@@ -11,10 +11,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
+import logging
 import os
 from pathlib import Path
 import re
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+
+log = logging.getLogger(__name__)
+
+
+class ResearchWriteOwnerUnavailableError(RuntimeError):
+    """Raised when the Postgres-backed ResearchWriteOwner is not configured.
+
+    Under BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001, experiment reads and
+    mutations delegate exclusively to ``services.research.write_owner.ResearchWriteOwner``.
+    There is no in-memory fallback: if the owner cannot be built (missing
+    ``DATABASE_URL``/``RESEARCH_STORE_DSN``) or a DB round-trip fails, callers
+    must surface a 500/503, never a silent empty/fake success.
+    """
 
 try:
     from services.knowledge.evidence.repository import (
@@ -383,6 +397,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         research_tickets_store: Optional[Dict[str, Any]] = None,
         research_analyses_store: Optional[Dict[str, Any]] = None,
         research_experiments_store: Optional[Dict[str, Any]] = None,
+        research_write_owner: Optional[Any] = None,
         research_artifacts_store: Optional[Dict[str, Any]] = None,
         evidence_refs_store: Optional[Dict[str, Any]] = None,
         search_documents_store: Optional[List[Dict[str, Any]]] = None,
@@ -409,7 +424,21 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         self._strategy_specs: Dict[str, Any] = dict(strategy_specs_store or {})
         self._tickets: Dict[str, Any] = dict(research_tickets_store or {})
         self._analyses: Dict[str, Any] = dict(research_analyses_store or {})
-        self._experiments: Dict[str, Any] = dict(research_experiments_store or {})
+        if research_experiments_store:
+            # ACG-02-003 (REMOVE): the in-memory experiments overlay is retired.
+            # BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001 deletes it entirely;
+            # this constructor kwarg is accepted-but-ignored only so unrelated
+            # fixtures that still pass it do not hard-crash at construction
+            # time. Experiment reads/writes now go exclusively through
+            # ResearchWriteOwner (Postgres), never this dict.
+            log.warning(
+                "DefaultResearchKnowledgeSourcePort: research_experiments_store is "
+                "deprecated and ignored; experiments now delegate exclusively to "
+                "ResearchWriteOwner (Postgres). See "
+                "docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md."
+            )
+        self._research_write_owner: Optional[Any] = research_write_owner
+        self._research_write_owner_resolved: bool = research_write_owner is not None
         self._artifacts: Dict[str, Any] = dict(research_artifacts_store or {})
         self._evidence_refs: Dict[str, Any] = dict(evidence_refs_store or {})
         self._search_documents: List[Dict[str, Any]] = list(search_documents_store or [])
@@ -429,6 +458,32 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         return False, None
 
     # -------------------------------------------------------------------------
+    # ResearchWriteOwner binding (RW-04 Experiments)
+    # -------------------------------------------------------------------------
+    def _get_research_write_owner(self) -> Optional[Any]:
+        """Lazily resolve the canonical Postgres-backed ResearchWriteOwner.
+
+        Returns ``None`` (never raises) when the owner cannot be built, so
+        callers can decide whether to fail closed (mutations, detail reads)
+        or report a degraded surface (list reads). Resolution is attempted at
+        most once per instance to avoid retry storms against a misconfigured
+        DSN on every request.
+        """
+        if self._research_write_owner is not None:
+            return self._research_write_owner
+        if self._research_write_owner_resolved:
+            return None
+        self._research_write_owner_resolved = True
+        try:
+            from services.research.write_owner import build_research_write_owner
+
+            self._research_write_owner = build_research_write_owner()
+        except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure means "unavailable"
+            log.warning("ResearchWriteOwner unavailable for research experiments: %s", exc)
+            self._research_write_owner = None
+        return self._research_write_owner
+
+    # -------------------------------------------------------------------------
     # Surface & Dataset metadata
     # -------------------------------------------------------------------------
     def dataset_source(self, dataset: str) -> str:
@@ -436,14 +491,15 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             return "typed_store" if self._institutional_memory_store is not None else ("bff_composed" if self._notes else "missing")
         if dataset == "evidence_refs":
             return "typed_store" if (self._evidence_repo is not None or self._evidence_refs) else "missing"
-        if dataset in ("research_notes", "insight_cards", "strategy_specs", "research_tickets", "research_analyses", "research_experiments", "research_artifacts"):
+        if dataset == "research_experiments":
+            return "typed_store" if self._get_research_write_owner() is not None else "missing"
+        if dataset in ("research_notes", "insight_cards", "strategy_specs", "research_tickets", "research_analyses", "research_artifacts"):
             store_map = {
                 "research_notes": self._notes,
                 "insight_cards": self._insights,
                 "strategy_specs": self._strategy_specs,
                 "research_tickets": self._tickets,
                 "research_analyses": self._analyses,
-                "research_experiments": self._experiments,
                 "research_artifacts": self._artifacts,
             }
             items = store_map.get(dataset, {})
@@ -556,7 +612,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             spec = self.get_strategy_spec(ref) or {}
             return spec.get("title") or spec.get("name")
         if entity == "experiment":
-            experiment = self.get_research_experiment(ref) or {}
+            try:
+                experiment = self.get_research_experiment(ref) or {}
+            except ResearchWriteOwnerUnavailableError:
+                experiment = {}
             return experiment.get("experiment_name")
         if entity == "artifact":
             artifact = self.get_research_artifact(ref) or {}
@@ -2048,131 +2107,39 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         return self._project_research_analysis_detail(analysis) if isinstance(analysis, dict) else None
 
     # -------------------------------------------------------------------------
-    # Research Experiments (RW-04) - NO process-local monkey patch overlays
+    # Research Experiments (RW-04) - delegate exclusively to ResearchWriteOwner
     # -------------------------------------------------------------------------
-    @classmethod
-    def _rw04_can_cancel(cls, status: Optional[str]) -> bool:
-        return str(status or "").strip().lower() in cls._RW04_CANCELABLE_STATUSES
-
-    @classmethod
-    def _project_research_experiment_summary(cls, exp: Dict[str, Any]) -> Dict[str, Any]:
-        status = str(exp.get("status") or "")
-        strategy_selector = exp.get("strategy_selector") or {}
-        strategy_id = (
-            exp.get("linked_strategy_id")
-            or exp.get("strategy_id")
-            or strategy_selector.get("strategy_id")
-        )
-        run_config = exp.get("run_config") or {}
-        return {
-            "experiment_id": exp.get("experiment_id"),
-            "ticket_id": exp.get("ticket_id"),
-            "experiment_name": exp.get("experiment_name"),
-            "status": status,
-            "stage": exp.get("stage"),
-            "framework": exp.get("framework") or run_config.get("backend"),
-            "queued_at": exp.get("queued_at"),
-            "started_at": exp.get("started_at"),
-            "completed_at": exp.get("completed_at"),
-            "strategy_id": strategy_id,
-            "linked_strategy_id": strategy_id,
-            "dataset_ref": exp.get("dataset_ref") or run_config.get("dataset_ref"),
-            "dataset_manifest_id": exp.get("dataset_manifest_id") or run_config.get("dataset_manifest_id"),
-            "artifact_ids": list(exp.get("artifact_ids") or []),
-            "registry_admission_status": exp.get("registry_admission_status"),
-            "can_deploy": bool(exp.get("can_deploy", True)),
-            "allowedActions": {"canCancel": cls._rw04_can_cancel(status)},
-        }
-
-    @classmethod
-    def _project_research_experiment_detail(cls, exp: Dict[str, Any]) -> Dict[str, Any]:
-        status = str(exp.get("status") or "")
-        failure = exp.get("failure") or {}
-        progress = exp.get("progress") or {}
-        strategy_selector = exp.get("strategy_selector") or {}
-        run_config = exp.get("run_config") or {}
-        time_range = run_config.get("time_range") or {}
-        launch_context = exp.get("launch_context") or {}
-        return {
-            "experiment_id": exp.get("experiment_id"),
-            "ticket_id": exp.get("ticket_id"),
-            "experiment_name": exp.get("experiment_name"),
-            "status": status,
-            "stage": exp.get("stage"),
-            "queued_at": exp.get("queued_at"),
-            "started_at": exp.get("started_at"),
-            "completed_at": exp.get("completed_at"),
-            "progress": {
-                "percent": progress.get("percent"),
-                "phase": progress.get("phase"),
-                "message": progress.get("message"),
-            },
-            "strategy_selector": {
-                "strategy_id": strategy_selector.get("strategy_id"),
-                "variant_id": strategy_selector.get("variant_id"),
-            },
-            "parameter_set": json.loads(json.dumps(exp.get("parameter_set") or {})),
-            "run_config": {
-                "backend": run_config.get("backend"),
-                "dataset_ref": run_config.get("dataset_ref"),
-                "dataset_manifest_id": run_config.get("dataset_manifest_id"),
-                "time_range": {
-                    "start_at": time_range.get("start_at"),
-                    "end_at": time_range.get("end_at"),
-                },
-                "execution_mode": run_config.get("execution_mode"),
-                "priority": run_config.get("priority"),
-                "requested_by": run_config.get("requested_by"),
-            },
-            "launch_context": {
-                "analysis_refs": (
-                    list(launch_context["analysis_refs"])
-                    if isinstance(launch_context.get("analysis_refs"), list)
-                    else None
-                ),
-            },
-            "validation_warnings": json.loads(json.dumps(exp.get("validation_warnings") or [])),
-            "artifact_ids": list(exp.get("artifact_ids") or []),
-            "artifact_refs": json.loads(json.dumps(exp.get("artifact_refs") or [])),
-            "framework": exp.get("framework") or run_config.get("backend"),
-            "dataset_ref": exp.get("dataset_ref") or run_config.get("dataset_ref"),
-            "dataset_manifest_id": exp.get("dataset_manifest_id") or run_config.get("dataset_manifest_id"),
-            "research_linkage": json.loads(json.dumps(exp.get("research_linkage") or {})),
-            "evidence_refs": json.loads(json.dumps(exp.get("evidence_refs") or [])),
-            "safety_assertions": json.loads(json.dumps(exp.get("safety_assertions") or {})),
-            "registry_admission_status": exp.get("registry_admission_status"),
-            "can_deploy": bool(exp.get("can_deploy", True)),
-            "deployment_stage": exp.get("deployment_stage"),
-            "failure": {
-                "reason_code": failure.get("reason_code"),
-                "message": failure.get("message"),
-            },
-            "allowedActions": {"canCancel": cls._rw04_can_cancel(status)},
-        }
-
+    # ACG-02-003 (REMOVE), BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001:
+    # the in-memory ``self._experiments`` dictionary and its bff-local
+    # projection helpers are deleted. `ResearchExperiment` is durably owned by
+    # `services.research.write_owner.ResearchWriteOwner`
+    # (`research.research_experiments` in Postgres); this port is a thin,
+    # fail-closed pass-through. There is no fallback to memory: if the owner
+    # cannot be resolved, every method below raises
+    # ``ResearchWriteOwnerUnavailableError`` for the caller to map to a 500/503.
     def list_research_experiments(
         self,
         *,
         ticket_id: Optional[str] = None,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        experiments = list(self._experiments.values())
-        if ticket_id:
-            experiments = [e for e in experiments if str(e.get("ticket_id") or "") == str(ticket_id)]
-        if status:
-            req_status = str(status).strip().lower()
-            experiments = [e for e in experiments if str(e.get("status") or "").strip().lower() == req_status]
-        experiments.sort(
-            key=lambda e: _naive_utc(_parse_rfc3339(e.get("queued_at"))),
-            reverse=True,
-        )
-        return [self._project_research_experiment_summary(e) for e in experiments if isinstance(e, dict)]
+        owner = self._get_research_write_owner()
+        if owner is None:
+            raise ResearchWriteOwnerUnavailableError(
+                "Research write owner (Postgres) is not configured; cannot list research experiments."
+            )
+        return owner.list_research_experiments(ticket_id=ticket_id, status=status)
 
     def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not experiment_id:
             return None
-        exp = self._experiments.get(str(experiment_id))
-        return self._project_research_experiment_detail(exp) if isinstance(exp, dict) else None
+        owner = self._get_research_write_owner()
+        if owner is None:
+            raise ResearchWriteOwnerUnavailableError(
+                "Research write owner (Postgres) is not configured; cannot read research experiment "
+                f"{experiment_id!r}."
+            )
+        return owner.get_research_experiment(experiment_id)
 
     def create_research_experiment(
         self,
@@ -2185,32 +2152,20 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         launch_context: Dict[str, Any],
         queued_at: Optional[str] = None,
     ) -> Dict[str, Any]:
-        timestamp = queued_at or _utc_now_rfc3339()
-        date_part = timestamp[:10].replace("-", "")
-        experiment_id = f"exp-{date_part}-{len(self._experiments) + 1:03d}"
-        while experiment_id in self._experiments:
-            experiment_id = f"exp-{date_part}-{len(self._experiments) + 2:03d}"
-
-        record: Dict[str, Any] = {
-            "experiment_id": experiment_id,
-            "ticket_id": ticket_id,
-            "experiment_name": experiment_name,
-            "status": "queued",
-            "queued_at": timestamp,
-            "started_at": None,
-            "completed_at": None,
-            "progress": {"percent": None, "phase": None, "message": None},
-            "strategy_selector": json.loads(json.dumps(strategy_selector)),
-            "parameter_set": json.loads(json.dumps(parameter_set)),
-            "run_config": json.loads(json.dumps(run_config)),
-            "launch_context": json.loads(json.dumps(launch_context)),
-            "validation_warnings": [],
-            "artifact_ids": [],
-            "failure": {"reason_code": None, "message": None},
-            "allowedActions": {"canCancel": True},
-        }
-        self._experiments[experiment_id] = record
-        return self._project_research_experiment_detail(record)
+        owner = self._get_research_write_owner()
+        if owner is None:
+            raise ResearchWriteOwnerUnavailableError(
+                "Research write owner (Postgres) is not configured; cannot create a research experiment."
+            )
+        return owner.create_research_experiment(
+            ticket_id=ticket_id,
+            experiment_name=experiment_name,
+            strategy_selector=strategy_selector,
+            parameter_set=parameter_set,
+            run_config=run_config,
+            launch_context=launch_context,
+            queued_at=queued_at,
+        )
 
     def cancel_research_experiment(
         self,
@@ -2218,16 +2173,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         *,
         completed_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        record = self._experiments.get(str(experiment_id))
-        if record is None or not isinstance(record, dict):
-            return None
-        status = str(record.get("status") or "").strip().lower()
-        if status not in self._RW04_CANCELABLE_STATUSES:
-            return None
-        record["status"] = "canceled"
-        record["completed_at"] = completed_at or _utc_now_rfc3339()
-        record["allowedActions"] = {"canCancel": False}
-        return self._project_research_experiment_detail(record)
+        owner = self._get_research_write_owner()
+        if owner is None:
+            raise ResearchWriteOwnerUnavailableError(
+                "Research write owner (Postgres) is not configured; cannot cancel research experiment "
+                f"{experiment_id!r}."
+            )
+        return owner.cancel_research_experiment(experiment_id, completed_at=completed_at)
 
     # -------------------------------------------------------------------------
     # Research Artifacts (RW-05)

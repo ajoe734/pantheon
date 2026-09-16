@@ -49,6 +49,11 @@ from services.control_plane.bff.ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
     ResearchKnowledgeSourcePort,
 )
+from services.control_plane.bff.ports.job_read import (
+    JobReadPort,
+    JobSourceUnavailableError,
+    create_job_read_port,
+)
 from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
     CompositeLifecycleTelemetryGovernancePort,
     DomainGovernancePort,
@@ -86,6 +91,7 @@ class ReadSurfacePorts:
         research_knowledge_source: Optional[ResearchKnowledgeSourcePort] = None,
         lifecycle_telemetry_governance: Optional[CompositeLifecycleTelemetryGovernancePort] = None,
         persona_training: Optional[PersonaTrainingDomainPort] = None,
+        job_read: Optional[JobReadPort] = None,
         paper_runtime_monitoring_sessions_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         paper_fleet_reconciler_url: Optional[str] = None,
         paper_fleet_transport: Optional[Any] = None,
@@ -97,6 +103,7 @@ class ReadSurfacePorts:
         self.research_knowledge_source = research_knowledge_source or DefaultResearchKnowledgeSourcePort()
         self.lifecycle_telemetry_governance = lifecycle_telemetry_governance or create_lifecycle_telemetry_governance_port()
         self.persona_training = persona_training or PersonaTrainingDomainPort()
+        self.job_read = job_read or create_job_read_port()
         self._paper_runtime_monitoring_sessions_provider = paper_runtime_monitoring_sessions_provider
         self._paper_fleet_reconciler_url = paper_fleet_reconciler_url
         self._paper_fleet_transport = paper_fleet_transport
@@ -116,6 +123,7 @@ class ReadSurfacePorts:
             "research_knowledge_source",
             "lifecycle_telemetry_governance",
             "persona_training",
+            "job_read",
             "_paper_runtime_monitoring_sessions_provider",
             "_paper_fleet_reconciler_url",
             "_paper_fleet_transport",
@@ -143,6 +151,7 @@ class ReadSurfacePorts:
             "research_knowledge_source",
             "lifecycle_telemetry_governance",
             "persona_training",
+            "job_read",
             "_paper_runtime_monitoring_sessions_provider",
             "_paper_fleet_reconciler_url",
             "_paper_fleet_transport",
@@ -529,6 +538,63 @@ class ReadSurfacePorts:
 
     def get_research_experiment(self, experiment_id: str) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_research_experiment(experiment_id)
+
+    # NOTE: create_research_experiment/cancel_research_experiment are
+    # deliberately NOT exposed here. Per
+    # tests/test_read_surface_caller_migration.py's
+    # RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE static regression,
+    # ReadSurfacePorts is a read-only facade; mutation APIs must be reached
+    # via ``self.research_knowledge_source.create_research_experiment(...)``/
+    # ``.cancel_research_experiment(...)`` directly (see
+    # research/routes/experiments.py), never re-exposed as a ReadSurfacePorts
+    # pass-through.
+
+    def get_experiment_logs(self, experiment_id: str) -> List[Dict[str, Any]]:
+        """Real stage/execution logs for an experiment's runs.
+
+        BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001 (5.2 KEEP mapping):
+        ``ResearchExperiment`` (owned by ``ResearchWriteOwner``) does not
+        itself persist a structured log stream — logs belong to the
+        ``OrchestratorRun`` aggregate, a distinct owner this port does not
+        cross-join without an explicit run linkage on the experiment record.
+        Returns ``[]`` when the experiment genuinely has no attached run logs
+        yet (e.g. still queued), never a hardcoded synthetic value.
+        """
+        experiment = self.research_knowledge_source.get_research_experiment(experiment_id)
+        if not experiment:
+            return []
+        logs = experiment.get("logs")
+        return list(logs) if isinstance(logs, list) else []
+
+    def get_experiment_metrics(self, experiment_id: str) -> Dict[str, Any]:
+        """Real execution metrics for an experiment, when the owner has any.
+
+        Returns ``{}`` for a pending/running experiment with no metrics yet,
+        per the accepted negative-case contract; never a hardcoded value.
+        """
+        experiment = self.research_knowledge_source.get_research_experiment(experiment_id)
+        if not experiment:
+            return {}
+        metrics = experiment.get("metrics")
+        return dict(metrics) if isinstance(metrics, dict) else {}
+
+    def get_experiment_artifacts(self, experiment_id: str) -> List[Dict[str, Any]]:
+        """Real artifacts produced by an experiment, resolved via RW-05.
+
+        Reads ``experiment.artifact_ids`` (owned by ``ResearchWriteOwner``)
+        and resolves each id through the existing RW-05 artifact port
+        (``get_research_artifact``) rather than a second, invented store.
+        """
+        experiment = self.research_knowledge_source.get_research_experiment(experiment_id)
+        if not experiment:
+            return []
+        artifact_ids = experiment.get("artifact_ids") or []
+        artifacts = []
+        for artifact_id in artifact_ids:
+            artifact = self.research_knowledge_source.get_research_artifact(str(artifact_id))
+            if artifact:
+                artifacts.append(artifact)
+        return artifacts
 
     def list_research_artifact_comparisons(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_research_artifact_comparisons(**kwargs)
@@ -1067,10 +1133,26 @@ class ReadSurfacePorts:
         return self.research_knowledge_source.get_research_experiment(exp_id)
 
     def get_job_bff(self, job_id: str) -> Optional[Dict[str, Any]]:
-        return self.research_knowledge_source.get_research_ticket(job_id)
+        """Typed Job read composition (BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001).
+
+        ``ResearchTicket != Job``: this no longer calls
+        ``get_research_ticket``. Dispatches to the qualified domain owner by
+        the ``job_id`` native-ID prefix via ``JobReadPort``. Raises
+        ``JobSourceUnavailableError`` (mapped to HTTP 503 by callers) when the
+        owning source cannot be reached, instead of silently returning None.
+        """
+        return self.job_read.get_job_bff(job_id)
 
     def list_jobs_bff(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self.research_knowledge_source.list_research_tickets(**kwargs)
+        """Typed Job read composition across the six qualified sources.
+
+        ``ResearchTicket`` records are never returned here; see
+        ``get_job_bff`` docstring.
+        """
+        return self.job_read.list_jobs_bff(**kwargs)
+
+    def get_job_logs_bff(self, job_id: str) -> List[Dict[str, Any]]:
+        return self.job_read.get_job_logs_bff(job_id)
 
     def list_events_bff(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.list_telemetry_events(**kwargs)
@@ -1253,6 +1335,7 @@ def create_read_surface_ports(
     research_knowledge_source: Optional[ResearchKnowledgeSourcePort] = None,
     lifecycle_telemetry_governance: Optional[CompositeLifecycleTelemetryGovernancePort] = None,
     persona_training: Optional[PersonaTrainingDomainPort] = None,
+    job_read: Optional[JobReadPort] = None,
     paper_runtime_monitoring_sessions_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     paper_fleet_reconciler_url: Optional[str] = None,
     paper_fleet_transport: Optional[Any] = None,
@@ -1275,6 +1358,7 @@ def create_read_surface_ports(
         research_knowledge_source=research_knowledge_source,
         lifecycle_telemetry_governance=lifecycle_telemetry_governance,
         persona_training=persona_training,
+        job_read=job_read,
         paper_runtime_monitoring_sessions_provider=paper_runtime_monitoring_sessions_provider,
         paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         paper_fleet_transport=paper_fleet_transport,
@@ -1289,6 +1373,7 @@ def create_in_memory_read_surface_ports(
     research_knowledge_source_kwargs: Optional[Dict[str, Any]] = None,
     lifecycle_telemetry_governance_kwargs: Optional[Dict[str, Any]] = None,
     persona_training_kwargs: Optional[Dict[str, Any]] = None,
+    job_read: Optional[JobReadPort] = None,
     paper_runtime_monitoring_sessions_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     paper_fleet_reconciler_url: Optional[str] = None,
     paper_fleet_transport: Optional[Any] = None,
@@ -1330,6 +1415,7 @@ def create_in_memory_read_surface_ports(
         research_knowledge_source=rks_port,
         lifecycle_telemetry_governance=ltg_port,
         persona_training=pt_port,
+        job_read=job_read,
         paper_runtime_monitoring_sessions_provider=paper_provider,
         paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         paper_fleet_transport=paper_fleet_transport,

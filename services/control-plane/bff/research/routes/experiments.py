@@ -30,6 +30,31 @@ try:
 except (ImportError, ValueError):
     from ..models import ErrorCode, ObjectType
 
+try:
+    from services.control_plane.bff.ports.research_knowledge_source import (
+        ResearchWriteOwnerUnavailableError,
+    )
+except (ImportError, ValueError):
+    from ..ports.research_knowledge_source import ResearchWriteOwnerUnavailableError  # type: ignore[no-redef]
+
+def _resolve_research_write_port(read_store: Any) -> Any:
+    """Resolve the port that owns experiment mutations (create/cancel).
+
+    Mirrors ``ResearchRouteContext.call_mutation_port`` in ``common.py``:
+    ``create_research_experiment``/``cancel_research_experiment`` are
+    deliberately not exposed on ``ReadSurfacePorts`` itself (see
+    ``tests/test_read_surface_caller_migration.py``
+    ``RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE``), and main.py's test-time
+    ``_active_delegate`` swap mechanism does not forward the
+    ``research_knowledge_source`` attribute, so this must follow
+    ``_active_delegate`` explicitly before reaching for
+    ``research_knowledge_source`` (falling back to the store itself for test
+    doubles that already are a research-knowledge-source port).
+    """
+    target = getattr(read_store, "_active_delegate", None) or read_store
+    return getattr(target, "research_knowledge_source", target)
+
+
 _EXPERIMENT_STATUSES = {"queued", "running", "completed", "failed", "canceled"}
 _EXPERIMENT_EXECUTION_MODES = {"paper", "backtest", "simulation"}
 _EXPERIMENT_PRIORITIES = {"normal", "high"}
@@ -89,16 +114,22 @@ def create_research_experiments_router(
         return enriched
 
     def _require_experiment(read_store: Any, clean_id: str) -> Dict[str, Any]:
-        if hasattr(read_store, "get_experiment_bff"):
-            item = read_store.get_experiment_bff(clean_id)
-        elif hasattr(read_store, "get_research_experiment"):
-            item = read_store.get_research_experiment(clean_id)
-        else:
-            rks = getattr(read_store, "research_knowledge_source", None)
-            if rks and hasattr(rks, "get_research_experiment"):
-                item = rks.get_research_experiment(clean_id)
+        try:
+            if hasattr(read_store, "get_experiment_bff"):
+                item = read_store.get_experiment_bff(clean_id)
+            elif hasattr(read_store, "get_research_experiment"):
+                # ReadSurfacePorts.get_research_experiment always exists and
+                # delegates directly to ResearchWriteOwner; no rks probing needed.
+                item = read_store.get_research_experiment(clean_id)
             else:
                 item = None
+        except ResearchWriteOwnerUnavailableError as exc:
+            raise bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Research experiment write owner unavailable",
+                str(exc),
+            ) from exc
         if not item:
             raise bff_error(
                 404,
@@ -162,38 +193,37 @@ def create_research_experiments_router(
                 precondition_failed="name",
             )
         read_store = get_read_store()
-        if hasattr(read_store, "create_experiment_bff"):
-            result = read_store.create_experiment_bff(
-                name=name,
-                actor_id=identity.operator_id,
-                created_at=utc_now(),
-                params=payload,
-            )
-        else:
-            rks = getattr(read_store, "research_knowledge_source", None)
-            creator = getattr(rks, "create_research_experiment", None) if rks else None
-            if creator is None:
-                try:
-                    from services.research.write_owner import build_research_write_owner
-                    creator = getattr(build_research_write_owner(), "create_research_experiment", None)
-                except Exception:
-                    creator = None
-            if creator is None:
-                raise bff_error(
-                    503,
-                    ErrorCode.DEPENDENCY_UNAVAILABLE,
-                    "Research experiment write owner unavailable",
-                    "Cannot execute create_research_experiment mutation",
+        try:
+            if hasattr(read_store, "create_experiment_bff"):
+                result = read_store.create_experiment_bff(
+                    name=name,
+                    actor_id=identity.operator_id,
+                    created_at=utc_now(),
+                    params=payload,
                 )
-            result = creator(
-                ticket_id=str(payload.get("ticket_id") or ""),
-                experiment_name=name,
-                strategy_selector=payload.get("strategy_selector") or {},
-                parameter_set=payload.get("parameter_set") or {},
-                run_config=payload.get("run_config") or {},
-                launch_context=payload.get("launch_context") or {"actor_id": identity.operator_id},
-                queued_at=utc_now(),
-            )
+            else:
+                # Wired directly to the canonical sub-port (BFF-RESEARCH-JOBS-OWNER
+                # -BINDING-CORRECTIVE-001): `research_knowledge_source.create_research_experiment`
+                # always exists and delegates exclusively to `ResearchWriteOwner`
+                # (Postgres, `research.research_experiments`). No in-memory
+                # dict fallback, no ad-hoc write-owner construction here.
+                rks = _resolve_research_write_port(read_store)
+                result = rks.create_research_experiment(
+                    ticket_id=str(payload.get("ticket_id") or ""),
+                    experiment_name=name,
+                    strategy_selector=payload.get("strategy_selector") or {},
+                    parameter_set=payload.get("parameter_set") or {},
+                    run_config=payload.get("run_config") or {},
+                    launch_context=payload.get("launch_context") or {"actor_id": identity.operator_id},
+                    queued_at=utc_now(),
+                )
+        except ResearchWriteOwnerUnavailableError as exc:
+            raise bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Research experiment write owner unavailable",
+                str(exc),
+            ) from exc
         if resolved_key:
             _RESEARCH_EXPERIMENT_IDEMPOTENCY[resolved_key] = {"hash": req_hash, "result": result}
         return result
@@ -249,11 +279,10 @@ def create_research_experiments_router(
         clean_id = experiment_id.strip()
         _require_experiment(read_store, clean_id)
         snapshot_at = utc_now()
-        logs_fn = getattr(read_store, "get_experiment_logs", None)
-        if logs_fn is None:
-            rks = getattr(read_store, "research_knowledge_source", None)
-            logs_fn = getattr(rks, "get_experiment_logs", None) if rks else None
-        logs = logs_fn(clean_id) if callable(logs_fn) else []
+        # get_experiment_logs is a real method on every read_store implementation
+        # (test doubles define it directly; ReadSurfacePorts always defines it
+        # too, see ports/read_surface_ports.py) — no hasattr/getattr probing.
+        logs = read_store.get_experiment_logs(clean_id)
         return {
             "experiment_id": clean_id,
             "logs": logs,
@@ -271,11 +300,7 @@ def create_research_experiments_router(
         clean_id = experiment_id.strip()
         _require_experiment(read_store, clean_id)
         snapshot_at = utc_now()
-        metrics_fn = getattr(read_store, "get_experiment_metrics", None)
-        if metrics_fn is None:
-            rks = getattr(read_store, "research_knowledge_source", None)
-            metrics_fn = getattr(rks, "get_experiment_metrics", None) if rks else None
-        metrics = metrics_fn(clean_id) if callable(metrics_fn) else {}
+        metrics = read_store.get_experiment_metrics(clean_id)
         return {
             "experiment_id": clean_id,
             "metrics": metrics,
@@ -293,11 +318,7 @@ def create_research_experiments_router(
         clean_id = experiment_id.strip()
         _require_experiment(read_store, clean_id)
         snapshot_at = utc_now()
-        artifacts_fn = getattr(read_store, "get_experiment_artifacts", None)
-        if artifacts_fn is None:
-            rks = getattr(read_store, "research_knowledge_source", None)
-            artifacts_fn = getattr(rks, "get_experiment_artifacts", None) if rks else None
-        artifacts = artifacts_fn(clean_id) if callable(artifacts_fn) else []
+        artifacts = read_store.get_experiment_artifacts(clean_id)
         return {
             "experiment_id": clean_id,
             "artifacts": artifacts,
@@ -454,7 +475,7 @@ def build_experiments_router(ctx: ResearchRouteContext) -> APIRouter:
         ctx.identity(request)
         port = ctx.get_read_store()
         payload = _validate_experiment_launch(await ctx.body(request))
-        experiment = ctx.call_port(
+        experiment = ctx.call_mutation_port(
             port,
             "create_research_experiment",
             ticket_id=payload["ticket_id"],
@@ -530,7 +551,12 @@ def build_experiments_router(ctx: ResearchRouteContext) -> APIRouter:
                 "Experiment cannot be canceled",
                 f"Experiment {experiment_id} is in terminal state '{experiment.get('status')}' and cannot be canceled",
             )
-        canceled = ctx.call_port(port, "cancel_research_experiment", experiment_id, completed_at=snapshot_at)
+        canceled = ctx.call_mutation_port(
+            port,
+            "cancel_research_experiment",
+            experiment_id,
+            completed_at=snapshot_at,
+        )
         if not canceled:
             raise ctx.bff_error(409, ErrorCode.OPERATION_NOT_ALLOWED, "Experiment cancel rejected", "Experiment could not be canceled")
         return {"experiment_id": experiment_id, "status": canceled.get("status"), "completed_at": canceled.get("completed_at"), "allowedActions": {"canCancel": False}}
