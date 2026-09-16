@@ -1,8 +1,9 @@
-"""Evolution Program owner API (U8A).
+"""Evolution Program owner API (U8A / U8B).
 
-Planned path per
-docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md §3:
-``/api/evolution/programs`` — create / list / get / metadata-PATCH(name only).
+Per docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md §3/§4:
+``/api/evolution/programs`` — create / list / get / metadata-PATCH(name only),
+and ``/api/evolution/programs/{program_id}/actions/{action_id}`` for real lifecycle
+controls, state transitions, generation freeze, candidate promotions, and receipts.
 
 This module is a bounded addition inside the existing Evolution service, not
 a new microservice. It is mounted by ``services/evolution/main.py`` under the
@@ -11,12 +12,6 @@ same ``authenticate_tenant`` middleware already enforced for every
 already-authenticated request tenant — callers inject that resolution via
 ``current_tenant``/``authorize_request_tenant`` rather than trusting a raw
 request body field.
-
-U8A does not implement real lifecycle actions (submit_evolution_review,
-approve_program, pause_program, resume_program, complete_program,
-retire_program, stop, freeze_generation, promote_candidate_paper/live,
-approve_mutation/reject_mutation) — this router intentionally exposes no
-action endpoint; those remain U8B's obligation.
 """
 from __future__ import annotations
 
@@ -25,6 +20,7 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.evolution.models import ProgramActionRequest
 from services.evolution.program_service import (
     ProgramConflictError,
     ProgramDivergentReplayError,
@@ -179,5 +175,42 @@ def create_program_router(
         except Exception as exc:
             raise _unavailable(exc) from exc
         return program
+
+    @router.post("/api/evolution/programs/{program_id}/actions/{action_id}", status_code=200)
+    def execute_program_action(
+        program_id: str,
+        action_id: str,
+        body: Optional[ProgramActionRequest] = None,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        req_body = body or ProgramActionRequest(actor_id="operator")
+        tenant_id = _resolve_tenant(req_body.tenant_id)
+        key = _idempotency_key(idempotency_key, x_idempotency_key)
+        payload = req_body.model_dump(exclude_unset=True)
+        try:
+            result, _replayed = service.execute_action(
+                tenant_id=tenant_id,
+                actor_id=req_body.actor_id,
+                actor_role=req_body.actor_role,
+                program_id=program_id,
+                action_id=action_id,
+                expected_revision=req_body.expected_revision,
+                idempotency_key=key,
+                payload=payload,
+            )
+        except ProgramValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ProgramNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ProgramDivergentReplayError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ProgramConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise _unavailable(exc) from exc
+        return result
 
     return router

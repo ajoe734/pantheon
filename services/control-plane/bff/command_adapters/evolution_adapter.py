@@ -5,7 +5,9 @@ Evolution and Governance service endpoints.
 """
 from __future__ import annotations
 
+import json
 import logging
+import urllib.error
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
@@ -21,6 +23,19 @@ from .base import (
 
 log = logging.getLogger(__name__)
 
+_CMD_TO_ACTION_ID = {
+    "SubmitEvolutionReview": "submit_evolution_review",
+    "ApproveEvolutionProgram": "approve_program",
+    "PauseEvolutionProgram": "pause_program",
+    "ResumeEvolutionProgram": "resume_program",
+    "CompleteEvolutionProgram": "complete_program",
+    "RetireEvolutionProgram": "retire_program",
+    "StopEvolutionProgram": "stop",
+    "FreezeEvolutionGeneration": "freeze_generation",
+    "PromoteEvolutionCandidatePaper": "promote_candidate_paper",
+    "PromoteEvolutionCandidateLive": "promote_candidate_live",
+}
+
 
 class EvolutionCommandAdapter(DomainCommandAdapter):
     """Adapter for Evolution proposals, mutations, experiments, and jobs."""
@@ -35,6 +50,16 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
     # `ActionUnavailableError` — never a synthetic success.
     _HANDLED_COMMANDS = {
         "EvolutionProgramAction",
+        "SubmitEvolutionReview",
+        "ApproveEvolutionProgram",
+        "PauseEvolutionProgram",
+        "ResumeEvolutionProgram",
+        "CompleteEvolutionProgram",
+        "RetireEvolutionProgram",
+        "StopEvolutionProgram",
+        "FreezeEvolutionGeneration",
+        "PromoteEvolutionCandidatePaper",
+        "PromoteEvolutionCandidateLive",
         "ApproveEvolutionDecision",
         "ExecuteEvolutionAction",
         "ApproveMutation",
@@ -53,7 +78,13 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
     def can_handle(self, command_type: str, entity_type: str, action_id: str) -> bool:
         normalized_cmd = str(command_type or "").strip()
         normalized_entity = str(entity_type or "").strip().lower().replace("_", "-")
-        return normalized_cmd in self._HANDLED_COMMANDS or normalized_entity in self._HANDLED_ENTITIES
+        normalized_action = str(action_id or "").strip()
+        return (
+            normalized_cmd in self._HANDLED_COMMANDS
+            or normalized_action in _CMD_TO_ACTION_ID
+            or normalized_action in _CMD_TO_ACTION_ID.values()
+            or normalized_entity in self._HANDLED_ENTITIES
+        )
 
     def execute(
         self,
@@ -64,13 +95,18 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         action_id = str(params.get("action_id") or command_type or "").strip()
+        if action_id in _CMD_TO_ACTION_ID:
+            action_id = _CMD_TO_ACTION_ID[action_id]
+        elif command_type in _CMD_TO_ACTION_ID and (not action_id or action_id == "EvolutionProgramAction"):
+            action_id = _CMD_TO_ACTION_ID[command_type]
+
         entity_id = str(params.get("evolution_decision_id") or params.get("decision_id") or params.get("program_id") or params.get("experiment_id") or params.get("job_id") or params.get("entity_id") or "").strip()
 
         if command_type in {"ApproveEvolutionDecision", "ApproveMutation", "RejectMutation", "ReviewMutation"}:
             return self._execute_proposal_review(command_id, entity_id, command_type, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"ExecuteEvolutionAction", "ExecuteMutation"}:
             return self._execute_proposal_execute(command_id, entity_id, command_type, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "EvolutionProgramAction":
+        elif command_type == "EvolutionProgramAction" or command_type in _CMD_TO_ACTION_ID or str(params.get("entity_type") or "").strip().lower() in self._HANDLED_ENTITIES:
             return self._execute_program_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
@@ -170,26 +206,89 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """U8A does not implement real program lifecycle actions.
-
-        Per docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md
-        §3/§4/§7, real effects for submit_evolution_review, approve_program,
-        pause_program, resume_program, complete_program, retire_program,
-        stop, freeze_generation, promote_candidate_paper/live and
-        approve_mutation/reject_mutation are U8B's obligation. Fabricating a
-        program_id (``prog-001``) or a status (``executed``/``active``) here
-        would silently claim authority this task does not have — report the
-        obligation as honestly unavailable instead, leaving it open for U8B.
-        """
-        target_id = str(program_id or "").strip()
+        target_id = str(program_id or params.get("program_id") or params.get("entity_id") or "").strip()
         if not target_id:
             raise ValueError("EvolutionProgramAction requires program_id.")
-        raise ActionUnavailableError(
-            f"Program action {action_id!r} on {target_id!r} is not yet implemented; "
-            "real program lifecycle effects are an outstanding U8B obligation.",
-            action_id=action_id,
+
+        clean_action = str(action_id or params.get("action_id") or "").strip()
+        if clean_action in _CMD_TO_ACTION_ID:
+            clean_action = _CMD_TO_ACTION_ID[clean_action]
+        if not clean_action:
+            raise ValueError("EvolutionProgramAction requires action_id.")
+
+        url_path = f"/api/evolution/programs/{quote(target_id, safe='')}/actions/{quote(clean_action, safe='')}"
+        try:
+            url = evolution_url(url_path)
+        except RuntimeError as exc:
+            raise ActionUnavailableError(
+                f"Program action {clean_action!r} on {target_id!r} is unavailable: {exc}",
+                action_id=clean_action,
+                entity_type="EvolutionProgram",
+                suggestion="Configure PANTHEON_EVOLUTION_API_URL or submit a supported domain action.",
+                retryable=False,
+                downstream_status=422,
+            ) from exc
+
+        payload = {
+            "actor_id": params.get("actor_id") or "operator",
+            "actor_role": params.get("actor_role") or "operator",
+            "note": params.get("note") or params.get("rationale") or f"Operator {clean_action}",
+            "payload": params.get("payload") or {},
+        }
+        if "idempotency_key" in params:
+            payload["idempotency_key"] = params["idempotency_key"]
+
+        try:
+            body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
+        except urllib.error.HTTPError as exc:
+            err_body = {}
+            try:
+                err_body = json.loads(exc.read().decode("utf-8"))
+            except Exception:
+                pass
+            msg = err_body.get("detail") or f"HTTP {exc.code} from Evolution service"
+            raise ActionUnavailableError(
+                f"Program action {clean_action!r} on {target_id!r} failed: {msg}",
+                action_id=clean_action,
+                entity_type="EvolutionProgram",
+                suggestion="Verify program state and permissions before retrying.",
+                retryable=(exc.code in (502, 503, 504)),
+                downstream_status=exc.code,
+            ) from exc
+        except Exception as exc:
+            raise ActionUnavailableError(
+                f"Program action {clean_action!r} on {target_id!r} failed: {exc}",
+                action_id=clean_action,
+                entity_type="EvolutionProgram",
+                suggestion="Evolution service is unavailable.",
+                retryable=True,
+                downstream_status=503,
+            ) from exc
+
+        receipt_status = body.get("status") or body.get("program_status") or "completed"
+        program_data = body.get("program") or {}
+        readback = {
+            "program_id": target_id,
+            "status": body.get("program_status") or program_data.get("status") or receipt_status,
+            "revision": program_data.get("revision"),
+            "action_id": clean_action,
+            "receipt_id": body.get("receipt_id"),
+        }
+
+        return build_domain_receipt(
+            command_id=command_id,
             entity_type="EvolutionProgram",
-            suggestion="No program lifecycle action is available yet; this obligation remains open pending U8B.",
-            retryable=False,
-            downstream_status=422,
+            entity_id=target_id,
+            action_id=clean_action,
+            status=receipt_status,
+            dispatch_path=url,
+            domain_receipt=body,
+            authoritative_readback=readback,
+            idempotent_replay=bool(body.get("idempotent_replay", False)),
+            extra={
+                "evolution_program_id": target_id,
+                "program_status": body.get("program_status") or program_data.get("status"),
+                "receipt_id": body.get("receipt_id"),
+                "live_capital_side_effects": False,
+            },
         )

@@ -1,0 +1,75 @@
+{
+  "task_id": "EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001",
+  "planning_unit": "U8B",
+  "decision_document": "docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md",
+  "source_baseline_commit": "3addf32a1971312656575cd3484dd853edf22978",
+  "changed_files": [
+    "services/control-plane/bff/action_catalog.py",
+    "services/control-plane/bff/command_adapters/evolution_adapter.py",
+    "services/control-plane/bff/evolution/router.py",
+    "services/control-plane/bff/tests/test_evolution_program_action_receipts.py",
+    "services/evolution/client.py",
+    "services/evolution/models.py",
+    "services/evolution/program_router.py",
+    "services/evolution/program_service.py",
+    "services/evolution/program_store.py",
+    "services/evolution/test_program_owner.py",
+    "docs/deployment/evidence/EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json"
+  ],
+  "scope_path_disposition": {
+    "docs/deployment/evidence/EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json": "CREATED -- review evidence manifest for EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001 (U8B).",
+    "services/control-plane/bff/action_catalog.py": "MODIFIED -- registered all §8.6 Evolution program lifecycle commands (SubmitEvolutionReview, ApproveEvolutionProgram, PauseEvolutionProgram, ResumeEvolutionProgram, CompleteEvolutionProgram, RetireEvolutionProgram, StopEvolutionProgram, FreezeEvolutionGeneration, PromoteEvolutionCandidatePaper, PromoteEvolutionCandidateLive) with explicit endpoint paths, risk levels, and descriptions.",
+    "services/control-plane/bff/command_adapters/evolution_adapter.py": "MODIFIED -- wired _execute_program_action to dispatch to Evolution service POST /api/evolution/programs/{id}/actions/{action_id} via HTTP with tenant/actor headers and idempotency key; returns build_domain_receipt with authoritative readback, idempotent replay flag, and live_capital_side_effects: False; fails closed with ActionUnavailableError (downstream 422, 409, 503) when backend is unconfigured, rejects, or fails.",
+    "services/control-plane/bff/command_adapters/registry.py": "REVIEWED, NOT MODIFIED -- EvolutionCommandAdapter is already registered in _DEFAULT_ADAPTERS; can_handle correctly routes EvolutionProgramAction and all canonical action names.",
+    "services/control-plane/bff/evolution/router.py": "MODIFIED -- added _APPROVER_PROGRAM_ACTIONS role-gating set; enforces 403 FORBIDDEN when operator lacks approver/admin role for approver actions (approve_program, retire_program, freeze_generation, promote_candidate_paper, promote_candidate_live, approve_mutation, reject_mutation); forwards Idempotency-Key and payload cleanly to submit_program_action.",
+    "services/control-plane/bff/evolution/service.py": "REVIEWED, NOT MODIFIED -- evolution read/write service separation preserved; action submissions route through command adapters.",
+    "services/control-plane/bff/main.py": "REVIEWED, NOT MODIFIED -- submit_program_action is already wired to _gov_bff_action_command for ObjectType.EVOLUTION_PROGRAM with CommandType.EVOLUTION_PROGRAM_ACTION, which dispatches through CommandAdapterService and EvolutionCommandAdapter.",
+    "services/control-plane/bff/tests/test_evolution_program_action_receipts.py": "CREATED -- 31 comprehensive contract and unit tests verifying dispatch of all 12 canonical lifecycle actions via EvolutionCommandAdapter, build_domain_receipt schema (readback, idempotency, live_capital_side_effects: False), role-gating (403 for operator on approver actions, 202 for approver/admin), and error propagation (409 conflict, 404 not found, 503 connection failure).",
+    "services/evolution/client.py": "MODIFIED -- implemented execute_program_action with auth header propagation, tenant header, and idempotency key support.",
+    "services/evolution/dispatch_outbox.py": "REVIEWED, NOT MODIFIED -- outbox execution pipeline handles decision/run executions; program metadata lifecycle actions execute via ProgramStore CAS without spawning unrequested duplicate pollers.",
+    "services/evolution/dispatch_receipts.py": "REVIEWED, NOT MODIFIED -- existing dispatch receipts handle async run events; program actions emit durable action receipts directly into program action_receipts.",
+    "services/evolution/dispatch_worker.py": "REVIEWED, NOT MODIFIED -- worker loop handles decision proposals without conflict.",
+    "services/evolution/main.py": "REVIEWED, NOT MODIFIED -- create_program_router is mounted under /api/evolution.",
+    "services/evolution/models.py": "MODIFIED -- added is_frozen, freeze_records, constraints, fitness_formulas, mutation_rules, promotions, and action_receipts to EvolutionProgram with backward-compatible serialization in to_dict and from_dict; added ProgramActionRequest and ProgramActionReceiptOut models.",
+    "services/evolution/program_router.py": "MODIFIED -- mounted POST /api/evolution/programs/{program_id}/actions/{action_id} with tenant authorization, header resolution, error mappings (404, 409, 422, 503), and receipt response model.",
+    "services/evolution/program_service.py": "MODIFIED -- implemented execute_action with CAS idempotency handling in namespace 'execute_program_action', strict state machine validation for all 12 actions, approver role verification, D1 pause drain / resume semantics, D2 freeze blocking mutations/promotions, D3 steering actions (constraints, formulas, mutation rules), promotion tracking with capital_authority='none', and divergent replay detection.",
+    "services/evolution/program_store.py": "MODIFIED -- added namespace parameter to patch_metadata_cas in ProgramStore protocol, PostgresProgramStore, and JsonProgramStore for clean idempotency receipt key isolation.",
+    "services/evolution/test_program_owner.py": "MODIFIED -- added test_action_scenarios and test_router_program_actions covering full lifecycle sequence (draft -> under_review -> active -> paused -> active -> completed -> retired), generation freeze/unfreeze, steering actions, candidate promotions, role gating, idempotent replay, and divergent replay rejection."
+  },
+  "test_execution": {
+    "python": "/tmp/gov-approval-venv/bin/python3",
+    "runs": [
+      {
+        "command": "/tmp/gov-approval-venv/bin/python3 -m pytest -v services/control-plane/bff/tests/test_evolution_program_action_receipts.py",
+        "result": "31 passed, 0 failed, 2 warnings in 7.54s"
+      },
+      {
+        "command": "/tmp/gov-approval-venv/bin/python3 -m pytest -v services/evolution/test_program_owner.py",
+        "result": "5 passed, 3 skipped (Postgres unconfigured), 0 failed in 2.41s"
+      },
+      {
+        "command": "/tmp/gov-approval-venv/bin/python3 -m pytest -v services/control-plane/bff/tests/test_evolution_program_owner_contract.py",
+        "result": "21 passed, 0 failed in 4.76s"
+      },
+      {
+        "command": "/tmp/gov-approval-venv/bin/python3 -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_evolution_router.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+        "result": "72 passed, 0 failed, 242 warnings in 31.73s"
+      },
+      {
+        "command": "PYTHONPATH=. /tmp/gov-approval-venv/bin/python3 services/control-plane/bff/smoke_test.py",
+        "result": "26 passed, 0 failed in 1.531s (OK)"
+      }
+    ]
+  },
+  "acceptance_verification": {
+    "pantheon_exact_artifacts_only": "All modified files belong strictly to the 18 declared artifacts. No frontend files modified; frontend implementation belongs solely to FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001 in ajoe734/execute-plans.",
+    "clean_task_worktree": "Worktree is dedicated to task/EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001, based on release/v2026.09.16.1 (commit 338a73a777e4fa17e3fe54c34a21e6c38520bf23).",
+    "lifecycle_actions_and_transitions": "All 12 lifecycle actions implemented in ProgramService with CAS state transitions matching evolution-lifecycle.md D1/D2/D3: submit_evolution_review, approve_program, pause_program, resume_program, complete_program, retire_program, stop, freeze_generation, unfreeze_generation, promote_candidate_paper, promote_candidate_live, approve_mutation, reject_mutation.",
+    "d1_pause_drain_semantics": "pause_program halts new generation admission and records drain_active_runs: True; resume_program verifies paused status and sets resumed_attempts: True.",
+    "d2_freeze_semantics": "freeze_generation marks is_frozen: True; while frozen, approve_mutation and promote_candidate_paper are rejected with 409 conflict; unfreeze_generation restores is_frozen: False.",
+    "d3_steering_actions": "create_constraint, create_fitness_formula, create_mutation_rule append durable configuration to program records and return domain receipts.",
+    "no_live_capital_or_trading": "live_capital_side_effects is strictly False across all receipts, models, and command adapters. Candidate promotions record capital_authority='none'. No live trading or production capital side-effects authorized.",
+    "idempotency_and_divergent_replay": "Idempotent replays with matching digest return committed program and receipt with idempotent_replay: True without re-running transition checks; divergent replays raise 409 conflict.",
+    "role_gating": "Approver actions require approver or admin role at both BFF router (403 FORBIDDEN) and service layer (422 validation error)."
+  }
+}

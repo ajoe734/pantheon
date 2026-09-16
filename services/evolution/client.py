@@ -293,6 +293,57 @@ class EvolutionClient:
             if should_close_client and client:
                 await client.aclose()
 
+    async def execute_program_action(
+        self,
+        program_id: str,
+        action_id: str,
+        *,
+        actor_id: str,
+        actor_role: str = "operator",
+        expected_revision: Optional[int] = None,
+        idempotency_key: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> Dict[str, Any]:
+        """Execute a program lifecycle action (POST /api/evolution/programs/{id}/actions/{action_id})."""
+        url = f"{self.base_url}/api/evolution/programs/{program_id}/actions/{action_id}"
+        headers = self._get_headers(idempotency_key=idempotency_key)
+        body = dict(payload or {})
+        body["actor_id"] = actor_id
+        body["actor_role"] = actor_role
+        if expected_revision is not None:
+            body["expected_revision"] = expected_revision
+
+        should_close_client = False
+        if client is None:
+            client = httpx.AsyncClient(timeout=self.timeout)
+            should_close_client = True
+        try:
+            resp = await client.post(url, json=body, headers=headers)
+            if resp.status_code in (401, 403):
+                raise EvolutionAuthenticationError(
+                    f"Evolution execute_program_action failed with auth error status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            if resp.status_code == 404:
+                raise EvolutionClientError(
+                    f"Evolution program not found: {program_id}",
+                    status_code=404,
+                    response_body=resp.text,
+                )
+            if resp.status_code not in (200, 201, 202):
+                raise EvolutionClientError(
+                    f"Evolution action {action_id} failed for {program_id} with status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            return resp.json()
+        finally:
+            if should_close_client and client:
+                await client.aclose()
+
+
     async def get_decision(
         self,
         decision_id: str,
