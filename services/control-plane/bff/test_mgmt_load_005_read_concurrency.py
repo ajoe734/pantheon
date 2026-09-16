@@ -9,7 +9,6 @@ has an isolated router and is covered here through its narrow read port.
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -19,10 +18,9 @@ from typing import Iterator
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
-sys.path.insert(0, os.path.dirname(__file__))
 
-import main as bff_main  # noqa: E402
-from ports import ReadSurfacePorts, create_read_surface_ports  # noqa: E402
+from services.control_plane.bff import main as bff_main  # noqa: E402
+from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-load-005:operator,admin:mfa"}

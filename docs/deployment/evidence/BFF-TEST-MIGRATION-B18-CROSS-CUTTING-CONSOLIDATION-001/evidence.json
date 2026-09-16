@@ -5,7 +5,13 @@
   "owner": "Antigravity2",
   "reviewer": "Claude",
   "target_repo": "ajoe734/pantheon",
-  "base_sha": "08294e46a70cdc62fd6eb782bb6a9df509b065dd",
+  "base_sha": "f86865f9ec63a6422be9fad25c37047caa3de5ec",
+  "refresh": {
+    "reason": "origin/dev advanced past the recorded base_sha before handoff; owner merged current dev tip and verified all tests pass before handoff",
+    "previous_base_sha": "08294e46a70cdc62fd6eb782bb6a9df509b065dd",
+    "merged_dev_tip": "f86865f9ec63a6422be9fad25c37047caa3de5ec",
+    "no_owned_source_files_changed_by_merge": true
+  },
   "delivery_state": "ready_for_independent_review",
   "summary": "Decoupled 4 test suites across B18_cross_cutting_consolidation (test_bff_alpha_factory_contract.py, test_bff_b2_003_capabilities.py, test_bff_b3_human_inbox.py, test_bff_emergency_containment.py) via modular domain routers and ports with 0 main imports and 0 sys.path mutations; removed all sys.path mutations from the 10 retained composition test files (test_bff_consol_008_fixture_pack_a.py, test_bff_consol_009_fixture_pack_b.py, test_bff_consol_010_fixture_pack_c.py, test_bff_consol_016_detail_smoke_a.py, test_bff_consol_017_detail_smoke_b.py, test_bff_b3_trading_pulse.py, test_bff_b6_003_nl_high_risk_refusal.py, test_bff_consol_skills_mcp_registry_contract.py, test_bff_path_dedupe.py, test_overlay_retirement.py) with canonical package imports; zero sys.path mutations across all 14 files; all 141 tests pass (1 skipped as expected baseline).",
   "source_artifacts": [

@@ -1,14 +1,9 @@
 """MGMT-GAP-003 OpenAPI contract hardening for management console reads."""
 from __future__ import annotations
 
-import os
-import sys
-
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 
 
 REQUIRED_ENDPOINTS = {
