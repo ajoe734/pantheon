@@ -136,8 +136,22 @@ except ImportError:
     foundation_id = lambda: str(uuid.uuid4())
     sha256_checksum = lambda data: hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
 
+from ..auth.policy import bool_from_env
 from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.command_adapters.service import (
+    CommandAdapterService,
+    _stable_json_hash,
+    _resolve_final_idempotency_key,
+    _reject_body_idempotency_key,
+    _audit_datetime,
+    _check_read_surface_state,
+)
+from services.control_plane.bff.management_read_models.service import (
+    _aggregate_group_surface,
+    _management_record_id,
+    _management_first_non_empty,
+    _snapshot_meta,
+)
 from services.control_plane.bff.governance.command_audit import (
     project_command_record_audit_event as _project_command_record_audit_event,
     audit_event_matches as _audit_event_matches,
@@ -580,7 +594,7 @@ def _ppl_alloc_009_telemetry_url(path: str) -> str:
 
 # --- _ppl_alloc_009_dev_proof_enabled ---
 def _ppl_alloc_009_dev_proof_enabled() -> bool:
-    return _bool_from_env(
+    return bool_from_env(
         "PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED",
         default=False,
     )
@@ -8451,14 +8465,6 @@ _BFF_STUB_CAPABILITY_ROLES = frozenset({"admin", "operator"})
 _BFF_VALID_AUTH_MODES = frozenset({"strict", "permissive"})
 
 
-# --- _bool_from_env ---
-def _bool_from_env(name: str, *, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 # --- _bff_auth_mode ---
 def _bff_auth_mode() -> str:
     raw = os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
@@ -8469,7 +8475,7 @@ def _bff_auth_mode() -> str:
 
 # --- _bff_auth_stub_enabled ---
 def _bff_auth_stub_enabled() -> bool:
-    return _bool_from_env(_BFF_AUTH_STUB_ENV) and _bff_auth_mode() != "strict"
+    return bool_from_env(_BFF_AUTH_STUB_ENV) and _bff_auth_mode() != "strict"
 
 
 # --- _ERROR_CODE_BY_STATUS ---
@@ -8995,23 +9001,6 @@ def _foundation_audit_for_command_record(
     )
 
 
-# --- _audit_datetime ---
-def _audit_datetime(value: Any) -> Optional[datetime]:
-    if isinstance(value, datetime):
-        parsed = value
-    else:
-        raw = str(value or "").strip()
-        if not raw:
-            return None
-        try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
 # --- _list_governance_audit_events ---
 def _list_governance_audit_events(
     *,
@@ -9051,60 +9040,6 @@ def _list_governance_audit_events(
     merged = list(events_by_id.values())
     merged.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
     return json.loads(json.dumps(merged))
-
-
-# --- _resolve_final_idempotency_key ---
-def _resolve_final_idempotency_key(
-    idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str],
-) -> str:
-    """Prefer Idempotency-Key (RFC); accept X-Idempotency-Key as a compatibility alias."""
-    canonical = str(idempotency_key or "").strip()
-    if canonical:
-        return canonical
-    alias = str(x_idempotency_key or "").strip()
-    if alias:
-        return alias
-    raise _bff_error(
-        400,
-        ErrorCode.VALIDATION_FAILED,
-        "Idempotency-Key is required for operator commands",
-        (
-            "Final contract routes require a non-empty Idempotency-Key header; "
-            "X-Idempotency-Key is accepted as a temporary compatibility alias"
-        ),
-        precondition_failed="idempotency_key",
-        suggestion="Retry with Idempotency-Key set to a stable client retry key",
-    )
-
-
-# --- _reject_body_idempotency_key ---
-def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
-    """Reject final-contract payloads that carry idempotencyKey in the body."""
-    body_key = "idempotencyKey" if "idempotencyKey" in payload else "idempotency_key" if "idempotency_key" in payload else None
-    if body_key is not None:
-        raise _bff_error(
-            400,
-            ErrorCode.VALIDATION_FAILED,
-            f"{body_key} must not appear in the request body",
-            (
-                "Final contract routes require idempotency via the Idempotency-Key header, "
-                "not the request body"
-            ),
-            precondition_failed="body_idempotency_key",
-            suggestion=f"Remove {body_key} from the body and set the Idempotency-Key header",
-        )
-
-
-# --- _stable_json_hash ---
-def _stable_json_hash(payload: Dict[str, Any]) -> str:
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 # --- _pm12_resolve_quarterly_recommendation_submit_params ---
@@ -10483,29 +10418,6 @@ def _page_slice(items: List[Dict[str, Any]], page_token: Optional[str], page_siz
 _RUNTIME_STATE_SORT_FIELDS = {"last_updated_at", "runtime_id", "deployment_stage", "status"}
 
 
-# --- _aggregate_group_surface ---
-def _aggregate_group_surface(
-    surface_key: str,
-    source_surfaces: List[Dict[str, Any]],
-    *,
-    snapshot_at: str,
-    unavailable_message: str,
-    degraded_message: str,
-) -> Dict[str, Any]:
-    surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
-    surface["source"] = "bff_composed"
-    statuses = [entry.get("status", "ok") for entry in source_surfaces]
-    if statuses and all(status == "ok" for status in statuses):
-        return surface
-    if statuses and all(status == "unavailable" for status in statuses):
-        surface["status"] = "unavailable"
-        surface["message"] = unavailable_message
-        return surface
-    surface["status"] = "degraded"
-    surface["message"] = degraded_message
-    return surface
-
-
 # --- _management_number_helpers ---
 def _management_number(value: Any) -> Optional[float]:
     if isinstance(value, (int, float)):
@@ -10629,17 +10541,6 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return public_item
 
 
-# --- _snapshot_meta ---
-def _snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-    }
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-    return meta
-
-
 # --- _surface_degradation_reason ---
 def _surface_degradation_reason(
     surface: Dict[str, Any],
@@ -10753,25 +10654,6 @@ def _deprecated_bff_path_response(*, route: str, replacement: str) -> JSONRespon
                 },
             },
         },
-    )
-
-
-# --- _check_read_surface_state ---
-def _check_read_surface_state() -> Optional[StalenessWarning]:
-    """
-    In production, query the BFF read surface health endpoint.
-    Returns a StalenessWarning when the surface is degraded or unavailable,
-    or None when fresh.
-    """
-    state = os.getenv("BFF_READ_SURFACE_STATE", "fresh")
-    if state == "fresh":
-        return None
-    return StalenessWarning(
-        read_surface_state=state,
-        message=(
-            "Command submitted against stale read surface data. "
-            "Verify target state via secondary control path before confirming action."
-        ),
     )
 
 
@@ -11031,23 +10913,6 @@ def _normalize_risk_level(value: Any) -> str:
     return _STRATEGY_BFF_RISK_MAP.get(text, "medium")
 
 
-# --- _deployment_url ---
-def _deployment_url(path: str) -> str:
-    base = os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip().rstrip("/")
-    if not base:
-        base = "http://deployment:8095"
-    return f"{base}{path}"
-
-
-# --- _management_record_id ---
-def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
-    for key in keys:
-        value = record.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
-
-
 # --- _management_as_float ---
 def _management_as_float(value: Any) -> Optional[float]:
     if isinstance(value, bool):
@@ -11058,14 +10923,6 @@ def _management_as_float(value: Any) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-# --- _management_first_non_empty ---
-def _management_first_non_empty(*values: Any) -> Any:
-    for value in values:
-        if value not in (None, ""):
-            return value
-    return None
 
 
 # --- _management_nested_value ---
