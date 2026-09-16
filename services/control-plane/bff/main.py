@@ -19496,6 +19496,15 @@ _events_router = _create_events_router(
 )
 app.include_router(_events_router)
 from .evolution.router import create_evolution_router as _create_evolution_router
+from .ports.evolution_program_commands import EvolutionServiceProgramCommandPort as _EvolutionServiceProgramCommandPort
+from services.evolution.client import EvolutionClient as _EvolutionClient
+
+# Typed write port for evolution program create/PATCH (U8A): calls the
+# Evolution service's owner API (/api/evolution/programs) via the shared
+# EvolutionClient, never the read surface. See
+# services/control-plane/bff/ports/evolution_program_commands.py.
+_evolution_program_commands = _EvolutionServiceProgramCommandPort(_EvolutionClient())
+
 app.include_router(
     _create_evolution_router(
         read_surface=app_deps.read_surface,
@@ -19511,6 +19520,11 @@ app.include_router(
         raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
         meta_staleness=_meta_staleness,
         mutation_review_projection=_mutation_review_projection,
+        # A lazy thunk (not the object itself) so tests can rebind the
+        # module-level ``_evolution_program_commands`` global after the app
+        # is built and still be seen — mirrors how ``read_store``/
+        # ``command_store`` are swapped by isolated-BFF test fixtures.
+        program_commands=lambda: _evolution_program_commands,
         submit_program_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
             ObjectType.EVOLUTION_PROGRAM,
             entity_id,

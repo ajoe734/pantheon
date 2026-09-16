@@ -471,6 +471,28 @@ controller = EvolutionController()
 evaluator = ThresholdEvaluator()
 
 # ---------------------------------------------------------------------------
+# Evolution Program owner API (U8A) — durable create/list/get/PATCH(name)
+# data contract for the Program aggregate. See
+# docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md §3.
+# Mounted under the same authenticate_tenant middleware as every other
+# /api/evolution path above; real lifecycle actions remain U8B's obligation
+# and are not exposed by this router.
+# ---------------------------------------------------------------------------
+from services.evolution.program_router import create_program_router
+from services.evolution.program_service import ProgramService
+from services.evolution.program_store import build_program_store
+
+program_store = build_program_store(Path(EVOLUTION_DATA_DIR) / "programs.json")
+program_service = ProgramService(program_store)
+app.include_router(
+    create_program_router(
+        service=program_service,
+        current_tenant=_current_tenant,
+        authorize_request_tenant=_authorized_request_tenant,
+    )
+)
+
+# ---------------------------------------------------------------------------
 # Durable dispatch outbox — every supported approved action is made durable
 # here before anything downstream is asked to do work, and a decision only
 # reaches ``executed`` once the downstream reports a terminal receipt that this
