@@ -2,7 +2,7 @@
   "task_id": "RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001",
   "planning_unit": "U10B",
   "decision_document": "docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md",
-  "source_baseline_commit": "9cc4a75e8f383c6b4564deb20c26c86f676fd5f7",
+  "source_baseline_commit": "93d8f4353bb34a9f9c39e541aed722ae36a05934",
   "exact_scope_boundary": "Strictly bounded to the 13 declared artifacts in dispatch-map.json. Frontend delivery belongs exclusively to FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001 in ajoe734/execute-plans.",
   "changed_files": [
     "docs/deployment/evidence/RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json",
