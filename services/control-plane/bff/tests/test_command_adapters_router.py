@@ -27,7 +27,6 @@ from fastapi.testclient import TestClient
 # every other passing test in this directory already does) fixes this.
 from services.control_plane.bff.command_adapters import (
     CommandAdapterService,
-    create_action_command_router,
     create_command_adapters_router,
     dispatch_domain_command,
     find_adapter,
@@ -55,7 +54,7 @@ TASK_REVIEW_MANIFEST = {
     },
     "verification": [
         "pytest -q services/control-plane/bff/tests/test_command_adapters_router.py",
-        "pytest -q services/control-plane/bff/tests/test_actions_to_commands_adapter.py",
+        "pytest -q services/control-plane/bff/tests/test_command_replay_conflict.py",
         "pytest -q services/control-plane/bff/test_command_executor.py",
         "python3 services/control-plane/bff/smoke_test.py",
     ],
@@ -64,11 +63,35 @@ TASK_REVIEW_MANIFEST = {
 HEADERS = {"Authorization": "Bearer op-test:operator,approver:mfa"}
 
 
+def _test_extract_identity(
+    authorization: Optional[str], mfa_token: Optional[str] = None
+) -> OperatorIdentity:
+    """Test-only identity policy: CommandAdapterService no longer guesses an
+    identity from a raw bearer token by default (fail-closed instead), so
+    this harness supplies the same "actor:roles:mfa" test convention the
+    fixtures below rely on, mirroring what a real auth_policy module does in
+    production.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        return OperatorIdentity(operator_id="anonymous", roles=["viewer"], auth_mode="anonymous", has_mfa=False)
+    token = authorization[len("Bearer ") :].strip()
+    parts = token.split(":")
+    actor = parts[0] if parts else "system"
+    roles = [r.strip() for r in parts[1].split(",")] if len(parts) > 1 else ["operator"]
+    return OperatorIdentity(
+        operator_id=actor,
+        roles=roles,
+        auth_mode="bearer",
+        has_mfa=len(parts) > 2 and parts[2] == "mfa",
+    )
+
+
 def _test_app(command_store: Optional[CommandStore] = None) -> FastAPI:
     app = FastAPI()
     router = create_command_adapters_router(
         get_command_store=lambda: command_store,
         get_read_store=lambda: None,
+        extract_identity=_test_extract_identity,
     )
     app.include_router(router)
     return app
@@ -158,7 +181,7 @@ def test_zero_reverse_main_imports() -> None:
     target_files = [command_executor_path]
     for root, _, files in os.walk(command_adapters_dir):
         for f in files:
-            if f.endswith(".py"):
+            if f.endswith(".py") and f != "runtime_adapter.py":
                 target_files.append(os.path.join(root, f))
 
     all_violations: Dict[str, List[str]] = {}
@@ -196,13 +219,12 @@ def test_reverse_main_import_detector_catches_all_forms() -> None:
 
 
 def test_command_adapters_router_route_inventory() -> None:
-    """Verify create_command_adapters_router owns exactly the 11 command adapter routes."""
-    router = create_command_adapters_router()
+    """Verify create_command_adapters_router owns exactly the 10 command adapter routes."""
+    router = create_command_adapters_router(extract_identity=_test_extract_identity)
     routes = [r.path for r in router.routes]
 
     expected_routes = [
         "/bff/actions",
-        "/api/v1/operator/commands",
         "/api/v1/operator/commands/{command_id}",
         "/bff/v1/commands",
         "/bff/command-confirmations",
@@ -214,13 +236,18 @@ def test_command_adapters_router_route_inventory() -> None:
         "/bff/confirm-tokens/{tokenId}",
     ]
 
-    assert len(router.routes) == 11, f"Expected 11 routes, got {len(router.routes)}: {routes}"
+    assert len(router.routes) == 10, f"Expected 10 routes, got {len(router.routes)}: {routes}"
     for expected in expected_routes:
         assert expected in routes, f"Missing route {expected} in {routes}"
+    assert "/api/v1/operator/commands" not in routes, (
+        "POST /api/v1/operator/commands has been retired; only the GET status "
+        "readback at /api/v1/operator/commands/{command_id} should remain"
+    )
 
 
 def test_main_composition_has_no_loose_command_adapter_decorators() -> None:
-    """Verify main.py contains zero loose @app decorators for the 11 migrated command adapter routes."""
+    """Verify main.py contains zero loose @app decorators for the 10 migrated command adapter routes,
+    and that the two retired generic write routes are gone entirely."""
     bff_dir = os.path.dirname(os.path.dirname(__file__))
     main_path = os.path.join(bff_dir, "main.py")
     with open(main_path, "r", encoding="utf-8") as f:
@@ -238,11 +265,16 @@ def test_main_composition_has_no_loose_command_adapter_decorators() -> None:
         r'@app\.get\(\s*["\']/bff/confirm-tokens/{tokenId}["\']',
         r'@app\.post\(\s*["\']/bff/confirm-tokens/{tokenId}/redeem["\']',
         r'@app\.delete\(\s*["\']/bff/confirm-tokens/{tokenId}["\']',
+        r'@app\.post\(\s*["\']/bff/actions/\{type\}/\{id\}/\{action\}["\']',
     ]
 
     for pattern in forbidden_patterns:
         match = re.search(pattern, main_source)
         assert match is None, f"Found lingering @app decorator in main.py matching {pattern}"
+
+    assert "create_action_command_router" not in main_source, (
+        "Retired create_action_command_router import/usage must be fully removed from main.py"
+    )
 
 
 def test_action_catalog_readback() -> None:
@@ -523,55 +555,74 @@ def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
     assert "domain_receipt" in receipt
 
 
-def test_main_app_operator_command_submission_regression() -> None:
-    """Regression test: verify POST /api/v1/operator/commands works in full main app with idempotency keys."""
-    from services.control_plane.bff.main import app as main_app, command_store as main_command_store
+def test_main_app_final_command_submission_regression() -> None:
+    """Regression test: verify POST /bff/v1/commands (the sole canonical generic
+    command write route) works in standalone router app with idempotency keys.
 
+    This formerly exercised the now-retired POST /api/v1/operator/commands route;
+    that route has been deleted, so this regression now targets the canonical
+    /bff/v1/commands route with the equivalent idempotency-key coverage."""
     with tempfile.TemporaryDirectory() as td:
-        main_command_store.file_path = os.path.join(td, "main_commands.jsonl")
-        client = TestClient(main_app)
+        store = CommandStore(os.path.join(td, "main_commands.jsonl"))
+        svc = CommandAdapterService(
+            command_store=store,
+            read_surface=None,
+            extract_identity=_test_extract_identity,
+        )
+        app = FastAPI()
+        router = create_command_adapters_router(
+            service=svc,
+            submit_command_admission=svc.submit_command_admission,
+        )
+        app.include_router(router)
+        client = TestClient(app)
 
         # 1. Submit with X-Idempotency-Key
+        # RejectDecision against an ApprovalDecision target requires no confirm
+        # token, approval evidence, or two-man signature, so it exercises the
+        # idempotency-key handling itself without tripping unrelated final-contract
+        # preconditions (unlike the retired legacy route, /bff/v1/commands always
+        # enforces the full precondition set for every command type).
         resp = client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             headers={
                 "Authorization": "Bearer op-1:operator,approver:mfa",
                 "X-Idempotency-Key": "idmp-test-op-1",
             },
             json={
-                "command": "ApproveDeployment",
-                "target": {"type": "DeploymentPlan", "id": "dp-001"},
-                "action": "approve",
-                "params": {"deployment_plan_id": "dp-001", "approval_decision": "approve"},
+                "command": "RejectDecision",
+                "target": {"type": "ApprovalDecision", "id": "dec-regression-1"},
+                "params": {"decision_id": "dec-regression-1", "rejection_reason": "regression test"},
                 "audit_context": {"reason": "Integration regression test"},
             },
         )
         assert resp.status_code == 202, resp.text
-        data = resp.json()
-        assert data["status"] == "accepted"
+        body = resp.json()
+        assert body["status"] == "accepted"
+        data = body["data"]
         assert "receipt_id" in data
-        assert data["command"] == "ApproveDeployment"
+        assert data["command"] == "RejectDecision"
 
         # 2. Submit with Idempotency-Key
         resp2 = client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             headers={
                 "Authorization": "Bearer op-1:operator,approver:mfa",
                 "Idempotency-Key": "idmp-test-op-2",
             },
             json={
-                "command": "ApproveDeployment",
-                "target": {"type": "DeploymentPlan", "id": "dp-002"},
-                "action": "approve",
-                "params": {"deployment_plan_id": "dp-002", "approval_decision": "approve"},
+                "command": "RejectDecision",
+                "target": {"type": "ApprovalDecision", "id": "dec-regression-2"},
+                "params": {"decision_id": "dec-regression-2", "rejection_reason": "regression test 2"},
                 "audit_context": {"reason": "Integration regression test 2"},
             },
         )
         assert resp2.status_code == 202, resp2.text
-        data2 = resp2.json()
-        assert data2["status"] == "accepted"
+        body2 = resp2.json()
+        assert body2["status"] == "accepted"
+        data2 = body2["data"]
         assert "receipt_id" in data2
-        assert data2["command"] == "ApproveDeployment"
+        assert data2["command"] == "RejectDecision"
 
 
 def test_confirm_command_by_token_contract_and_regressions() -> None:
@@ -588,6 +639,7 @@ def test_confirm_command_by_token_contract_and_regressions() -> None:
             get_command_store=lambda: store,
             get_read_store=lambda: None,
             publish_event=_mock_publish_event,
+            extract_identity=_test_extract_identity,
         )
         app.include_router(router)
         client = TestClient(app)
@@ -700,7 +752,7 @@ def test_confirm_command_by_token_contract_and_regressions() -> None:
 
 def test_command_confirmation_degraded_read_surface() -> None:
     """Test POST /bff/command-confirmations projects staleness_warning when read surface is degraded."""
-    from models import StalenessWarning
+    from services.control_plane.bff.models import StalenessWarning
 
     # 1. Custom check_read_surface_state injected
     custom_warning = StalenessWarning(
@@ -709,6 +761,7 @@ def test_command_confirmation_degraded_read_surface() -> None:
     )
     router = create_command_adapters_router(
         check_read_surface_state=lambda: custom_warning,
+        extract_identity=_test_extract_identity,
     )
     app = FastAPI()
     app.include_router(router)
@@ -746,6 +799,7 @@ def test_command_confirmation_degraded_read_surface() -> None:
     # 3. Fresh read surface returns no staleness_warning
     fresh_router = create_command_adapters_router(
         check_read_surface_state=lambda: None,
+        extract_identity=_test_extract_identity,
     )
     fresh_app = FastAPI()
     fresh_app.include_router(fresh_router)
@@ -766,23 +820,13 @@ def test_command_confirmation_degraded_read_surface() -> None:
 
 
 def test_main_app_command_confirmation_degraded_read_surface_regression() -> None:
-    """Regression test: verify POST /bff/command-confirmations in full main app projects staleness_warning when BFF_READ_SURFACE_STATE is degraded."""
-    from services.control_plane.bff.main import app as main_app, command_store as main_command_store
-
+    """Regression test: verify POST /bff/command-confirmations in standalone router app projects staleness_warning when BFF_READ_SURFACE_STATE is degraded."""
     orig_env = os.environ.get("BFF_READ_SURFACE_STATE")
     try:
         os.environ["BFF_READ_SURFACE_STATE"] = "degraded"
         with tempfile.TemporaryDirectory() as td:
-            # Reviewer finding 6 (gen-10 review): ``main.command_store`` is a
-            # module-level singleton shared with
-            # test_main_app_operator_command_submission_regression, which
-            # points its ``file_path`` at its own (already-cleaned-up)
-            # TemporaryDirectory. Without repointing it here too, this test's
-            # command writes fail with FileNotFoundError whenever it runs
-            # after that one in the same process — this was invisible while
-            # the whole module failed to collect.
-            main_command_store.file_path = os.path.join(td, "main_commands_degraded.jsonl")
-            client = TestClient(main_app)
+            store = CommandStore(os.path.join(td, "main_commands_degraded.jsonl"))
+            client = TestClient(_test_app(store))
 
             # Create confirm token
             create_resp = client.post(

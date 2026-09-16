@@ -19,8 +19,12 @@ import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 
-from services.control_plane.bff.ports import create_in_memory_read_surface_ports
-from services.control_plane.bff.tests.fixtures.research_fixture import create_research_test_client
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+import main as bff_main
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_AUTH = "Bearer exp002-op:operator"
 HEADERS = {"Authorization": OPERATOR_AUTH}
@@ -112,15 +116,100 @@ _SEED_EXPERIMENTS = {
 }
 
 
+class _FakeResearchWriteOwner:
+    """Stand-in for ``services.research.write_owner.ResearchWriteOwner``.
+
+    BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001 deletes
+    ``DefaultResearchKnowledgeSourcePort``'s in-memory ``_experiments`` dict;
+    experiments now delegate exclusively to ``ResearchWriteOwner`` (Postgres).
+    This fake is injected via the port's ``research_write_owner`` constructor
+    kwarg (real dependency injection), replacing the retired
+    ``research_experiments_store=`` fixture-seeding kwarg.
+    """
+
+    _CANCELABLE = frozenset({"queued", "running"})
+
+    def __init__(self, seed: dict) -> None:
+        self._experiments = {k: dict(v) for k, v in seed.items()}
+
+    def list_research_experiments(self, *, ticket_id=None, status=None):
+        items = list(self._experiments.values())
+        if ticket_id:
+            items = [e for e in items if e.get("ticket_id") == ticket_id]
+        if status:
+            items = [e for e in items if e.get("status") == status]
+        return [dict(e) for e in items]
+
+    def get_research_experiment(self, experiment_id):
+        rec = self._experiments.get(str(experiment_id))
+        return dict(rec) if rec else None
+
+    def create_research_experiment(
+        self,
+        *,
+        ticket_id,
+        experiment_name,
+        strategy_selector,
+        parameter_set,
+        run_config,
+        launch_context,
+        queued_at=None,
+        experiment_id=None,
+    ):
+        timestamp = queued_at or "2026-04-20T00:00:00Z"
+        date_part = timestamp[:10].replace("-", "")
+        exp_id = experiment_id or f"exp-{date_part}-{len(self._experiments) + 1:03d}"
+        record = {
+            "experiment_id": exp_id,
+            "ticket_id": ticket_id,
+            "experiment_name": experiment_name,
+            "status": "queued",
+            "queued_at": timestamp,
+            "started_at": None,
+            "completed_at": None,
+            "strategy_selector": strategy_selector,
+            "parameter_set": parameter_set,
+            "run_config": run_config,
+            "launch_context": launch_context,
+            "validation_warnings": [],
+            "artifact_ids": [],
+            "failure": {"reason_code": None, "message": None},
+            "allowedActions": {"canCancel": True},
+        }
+        self._experiments[exp_id] = record
+        return dict(record)
+
+    def cancel_research_experiment(self, experiment_id, *, completed_at=None):
+        rec = self._experiments.get(str(experiment_id))
+        if not rec or rec.get("status") not in self._CANCELABLE:
+            return None
+        rec["status"] = "canceled"
+        rec["completed_at"] = completed_at
+        rec["allowedActions"] = {"canCancel": False}
+        return dict(rec)
+
+
 @contextmanager
 def _bff_client(*, fallback: bool = True) -> Iterator[TestClient]:
+    original_store = bff_main.read_store
+    original_experiment_overlay = dict(bff_main._GOV_BFF_EXPERIMENT_OVERLAY)
+    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
     store = create_in_memory_read_surface_ports(
         research_knowledge_source_kwargs={
-            "research_experiments_store": _SEED_EXPERIMENTS if fallback else {},
+            "research_write_owner": _FakeResearchWriteOwner(_SEED_EXPERIMENTS if fallback else {}),
         }
     )
-    store.create_research_experiment = store.research_knowledge_source.create_research_experiment
-    yield create_research_test_client(store)
+    bff_main.read_store = store
+    bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
+    bff_main._GOV_BFF_IDEMPOTENCY.clear()
+    try:
+        yield TestClient(bff_main.app)
+    finally:
+        bff_main.read_store = original_store
+        bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
+        bff_main._GOV_BFF_EXPERIMENT_OVERLAY.update(original_experiment_overlay)
+        bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
 
 
 # ---------------------------------------------------------------------------

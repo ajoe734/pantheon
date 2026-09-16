@@ -942,6 +942,14 @@ class RuntimeManagerServiceTests(unittest.TestCase):
 
 
 class RuntimeManagerClientTests(unittest.TestCase):
+    def test_remote_transition_forwards_operator_pause_metadata(self):
+        client = RuntimeManagerClient(base_url="http://runtime-manager.invalid", bearer_token="unit-only")
+        patch = {"session_admission": {"reason_code": "operator_requested_pause"}}
+        with mock.patch.object(client, "_request_json", return_value={"binding_id": "rb-unit", "status": "paused"}) as request:
+            result = client.transition("rb-unit", "paused", metadata_patch=patch)
+        request.assert_called_once_with("POST", "/api/runtime-bindings/rb-unit/transition", {"new_status": "paused", "metadata_patch": patch})
+        self.assertEqual(result["status"], "paused")
+
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.store_path = Path(self.tempdir.name) / "bindings.json"
@@ -962,6 +970,27 @@ class RuntimeManagerClientTests(unittest.TestCase):
         self.assertIsNone(client.get_active_for_pool("pool-001"))
         self.assertEqual(client.list_by_pool("pool-001")[0]["binding_id"], binding["binding_id"])
         self.assertEqual(client.list_by_plan("plan-001")[0]["binding_id"], binding["binding_id"])
+
+    def test_reproduces_recorded_zero_active_bindings_before_deploy(self):
+        """LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001 reproduction of the dev
+        hosted-redeploy failure recorded in docs/deployment/evidence/
+        LOOP-L08-PERSONA-PROVISIONING-RECONCILE-001/evidence.json: before an
+        admitted plan's binding is dispatched, list_by_plan(plan_id) returns
+        exactly zero bindings -- the same observed value that caused the
+        governed dev paper baseline reconcile to remain stuck in
+        'provisioning'. After the sole dispatch owner (client.deploy) runs,
+        exactly one authoritative active binding exists for that plan_id."""
+        client = RuntimeManagerClient(base_url=None, allow_local=True)
+
+        observed_before_dispatch = client.list_by_plan("plan-001")
+        self.assertEqual(observed_before_dispatch, [])
+
+        binding = client.deploy(_valid_deploy_request())
+
+        observed_after_dispatch = client.list_by_plan("plan-001")
+        self.assertEqual(len(observed_after_dispatch), 1)
+        self.assertEqual(observed_after_dispatch[0]["binding_id"], binding["binding_id"])
+        self.assertEqual(observed_after_dispatch[0]["status"], "active")
 
     def test_client_refuses_implicit_local_runtime_fallback(self):
         with mock.patch.dict(os.environ, {}, clear=False):

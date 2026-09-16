@@ -1,14 +1,28 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER_PATH = ROOT / "scripts" / "agora_workshop_restart_persistence_smoke.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
+
+
+def test_standalone_cli_imports_without_repository_pythonpath(tmp_path) -> None:
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    result = subprocess.run(
+        [sys.executable, str(HELPER_PATH), "--help"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "seed" in result.stdout and "verify" in result.stdout
 
 
 def _load_helper():
@@ -132,12 +146,16 @@ def test_helper_rejects_missing_or_wrong_persisted_record() -> None:
         )
 
 
-def test_workflow_uses_internal_fresh_process_persistence_proof() -> None:
-    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-    step = workflow.split("- name: Dev Agora governance restart persistence smoke", 1)[1]
-    step = step.split("- name: Summarize auto-deploy", 1)[0]
+def _dev_persistence_step() -> str:
+    workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    return next(step["run"] for step in workflow["jobs"]["deploy-dev"]["steps"]
+                if step.get("id") == "agora")
 
-    assert "agora-deploy-smoke:operator" not in workflow
+
+def test_workflow_uses_internal_fresh_process_persistence_proof() -> None:
+    step = _dev_persistence_step()
+
+    assert "agora-deploy-smoke:operator" not in step
     assert "Authorization:" not in step
     assert "Bearer " not in step
     seed = "agora_workshop_restart_persistence_smoke.py seed"
@@ -145,24 +163,21 @@ def test_workflow_uses_internal_fresh_process_persistence_proof() -> None:
     verify = "agora_workshop_restart_persistence_smoke.py verify"
     assert seed in step
     assert verify in step
-    assert step.index(seed) < step.index(restart) < step.index(verify)
+    readiness = "wait_for_bff_lifecycle_readiness.py"
+    assert step.index(seed) < step.index(restart) < step.index(readiness) < step.index(verify)
     assert step.count("docker compose -p pantheon -f docker-compose.yml exec -T operator-bff") == 2
-    assert 'test "${ready}" = true' in step
+    assert "--expected-deployment-sha" in step
+    assert "run_with_dev_environment_lease.sh" in step
+    assert "--tenant-id ${tenant_id_q} --user-id ${user_id_q}" in step
+    assert "|| true" not in step
     assert "proposal-${workshop_id}" in step
     assert "exactly-once replay and pending outbox recovery" in step
 
 
-def test_workflow_log_and_inspect_probes_consume_complete_input_under_pipefail() -> None:
-    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-    step = workflow.split("- name: Dev Agora governance restart persistence smoke", 1)[1]
-    step = step.split("- name: Summarize auto-deploy", 1)[0]
-
-    assert "grep -q" not in step
-    assert step.count("docker inspect pantheon-operator-bff-1") == 3
-    assert step.count("docker logs pantheon-operator-bff-1") == 3
-    assert "grep -F -x 'AGORA_WORKSHOP_STORE_BACKEND=postgres' >/dev/null" in step
-    assert "grep -F -x 'AGORA_GOVERNANCE_STORE_BACKEND=postgres' >/dev/null" in step
-    assert "grep -F -x 'AGORA_DATASET_STORE_BACKEND=postgres' >/dev/null" in step
-    assert "grep -F 'Agora workshop store initialized backend=postgres' >/dev/null" in step
-    assert "grep -F 'Agora governance store initialized backend=postgres' >/dev/null" in step
-    assert "grep -F 'Agora dataset store initialized backend=postgres' >/dev/null" in step
+def test_workflow_does_not_require_optional_startup_log_messages() -> None:
+    step = _dev_persistence_step()
+    # main() requires all three Postgres backends itself before either operation.
+    # Its real write/restart/readback must not depend on INFO logger settings.
+    assert "docker inspect" not in step
+    assert "docker logs" not in step
+    assert "initialized backend=postgres" not in step

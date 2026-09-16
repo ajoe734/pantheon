@@ -1,22 +1,48 @@
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import main as bff_main
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.capital.router import create_capital_router
+from services.control_plane.bff.models import utc_now
+from services.control_plane.bff.personas.service import _persona_fleet_capital_binding_projection
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer ppl-alloc-003:operator"}
 
 
+def _build_app(read_store) -> FastAPI:
+    app = FastAPI()
+    app.include_router(
+        create_capital_router(
+            read_surface=read_store,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+        )
+    )
+    return app
+
+
 def test_capital_pool_rows_include_persona_binding_summaries(monkeypatch) -> None:
-    monkeypatch.setattr(bff_main.read_store, "list_capital_pools", lambda **_: [{"pool_id": "pool-parent"}])
+    read_store = create_in_memory_read_surface_ports()
+    monkeypatch.setattr(read_store, "list_capital_pools", lambda **_: [{"pool_id": "pool-parent"}])
     monkeypatch.setattr(
-        bff_main.read_store,
+        read_store,
         "list_bindings",
         lambda **_: [
             {"binding_id": "b-a", "persona_id": "persona-a", "capital_pool_id": "pool-parent", "sleeve_id": "sleeve-a", "current_weight": 0.1, "target_weight": 0.12, "status": "active"},
             {"binding_id": "b-b", "persona_id": "persona-b", "capital_pool_id": "pool-parent", "sleeve_id": "sleeve-b", "current_weight": 0.2, "target_weight": 0.18, "status": "active"},
         ],
     )
-    with TestClient(bff_main.app) as client:
+    with TestClient(_build_app(read_store)) as client:
         response = client.get("/bff/capital-pools", headers=HEADERS)
     assert response.status_code == 200
     row = response.json()["data"][0]
@@ -26,7 +52,7 @@ def test_capital_pool_rows_include_persona_binding_summaries(monkeypatch) -> Non
 
 
 def test_stage_aware_binding_projection_keeps_paper_pool_as_trace_only() -> None:
-    paper = bff_main._persona_fleet_capital_binding_projection(
+    paper = _persona_fleet_capital_binding_projection(
         persona_id="persona-paper", capital_mode="paper", deployment_stage="paper",
         paper_ledger_id="ledger-paper", live_pool_id=None,
         binding={"capital_pool_id": "legacy-paper-pool", "status": "active"}, runtime={},
@@ -37,7 +63,7 @@ def test_stage_aware_binding_projection_keeps_paper_pool_as_trace_only() -> None
     assert paper["capital_sleeve_id"] is None
     assert paper["capital_binding"]["capital_pool_id"] is None
 
-    canary = bff_main._persona_fleet_capital_binding_projection(
+    canary = _persona_fleet_capital_binding_projection(
         persona_id="persona-canary", capital_mode="canary", deployment_stage="canary",
         paper_ledger_id=None, live_pool_id="pool-parent",
         binding={"sleeve_id": "sleeve-canary", "current_weight": "0.03", "target_weight": 0.05, "validity": "active"},
@@ -51,7 +77,7 @@ def test_stage_aware_binding_projection_keeps_paper_pool_as_trace_only() -> None
 
 
 def test_missing_binding_projects_explicit_unbound_state() -> None:
-    row = bff_main._persona_fleet_capital_binding_projection(
+    row = _persona_fleet_capital_binding_projection(
         persona_id="persona-unbound", capital_mode="none", deployment_stage="none",
         paper_ledger_id=None, live_pool_id=None, binding={}, runtime={}, league_entry={},
         raw_metadata={}, context_metadata={},

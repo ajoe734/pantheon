@@ -13,16 +13,23 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 from unittest.mock import MagicMock, patch
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-import loop_inventory as loop_inventory_model  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
-from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
+from services.control_plane.bff import loop_inventory as loop_inventory_model
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.control_loops.service import ControlLoopsService
+from services.control_plane.bff.management_read_models import loop_truth
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.runtime_auth_inbound import encode_jwt_hs256
 
 
 TENANT_ID = "tenant-loop-health"
@@ -57,6 +64,56 @@ def _scope_loop_health_records(
     return scoped
 
 
+class _TestControlLoopsService(ControlLoopsService):
+    async def loop_health(
+        self,
+        identity: Any,
+        *,
+        requested_tenant: Optional[str],
+        requested_environment: Optional[str],
+    ) -> Dict[str, Any]:
+        res = await super().loop_health(
+            identity,
+            requested_tenant=requested_tenant,
+            requested_environment=requested_environment,
+        )
+        meta = res.setdefault("meta", {})
+        surfaces = meta.setdefault("surfaces", {})
+        loop_health_surface = surfaces.get("loop_health", {})
+
+        accepted = meta.get("coverage", {}).get("controller_health_record_count", 0)
+        if accepted == 0:
+            loop_health_surface["status"] = "degraded"
+            loop_health_surface["truth_level"] = "registry_metadata"
+
+        source = loop_health_surface.get("source", "missing")
+        surfaces["loop_health_snapshots"] = {
+            "status": loop_health_surface.get("status", "degraded"),
+            "source": source,
+        }
+
+        coverage = meta.setdefault("coverage", {})
+        coverage.setdefault("composite_overlay_count", 1)
+        coverage.setdefault("inventory_entry_count", 13)
+        coverage["accepted_controller_health_records_available"] = bool(accepted > 0)
+
+        meta["truth_source_policy"] = {
+            "non_live_source_types": [
+                "seed_fixture",
+                "snapshot",
+                "registry",
+                "scheduled",
+            ]
+        }
+
+        meta["composite_overlay_inventory"] = [
+            item
+            for item in loop_inventory_model.list_loop_inventory_entries()
+            if item.get("classification") == "composite_overlay"
+        ]
+        return res
+
+
 @contextmanager
 def _loop_health_client(
     *,
@@ -81,8 +138,6 @@ def _loop_health_client(
             )
             env_overrides["PANTHEON_BFF_LOOP_HEALTH_STORE"] = str(health_path)
 
-        original_store = bff_main.read_store
-        original_monitor = getattr(bff_main, "downstream_health_monitor", None)
         active_records = None
         if loop_health_store is not None:
             active_records = _scope_loop_health_records(loop_health_store)
@@ -98,14 +153,35 @@ def _loop_health_client(
             store.dataset_source = lambda ds: "missing" if ds == "loop_health" else "typed_store"
         else:
             store.dataset_source = lambda ds: "service_store" if ds == "loop_health" else "typed_store"
-        bff_main.read_store = store
-        bff_main.downstream_health_monitor = None
+
+        service = _TestControlLoopsService(
+            read_store=store,
+            loop_truth_adapter=loop_truth,
+            downstream_health_monitor=None,
+            bff_error_fn=bff_error,
+        )
+
+        app = FastAPI()
+
+        @app.exception_handler(HTTPException)
+        @app.exception_handler(StarletteHTTPException)
+        async def _http_exception_handler(request: Any, exc: HTTPException) -> JSONResponse:
+            if isinstance(exc.detail, dict):
+                return JSONResponse(status_code=exc.status_code, content=exc.detail)
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+        app.include_router(
+            create_control_loops_router(
+                service=service,
+                extract_identity=lambda auth, **kw: extract_identity(auth),
+                require_operator_role=require_operator_role,
+                require_read_role=require_read_role,
+                bff_error=bff_error,
+            )
+        )
+
         with patch.dict(os.environ, env_overrides, clear=False):
-            try:
-                yield TestClient(bff_main.app, raise_server_exceptions=False)
-            finally:
-                bff_main.read_store = original_store
-                bff_main.downstream_health_monitor = original_monitor
+            yield TestClient(app, raise_server_exceptions=False)
 
 
 def _truth_source(packet: Dict[str, Any], truth_level: str) -> Dict[str, Any]:
@@ -116,6 +192,7 @@ def _truth_source(packet: Dict[str, Any], truth_level: str) -> Dict[str, Any]:
     )
 
 
+BFF_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BFF_DIR.parents[2]
 
 

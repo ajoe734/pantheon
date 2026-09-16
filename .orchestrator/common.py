@@ -40,6 +40,208 @@ DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 
 
+CANONICAL_REVIEW_GATE_CONTEXT = "Pantheon canonical review gate"
+CANONICAL_REVIEW_CONTEXT = CANONICAL_REVIEW_GATE_CONTEXT
+
+
+_PYTHON_EXE_RE = re.compile(r"^(?:python(?:\d+(?:\.\d+)?)?|pypy(?:\d+(?:\.\d+)?)?)$")
+_PYTHON_NO_ARG_SHORT_FLAGS = frozenset("bBdEhiIOPqsuvVx?")
+
+
+def _is_worker_runner_script_token(token: str) -> bool:
+    """Return True if token is an exact path to worker_runner.py under .orchestrator."""
+    if not token or any(ch.isspace() for ch in token):
+        return False
+    path = Path(token)
+    return path.name == "worker_runner.py" and ".orchestrator" in path.parts
+
+
+def _is_python_executable_token(token: str) -> bool:
+    """Return True if token is a python/pypy interpreter executable name or path."""
+    if not token or any(ch.isspace() for ch in token):
+        return False
+    name = Path(token).name
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return bool(_PYTHON_EXE_RE.match(name))
+
+
+def worker_runner_script(parts: list[str]) -> str | None:
+    """Return the executable worker script, never a path appearing in a prompt or bind operand.
+
+    Binds the shared predicate to the actual interpreter/script invocation:
+    - Direct script execution: argv[0] is worker_runner.py under .orchestrator
+    - Python interpreter execution: argv[0] is Python, followed by optional
+      Python options (excluding stdin mode `-` and inline code/module `-c`/`-m`),
+      and the first positional script argument is worker_runner.py under .orchestrator.
+
+    Rejects:
+    - Provider CLI descendants whose arguments contain worker_runner.py (e.g.
+      ['claude', '--prompt', '/repo/.orchestrator/worker_runner.py', 'wake'])
+    - Sandbox shims whose bind operands contain worker_runner.py (e.g.
+      ['/usr/bin/bwrap', '--ro-bind', '/repo/.orchestrator/worker_runner.py', '/tmp/ref.py', 'wake'])
+    - Non-script python modes:
+      - stdin mode (`-`)
+      - inline code execution (`-c`, `-c<code>`, `-uc<code>`, etc.)
+      - module execution (`-m`, `-m<mod>`, `-um<mod>`, etc.)
+    - Unrelated scripts executed by python where worker_runner.py is a downstream option
+    """
+    if not parts:
+        return None
+
+    # 1. Direct script execution: argv[0] is the worker_runner script itself
+    if _is_worker_runner_script_token(parts[0]):
+        return parts[0]
+
+    # 2. Python interpreter execution: argv[0] is python, first positional arg is worker_runner
+    if not _is_python_executable_token(parts[0]):
+        return None
+
+    idx = 1
+    while idx < len(parts):
+        arg = parts[idx]
+
+        # Plain script path (does not begin with dash)
+        if not arg.startswith("-"):
+            return arg if _is_worker_runner_script_token(arg) else None
+
+        # Stdin script execution: `python - [arg ...]` executes stdin, never worker_runner
+        if arg == "-":
+            return None
+
+        # End of options delimiter: `--` terminates option parsing
+        if arg == "--":
+            if idx + 1 < len(parts):
+                return parts[idx + 1] if _is_worker_runner_script_token(parts[idx + 1]) else None
+            return None
+
+        # Long options starting with `--`
+        if arg.startswith("--"):
+            if arg == "--check-hash-based-pycs":
+                if idx + 1 >= len(parts):
+                    return None
+                idx += 2
+                continue
+            if arg.startswith("--check-hash-based-pycs="):
+                idx += 1
+                continue
+            if arg in ("--help", "--help-env", "--help-xoptions", "--help-all", "--version"):
+                idx += 1
+                continue
+            # Unknown long option
+            return None
+
+        # Short options cluster starting with single dash: e.g. -u, -Bu, -Wignore, -uc<code>
+        chars = arg[1:]
+        char_idx = 0
+        while char_idx < len(chars):
+            ch = chars[char_idx]
+
+            # -c and -m execute inline code or module, not a script file.
+            # Reject whether separate (-c "code"), attached (-cimport), or clustered (-ucimport).
+            if ch in ("c", "m"):
+                return None
+
+            # -W and -X take an option-argument (either attached or next token)
+            if ch in ("W", "X"):
+                rest = chars[char_idx + 1:]
+                if rest:
+                    # Attached argument (e.g. -Wignore, -uWignore, -Xdev)
+                    idx += 1
+                    break
+                else:
+                    # Separate argument token (e.g. -W ignore, -X dev)
+                    if idx + 1 >= len(parts):
+                        return None
+                    idx += 2
+                    break
+
+            if ch in _PYTHON_NO_ARG_SHORT_FLAGS:
+                char_idx += 1
+                continue
+
+            # Unrecognized short flag character
+            return None
+        else:
+            # All flags in this token were valid no-arg flags
+            idx += 1
+            continue
+
+        # W or X broke out after consuming their attached or separate argument
+        continue
+
+    return None
+
+
+def cmdline_is_worker_runner(parts: list[str]) -> bool:
+    """Shared supervisor/watchdog identity for the one-per-worker wrapper."""
+    return worker_runner_script(parts) is not None
+
+
+def validate_review_bridge_policy(
+    config: Mapping[str, Any],
+) -> tuple[bool, tuple[str, ...]]:
+    """Validate review bridge toggle and declared task PR checks.
+
+    Defines one fail-closed relationship between
+    ``review_gate.github_review_bridge_required`` and
+    ``branch_workflow.task_pr.required_status_checks``:
+    - when the bridge is false, 'Pantheon canonical review gate' must be absent;
+    - when it is true, that context must be present.
+
+    Missing, malformed, duplicated, or contradictory policy fails closed.
+    """
+
+    if not isinstance(config, Mapping):
+        raise ValueError("config must be a mapping")
+
+    review_gate = config.get("review_gate")
+    if not isinstance(review_gate, Mapping):
+        raise ValueError("review_gate configuration is required and must be a mapping")
+    bridge_required = review_gate.get("github_review_bridge_required")
+    if bridge_required is None:
+        raise ValueError("review_gate.github_review_bridge_required is required")
+    if not isinstance(bridge_required, bool):
+        raise ValueError("review_gate.github_review_bridge_required must be a boolean")
+
+    branch_workflow = config.get("branch_workflow")
+    if not isinstance(branch_workflow, Mapping):
+        raise ValueError("branch_workflow configuration is required and must be a mapping")
+    task_pr = branch_workflow.get("task_pr")
+    if not isinstance(task_pr, Mapping):
+        raise ValueError("branch_workflow.task_pr configuration is required and must be a mapping")
+    raw_checks = task_pr.get("required_status_checks")
+    if raw_checks is None:
+        raise ValueError("branch_workflow.task_pr.required_status_checks is required")
+    if not isinstance(raw_checks, (list, tuple)):
+        raise ValueError("branch_workflow.task_pr.required_status_checks must be a sequence of strings")
+    checks: list[str] = []
+    seen: set[str] = set()
+    for check in raw_checks:
+        if not isinstance(check, str) or not check.strip():
+            raise ValueError("branch_workflow.task_pr.required_status_checks items must be non-empty strings")
+        if check in seen:
+            raise ValueError(
+                f"branch_workflow.task_pr.required_status_checks contains duplicate check: {check!r}"
+            )
+        seen.add(check)
+        checks.append(check)
+
+    has_canonical = CANONICAL_REVIEW_GATE_CONTEXT in seen
+    if not bridge_required and has_canonical:
+        raise ValueError(
+            f"contradictory review bridge policy: github_review_bridge_required is false, "
+            f"but {CANONICAL_REVIEW_GATE_CONTEXT!r} is declared in branch_workflow.task_pr.required_status_checks"
+        )
+    if bridge_required and not has_canonical:
+        raise ValueError(
+            f"contradictory review bridge policy: github_review_bridge_required is true, "
+            f"but {CANONICAL_REVIEW_GATE_CONTEXT!r} is missing from branch_workflow.task_pr.required_status_checks"
+        )
+
+    return bridge_required, tuple(checks)
+
+
 def github_review_bridge_required(config: Mapping[str, Any]) -> bool:
     """Return whether development review must publish GitHub proof.
 
@@ -53,7 +255,11 @@ def github_review_bridge_required(config: Mapping[str, Any]) -> bool:
     a new runtime packaging dependency.
     """
 
-    review_gate = config.get("review_gate")
+    if isinstance(config, Mapping) and "review_gate" in config and "branch_workflow" in config:
+        bridge_required, _ = validate_review_bridge_policy(config)
+        return bridge_required
+
+    review_gate = config.get("review_gate") if isinstance(config, Mapping) else None
     if not isinstance(review_gate, Mapping):
         return True
     value = review_gate.get("github_review_bridge_required")
@@ -554,6 +760,7 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
     config = load_json(config_file, default={})
     if LOCAL_CONFIG_PATH.exists():
         config = deep_merge(config, load_json(LOCAL_CONFIG_PATH, default={}))
+    validate_review_bridge_policy(config)
     return config
 
 
@@ -1048,15 +1255,6 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
         normalized_generation = 0
     if normalized_generation > 0:
         env["ORCH_TASK_GENERATION"] = str(normalized_generation)
-    # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 4): the exact run id the
-    # canonical claim/lease boundary bound this privileged task's one-shot
-    # grant reservation to. worker_runner.py's direct worker-entry check
-    # requires this to match ``execution_authorization.reserved_run_id``
-    # before it will launch an owner-execution process; absent for every
-    # non-privileged (the overwhelmingly common) dispatch.
-    execution_authorization_run_id = (metadata or {}).get("execution_authorization_run_id")
-    if isinstance(execution_authorization_run_id, str) and execution_authorization_run_id.strip():
-        env["ORCH_EXECUTION_AUTHORIZATION_RUN_ID"] = execution_authorization_run_id.strip()
     raw_resources = (metadata or {}).get("execution_resources", [])
     if not isinstance(raw_resources, list):
         raise ValueError("delivery execution_resources must be a list")
@@ -1324,6 +1522,68 @@ def apply_claude_oauth_token_file(env: dict[str, str], runtime: dict[str, Any]) 
     return env
 
 
+def _claude_status_first_value(payload: Mapping[str, Any], keys: tuple[str, ...]) -> str | None:
+    """Read one non-empty scalar from Claude auth-status data without exposing it."""
+
+    queue: list[Mapping[str, Any]] = [payload]
+    seen: set[int] = set()
+    while queue:
+        current = queue.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        for key in keys:
+            value = current.get(key)
+            if value in (None, "", [], {}):
+                continue
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
+        for value in current.values():
+            if isinstance(value, Mapping):
+                queue.append(value)
+    return None
+
+
+def claude_oauth_refresh_lock_key(
+    auth_status_payload: Mapping[str, Any] | None,
+    *,
+    fallback: str | None = None,
+) -> str | None:
+    """Return an opaque mutex key for one Claude OAuth account.
+
+    ``providers.*.account`` governs scheduler capacity and can intentionally be
+    distinct for separate worker lanes.  OAuth refreshes instead need to
+    serialize profiles that authenticate to the same Claude account.  A live
+    auth-status response supplies that identity; only its digest reaches the
+    lock filename.  The configured account remains the backwards-compatible
+    fallback when status does not identify an account.
+    """
+
+    if isinstance(auth_status_payload, Mapping) and auth_status_payload.get("loggedIn") is not False:
+        identity = _claude_status_first_value(
+            auth_status_payload,
+            (
+                "orgId",
+                "organizationId",
+                "organizationUUID",
+                "organizationUuid",
+                "orgUUID",
+                "orgUuid",
+            ),
+        ) or _claude_status_first_value(
+            auth_status_payload,
+            ("email", "userEmail", "accountEmail", "username"),
+        )
+        if identity:
+            digest = hashlib.sha256(
+                f"claude-oauth-refresh:{identity.casefold()}".encode("utf-8")
+            ).hexdigest()[:32]
+            return f"claude-oauth-{digest}"
+    normalized_fallback = str(fallback or "").strip()
+    return normalized_fallback or None
+
+
 @contextmanager
 def _claude_oauth_refresh_serialization(account_lock_key: str | None) -> Generator[None, None, None]:
     """Serialize outbound OAuth refresh calls sharing one Claude account.
@@ -1461,6 +1721,7 @@ def claude_auth_ready(
     env: dict[str, str] | None = None,
     refresh_if_needed: bool = True,
     account_lock_key: str | None = None,
+    auth_status_payload: Mapping[str, Any] | None = None,
 ) -> bool:
     """One auth decision: ready, rejected/unavailable, or ClaudeAuthRetry.
 
@@ -1484,25 +1745,31 @@ def claude_auth_ready(
             return True
         if not refresh_if_needed:
             return False
-        refreshed = refresh_claude_oauth_tokens(env, account_lock_key=account_lock_key)
+        refresh_lock_key = claude_oauth_refresh_lock_key(
+            auth_status_payload, fallback=account_lock_key
+        )
+        refreshed = refresh_claude_oauth_tokens(env, account_lock_key=refresh_lock_key)
         if refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0):
             refreshed_token = str(refreshed.get("accessToken") or "").strip()
             if refreshed_token.startswith("sk-ant-") and env is not None:
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = refreshed_token
             return True
         return False
-    try:
-        status = run_command([binary, "auth", "status"], env=env)
-    except (OSError, subprocess.TimeoutExpired):
-        raise ClaudeAuthRetry("Claude auth status temporarily unavailable.") from None
-    if status.returncode != 0 or not status.stdout:
-        return False
-    try:
-        payload = json.loads(status.stdout)
-    except json.JSONDecodeError:
-        raise ClaudeAuthRetry("Claude auth status returned an invalid response.") from None
-    if not isinstance(payload, dict):
-        raise ClaudeAuthRetry("Claude auth status returned an invalid response.")
+    payload: Mapping[str, Any] | None = auth_status_payload
+    if payload is None:
+        try:
+            status = run_command([binary, "auth", "status"], env=env)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ClaudeAuthRetry("Claude auth status temporarily unavailable.") from None
+        if status.returncode != 0 or not status.stdout:
+            return False
+        try:
+            parsed_payload = json.loads(status.stdout)
+        except json.JSONDecodeError:
+            raise ClaudeAuthRetry("Claude auth status returned an invalid response.") from None
+        if not isinstance(parsed_payload, Mapping):
+            raise ClaudeAuthRetry("Claude auth status returned an invalid response.")
+        payload = parsed_payload
     if not payload.get("loggedIn"):
         return False
     loaded = load_claude_oauth_tokens(env)
@@ -1513,7 +1780,10 @@ def claude_auth_ready(
         return True
     if not refresh_if_needed:
         return False
-    refreshed = refresh_claude_oauth_tokens(env, account_lock_key=account_lock_key)
+    refresh_lock_key = claude_oauth_refresh_lock_key(
+        payload, fallback=account_lock_key
+    )
+    refreshed = refresh_claude_oauth_tokens(env, account_lock_key=refresh_lock_key)
     return bool(refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0))
 
 

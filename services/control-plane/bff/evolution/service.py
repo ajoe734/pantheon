@@ -650,6 +650,32 @@ def evolution_journal_surfaces(
         mutation_surface = {"status": "degraded", "source": "bff_composed", "message": "Mutation review partially degraded", "snapshot_at": snapshot_at}
 
     source_surfaces["mutation_review"] = mutation_surface
+
+    # Composed overall journal surface across the core aggregate sources.
+    journal_statuses = [
+        source_surfaces["evolution_decisions"].get("status", "ok"),
+        source_surfaces["postmortems"].get("status", "ok"),
+        source_surfaces["freeze_orders"].get("status", "ok"),
+        source_surfaces["rollbacks"].get("status", "ok"),
+    ]
+    if all(s == "ok" for s in journal_statuses):
+        journal_surface = {"status": "ok", "source": "bff_composed", "snapshot_at": snapshot_at}
+    elif all(s == "unavailable" for s in journal_statuses):
+        journal_surface = {
+            "status": "unavailable",
+            "source": "bff_composed",
+            "message": "Evolution journal data unavailable",
+            "snapshot_at": snapshot_at,
+        }
+    else:
+        journal_surface = {
+            "status": "degraded",
+            "source": "bff_composed",
+            "message": "Evolution journal partially degraded",
+            "snapshot_at": snapshot_at,
+        }
+    source_surfaces["management_evolution_journal"] = journal_surface
+
     return source_surfaces
 
 

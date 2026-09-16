@@ -24,6 +24,7 @@ REASONS = frozenset(
     {
         "ambiguous-open-prs", "auto-merge-revocation-failed", "base-branch-mismatch",
         "canonical-authority-lock-failed", "canonical-state-refresh-failed", "ci-red",
+        "contradictory-review-bridge-policy",
         "dirty-repository-checkout", "exact-head-merge-conflict", "exact-head-missing",
         "final-auto-merge-armed", "final-base-branch-mismatch", "final-ci-not-green",
         "final-ci-red", "final-head-branch-mismatch", "final-head-changed",
@@ -113,7 +114,8 @@ def requires_repair_task(reason: str) -> bool:
 
     The candidate still reports blocked. This never grants approval or hides
     a gate failure; it prevents a failing approval from spawning its own chain
-    of approval-dependent repair tasks. Real CI/rebase repairs remain eligible.
+    of approval-dependent repair tasks. CI/rebase and review-bridge policy
+    configuration repairs remain eligible.
     """
     validate_reason(reason)
     return not (reason.startswith("review-gate-") or reason in {

@@ -8,21 +8,16 @@ posture for non-live environments.
 from __future__ import annotations
 
 import json
-import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, List, Optional
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-ooda005:operator,reviewer,admin:mfa"}
@@ -96,7 +91,6 @@ def _cr_client(
     ooda_enabled: bool = True,
 ) -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
         monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
         monkeypatch.setenv("PANTHEON_OODA_API_URL", "")
@@ -120,11 +114,9 @@ def _cr_client(
             monkeypatch.delenv("PANTHEON_BFF_OODA_PACKET_STORE", raising=False)
             store = create_in_memory_read_surface_ports()
             store.dataset_source = lambda ds: "missing" if ds == "ooda_packets" else "typed_store"
-        bff_main.read_store = store
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original_store
+        app = FastAPI()
+        app.include_router(create_control_loops_router(read_surface=store))
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 def test_control_room_includes_ooda_status_card(monkeypatch) -> None:

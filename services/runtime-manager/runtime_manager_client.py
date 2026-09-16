@@ -169,14 +169,17 @@ class RuntimeManagerClient:
         binding = self._local().get_active_for_pool(capital_pool_id)
         return binding.to_dict() if binding is not None else None
 
-    def transition(self, binding_id: str, new_status: str) -> Dict[str, Any]:
+    def transition(self, binding_id: str, new_status: str, *, metadata_patch: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if self._use_http():
+            payload: Dict[str, Any] = {"new_status": new_status}
+            if metadata_patch is not None:
+                payload["metadata_patch"] = metadata_patch
             return self._request_json(
                 "POST",
                 f"/api/runtime-bindings/{binding_id}/transition",
-                {"new_status": new_status},
+                payload,
             )
-        binding = self._local().transition(binding_id, new_status)
+        binding = self._local().transition(binding_id, new_status, metadata_patch=metadata_patch)
         return binding.to_dict()
 
     def retire(self, binding_id: str, *, retired_at: Optional[str] = None) -> Dict[str, Any]:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -39,6 +40,7 @@ class FakeRunner:
         base_manifest_missing: bool = False,
         base_manifest_error: str = "",
         pr_files: Sequence[Mapping[str, Any]] | None = None,
+        pr_files_by_page: Mapping[int, Sequence[Mapping[str, Any]]] | None = None,
         is_draft: bool = False,
         workflow_id: int = 842691579,
         workflow_path: str = ".github/workflows/canonical-review-gate.yml",
@@ -71,6 +73,11 @@ class FakeRunner:
         self.base_manifest_missing = base_manifest_missing
         self.base_manifest_error = base_manifest_error
         self.pr_files = [dict(item) for item in (pr_files or [])]
+        self.pr_files_by_page = (
+            {page: [dict(item) for item in items] for page, items in pr_files_by_page.items()}
+            if pr_files_by_page is not None
+            else {}
+        )
         self.is_draft = is_draft
         self.workflow_id = workflow_id
         self.workflow_path = workflow_path
@@ -127,8 +134,16 @@ class FakeRunner:
                     raise bridge.GitHubReviewBridgeError(self.base_manifest_error)
                 return dict(self.base_manifest_payload)
             return dict(self.manifest_payload)
-        if joined.endswith("/pulls/4269/files?per_page=100"):
-            return list(self.pr_files)
+        if "/pulls/4269/files" in joined or re.search(r"/pulls/\d+/files", joined):
+            page_match = re.search(r"[?&]page=(\d+)", joined)
+            page = int(page_match.group(1)) if page_match else 1
+            if self.pr_files_by_page:
+                return [dict(item) for item in self.pr_files_by_page.get(page, [])]
+            per_page_match = re.search(r"[?&]per_page=(\d+)", joined)
+            per_page = int(per_page_match.group(1)) if per_page_match else 100
+            start = (page - 1) * per_page
+            end = start + per_page
+            return [dict(item) for item in self.pr_files[start:end]]
         commit_prefix = f"repos/{REPOSITORY}/commits/"
         if (
             joined.startswith(f"gh api {commit_prefix}")
@@ -1600,6 +1615,142 @@ class GitHubReviewBridgeTests(unittest.TestCase):
             actor="ActorB",
         )
         self.assertEqual(len(runner.reviews), 3)
+
+    def test_list_pull_request_files_paginates_across_pages(self) -> None:
+        page1 = [
+            {"filename": f"file_{i}.py", "sha": "a" * 40, "status": "modified"}
+            for i in range(100)
+        ]
+        page2 = [
+            {"filename": "file_100.py", "sha": "b" * 40, "status": "added"},
+            {"filename": "file_101.py", "sha": "c" * 40, "status": "modified"},
+        ]
+        runner = FakeRunner(pr_files_by_page={1: page1, 2: page2})
+        files = bridge.list_pull_request_files(
+            repository=REPOSITORY,
+            pr=4269,
+            runner=runner,
+            per_page=100,
+        )
+        self.assertEqual(len(files), 102)
+        self.assertEqual(files[0]["filename"], "file_0.py")
+        self.assertEqual(files[100]["filename"], "file_100.py")
+        self.assertEqual(files[101]["filename"], "file_101.py")
+        file_calls = [cmd for cmd, _ in runner.calls if "/pulls/4269/files" in " ".join(cmd)]
+        self.assertEqual(len(file_calls), 2)
+        self.assertIn("page=1", file_calls[0][-1])
+        self.assertIn("page=2", file_calls[1][-1])
+
+    def test_list_pull_request_files_stops_on_partial_page(self) -> None:
+        page1 = [
+            {"filename": "file_0.py", "sha": "a" * 40, "status": "modified"},
+            {"filename": "file_1.py", "sha": "b" * 40, "status": "added"},
+        ]
+        runner = FakeRunner(pr_files_by_page={1: page1})
+        files = bridge.list_pull_request_files(
+            repository=REPOSITORY,
+            pr=4269,
+            runner=runner,
+            per_page=100,
+        )
+        self.assertEqual(len(files), 2)
+        file_calls = [cmd for cmd, _ in runner.calls if "/pulls/4269/files" in " ".join(cmd)]
+        self.assertEqual(len(file_calls), 1)
+
+    def test_list_pull_request_files_rejects_malformed_response(self) -> None:
+        class NonListRunner(FakeRunner):
+            def run_json(self, args: Sequence[str], *, payload: Mapping[str, Any] | None = None) -> Any:
+                cmd = " ".join(args)
+                if "/pulls/4269/files" in cmd:
+                    return {"error": "not a list"}
+                return super().run_json(args, payload=payload)
+
+        runner = NonListRunner()
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "not an array"):
+            bridge.list_pull_request_files(
+                repository=REPOSITORY,
+                pr=4269,
+                runner=runner,
+            )
+
+    def test_list_pull_request_files_rejects_missing_or_invalid_fields(self) -> None:
+        # Missing filename
+        runner1 = FakeRunner(pr_files=[{"sha": "a" * 40, "status": "modified"}])
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "missing filename"):
+            bridge.list_pull_request_files(repository=REPOSITORY, pr=4269, runner=runner1)
+
+        # Invalid blob SHA
+        runner2 = FakeRunner(pr_files=[{"filename": "test.py", "sha": "short", "status": "modified"}])
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "invalid blob SHA"):
+            bridge.list_pull_request_files(repository=REPOSITORY, pr=4269, runner=runner2)
+
+        # Missing status
+        runner3 = FakeRunner(pr_files=[{"filename": "test.py", "sha": "a" * 40}])
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "missing status"):
+            bridge.list_pull_request_files(repository=REPOSITORY, pr=4269, runner=runner3)
+
+    def test_list_pull_request_files_rejects_unsafe_paths(self) -> None:
+        for unsafe in ["/etc/passwd", "../escape.py", "foo/../../bar.py", "foo\\bar.py"]:
+            runner = FakeRunner(pr_files=[{"filename": unsafe, "sha": "a" * 40, "status": "added"}])
+            with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "normalized repository-relative path"):
+                bridge.list_pull_request_files(repository=REPOSITORY, pr=4269, runner=runner)
+
+    def test_list_pull_request_files_handles_renamed_files_and_rejects_unsafe_previous(self) -> None:
+        # Valid rename
+        valid_rename = [
+            {"filename": "new.py", "previous_filename": "old.py", "sha": "a" * 40, "status": "renamed"}
+        ]
+        runner = FakeRunner(pr_files=valid_rename)
+        files = bridge.list_pull_request_files(repository=REPOSITORY, pr=4269, runner=runner)
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0]["filename"], "new.py")
+        self.assertEqual(files[0]["previous_filename"], "old.py")
+
+        # Renamed without previous_filename
+        runner_no_prev = FakeRunner(pr_files=[{"filename": "new.py", "sha": "a" * 40, "status": "renamed"}])
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "missing previous_filename"):
+            bridge.list_pull_request_files(repository=REPOSITORY, pr=4269, runner=runner_no_prev)
+
+        # Renamed with unsafe previous_filename
+        runner_unsafe_prev = FakeRunner(
+            pr_files=[{"filename": "new.py", "previous_filename": "../bad.py", "sha": "a" * 40, "status": "renamed"}]
+        )
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "normalized repository-relative path"):
+            bridge.list_pull_request_files(repository=REPOSITORY, pr=4269, runner=runner_unsafe_prev)
+
+    def test_list_pull_request_files_rejects_cap_overrun(self) -> None:
+        pr_files = [
+            {"filename": f"f_{i}.py", "sha": "a" * 40, "status": "added"}
+            for i in range(10)
+        ]
+        runner = FakeRunner(pr_files=pr_files)
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "exceeds maximum allowed cap"):
+            bridge.list_pull_request_files(
+                repository=REPOSITORY,
+                pr=4269,
+                runner=runner,
+                per_page=5,
+                max_files=5,
+            )
+
+    def test_revalidate_pull_request_snapshot_accepts_matching_and_rejects_drift(self) -> None:
+        b = binding()
+        runner = FakeRunner(actual_head=HEAD)
+        snap = bridge.revalidate_pull_request_snapshot(
+            repository=REPOSITORY,
+            binding=b,
+            runner=runner,
+        )
+        self.assertEqual(snap["headRefOid"], HEAD)
+
+        # Drift in head SHA
+        runner_drift = FakeRunner(actual_head="f" * 40)
+        with self.assertRaisesRegex(bridge.ReviewBindingMismatch, "no longer matches reviewed identity"):
+            bridge.revalidate_pull_request_snapshot(
+                repository=REPOSITORY,
+                binding=b,
+                runner=runner_drift,
+            )
 
 
 if __name__ == "__main__":

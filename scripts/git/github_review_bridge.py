@@ -23,8 +23,13 @@ import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import PurePosixPath
 from typing import Any, Mapping, Protocol, Sequence
 from urllib.parse import quote, urlparse
+
+
+MAX_PULL_REQUEST_FILES = 3000
+DEFAULT_PULL_FILES_PAGE_SIZE = 100
 
 
 CANONICAL_REVIEW_CONTEXT = "Pantheon canonical review gate"
@@ -523,6 +528,125 @@ def _current_base_ref_sha(
     return base_sha
 
 
+def _validate_safe_repo_relative_path(value: Any, *, label: str) -> str:
+    raw = str(value or "").strip()
+    if (
+        not raw
+        or raw.startswith("/")
+        or "\\" in raw
+        or raw in {".", ".."}
+        or raw.startswith("../")
+        or "/../" in f"/{raw}/"
+    ):
+        raise GitHubReviewBridgeError(
+            f"{label} must be a normalized repository-relative path, got {raw!r}"
+        )
+    parts = PurePosixPath(raw).parts
+    if any(part in {"", ".", ".."} for part in parts):
+        raise GitHubReviewBridgeError(
+            f"{label} must be a normalized repository-relative path, got {raw!r}"
+        )
+    return raw
+
+
+def list_pull_request_files(
+    *,
+    repository: str,
+    pr: int,
+    runner: JsonRunner | None = None,
+    per_page: int = DEFAULT_PULL_FILES_PAGE_SIZE,
+    max_files: int = MAX_PULL_REQUEST_FILES,
+) -> list[dict[str, Any]]:
+    """Return all changed files for a pull request using bounded pagination.
+
+    Fails closed on any API error, malformed item, invalid blob SHA, unsafe path,
+    cap overrun, or pagination limit overrun.
+    """
+    repository = _require_repository_slug(repository)
+    if not isinstance(pr, int) or pr <= 0:
+        raise GitHubReviewBridgeError(f"invalid pull request number {pr!r}")
+    if per_page <= 0 or per_page > 100:
+        raise GitHubReviewBridgeError(f"invalid per_page {per_page!r}; must be in 1..100")
+    if max_files <= 0:
+        raise GitHubReviewBridgeError(f"invalid max_files {max_files!r}; must be positive")
+
+    client = runner or GhJsonRunner()
+    all_files: list[dict[str, Any]] = []
+    page = 1
+    max_pages = (max_files + per_page - 1) // per_page + 1
+
+    while True:
+        if page > max_pages:
+            raise GitHubReviewBridgeError(
+                f"GitHub PR #{pr} pagination exceeded maximum limit of {max_pages} pages"
+            )
+        endpoint = f"repos/{repository}/pulls/{pr}/files?per_page={per_page}&page={page}"
+        payload = client.run_json(["gh", "api", endpoint])
+        if not isinstance(payload, list):
+            raise GitHubReviewBridgeError(
+                f"GitHub PR #{pr} files response on page {page} is not an array"
+            )
+        if not payload:
+            break
+
+        for item in payload:
+            if not isinstance(item, Mapping):
+                raise GitHubReviewBridgeError(
+                    f"GitHub PR #{pr} file entry on page {page} is not an object"
+                )
+            raw_filename = item.get("filename")
+            if not raw_filename or not isinstance(raw_filename, str) or not raw_filename.strip():
+                raise GitHubReviewBridgeError(
+                    f"GitHub PR #{pr} file entry on page {page} is missing filename"
+                )
+            filename = _validate_safe_repo_relative_path(
+                raw_filename, label=f"GitHub PR #{pr} filename"
+            )
+
+            raw_sha = str(item.get("sha") or "").strip().lower()
+            if not OID_RE.fullmatch(raw_sha):
+                raise GitHubReviewBridgeError(
+                    f"GitHub PR #{pr} file {filename!r} has invalid blob SHA: {raw_sha!r}"
+                )
+
+            raw_status = str(item.get("status") or "").strip().lower()
+            if not raw_status:
+                raise GitHubReviewBridgeError(
+                    f"GitHub PR #{pr} file {filename!r} is missing status"
+                )
+
+            entry: dict[str, Any] = {
+                "filename": filename,
+                "sha": raw_sha,
+                "status": raw_status,
+            }
+
+            previous_filename = item.get("previous_filename")
+            if raw_status == "renamed" and (not previous_filename or not str(previous_filename).strip()):
+                raise GitHubReviewBridgeError(
+                    f"GitHub PR #{pr} renamed file {filename!r} is missing previous_filename"
+                )
+            if previous_filename is not None:
+                prev_str = _validate_safe_repo_relative_path(
+                    previous_filename,
+                    label=f"GitHub PR #{pr} previous_filename for {filename}",
+                )
+                entry["previous_filename"] = prev_str
+
+            all_files.append(entry)
+            if len(all_files) > max_files:
+                raise GitHubReviewBridgeError(
+                    f"GitHub PR #{pr} changed files count ({len(all_files)}) "
+                    f"exceeds maximum allowed cap of {max_files}"
+                )
+
+        if len(payload) < per_page:
+            break
+        page += 1
+
+    return all_files
+
+
 def _review_manifest_identity(
     runner: JsonRunner,
     *,
@@ -565,12 +689,13 @@ def _review_manifest_identity(
     )
 
     def exact_pr_file_change() -> bool:
-        files = runner.run_json(
-            ["gh", "api", f"repos/{repository}/pulls/{pr}/files?per_page=100"]
+        files = list_pull_request_files(
+            runner=runner,
+            repository=repository,
+            pr=pr,
         )
-        return isinstance(files, list) and any(
-            isinstance(item, Mapping)
-            and str(item.get("filename") or "") == path
+        return any(
+            str(item.get("filename") or "") == path
             and str(item.get("sha") or "").strip().lower() == blob_sha
             and str(item.get("status") or "").strip().lower()
             in {"added", "modified", "renamed"}
@@ -915,6 +1040,28 @@ def validate_review_binding(
         binding=normalized,
     )
     return normalized
+
+
+def revalidate_pull_request_snapshot(
+    *,
+    repository: str,
+    binding: Mapping[str, Any] | ReviewBinding,
+    runner: JsonRunner | None = None,
+) -> dict[str, Any]:
+    """Recheck the exact PR snapshot after file enumeration to guard against concurrent drift."""
+    repository = _require_repository_slug(repository)
+    normalized = (
+        binding
+        if isinstance(binding, ReviewBinding)
+        else ReviewBinding.from_mapping(binding)
+    )
+    client = runner or GhJsonRunner()
+    return _pr_snapshot(
+        client,
+        repository=repository,
+        binding=normalized,
+        allowed_states=frozenset({"OPEN"}),
+    )
 
 
 def _reviews(

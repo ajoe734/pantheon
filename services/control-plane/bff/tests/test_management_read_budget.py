@@ -8,7 +8,6 @@ whole fleet, and a synchronous Source Ingest registry wait.
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -17,13 +16,23 @@ from typing import Any, Iterator
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-import main as bff_main  # noqa: E402
-from ports import ReadSurfacePorts  # noqa: E402
-from rebalance_authority_test_support import (  # noqa: E402
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
     create_market_persona_projection_test_double,
 )
+
+# BFF-TEST-MIGRATION-B12: RETAINED_COMPOSITION. Every assertion in this file
+# targets a main.py-only private helper/global that management_read_models
+# (router.py/service.py) neither defines nor calls:
+# _build_operator_alerts_payload, _build_operator_health_status_payload,
+# _build_management_cockpit_payload, _persona_fleet_slim_list_payload,
+# _pm12_performance_attribution_sources, and
+# _management_data_sources_read_timeout_seconds all live only in main.py.
+# Reimplementing them in a test double would duplicate production logic
+# rather than reuse it, so this file continues to exercise the assembled
+# `main.app` and `main` module attributes directly.
 
 
 HEADERS = {"Authorization": "Bearer pfg-mgmt-read-budget:operator"}

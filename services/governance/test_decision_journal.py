@@ -2216,6 +2216,7 @@ class TestDecisionJournalReadOnlySnapshots(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         return [
             "docker", "run", "--rm", "-i", "--network", "none", "--read-only",
+            "--user", f"{os.getuid()}:{os.getgid()}",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
             "--mount", f"type=bind,source={root},target=/workspace,readonly",
             "--mount", f"type=bind,source={self.path},target=/journal,readonly",

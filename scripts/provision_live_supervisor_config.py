@@ -766,9 +766,11 @@ def build_live_config(
     if orchestrator_dir not in sys.path:
         sys.path.insert(0, orchestrator_dir)
     from supervisor_watchdog import validated_fleet_worker_cap
+    import common
 
     validated_fleet_worker_cap(rendered)
     validate_provider_accounts(rendered)
+    common.validate_review_bridge_policy(rendered)
     apply_repository_source_roots(rendered, repository_source_roots)
     apply_repository_integration_roots(rendered, repository_integration_roots)
     apply_task_state_store(

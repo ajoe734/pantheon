@@ -16,17 +16,22 @@ from starlette.responses import StreamingResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient as StarletteTestClient
 
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
-
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 os.environ.setdefault("PANTHEON_BFF_CORS_ORIGINS", "https://fe.example.com")
 
-import main as bff_main  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from services.control_plane.bff.core.app_factory import build_bff_app  # noqa: E402
 
-CLIENT = TestClient(bff_main.app)
+app = build_bff_app()
+
+
+@app.get("/bff/me")
+async def _me():
+    return {"status": "ok"}
+
+
+CLIENT = TestClient(app)
 HEADERS = {"Authorization": "Bearer op-sec:operator,admin,reviewer:mfa"}
 EXPECTED = {
     "x-content-type-options": "nosniff",
@@ -60,8 +65,10 @@ def test_middleware_is_streaming_safe():
                 yield f"chunk{i};".encode()
         return StreamingResponse(gen(), media_type="text/event-stream")
 
+    from services.control_plane.bff.core.http_security import _SecurityHeadersMiddleware
+
     app = Starlette(routes=[Route("/s", stream)])
-    app.add_middleware(bff_main._SecurityHeadersMiddleware)
+    app.add_middleware(_SecurityHeadersMiddleware)
     with StarletteTestClient(app) as client:
         r = client.get("/s")
     assert r.status_code == 200

@@ -157,12 +157,197 @@ def _validated_pr_binding(binding: Mapping[str, Any], task_id: str) -> dict[str,
     }
 
 
+def _safe_repo_relative_path(value: Any, *, label: str) -> PurePosixPath:
+    raw = str(value or "").strip()
+    path = PurePosixPath(raw)
+    if (
+        not raw
+        or raw.startswith("/")
+        or "\\" in raw
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise SystemExit(f"{label} must be a normalized repository-relative path")
+    return path
+
+
+def matches_artifact_pattern(file_path: str, pattern: str) -> bool:
+    """Check if a normalized repository-relative file path matches an artifact pattern.
+
+    Preserves exact paths, directory prefix grants (with or without trailing slash),
+    star (*) within path components, and double-star (**) across directory components.
+    """
+    clean_path = str(file_path or "").strip()
+    norm_pattern = str(pattern or "").strip()
+    if not clean_path or not norm_pattern:
+        return False
+
+    is_dir_grant = norm_pattern.endswith("/")
+    clean_pattern = norm_pattern.rstrip("/")
+    if not clean_pattern:
+        return False
+
+    # 1. Exact match
+    if clean_path == clean_pattern:
+        return True
+
+    file_p = PurePosixPath(clean_path)
+    pattern_p = PurePosixPath(clean_pattern)
+
+    # 2. Directory prefix grant
+    if is_dir_grant or pattern_p in file_p.parents:
+        if clean_path.startswith(clean_pattern + "/") or pattern_p in file_p.parents:
+            return True
+
+    # 3. Glob matching if pattern contains wildcards
+    if any(c in clean_pattern for c in "*?["):
+        tokens: list[str] = []
+        i = 0
+        n = len(clean_pattern)
+        while i < n:
+            if clean_pattern[i : i + 3] == "/**":
+                if i + 3 == n:
+                    tokens.append("(?:/.*)?")
+                    i += 3
+                    continue
+                elif clean_pattern[i + 3] == "/":
+                    tokens.append("(?:/|/.*/)")
+                    i += 4
+                    continue
+            if clean_pattern[i : i + 3] == "**/":
+                tokens.append("(?:.*/)?")
+                i += 3
+                continue
+            if clean_pattern[i : i + 2] == "**":
+                tokens.append(".*")
+                i += 2
+                continue
+            if clean_pattern[i] == "*":
+                tokens.append("[^/]*")
+                i += 1
+                continue
+            if clean_pattern[i] == "?":
+                tokens.append("[^/]")
+                i += 1
+                continue
+            tokens.append(re.escape(clean_pattern[i]))
+            i += 1
+        reg = "".join(tokens)
+        if is_dir_grant:
+            regex = re.compile(f"^{reg}(?:/.*)?$")
+        else:
+            regex = re.compile(f"^{reg}$")
+        if regex.match(clean_path):
+            return True
+
+    return False
+
+
+def task_normalized_artifact_patterns(
+    task: Mapping[str, Any],
+    config: dict[str, Any],
+    *,
+    repository_id: str,
+) -> list[str]:
+    """Return repository-relative artifact grant patterns for repository_id."""
+    allowed: list[str] = []
+    artifacts = task.get("artifacts")
+    if isinstance(artifacts, list):
+        for artifact in artifacts:
+            raw = str(artifact or "").strip()
+            if not raw:
+                continue
+            artifact_repo = artifact_repository_id(
+                config,
+                raw,
+                default_repo_id=repository_id,
+            )
+            if artifact_repo != repository_id:
+                continue
+            relative = repository_relative_artifact_path(
+                config,
+                raw,
+                repository_id,
+            )
+            rel_str = relative.as_posix()
+            if raw.endswith("/") and not rel_str.endswith("/"):
+                rel_str += "/"
+            if rel_str and rel_str not in allowed:
+                allowed.append(rel_str)
+    return allowed
+
+
+def validate_review_manifest_contract_path(
+    task: Mapping[str, Any],
+    config: dict[str, Any],
+    *,
+    repository_id: str,
+    review_file: str,
+) -> str:
+    """Require REVIEW_FILE to belong to this task's delivery contract.
+
+    Merely committing some evidence file on the reviewed head is insufficient:
+    a reviewer must be bound to an artifact path the task actually authorizes.
+    A declared directory-like artifact is an allowed prefix; a declared file is
+    accepted exactly. Repository prefixes are removed before comparison.
+    """
+    task_id = str(task.get("id") or "?").strip()
+    manifest = _safe_repo_relative_path(review_file, label="REVIEW_FILE")
+    allowed = task_normalized_artifact_patterns(
+        task, config, repository_id=repository_id
+    )
+    if not any(matches_artifact_pattern(manifest.as_posix(), pat) for pat in allowed):
+        rendered = ", ".join(allowed) or "<none>"
+        raise SystemExit(
+            f"{task_id}: REVIEW_FILE={manifest.as_posix()!r} is outside the task "
+            f"artifact contract for repository {repository_id!r}; allowed: {rendered}"
+        )
+    return manifest.as_posix()
+
+
+def validate_task_artifact_diff_scope(
+    task: Mapping[str, Any],
+    config: dict[str, Any],
+    *,
+    repository_id: str,
+    pr_files: Sequence[Mapping[str, Any]],
+) -> None:
+    """Validate every changed filename and rename previous_filename against task artifact contract."""
+    task_id = str(task.get("id") or "?").strip()
+    allowed_patterns = task_normalized_artifact_patterns(
+        task, config, repository_id=repository_id
+    )
+    rendered = ", ".join(allowed_patterns) or "<none>"
+
+    for file_info in pr_files:
+        filename = str(file_info.get("filename") or "").strip()
+        if not filename:
+            raise SystemExit(
+                f"{task_id}: PR changed file entry is missing filename"
+            )
+        if not any(matches_artifact_pattern(filename, pat) for pat in allowed_patterns):
+            raise SystemExit(
+                f"{task_id}: changed file {filename!r} is outside the task "
+                f"artifact contract for repository {repository_id!r}; allowed: {rendered}"
+            )
+
+        previous_filename = file_info.get("previous_filename")
+        if previous_filename:
+            prev_str = str(previous_filename).strip()
+            if not any(matches_artifact_pattern(prev_str, pat) for pat in allowed_patterns):
+                raise SystemExit(
+                    f"{task_id}: renamed file source {prev_str!r} is outside the task "
+                    f"artifact contract for repository {repository_id!r}; allowed: {rendered}"
+                )
+
+
 def validate_handoff_pr_delivery_binding(
     task: Mapping[str, Any],
     config: dict[str, Any],
     binding: Mapping[str, Any],
     *,
     review_file: str | None = None,
+    runner: Any = None,
 ) -> dict[str, Any]:
     """Return the one complete review-admission binding, or fail closed."""
     ai_status = _ai_status_module()
@@ -199,85 +384,57 @@ def validate_handoff_pr_delivery_binding(
         repository_id=repository_id,
         review_file=manifest_path,
     )
+    bridge_error = getattr(github_review_bridge, "GitHubReviewBridgeError", None)
+    if not isinstance(bridge_error, type) or not issubclass(bridge_error, BaseException):
+        try:
+            from scripts.git import github_review_bridge as _real_bridge
+            bridge_error = _real_bridge.GitHubReviewBridgeError
+        except Exception:
+            bridge_error = Exception
+
     try:
         validated = github_review_bridge.validate_review_admission(
             repository=repository_slug_value,
             binding=normalized,
             review_file=manifest_path,
             required_merge_method=ai_status.REQUIRED_REVIEW_MERGE_METHOD,
+            runner=runner,
         )
-    except github_review_bridge.GitHubReviewBridgeError as exc:
+    except bridge_error as exc:
         raise SystemExit(
             f"GitHub rejected the proposed delivery binding for {task_id or '?'}: {exc}"
         ) from exc
-    return dict(validated.as_dict())
 
-
-def _safe_repo_relative_path(value: Any, *, label: str) -> PurePosixPath:
-    raw = str(value or "").strip()
-    path = PurePosixPath(raw)
-    if (
-        not raw
-        or raw.startswith("/")
-        or "\\" in raw
-        or path.is_absolute()
-        or any(part in {"", ".", ".."} for part in path.parts)
-    ):
-        raise SystemExit(f"{label} must be a normalized repository-relative path")
-    return path
-
-
-def validate_review_manifest_contract_path(
-    task: Mapping[str, Any],
-    config: dict[str, Any],
-    *,
-    repository_id: str,
-    review_file: str,
-) -> str:
-    """Require REVIEW_FILE to belong to this task's delivery contract.
-
-    Merely committing some evidence file on the reviewed head is insufficient:
-    a reviewer must be bound to an artifact path the task actually authorizes.
-    A declared directory-like artifact is an allowed prefix; a declared file is
-    accepted exactly. Repository prefixes are removed before comparison.
-    """
-
-    task_id = str(task.get("id") or "?").strip()
-    manifest = _safe_repo_relative_path(review_file, label="REVIEW_FILE")
-    allowed: list[PurePosixPath] = []
-    artifacts = task.get("artifacts")
-    if isinstance(artifacts, list):
-        for artifact in artifacts:
-            artifact_repo = artifact_repository_id(
-                config,
-                artifact,
-                default_repo_id=repository_id,
-            )
-            if artifact_repo != repository_id:
-                continue
-            relative = repository_relative_artifact_path(
-                config,
-                artifact,
-                repository_id,
-            )
-            try:
-                normalized = _safe_repo_relative_path(
-                    relative.as_posix(),
-                    label="task artifact",
-                )
-            except SystemExit:
-                continue
-            allowed.append(normalized)
-    if not any(
-        manifest == artifact or artifact in manifest.parents
-        for artifact in allowed
-    ):
-        rendered = ", ".join(path.as_posix() for path in allowed) or "<none>"
-        raise SystemExit(
-            f"{task_id}: REVIEW_FILE={manifest.as_posix()!r} is outside the task "
-            f"artifact contract for repository {repository_id!r}; allowed: {rendered}"
+    try:
+        pr_files = github_review_bridge.list_pull_request_files(
+            repository=repository_slug_value,
+            pr=normalized["pr"],
+            runner=runner,
         )
-    return manifest.as_posix()
+    except bridge_error as exc:
+        raise SystemExit(
+            f"GitHub rejected the proposed delivery binding for {task_id or '?'}: {exc}"
+        ) from exc
+
+    validate_task_artifact_diff_scope(
+        task,
+        config,
+        repository_id=repository_id,
+        pr_files=pr_files,
+    )
+
+    try:
+        github_review_bridge.revalidate_pull_request_snapshot(
+            repository=repository_slug_value,
+            binding=normalized,
+            runner=runner,
+        )
+    except bridge_error as exc:
+        raise SystemExit(
+            f"GitHub rejected the proposed delivery binding for {task_id or '?'}: {exc}"
+        ) from exc
+
+    return dict(validated.as_dict())
 
 
 @dataclass(frozen=True)
@@ -398,7 +555,7 @@ def _discover_open_pull_request_for_branch(
 
 
 def resolve_handoff_delivery_binding(
-    task: Mapping[str, Any], config: dict[str, Any]
+    task: Mapping[str, Any], config: dict[str, Any], *, runner: Any = None
 ) -> dict[str, Any]:
     """Create the one delivery contract before a task becomes reviewable.
 
@@ -445,6 +602,7 @@ def resolve_handoff_delivery_binding(
                 config,
                 candidate,
                 review_file=os.environ.get("REVIEW_FILE", ""),
+                runner=runner,
             ),
         }
 
@@ -483,6 +641,7 @@ def resolve_handoff_delivery_binding(
                     task_id,
                 ),
                 review_file=os.environ.get("REVIEW_FILE", ""),
+                runner=runner,
             ),
         }
     contract = _delivery_contract_payload(task)

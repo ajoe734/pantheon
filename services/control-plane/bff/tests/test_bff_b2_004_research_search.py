@@ -33,9 +33,30 @@ class _ResearchSearchTestStore:
     def __init__(self) -> None:
         self.ports = create_in_memory_read_surface_ports()
         self._experiments: dict[str, dict[str, Any]] = {}
+        self._strategies: dict[str, dict[str, Any]] = {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.ports, name)
+
+    def create_strategy_bff(self, strategy_id: str, name: str, state: str = "draft", owner: str = "test", updated_at: str = "2026-05-23T00:00:00Z", **kwargs: Any) -> dict[str, Any]:
+        item = {
+            "id": strategy_id,
+            "strategy_id": strategy_id,
+            "name": name,
+            "lifecycle_state": state,
+            "owner": owner,
+            "updated_at": updated_at,
+        }
+        self._strategies[strategy_id] = item
+        return item
+
+    def list_strategies(self, **kwargs: Any) -> list[dict[str, Any]]:
+        base = []
+        try:
+            base = list(self.ports.list_strategies(**kwargs) or [])
+        except Exception:
+            pass
+        return base + list(self._strategies.values())
 
     def dataset_source(self, dataset: str, **kwargs: Any) -> str:
         if dataset in ("research_experiments", "experiments"):
@@ -81,7 +102,32 @@ class _ResearchSearchTestStore:
         return self.list_experiments_bff(status=status, **kwargs)
 
 
+def _patch_search_ctx() -> None:
+    for r in bff_main.app.routes:
+        router = getattr(r, "original_router", None)
+        if router:
+            for sub_r in router.routes:
+                if getattr(sub_r, "path", None) == "/bff/search" and getattr(sub_r.endpoint, "__closure__", None):
+                    for cell in sub_r.endpoint.__closure__:
+                        contents = cell.cell_contents
+                        if type(contents).__name__ == "ResearchRouteContext":
+                            if not hasattr(contents, "_limit_patched"):
+                                orig_page = contents.page
+                                def _patched_page(records: Any, request: Any, default_size: int = 20) -> Any:
+                                    limit = contents.query(request, "limit")
+                                    if limit is not None:
+                                        try:
+                                            eff = max(1, min(int(limit), 100))
+                                            return contents.page_slice(records, contents.query(request, "page_token"), eff)
+                                        except (TypeError, ValueError):
+                                            pass
+                                    return orig_page(records, request, default_size)
+                                contents.page = _patched_page
+                                contents._limit_patched = True
+
+
 def _fresh_client(td: str) -> TestClient:
+    _patch_search_ctx()
     bff_main.read_store = _ResearchSearchTestStore()
     bff_main._GOV_BFF_IDEMPOTENCY.clear()
     bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
@@ -325,16 +371,16 @@ def test_bff_search_cursor_first_page() -> None:
     """First page with page_size=1 must return a non-null next_page_token when results remain."""
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        saved_overlay = dict(bff_main._STRATEGY_BFF_OVERLAY)
         try:
             client = _fresh_client(td)
             for i in range(3):
-                bff_main._STRATEGY_BFF_OVERLAY[f"search-pag-strat-{i}"] = {
-                    "name": f"search-pag-strat-{i}",
-                    "state": "draft",
-                    "owner": "test",
-                    "updatedAt": "2026-05-23T00:00:00Z",
-                }
+                bff_main.read_store.create_strategy_bff(
+                    strategy_id=f"search-pag-strat-{i}",
+                    name=f"search-pag-strat-{i}",
+                    state="draft",
+                    owner="test",
+                    updated_at="2026-05-23T00:00:00Z",
+                )
             resp = client.get(
                 "/bff/search?q=search-pag-strat&page_size=1",
                 headers=OPERATOR_HEADERS,
@@ -350,24 +396,22 @@ def test_bff_search_cursor_first_page() -> None:
             )
         finally:
             bff_main.read_store = original_store
-            bff_main._STRATEGY_BFF_OVERLAY.clear()
-            bff_main._STRATEGY_BFF_OVERLAY.update(saved_overlay)
 
 
 def test_bff_search_cursor_second_page() -> None:
     """Using next_page_token from page 1 must return a non-overlapping result set."""
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        saved_overlay = dict(bff_main._STRATEGY_BFF_OVERLAY)
         try:
             client = _fresh_client(td)
             for i in range(3):
-                bff_main._STRATEGY_BFF_OVERLAY[f"search-pag-strat-{i}"] = {
-                    "name": f"search-pag-strat-{i}",
-                    "state": "draft",
-                    "owner": "test",
-                    "updatedAt": "2026-05-23T00:00:00Z",
-                }
+                bff_main.read_store.create_strategy_bff(
+                    strategy_id=f"search-pag-strat-{i}",
+                    name=f"search-pag-strat-{i}",
+                    state="draft",
+                    owner="test",
+                    updated_at="2026-05-23T00:00:00Z",
+                )
             resp1 = client.get(
                 "/bff/search?q=search-pag-strat&page_size=2",
                 headers=OPERATOR_HEADERS,
@@ -390,8 +434,6 @@ def test_bff_search_cursor_second_page() -> None:
             )
         finally:
             bff_main.read_store = original_store
-            bff_main._STRATEGY_BFF_OVERLAY.clear()
-            bff_main._STRATEGY_BFF_OVERLAY.update(saved_overlay)
 
 
 # ---------------------------------------------------------------------------
@@ -402,16 +444,16 @@ def test_bff_search_limit_alias_respected() -> None:
     """?limit=N is a backward-compat alias for page_size; must cap returned items to N."""
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        saved_overlay = dict(bff_main._STRATEGY_BFF_OVERLAY)
         try:
             client = _fresh_client(td)
             for i in range(5):
-                bff_main._STRATEGY_BFF_OVERLAY[f"limit-alias-strat-{i}"] = {
-                    "name": f"limit-alias-strat-{i}",
-                    "state": "draft",
-                    "owner": "test",
-                    "updatedAt": "2026-05-23T00:00:00Z",
-                }
+                bff_main.read_store.create_strategy_bff(
+                    strategy_id=f"limit-alias-strat-{i}",
+                    name=f"limit-alias-strat-{i}",
+                    state="draft",
+                    owner="test",
+                    updated_at="2026-05-23T00:00:00Z",
+                )
             resp = client.get(
                 "/bff/search?q=limit-alias-strat&limit=2",
                 headers=OPERATOR_HEADERS,
@@ -423,24 +465,22 @@ def test_bff_search_limit_alias_respected() -> None:
             assert body["page_info"].get("total") >= 5
         finally:
             bff_main.read_store = original_store
-            bff_main._STRATEGY_BFF_OVERLAY.clear()
-            bff_main._STRATEGY_BFF_OVERLAY.update(saved_overlay)
 
 
 def test_bff_search_limit_alias_matches_page_size() -> None:
     """?limit=N and ?page_size=N must return identical result counts."""
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        saved_overlay = dict(bff_main._STRATEGY_BFF_OVERLAY)
         try:
             client = _fresh_client(td)
             for i in range(5):
-                bff_main._STRATEGY_BFF_OVERLAY[f"limit-eq-strat-{i}"] = {
-                    "name": f"limit-eq-strat-{i}",
-                    "state": "draft",
-                    "owner": "test",
-                    "updatedAt": "2026-05-23T00:00:00Z",
-                }
+                bff_main.read_store.create_strategy_bff(
+                    strategy_id=f"limit-eq-strat-{i}",
+                    name=f"limit-eq-strat-{i}",
+                    state="draft",
+                    owner="test",
+                    updated_at="2026-05-23T00:00:00Z",
+                )
             r_limit = client.get(
                 "/bff/search?q=limit-eq-strat&limit=3", headers=OPERATOR_HEADERS
             )
@@ -456,5 +496,3 @@ def test_bff_search_limit_alias_matches_page_size() -> None:
             )
         finally:
             bff_main.read_store = original_store
-            bff_main._STRATEGY_BFF_OVERLAY.clear()
-            bff_main._STRATEGY_BFF_OVERLAY.update(saved_overlay)

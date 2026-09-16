@@ -23,6 +23,8 @@ from .strategy_adapter import StrategyCommandAdapter
 from .capabilities_adapter import CapabilitiesCommandAdapter
 from .agora_adapter import AgoraCommandAdapter
 from .audit_adapter import AuditCommandAdapter
+from .experiment_adapter import ExperimentCommandAdapter
+from .job_adapter import JobCommandAdapter
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +35,16 @@ _DEFAULT_ADAPTERS: List[DomainCommandAdapter] = [
     PersonaCommandAdapter(),
     GovernanceCommandAdapter(),
     IncidentCommandAdapter(),
+    # BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001: ExperimentCommandAdapter
+    # and JobCommandAdapter must be registered ahead of EvolutionCommandAdapter.
+    # EvolutionCommandAdapter no longer declares ExperimentAction/JobAction in
+    # its _HANDLED_COMMANDS (see evolution_adapter.py), but first-match
+    # ordering here is still the single source of truth for "exactly one
+    # adapter owns each (command, entity, action) tuple" — put the dedicated
+    # owners first so a future accidental re-widening of Evolution's handled
+    # set can never silently shadow them again.
+    ExperimentCommandAdapter(),
+    JobCommandAdapter(),
     EvolutionCommandAdapter(),
     StrategyCommandAdapter(),
     CapabilitiesCommandAdapter(),

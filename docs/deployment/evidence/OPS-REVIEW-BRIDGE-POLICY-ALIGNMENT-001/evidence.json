@@ -1,0 +1,305 @@
+{
+  "task_id": "OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001",
+  "title": "Align declared review-bridge policy with enforced task PR checks",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "phase": "development-tooling-review-bridge-policy-alignment-20260910",
+  "generated_at": "2026-09-10T04:27:00.000000+00:00",
+  "identities": {
+    "source_base": "pantheon-origin-dev@9b867623884b5e8f2322beca801e872f2ce92a82",
+    "command_runtime_sha": "41f08d9f28f4f5f68a4fa99c993f9d24939ede0f",
+    "command_runtime_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/41f08d9f28f4f5f68a4fa99c993f9d24939ede0f",
+    "status_root": "/home/chloe_ong_dev_cctech_support_com/code/pantheon",
+    "previous_frozen_head": "12d8d8d364c5d7ea9f52052f25e1cf3941a43503",
+    "validated_source_commit": "24658c9c3d8fcf2e775b5d2cb25188d137558994",
+    "tested_source_base": "9b867623884b5e8f2322beca801e872f2ce92a82"
+  },
+  "config_digests": {
+    "committed_source_config_path": ".orchestrator/config.json",
+    "committed_source_config_sha256": "bf31437a71353df7916771b6bcb876ebf4d15e96e47a929efd12f9b1e97ae74c",
+    "prior_source_config_sha256": "6ee526e13996b7919291c7d0a2c04fc6bfb7fa7bf2bbe7d84a2e8a30929e4da2",
+    "live_runtime_config_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "live_runtime_config_sha256": "dc5a146a9cc0330e58430a4413a7b4d087a7bad8632c8d3af15fc40559f8dede"
+  },
+  "github_dev_branch_protection_readback": {
+    "url": "https://api.github.com/repos/ajoe734/pantheon/branches/dev/protection/required_status_checks",
+    "strict": false,
+    "contexts": [
+      "Commit trailers",
+      "Runtime mirror guard",
+      "Smoke acceptance"
+    ],
+    "contexts_url": "https://api.github.com/repos/ajoe734/pantheon/branches/dev/protection/required_status_checks/contexts",
+    "checks": [
+      {
+        "context": "Commit trailers",
+        "app_id": 15368
+      },
+      {
+        "context": "Runtime mirror guard",
+        "app_id": 15368
+      },
+      {
+        "context": "Smoke acceptance",
+        "app_id": 15368
+      }
+    ],
+    "read_at": "2026-09-10T03:57:58.469695+00:00",
+    "command": "gh api repos/ajoe734/pantheon/branches/dev/protection/required_status_checks",
+    "exit_code": 0
+  },
+  "policy_alignment": {
+    "review_gate.github_review_bridge_required": false,
+    "branch_workflow.task_pr.required_status_checks": [
+      "Commit trailers",
+      "Runtime mirror guard",
+      "Smoke acceptance"
+    ],
+    "fail_closed_contract": {
+      "definition_module": ".orchestrator/common.py",
+      "validator": "validate_review_bridge_policy",
+      "rule": "When github_review_bridge_required is false, Pantheon canonical review gate must be absent from branch_workflow.task_pr.required_status_checks; when true, it must be present. Missing, malformed, duplicated, or contradictory policy raises ValueError fail-closed."
+    },
+    "drift_detection": {
+      "module": "scripts/check_config_drift.py",
+      "critical_flags_added": [
+        "review_gate.github_review_bridge_required",
+        "branch_workflow.task_pr.required_status_checks"
+      ],
+      "validator": "review_bridge_policy_errors",
+      "behavior": "Compares review bridge flags between repo and live configs. Rejects and fails closed on contradictory/malformed policy on either side even if equal or with --fix."
+    },
+    "live_provisioning": {
+      "module": "scripts/provision_live_supervisor_config.py",
+      "builder": "build_live_config",
+      "behavior": "Carries review-bridge and task-PR status checks into rendered config and validates using common.validate_review_bridge_policy() before emission."
+    },
+    "auto_integrator": {
+      "module": "scripts/git/auto_integrator.py",
+      "diagnostic_handler": "is_ignorable_diagnostic",
+      "rollup_handler": "integration_status_rollup",
+      "merge_authority": "TaskStore exact-head reviewer approval remains mandatory.",
+      "behavior": {
+        "valid_false_mode": "External canonical-gate failure is diagnostic only and does not block merge; recorded in ignored_diagnostic and auditable in candidate logs.",
+        "declared_checks": "Presence and successful terminal results are strictly enforced for every declared context before diagnostic filtering. Failure blocks and pending waits without REST merge or integration receipt.",
+        "contradictory_config": "Contradictory or malformed policy fails closed at candidate evaluation, execute authority resolution, and final revalidation. Final revalidation raises contradictory-review-bridge-policy, which is repair-producing in the shared contract. Execute publishes a durable request after releasing authority locks; supervisor materializes one exact-delivery-bound repair task through TaskStore without changing source approval, merging, or recording an integration receipt.",
+        "valid_true_mode": "Canonical review gate failure blocks merge unless verified proof tags exist."
+      }
+    }
+  },
+  "separation_of_authorities": {
+    "scope": "source delivery only",
+    "statement": "This delivery modifies committed source configuration, validation logic, drift detection, provisioning guards, and auto-integrator tests. It does not mutate the live supervisor runtime config or execute runtime promotion. Live runtime promotion remains a separate governed operation via existing promotion tooling. No GitHub branch-protection PATCH, credential rotation, or external identity changes were performed."
+  },
+  "declared_artifacts": [
+    ".orchestrator/config.json",
+    ".orchestrator/common.py",
+    ".orchestrator/test_common.py",
+    "scripts/git/auto_integrator.py",
+    "scripts/git/test_auto_integrator.py",
+    "scripts/check_config_drift.py",
+    "scripts/test_check_config_drift.py",
+    "scripts/provision_live_supervisor_config.py",
+    "scripts/test_provision_live_supervisor_config.py",
+    "docs/operations/auto-integrator.md",
+    "docs/deployment/evidence/OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001/evidence.json",
+    ".orchestrator/auto_integrator_unblock_contract.py",
+    ".orchestrator/test_supervisor_watchdog.py",
+    ".orchestrator/test_supervisor_recovery_process_e2e.py",
+    "scripts/git/test_task_review_merge_gate.py"
+  ],
+  "prior_delivery_verification": {
+    "python_environment": ".venv-pantheon/bin/python3 (provisioned via PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3)",
+    "test_results": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py",
+        "exit_code": 0,
+        "summary": "130 passed, 66 subtests passed in 29.31s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_provision_live_supervisor_config.py",
+        "exit_code": 0,
+        "summary": "58 passed in 36.40s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_check_config_drift.py",
+        "exit_code": 0,
+        "summary": "48 passed in 5.55s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py",
+        "exit_code": 0,
+        "summary": "149 passed, 22 subtests passed in 19.65s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py scripts/git/test_auto_integrator.py .orchestrator/test_supervisor.py -k \"not test_supervisor or test_consumer_allowlist_covers_literal_auto_integrator_reason_producers\"",
+        "exit_code": 0,
+        "summary": "386 passed in 96.79s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/check_config_drift.py --repo-config .orchestrator/config.json --live-config /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --json",
+        "exit_code": 1,
+        "summary": "Accurately detects drift in branch_workflow.task_pr.required_status_checks and reports live contradictory review bridge policy failure"
+      }
+    ]
+  },
+  "verification": {
+    "python_environment": ".venv-pantheon/bin/python3; checkout-scoped provisioning with dependency interpreter /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3",
+    "test_results": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py -k final_invalid_policy --tb=short",
+        "exit_code": 0,
+        "summary": "1 passed, 149 deselected, 3 subtests passed in 1.66s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/check_config_drift.py --repo-config .orchestrator/config.json --live-config /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --json",
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "summary": "Read-only drift probe reports required_status_checks source/live mismatch and contradictory live review-bridge policy; no fix requested. Also reports five missing worker_slots entries."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py scripts/git/test_auto_integrator.py .orchestrator/test_supervisor.py -k 'not test_supervisor or AutoIntegratorUnblockAuthorityTests' --tb=short",
+        "exit_code": 0,
+        "summary": "401 passed, 309 deselected, 109 subtests passed in 184.86s (0:03:04)"
+      }
+    ],
+    "base_composition": "Composed current dev at 53309a9aaaf354db1c510cf7c284aa0ad38de944 (artifact scope admission and integration recovery evidence) without conflicts; the new fixture and policy suite results above cover the composed source.",
+    "fixture_repair": {
+      "anchor_commit": "1123e01e96a5bf020ecb004727a9539e8e263beb",
+      "scope": "Only local watchdog and recovery subprocess configs declare false bridge mode and exactly Commit trailers, Runtime mirror guard, Smoke acceptance. Shared config_fixture and strict load_config validation are unchanged. Removed the declared EOF blank in scripts/test_check_config_drift.py.",
+      "test_results": [
+        {
+          "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_watchdog.py .orchestrator/test_supervisor_recovery_process_e2e.py scripts/test_check_config_drift.py --tb=short",
+          "exit_code": 1,
+          "summary": "116 passed, 1 failed, 20 subtests passed in 49.82s; inherited ORCH heartbeat/status paths caused temporary status-root mismatch in test_human_ops_cli_reopen_reaches_one_worker_through_fresh_scheduler."
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_watchdog.py .orchestrator/test_supervisor_recovery_process_e2e.py .orchestrator/test_common.py scripts/test_check_config_drift.py scripts/test_provision_live_supervisor_config.py scripts/git/test_auto_integrator.py --tb=short",
+          "environment": "Test subprocess removes inherited PANTHEON_* variables; 300-second subprocess timeout.",
+          "exit_code": 1,
+          "summary": "454 passed, 1 failed, 111 subtests passed in 153.43s; the same recovery test detected inherited ORCH_WORKSPACE_PATH without PANTHEON_WORKTREE_ROOT. All other tests passed."
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_recovery_process_e2e.py --tb=short",
+          "environment": "Test subprocess removes inherited PANTHEON_* and ORCH_* variables; 300-second subprocess timeout. Actual governed worker commands retain their supervisor binding.",
+          "exit_code": 0,
+          "summary": "5 passed in 37.94s, including the previously environment-contaminated human-ops CLI test."
+        },
+        {
+          "command": "git diff --check origin/dev...HEAD",
+          "exit_code": 0
+        }
+      ],
+      "read_only_live_drift": {
+        "command": ".venv-pantheon/bin/python3 scripts/check_config_drift.py --repo-config .orchestrator/config.json --live-config /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --json",
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "report": {
+          "drift": [
+            {
+              "path": "branch_workflow.task_pr.required_status_checks",
+              "repo": [
+                "Commit trailers",
+                "Runtime mirror guard",
+                "Smoke acceptance"
+              ],
+              "live": [
+                "Commit trailers",
+                "Runtime mirror guard",
+                "Smoke acceptance",
+                "Pantheon canonical review gate"
+              ]
+            }
+          ],
+          "intentional": [],
+          "missing": [
+            {
+              "path": "agents.claude.worker_slots",
+              "repo": null,
+              "live": null
+            },
+            {
+              "path": "agents.claude2.worker_slots",
+              "repo": null,
+              "live": null
+            },
+            {
+              "path": "agents.antigravity.worker_slots",
+              "repo": null,
+              "live": null
+            },
+            {
+              "path": "agents.antigravity2.worker_slots",
+              "repo": null,
+              "live": null
+            },
+            {
+              "path": "agents.copilot.worker_slots",
+              "repo": null,
+              "live": null
+            }
+          ],
+          "fleet_capacity_errors": [],
+          "review_bridge_policy_errors": [
+            {
+              "source": "live",
+              "error": "contradictory review bridge policy: github_review_bridge_required is false, but 'Pantheon canonical review gate' is declared in branch_workflow.task_pr.required_status_checks"
+            }
+          ],
+          "repository_source_drift": [],
+          "repository_integration_drift": [],
+          "dev_root_behind": null,
+          "fixed": [],
+          "exit_code": 1
+        }
+      }
+    },
+    "integration_gate_fixture_repair": {
+      "scope": "Repair only scripts/git/test_task_review_merge_gate.py open_pr required-check rollup to include Commit trailers, Runtime mirror guard, and Smoke acceptance. Strict production policy and shared config fixtures remain unchanged.",
+      "test_results": [
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py",
+          "exit_code": 0,
+          "summary": "119 passed, 8 subtests passed in 25.23s"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py",
+          "exit_code": 0,
+          "summary": "236 passed, 66 subtests passed in 74.79s (0:01:14)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py",
+          "exit_code": 0,
+          "summary": "150 passed, 25 subtests passed in 23.58s"
+        },
+        {
+          "command": "env -i HOME=$HOME PATH=$PATH USER=$USER .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_recovery_process_e2e.py",
+          "exit_code": 0,
+          "summary": "5 passed in 39.84s (clean subprocess environment)"
+        },
+        {
+          "command": "env -i HOME=$HOME PATH=$PATH USER=$USER .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_watchdog.py",
+          "exit_code": 0,
+          "summary": "64 passed, 20 subtests passed in 12.18s (clean subprocess environment)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 scripts/check_config_drift.py --repo-config .orchestrator/config.json --live-config /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --json",
+          "exit_code": 1,
+          "expected_exit_code": 1,
+          "summary": "Read-only drift probe reports required_status_checks source/live mismatch and contradictory live review-bridge policy; no fix requested."
+        },
+        {
+          "command": "git diff --check origin/dev...HEAD",
+          "exit_code": 0
+        }
+      ]
+    }
+  },
+  "delivery": {
+    "pr": 5738,
+    "url": "https://github.com/ajoe734/pantheon/pull/5738",
+    "state": "awaiting fresh exact-head independent review",
+    "merge_commit": null,
+    "runtime_promotion": "not performed; live policy drift remains until governed promotion"
+  }
+}

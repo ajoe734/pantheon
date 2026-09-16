@@ -7,8 +7,12 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-from services.control_plane.bff.ports import DefaultResearchKnowledgeSourcePort
-from services.control_plane.bff.tests.fixtures.research_fixture import create_research_test_client
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+import main as bff_main
+from ports import DefaultResearchKnowledgeSourcePort
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -86,9 +90,9 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
         include_snapshot_fallback: bool = True,
         include_local_fallback: bool = True,
     ) -> dict | None:
-        import inspect
-        stack_names = {f.function for f in inspect.stack()[:8]}
-        if self._source == "local_snapshot" and "endpoint_get_ticket" in stack_names:
+        if self._source == "local_snapshot" and not (
+            include_snapshot_fallback and include_local_fallback
+        ):
             return None
         return super().get_research_ticket(ticket_id)
 
@@ -112,11 +116,17 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
 
 @contextmanager
 def _seeded_client():
-    port = _TicketPortDouble(
-        _SEEDED_TICKETS,
-        source="local_snapshot",
-    )
-    yield create_research_test_client(port)
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        bff_main.read_store = _TicketPortDouble(
+            _SEEDED_TICKETS,
+            source="local_snapshot",
+        )
+        client = TestClient(bff_main.app)
+        try:
+            yield client
+        finally:
+            bff_main.read_store = original_store
 
 
 @contextmanager
@@ -166,15 +176,17 @@ def _service_backed_client():
 
         os.environ["PANTHEON_BFF_RESEARCH_TICKET_STORE"] = str(ticket_store)
 
-        port = _TicketPortDouble(
+        original_store = bff_main.read_store
+        bff_main.read_store = _TicketPortDouble(
             json.loads(ticket_store.read_text(encoding="utf-8")),
             source="service_client",
             persistence_path=ticket_store,
         )
-        client = create_research_test_client(port)
+        client = TestClient(bff_main.app)
         try:
             yield client, ticket_store
         finally:
+            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -184,8 +196,14 @@ def _service_backed_client():
 
 @contextmanager
 def _unavailable_client():
-    port = _TicketPortDouble({}, source="missing")
-    yield create_research_test_client(port)
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        bff_main.read_store = _TicketPortDouble({}, source="missing")
+        client = TestClient(bff_main.app)
+        try:
+            yield client
+        finally:
+            bff_main.read_store = original_store
 
 
 def test_rw01_list_contract_returns_ticket_projection() -> None:

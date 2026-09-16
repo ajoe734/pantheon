@@ -1,11 +1,11 @@
 {
-  "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
-  "version": "2.0",
-  "description": "Architectural classification of BFF test suites and composition decoupling",
-  "total_test_files": 369,
+  "task_id": "BFF-TEST-ARCH-001",
+  "version": "1.0",
+  "description": "Architectural classification of BFF test suites and composition allowlist",
+  "total_test_files": 341,
   "audited_baseline_main_importers": 218,
-  "current_main_importers": 192,
-  "migrated_in_task_count": 34,
+  "current_main_importers": 211,
+  "migrated_in_task_count": 5,
   "composition_allowlist": [
     "tests/test_bff_main_composition.py",
     "test_action_catalog.py",
@@ -18,63 +18,36 @@
     "tests/test_read_store_fixture_boundaries.py",
     "tests/test_agora_servant_production_write_owner.py",
     "tests/test_read_surface_caller_migration.py",
-    "tests/test_bff_test_architecture.py"
+    "tests/test_bff_test_architecture.py",
+    "test_execute_plans_contract_registry.py",
+    "test_execute_plans_final_live_wiring_contract.py"
   ],
   "migrated_suites": [
-    "test_ask_001_sessions_contract.py",
-    "test_ask_003_committee_lifecycle.py",
-    "test_ask_004_memo_publish_contract.py",
-    "test_audit_timestamp_filter_no_500.py",
-    "test_bff_audit_contract.py",
-    "test_consultation_surfaces.py",
     "test_cw01_consult_request_contract.py",
     "test_cw02_debate_transcript_contract.py",
     "test_cw04_redteam_memo_contract.py",
-    "test_exp002_bff_research_experiments_contract.py",
-    "test_inc001_rebaseline_incidents_contract.py",
-    "test_incident_stream_route_order.py",
-    "test_pkt001_deployment_review_console_contract.py",
-    "test_pkt001_governance_review_queue_contract.py",
-    "test_pkt006_approval_queue_contract.py",
-    "test_rw01_research_ticket_contract.py",
-    "test_rw02_search_contract.py",
-    "test_rw03_analyze_contract.py",
-    "test_rw04_experiment_launch_contract.py",
-    "test_rw05_artifact_compare_contract.py",
-    "test_settings_contract.py",
-    "test_trn002_trainer_session_contract.py",
-    "test_trn003_rapid_eval_contract.py",
-    "test_tw01_teaching_dialog_contract.py",
-    "test_tw02_parameter_controls_contract.py",
-    "test_tw03_before_after_compare_contract.py",
-    "test_tw04_teaching_replay_contract.py",
-    "tests/test_bff_auth_refresh.py",
-    "tests/test_bff_logout.py",
-    "tests/test_bff_me_locale.py",
-    "tests/test_bff_me_session_bootstrap.py",
     "tests/test_governance_router.py",
-    "tests/test_incident_router.py",
     "tests/test_operations_consultation_ports.py"
   ],
   "layer_summary": {
-    "adapter": 29,
-    "application": 196,
-    "router": 116,
-    "composition": 17,
+    "composition": 11,
+    "router": 114,
+    "application": 180,
+    "adapter": 25,
     "hosted": 11
   },
   "main_by_layer": {
-    "composition": 8,
-    "router": 58,
+    "composition": 7,
+    "router": 79,
     "application": 115,
-    "adapter": 5,
+    "adapter": 4,
     "hosted": 6
   },
   "disposition_summary": {
-    "ALLOWLIST": 12,
-    "MIGRATED": 34,
-    "PLANNED": 182,
-    "DECOUPLED": 141
+    "ALLOWLIST": 13,
+    "MIGRATED": 5,
+    "PLANNED": 202,
+    "DECOUPLED": 121
   },
   "tests": [
     {
@@ -232,20 +205,6 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
-      "file": "auth/test_policy.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "conftest.py",
-      "layer": "composition",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
       "file": "events/test_router.py",
       "layer": "router",
       "imports_main": false,
@@ -260,60 +219,11 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
-      "file": "governance/test_decision_journal_write_owner.py",
-      "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
       "file": "http_smoke_test.py",
       "layer": "application",
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
-    },
-    {
-      "file": "management_read_models/test_management_service_context_observations.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "management_read_models/test_persona_fleet_read_failures.py",
-      "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "management_read_models/test_twelve_loop_projector.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "migrations/test_overlay_retirement.py",
-      "layer": "adapter",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "migrations/test_twelve_loop_truth.py",
-      "layer": "adapter",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "personas/test_router_isolation.py",
-      "layer": "router",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
     },
     {
       "file": "research/test_router.py",
@@ -328,20 +238,6 @@
       "imports_main": true,
       "disposition": "ALLOWLIST",
       "rationale": "Reviewed composition/architecture test permitted to import composition root"
-    },
-    {
-      "file": "smoke_test_incident.py",
-      "layer": "composition",
-      "imports_main": true,
-      "disposition": "ALLOWLIST",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "strategies/test_router_isolation.py",
-      "layer": "router",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
     },
     {
       "file": "test_action_catalog.py",
@@ -388,23 +284,23 @@
     {
       "file": "test_ask_001_sessions_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated to standalone router/app composition with instance-bound store/idempotency isolation (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_ask_003_committee_lifecycle.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated to standalone router/app composition with instance-bound store/idempotency isolation (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "test_ask_004_memo_publish_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated to standalone router/app composition with instance-bound store/idempotency isolation (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_aud_002_audit_action_write_engine.py",
@@ -416,9 +312,9 @@
     {
       "file": "test_audit_timestamp_filter_no_500.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "test_bff_agora_core_contract.py",
@@ -444,9 +340,9 @@
     {
       "file": "test_bff_audit_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_bff_auth_facade.py",
@@ -668,9 +564,9 @@
     {
       "file": "test_consultation_surfaces.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated to standalone governance router composition with per-client store (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "test_current_twelve_owner_truth.py",
@@ -767,22 +663,22 @@
       "file": "test_execute_plans_contract_registry.py",
       "layer": "router",
       "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "disposition": "ALLOWLIST",
+      "rationale": "Retained on composition allowlist as whole-application contract registry suite"
     },
     {
       "file": "test_execute_plans_final_live_wiring_contract.py",
       "layer": "hosted",
       "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: hosted)"
+      "disposition": "ALLOWLIST",
+      "rationale": "Retained on composition allowlist as whole-application final live wiring contract suite"
     },
     {
       "file": "test_exp002_bff_research_experiments_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_final_command_execution_bridge.py",
@@ -822,16 +718,16 @@
     {
       "file": "test_inc001_rebaseline_incidents_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_incident_stream_route_order.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_kw01_institutional_memory_contract.py",
@@ -1102,16 +998,16 @@
     {
       "file": "test_pkt001_deployment_review_console_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated to standalone deployment router composition via DeploymentReadSurfaceAdapter (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_pkt001_governance_review_queue_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_pkt003_lineage_view_contract.py",
@@ -1144,9 +1040,9 @@
     {
       "file": "test_pkt006_approval_queue_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_pkt007_deployment_diff_contract.py",
@@ -1305,37 +1201,37 @@
     {
       "file": "test_rw01_research_ticket_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_rw02_search_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_rw03_analyze_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_rw04_experiment_launch_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_rw05_artifact_compare_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_search_retrieval_cutoff_contract.py",
@@ -1375,9 +1271,9 @@
     {
       "file": "test_settings_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated to standalone settings router composition (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_source_connector_service_client.py",
@@ -1459,44 +1355,44 @@
     {
       "file": "test_trn002_trainer_session_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_trn003_rapid_eval_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_tw01_teaching_dialog_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_tw02_parameter_controls_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_tw03_before_after_compare_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_tw04_teaching_replay_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "test_v5_interventions.py",
@@ -1525,34 +1421,6 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
-    },
-    {
-      "file": "tests/fixtures/__init__.py",
-      "layer": "composition",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "tests/fixtures/governance_fixture.py",
-      "layer": "composition",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "tests/fixtures/research_fixture.py",
-      "layer": "composition",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "tests/fixtures/training_fixture.py",
-      "layer": "composition",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
     },
     {
       "file": "tests/knowledge_read_port_fixtures.py",
@@ -1590,13 +1458,6 @@
       "rationale": "Planned for decoupling in subsequent wave (layer: adapter)"
     },
     {
-      "file": "tests/test_agora_authentic_adapter_negative_controls.py",
-      "layer": "adapter",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
       "file": "tests/test_agora_candidate_decisions.py",
       "layer": "application",
       "imports_main": false,
@@ -1616,13 +1477,6 @@
       "imports_main": true,
       "disposition": "PLANNED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
-    },
-    {
-      "file": "tests/test_agora_chain_001_natural_owner_and_receipt.py",
-      "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
     },
     {
       "file": "tests/test_agora_dashboard_store.py",
@@ -1665,13 +1519,6 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
-    },
-    {
-      "file": "tests/test_agora_performance_transport_and_isolated_store.py",
-      "layer": "adapter",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
     },
     {
       "file": "tests/test_agora_persona_interactions.py",
@@ -1844,8 +1691,8 @@
     {
       "file": "tests/test_bff_auth_refresh.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "MIGRATED",
+      "imports_main": true,
+      "disposition": "PLANNED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
@@ -2026,8 +1873,8 @@
     {
       "file": "tests/test_bff_logout.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "MIGRATED",
+      "imports_main": true,
+      "disposition": "PLANNED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
@@ -2061,15 +1908,15 @@
     {
       "file": "tests/test_bff_me_locale.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "MIGRATED",
+      "imports_main": true,
+      "disposition": "PLANNED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "tests/test_bff_me_session_bootstrap.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "MIGRATED",
+      "imports_main": true,
+      "disposition": "PLANNED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
@@ -2271,9 +2118,9 @@
     {
       "file": "tests/test_incident_router.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Decoupled from composition root main.py and isolated into domain fixture/router"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
       "file": "tests/test_lifecycle_telemetry_governance_ports.py",
@@ -2313,7 +2160,7 @@
     {
       "file": "tests/test_management_read_models_router.py",
       "layer": "router",
-      "imports_main": true,
+      "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
     },
@@ -2323,13 +2170,6 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
-    },
-    {
-      "file": "tests/test_mgmt_read_001_persona_fleet_owner_observations.py",
-      "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
     },
     {
       "file": "tests/test_ooda_management_ports.py",
@@ -2360,13 +2200,6 @@
       "rationale": "Decoupled from main composition globals in BFF-TEST-ARCH-001"
     },
     {
-      "file": "tests/test_overlay_retirement.py",
-      "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
       "file": "tests/test_persona_capital_runtime_ports.py",
       "layer": "application",
       "imports_main": false,
@@ -2374,60 +2207,11 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
-      "file": "tests/test_persona_create_owner_contract.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "tests/test_persona_deployment_wire_contract.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "tests/test_persona_governance_caller_contract.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
       "file": "tests/test_persona_owner_packaged_transport.py",
       "layer": "adapter",
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
-    },
-    {
-      "file": "tests/test_persona_owner_transport_contract.py",
-      "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "tests/test_persona_paper_owner_lifecycle_contract.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "tests/test_persona_paper_principal_transport_contract.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
-      "file": "tests/test_persona_paper_registry_owner_contract.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
     },
     {
       "file": "tests/test_persona_provisioning_read_surface_mutation.py",
@@ -2605,13 +2389,6 @@
       "rationale": "Planned for decoupling in subsequent wave (layer: router)"
     },
     {
-      "file": "tests/test_strategy_registry_owner_prerequisite.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Reconciled live test suite on disk into inventory catalog"
-    },
-    {
       "file": "tests/test_strategy_workshop_command_store.py",
       "layer": "adapter",
       "imports_main": false,
@@ -2649,7 +2426,7 @@
     {
       "file": "tests/test_unhandled_error_cors.py",
       "layer": "application",
-      "imports_main": true,
+      "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
     },

@@ -10,9 +10,150 @@ services/control-plane/governance/.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field as dataclass_field
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+
+# ---------------------------------------------------------------------------
+# Evolution Program (U8A owner data contract)
+#
+# See docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md
+# §2/§3: exactly six program states, never aliased to a decision/run/approval
+# state. U8A only implements durable create/list/get/PATCH(name) — real
+# lifecycle transitions (submit_evolution_review, approve_program,
+# pause_program, resume_program, complete_program, retire_program, stop,
+# freeze_generation, promote_candidate_paper/live, approve_mutation/
+# reject_mutation) are U8B's obligation.
+# ---------------------------------------------------------------------------
+
+class ProgramStatus(str, Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    PAUSED = "paused"
+    UNDER_REVIEW = "under_review"
+    COMPLETED = "completed"
+    RETIRED = "retired"
+    STOPPED = "stopped"
+
+
+@dataclass
+class EvolutionProgram:
+    """Program aggregate: trusted tenant + program_id, durable revision.
+
+    ``legacy_params`` preserves any pre-existing stored params for audit
+    only. Real lifecycle controls, state transitions, steering (constraints,
+    fitness formulas, mutation rules), generation freeze records, and
+    promotions are owned by U8B.
+    """
+
+    program_id: str
+    tenant_id: str
+    created_by: str
+    name: str
+    status: ProgramStatus
+    revision: int
+    created_at: str
+    updated_at: str
+    legacy_params: Dict[str, Any] = dataclass_field(default_factory=dict)
+    run_ids: List[str] = dataclass_field(default_factory=list)
+    candidate_ids: List[str] = dataclass_field(default_factory=list)
+    updated_by: Optional[str] = None
+    is_frozen: bool = False
+    freeze_records: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    constraints: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    fitness_formulas: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    mutation_rules: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    promotions: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    action_receipts: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "program_id": self.program_id,
+            "tenant_id": self.tenant_id,
+            "created_by": self.created_by,
+            "name": self.name,
+            "status": self.status.value if isinstance(self.status, ProgramStatus) else str(self.status),
+            "revision": self.revision,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "legacy_params": self.legacy_params or {},
+            "run_ids": list(self.run_ids or []),
+            "candidate_ids": list(self.candidate_ids or []),
+            "updated_by": self.updated_by,
+            "is_frozen": bool(self.is_frozen),
+            "freeze_records": list(self.freeze_records or []),
+            "constraints": list(self.constraints or []),
+            "fitness_formulas": list(self.fitness_formulas or []),
+            "mutation_rules": list(self.mutation_rules or []),
+            "promotions": list(self.promotions or []),
+            "action_receipts": list(self.action_receipts or []),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "EvolutionProgram":
+        status = data.get("status")
+        return cls(
+            program_id=str(data.get("program_id") or ""),
+            tenant_id=str(data.get("tenant_id") or ""),
+            created_by=str(data.get("created_by") or ""),
+            name=str(data.get("name") or ""),
+            status=ProgramStatus(status) if not isinstance(status, ProgramStatus) else status,
+            revision=int(data.get("revision") or 0),
+            created_at=str(data.get("created_at") or ""),
+            updated_at=str(data.get("updated_at") or ""),
+            legacy_params=dict(data.get("legacy_params") or {}),
+            run_ids=list(data.get("run_ids") or []),
+            candidate_ids=list(data.get("candidate_ids") or []),
+            updated_by=data.get("updated_by"),
+            is_frozen=bool(data.get("is_frozen", False)),
+            freeze_records=list(data.get("freeze_records") or []),
+            constraints=list(data.get("constraints") or []),
+            fitness_formulas=list(data.get("fitness_formulas") or []),
+            mutation_rules=list(data.get("mutation_rules") or []),
+            promotions=list(data.get("promotions") or []),
+            action_receipts=list(data.get("action_receipts") or []),
+        )
+
+
+class ProgramActionRequest(BaseModel):
+    model_config = {"extra": "allow"}
+
+    actor_id: str
+    actor_role: str = "operator"
+    expected_revision: Optional[int] = None
+    tenant_id: Optional[str] = None
+    reason: Optional[str] = None
+    note: Optional[str] = None
+    params: Optional[Dict[str, Any]] = None
+    candidate_id: Optional[str] = None
+    run_id: Optional[str] = None
+    artifact_id: Optional[str] = None
+    artifact_version: Optional[str] = None
+    artifact_digest: Optional[str] = None
+    approval_id: Optional[str] = None
+    decision_id: Optional[str] = None
+    mutation_id: Optional[str] = None
+    generation_id: Optional[Any] = None
+    idempotency_key: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+
+
+class ProgramActionReceiptOut(BaseModel):
+    receipt_id: str
+    program_id: str
+    action_id: str
+    status: str
+    executed_at: str
+    actor_id: str
+    actor_role: str
+    prior_status: str
+    new_status: str
+    revision: int
+    readback: Dict[str, Any]
+    details: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------

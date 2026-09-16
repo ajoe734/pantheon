@@ -126,6 +126,229 @@ class EvolutionClient:
             if should_close_client and client:
                 await client.aclose()
 
+    # ------------------------------------------------------------------
+    # Evolution Program owner API (U8A) — /api/evolution/programs
+    #
+    # These mirror ``submit_proposal``/``get_decision``'s auth/tenant/
+    # idempotency header conventions above. U8A only implements durable
+    # create/list/get/PATCH(name); there is deliberately no program action
+    # method here — real lifecycle effects are U8B's obligation and must
+    # not be fabricated by this client.
+    # ------------------------------------------------------------------
+
+    async def create_program(
+        self,
+        *,
+        name: str,
+        actor_id: str,
+        idempotency_key: Optional[str] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> Dict[str, Any]:
+        """Create a new Evolution Program (POST /api/evolution/programs)."""
+        url = f"{self.base_url}/api/evolution/programs"
+        headers = self._get_headers(idempotency_key=idempotency_key)
+        payload = {"name": name, "actor_id": actor_id}
+
+        should_close_client = False
+        client = client or self._async_client
+        if client is None:
+            client = httpx.AsyncClient(timeout=self.timeout)
+            should_close_client = True
+        try:
+            resp = await client.post(url, json=payload, headers=headers)
+            if resp.status_code in (401, 403):
+                raise EvolutionAuthenticationError(
+                    f"Evolution create_program failed with auth error status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise EvolutionClientError(
+                    f"Evolution create_program failed with status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            return resp.json()
+        finally:
+            if should_close_client and client:
+                await client.aclose()
+
+    async def list_programs(
+        self,
+        *,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> Dict[str, Any]:
+        """List Evolution Programs for the caller's tenant (GET /api/evolution/programs)."""
+        url = f"{self.base_url}/api/evolution/programs"
+        headers = self._get_headers()
+
+        should_close_client = False
+        client = client or self._async_client
+        if client is None:
+            client = httpx.AsyncClient(timeout=self.timeout)
+            should_close_client = True
+        try:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code in (401, 403):
+                raise EvolutionAuthenticationError(
+                    f"Evolution list_programs failed with auth error status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            if resp.status_code != 200:
+                raise EvolutionClientError(
+                    f"Evolution list_programs failed with status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            return resp.json()
+        finally:
+            if should_close_client and client:
+                await client.aclose()
+
+    async def get_program(
+        self,
+        program_id: str,
+        *,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> Dict[str, Any]:
+        """Fetch a single Evolution Program (GET /api/evolution/programs/{id})."""
+        url = f"{self.base_url}/api/evolution/programs/{program_id}"
+        headers = self._get_headers()
+
+        should_close_client = False
+        client = client or self._async_client
+        if client is None:
+            client = httpx.AsyncClient(timeout=self.timeout)
+            should_close_client = True
+        try:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code in (401, 403):
+                raise EvolutionAuthenticationError(
+                    f"Evolution get_program failed with auth error status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            if resp.status_code == 404:
+                raise EvolutionClientError(
+                    f"Evolution program not found: {program_id}",
+                    status_code=404,
+                    response_body=resp.text,
+                )
+            if resp.status_code != 200:
+                raise EvolutionClientError(
+                    f"Evolution get_program failed for {program_id} with status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            return resp.json()
+        finally:
+            if should_close_client and client:
+                await client.aclose()
+
+    async def patch_program(
+        self,
+        program_id: str,
+        *,
+        name: str,
+        actor_id: str,
+        expected_revision: int,
+        idempotency_key: Optional[str] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> Dict[str, Any]:
+        """Patch a program's ``name`` (PATCH /api/evolution/programs/{id}).
+
+        The owner API allowlists ``name`` only; ``expected_revision`` is the
+        CAS precondition, not a patchable field. Any other field is rejected
+        with 422 by the owner service — this client does not smuggle
+        unsupported fields through.
+        """
+        url = f"{self.base_url}/api/evolution/programs/{program_id}"
+        headers = self._get_headers(idempotency_key=idempotency_key)
+        payload = {"name": name, "actor_id": actor_id, "expected_revision": expected_revision}
+
+        should_close_client = False
+        client = client or self._async_client
+        if client is None:
+            client = httpx.AsyncClient(timeout=self.timeout)
+            should_close_client = True
+        try:
+            resp = await client.patch(url, json=payload, headers=headers)
+            if resp.status_code in (401, 403):
+                raise EvolutionAuthenticationError(
+                    f"Evolution patch_program failed with auth error status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            if resp.status_code == 404:
+                raise EvolutionClientError(
+                    f"Evolution program not found: {program_id}",
+                    status_code=404,
+                    response_body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise EvolutionClientError(
+                    f"Evolution patch_program failed for {program_id} with status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            return resp.json()
+        finally:
+            if should_close_client and client:
+                await client.aclose()
+
+    async def execute_program_action(
+        self,
+        program_id: str,
+        action_id: str,
+        *,
+        actor_id: str,
+        actor_role: str = "operator",
+        expected_revision: Optional[int] = None,
+        idempotency_key: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> Dict[str, Any]:
+        """Execute a program lifecycle action (POST /api/evolution/programs/{id}/actions/{action_id})."""
+        url = f"{self.base_url}/api/evolution/programs/{program_id}/actions/{action_id}"
+        headers = self._get_headers(idempotency_key=idempotency_key)
+        body = dict(payload or {})
+        body["actor_id"] = actor_id
+        body["actor_role"] = actor_role
+        if expected_revision is not None:
+            body["expected_revision"] = expected_revision
+
+        should_close_client = False
+        client = client or self._async_client
+        if client is None:
+            client = httpx.AsyncClient(timeout=self.timeout)
+            should_close_client = True
+        try:
+            resp = await client.post(url, json=body, headers=headers)
+            if resp.status_code in (401, 403):
+                raise EvolutionAuthenticationError(
+                    f"Evolution execute_program_action failed with auth error status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            if resp.status_code == 404:
+                raise EvolutionClientError(
+                    f"Evolution program not found: {program_id}",
+                    status_code=404,
+                    response_body=resp.text,
+                )
+            if resp.status_code not in (200, 201, 202):
+                raise EvolutionClientError(
+                    f"Evolution action {action_id} failed for {program_id} with status={resp.status_code}: {resp.text}",
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+            return resp.json()
+        finally:
+            if should_close_client and client:
+                await client.aclose()
+
+
     async def get_decision(
         self,
         decision_id: str,
@@ -136,6 +359,7 @@ class EvolutionClient:
         headers = self._get_headers()
 
         should_close_client = False
+        client = client or self._async_client
         if client is None:
             client = httpx.AsyncClient(timeout=self.timeout)
             should_close_client = True

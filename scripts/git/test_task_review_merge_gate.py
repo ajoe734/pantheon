@@ -166,7 +166,11 @@ def open_pr(**overrides: Any) -> dict[str, Any]:
         "state": "OPEN",
         "mergeStateStatus": "CLEAN",
         "commits": [{"oid": "b" * 40, "committedDate": "2026-07-26T11:30:00Z"}],
-        "statusCheckRollup": [{"name": "Smoke acceptance", "conclusion": "SUCCESS"}],
+        "statusCheckRollup": [
+            {"name": "Commit trailers", "conclusion": "SUCCESS"},
+            {"name": "Runtime mirror guard", "conclusion": "SUCCESS"},
+            {"name": "Smoke acceptance", "conclusion": "SUCCESS"},
+        ],
     }
     pr.update(overrides)
     return pr

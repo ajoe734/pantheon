@@ -1,0 +1,74 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001-MISSING-PR-396684243EB9",
+  "recorded_at": "2026-09-10T03:40:10Z",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "scope": "Restore discovery of the original promotion-drain PR and document the missing-pr integration blocker.",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "05dfc375f0a097cc4544f029cce811a6383d5112",
+  "command_runtime_sha": "41f08d9f28f4f5f68a4fa99c993f9d24939ede0f",
+  "source_task": {
+    "id": "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
+    "generation_at_inspection": 4,
+    "canonical_status_at_inspection": "review_approved",
+    "pr": 5736,
+    "url": "https://github.com/ajoe734/pantheon/pull/5736",
+    "head_sha_before_and_after": "2f30e2b5489e2ec9de84f5bda650e1346e66f999",
+    "frozen_base_sha": "9efcb763c44fdaf3f9f73dcafe4d9d3bf5e0fd91",
+    "review_file": "docs/deployment/evidence/OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001/evidence.json"
+  },
+  "root_cause": {
+    "observed": "PR #5736 was CLOSED without a merge while its canonical task remained review_approved. The integrator searches open PRs and then merged PRs; a closed, unmerged PR correctly does not qualify.",
+    "closure_at": "2026-09-10T03:31:22Z",
+    "correlated_pr": "https://github.com/ajoe734/pantheon/pull/5740",
+    "correlated_body_text": "resolves #5736",
+    "correlated_merge_at": "2026-09-10T03:31:21Z",
+    "correlated_merge_sha": "05dfc375f0a097cc4544f029cce811a6383d5112",
+    "inference": "The closing-keyword reference in #5740 and closure one second after its merge indicate an accidental cross-reference closure. #5740 implements artifact-scope admission and does not replace the promotion-drain implementation.",
+    "source_queries": [
+      "gh pr list --repo ajoe734/pantheon --head task/OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001 --state all --json number,state,url,headRefOid,baseRefName,mergeCommit",
+      "gh api repos/ajoe734/pantheon/issues/5736/timeline --paginate",
+      "gh api repos/ajoe734/pantheon/pulls/5740"
+    ]
+  },
+  "recovery": {
+    "command": "gh pr reopen 5736 --repo ajoe734/pantheon",
+    "exit_code": 0,
+    "state_after": "OPEN",
+    "auto_merge_request_after": null,
+    "implementation_head_changed": false,
+    "canonical_task_mutated": false,
+    "integrator_code_changed": false,
+    "reason_no_code_change": "The discovery policy is correct. Restoring the accidentally closed PR repairs this missing-pr incident without making closed PRs merge candidates."
+  },
+  "validation": [
+    {
+      "command": "timeout 60 python3 -c 'import json; from pathlib import Path; from scripts.git.auto_integrator import TaskCandidate, Settings, CommandRunner, fetch_pr_for_task, validate_pr; task=\"OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001\"; candidate=TaskCandidate(task_id=task,title=\"Promotion drain fence\",owner=\"Codex\",reviewer=\"Antigravity2\",branch=\"task/\"+task); runner=CommandRunner(); settings=Settings(); pr=fetch_pr_for_task(candidate,settings,runner,root=Path.cwd()); assert pr is not None; assert pr[\"number\"]==5736; assert pr[\"state\"]==\"OPEN\"; assert pr[\"headRefOid\"]==\"2f30e2b5489e2ec9de84f5bda650e1346e66f999\"; assert pr.get(\"autoMergeRequest\") is None; assert validate_pr(candidate,pr,settings) is None; print(json.dumps({k:pr.get(k) for k in (\"number\",\"state\",\"headRefOid\",\"baseRefName\",\"autoMergeRequest\",\"url\")},indent=2))'",
+      "exit_code": 0,
+      "result": "Actual integrator discovery and PR identity validation find the unchanged open PR #5736 targeting dev with auto-merge off. This does not assert merge readiness."
+    },
+    {
+      "command": "timeout 180 python3 scripts/git/auto_integrator.py --task-id OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001 --no-open-unblock --skip-smoke --json",
+      "exit_code": 2,
+      "result": "Full dry-run stopped at integration_lock_error: configured central lock parent is not writable from this worker."
+    },
+    {
+      "command": "timeout 180 python3 scripts/git/auto_integrator.py --task-id OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001 --no-open-unblock --no-lock --skip-smoke --json",
+      "exit_code": 2,
+      "result": "Isolated dry-run selected the source task, then stopped at central git-common-directory write preflight. No integration execution or smoke success is claimed."
+    }
+  ],
+  "remaining_delivery_gates": [
+    "Original PR #5736 requires supervisor integration after CI and canonical review requirements pass; it is not merged by this repair.",
+    "At post-reopen inspection, Smoke acceptance was pending in run 34434065398. Commit trailers, Runtime mirror guard and Python packaging provision passed.",
+    "Canonical review status from run 34434065425 reported a missing review-proof tag despite the existing canonical approval. The authorized review/integration lane must reconcile the genuine approval evidence; this repair does not fabricate tags or approvals.",
+    "Live promotion, health and watchdog acceptance remain the original task's separate post-merge obligations.",
+    "This evidence delivery requires its own exact-head independent review and supervisor merge before owner done."
+  ],
+  "acceptance": {
+    "root_cause_documented": true,
+    "original_pr_restored_to_open_discovery": true,
+    "source_implementation_merged": false,
+    "live_runtime_activated": false
+  }
+}

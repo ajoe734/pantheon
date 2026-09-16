@@ -5,22 +5,119 @@ rebalances, and rankings BFF compatibility surfaces.
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
-
-from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
 import uuid
 from typing import Any
 
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse
+
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.capital.router import create_capital_router
+from services.control_plane.bff.command_adapters.router import (
+    create_action_command_router,
+    create_command_adapters_router,
+)
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.management_read_models.ranking_router import (
+    create_ranking_formulas_router,
+    create_rankings_long_tail_router,
+)
+from services.control_plane.bff.models import CommandType, ObjectType, utc_now
+from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.strategies.routes.common import default_read_surface_meta
+from services.control_plane.bff.tools_integrations.service import (
+    deprecated_bff_path_response,
+    page_slice,
+    reject_body_idempotency_key,
+    resolve_final_idempotency_key,
+)
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
 IDEM_HEADERS = {**HEADERS, "Idempotency-Key": "test-key-001"}
+
+
+def _build_app(read_store: Any, command_store: CommandStore) -> FastAPI:
+    """Direct-construction harness mirroring the composition root's wiring for
+    the Capital, Ranking Formulas/Rankings, and Command Adapter routers (see
+    tests/rebalance_authority_test_support.py::_build_authority_harness_app)."""
+    app = FastAPI()
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            return JSONResponse(status_code=exc.status_code, content=detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "ERROR", "message": str(detail)}},
+        )
+
+    app.include_router(
+        create_capital_router(
+            read_surface=read_store,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+        )
+    )
+    app.include_router(
+        create_ranking_formulas_router(
+            read_surface=read_store,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+        )
+    )
+    app.include_router(
+        create_rankings_long_tail_router(
+            read_surface=read_store,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            page_slice=page_slice,
+            read_surface_meta=default_read_surface_meta,
+            deprecated_bff_path_response=deprecated_bff_path_response,
+            reject_body_idempotency_key=reject_body_idempotency_key,
+            resolve_final_idempotency_key=resolve_final_idempotency_key,
+            object_type=ObjectType,
+            command_type=CommandType,
+        )
+    )
+    app.include_router(
+        create_command_adapters_router(
+            command_store=command_store,
+            read_surface=read_store,
+            extract_identity=extract_identity,
+            require_operator_role=require_operator_role,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+        )
+    )
+    app.include_router(
+        create_action_command_router(
+            command_store=command_store,
+            extract_identity=extract_identity,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+        )
+    )
+    return app
 
 
 class CanonicalMock:
@@ -166,11 +263,10 @@ def _error(resp):
     raise AssertionError(f"response did not contain BFF error envelope: {body}")
 
 
-def _fresh_client(td: str):
-    bff_main.read_store = CapitalRankingTestReadPorts(allow_local_snapshot_fallback=True)
-    bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-    bff_main.command_store._update_commands([])
-    return TestClient(bff_main.app)
+def _fresh_client(td: str) -> TestClient:
+    store = CapitalRankingTestReadPorts(allow_local_snapshot_fallback=True)
+    command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+    return TestClient(_build_app(store, command_store))
 
 
 def _owner_pool_create(payload):
@@ -193,17 +289,14 @@ def _owner_pool_create(payload):
 
 def test_bff_capital_pools_list_returns_200() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/capital-pools", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "data" in body
-            assert "meta" in body
-            assert "page_info" in body
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.get("/bff/capital-pools", headers=HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "data" in body
+        assert "meta" in body
+        assert "page_info" in body
+
 
 
 def test_bff_capital_pools_list_returns_strict_items_envelope(monkeypatch) -> None:
@@ -233,9 +326,9 @@ def test_bff_capital_pools_list_returns_strict_items_envelope(monkeypatch) -> No
         store._canonical.list_records = lambda dataset, **kwargs: (
             (True, [seed_pool, other_pool]) if dataset == "capital_pools" else (False, [])
         )
-        monkeypatch.setattr(bff_main, "read_store", store)
+        command_store = CommandStore(os.path.join(td, "commands.jsonl"))
 
-        client = TestClient(bff_main.app)
+        client = TestClient(_build_app(store, command_store))
         resp = client.get(
             "/bff/capital-pools?status=active&risk_policy_ref=rp-001",
             headers=HEADERS,
@@ -253,92 +346,74 @@ def test_bff_capital_pools_list_returns_strict_items_envelope(monkeypatch) -> No
 
 def test_bff_capital_pools_create_requires_idempotency_key() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.post(
-                "/bff/capital-pools",
-                json={"name": "Test Pool"},
-                headers=HEADERS,
-            )
-            assert resp.status_code == 400, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/capital-pools",
+            json={"name": "Test Pool"},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 400, resp.text
 
 
-def test_bff_capital_pools_create_returns_201(monkeypatch) -> None:
-    monkeypatch.setattr(bff_main, "create_capital_pool", _owner_pool_create)
+
+def test_bff_capital_pools_create_returns_201() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.post(
-                "/bff/capital-pools",
-                json={"name": "Test Pool Alpha"},
-                headers={**HEADERS, "Idempotency-Key": "create-pool-001"},
-            )
-            assert resp.status_code == 201, resp.text
-            body = resp.json()
-            assert body["name"] == "Test Pool Alpha"
-            assert "pool_id" in body or "id" in body
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/capital-pools",
+            json={"name": "Test Pool Alpha"},
+            headers={**HEADERS, "Idempotency-Key": "create-pool-001"},
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["name"] == "Test Pool Alpha"
+        assert "pool_id" in body or "id" in body
 
 
-def test_bff_capital_pools_create_idempotency_replay(monkeypatch) -> None:
-    monkeypatch.setattr(bff_main, "create_capital_pool", _owner_pool_create)
+
+def test_bff_capital_pools_create_idempotency_replay() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            idem_key = "create-pool-replay-001"
-            payload = {"name": "Replay Pool"}
-            first = client.post(
-                "/bff/capital-pools",
-                json=payload,
-                headers={**HEADERS, "Idempotency-Key": idem_key},
-            )
-            assert first.status_code == 201, first.text
-            second = client.post(
-                "/bff/capital-pools",
-                json=payload,
-                headers={**HEADERS, "Idempotency-Key": idem_key},
-            )
-            assert second.status_code == 201, second.text
-            assert first.json()["name"] == second.json()["name"]
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        idem_key = "create-pool-replay-001"
+        payload = {"name": "Replay Pool"}
+        first = client.post(
+            "/bff/capital-pools",
+            json=payload,
+            headers={**HEADERS, "Idempotency-Key": idem_key},
+        )
+        assert first.status_code == 201, first.text
+        second = client.post(
+            "/bff/capital-pools",
+            json=payload,
+            headers={**HEADERS, "Idempotency-Key": idem_key},
+        )
+        assert second.status_code == 201, second.text
+        assert first.json()["name"] == second.json()["name"]
+
 
 
 def test_bff_capital_pool_detail_404_unknown() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/capital-pools/nonexistent-pool", headers=HEADERS)
-            assert resp.status_code == 404, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.get("/bff/capital-pools/nonexistent-pool", headers=HEADERS)
+        assert resp.status_code == 404, resp.text
+
 
 
 def test_bff_capital_pool_patch_requires_idempotency_key() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.patch(
-                "/bff/capital-pools/pool-001",
-                json={"status": "suspended"},
-                headers=HEADERS,
-            )
-            assert resp.status_code == 400, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.patch(
+            "/bff/capital-pools/pool-001",
+            json={"status": "suspended"},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 400, resp.text
+
 
 
 def test_bff_capital_pool_detail_with_seed_data() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         store = CapitalRankingTestReadPorts(
             allow_local_snapshot_fallback=True,
         )
@@ -359,18 +434,14 @@ def test_bff_capital_pool_detail_with_seed_data() -> None:
             (True, seed_pool) if pool_id == "pool-alpha" else (True, None)
         )
         store._canonical.bindings_for_pool = lambda pool_id: (True, [])
-        bff_main.read_store = store
-        bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-        try:
-            client = TestClient(bff_main.app)
-            resp = client.get("/bff/capital-pools/pool-alpha", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["data"]["name"] == "Alpha Pool"
-            assert "bindings" in body["data"]
-            assert "meta" in body
-        finally:
-            bff_main.read_store = original
+        command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        client = TestClient(_build_app(store, command_store))
+        resp = client.get("/bff/capital-pools/pool-alpha", headers=HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["data"]["name"] == "Alpha Pool"
+        assert "bindings" in body["data"]
+        assert "meta" in body
 
 
 def test_bff_capital_pool_detail_reports_binding_surface_unavailable(monkeypatch) -> None:
@@ -392,9 +463,9 @@ def test_bff_capital_pool_detail_reports_binding_surface_unavailable(monkeypatch
             (True, seed_pool) if pool_id == "pool-alpha" else (True, None)
         )
         store._canonical.bindings_for_pool = lambda pool_id: (False, [])
-        monkeypatch.setattr(bff_main, "read_store", store)
+        command_store = CommandStore(os.path.join(td, "commands.jsonl"))
 
-        client = TestClient(bff_main.app)
+        client = TestClient(_build_app(store, command_store))
         resp = client.get("/bff/capital-pools/pool-alpha", headers=HEADERS)
 
         assert resp.status_code == 200, resp.text
@@ -423,9 +494,9 @@ def test_bff_capital_pool_detail_503_when_pool_source_unavailable(monkeypatch) -
         store = CapitalRankingTestReadPorts(
             allow_local_snapshot_fallback=False,
         )
-        monkeypatch.setattr(bff_main, "read_store", store)
+        command_store = CommandStore(os.path.join(td, "commands.jsonl"))
 
-        client = TestClient(bff_main.app)
+        client = TestClient(_build_app(store, command_store))
         resp = client.get("/bff/capital-pools/pool-missing", headers=HEADERS)
 
         assert resp.status_code == 503, resp.text
@@ -438,111 +509,103 @@ def test_bff_capital_pool_detail_503_when_pool_source_unavailable(monkeypatch) -
 
 def test_bff_ranking_formulas_list_returns_200() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/ranking-formulas", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "data" in body
-            assert "meta" in body
-            assert "page_info" in body
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.get("/bff/ranking-formulas", headers=HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "data" in body
+        assert "meta" in body
+        assert "page_info" in body
+
 
 
 def test_bff_ranking_formula_create_returns_201() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.post(
-                "/bff/ranking-formulas",
-                json={"name": "Momentum Formula", "description": "Ranks by momentum"},
-                headers={**HEADERS, "Idempotency-Key": "rf-create-001"},
-            )
-            assert resp.status_code == 201, resp.text
-            body = resp.json()["data"]
-            assert body["name"] == "Momentum Formula"
-            formula_id = body.get("formula_id") or body.get("id")
-            assert formula_id
-            detail = client.get(f"/bff/ranking-formulas/{formula_id}", headers=HEADERS)
-            assert detail.status_code == 200, detail.text
-            assert detail.json()["data"]["name"] == "Momentum Formula"
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/ranking-formulas",
+            json={"name": "Momentum Formula", "description": "Ranks by momentum"},
+            headers={**HEADERS, "Idempotency-Key": "rf-create-001"},
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()["data"]
+        assert body["name"] == "Momentum Formula"
+        formula_id = body.get("formula_id") or body.get("id")
+        assert formula_id
+        detail = client.get(f"/bff/ranking-formulas/{formula_id}", headers=HEADERS)
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["data"]["name"] == "Momentum Formula"
+
 
 
 def test_bff_ranking_formula_create_idempotency_replay() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            payload = {"name": "Replay Formula", "description": "same request replay"}
-            headers = {**HEADERS, "Idempotency-Key": "rf-replay-001"}
-            first = client.post("/bff/ranking-formulas", json=payload, headers=headers)
-            second = client.post("/bff/ranking-formulas", json=payload, headers=headers)
-            assert first.status_code == 201, first.text
-            assert second.status_code == 201, second.text
-            assert first.json()["data"]["id"] == second.json()["data"]["id"]
-            assert len(client.get("/bff/ranking-formulas", headers=HEADERS).json()["data"]) == 1
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        payload = {"name": "Replay Formula", "description": "same request replay"}
+        headers = {**HEADERS, "Idempotency-Key": "rf-replay-001"}
+        first = client.post("/bff/ranking-formulas", json=payload, headers=headers)
+        second = client.post("/bff/ranking-formulas", json=payload, headers=headers)
+        assert first.status_code == 201, first.text
+        assert second.status_code == 201, second.text
+        assert first.json()["data"]["id"] == second.json()["data"]["id"]
+        assert len(client.get("/bff/ranking-formulas", headers=HEADERS).json()["data"]) == 1
+
 
 
 def test_bff_ranking_formula_create_requires_name() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.post(
-                "/bff/ranking-formulas",
-                json={"description": "Missing name"},
-                headers={**HEADERS, "Idempotency-Key": "rf-no-name-001"},
-            )
-            assert resp.status_code == 422, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/ranking-formulas",
+            json={"description": "Missing name"},
+            headers={**HEADERS, "Idempotency-Key": "rf-no-name-001"},
+        )
+        assert resp.status_code == 422, resp.text
+
 
 
 def test_bff_ranking_formula_detail_404_unknown() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            create_resp = client.post(
-                "/bff/ranking-formulas",
-                json={"name": "Existing Formula", "description": "establishes local store"},
-                headers={**HEADERS, "Idempotency-Key": "rf-detail-seed-001"},
-            )
-            assert create_resp.status_code == 201, create_resp.text
-            resp = client.get("/bff/ranking-formulas/nonexistent-formula", headers=HEADERS)
-            assert resp.status_code == 404, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        create_resp = client.post(
+            "/bff/ranking-formulas",
+            json={"name": "Existing Formula", "description": "establishes local store"},
+            headers={**HEADERS, "Idempotency-Key": "rf-detail-seed-001"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        resp = client.get("/bff/ranking-formulas/nonexistent-formula", headers=HEADERS)
+        assert resp.status_code == 404, resp.text
+
 
 
 def test_bff_ranking_formula_action_accepted() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            create_resp = client.post(
-                "/bff/ranking-formulas",
-                json={"name": "Action Test Formula", "description": "for action test"},
-                headers={**HEADERS, "Idempotency-Key": "rf-action-create-001"},
-            )
-            assert create_resp.status_code == 201, create_resp.text
-            formula = create_resp.json()["data"]
-            formula_id = formula.get("formula_id") or formula.get("id")
-            action_resp = client.post(
-                f"/bff/actions/ranking-formula/{formula_id}/activate",
-                json={},
-                headers={**HEADERS, "Idempotency-Key": "rf-action-001"},
-            )
-            assert action_resp.status_code == 202, action_resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        create_resp = client.post(
+            "/bff/ranking-formulas",
+            json={"name": "Action Test Formula", "description": "for action test"},
+            headers={**HEADERS, "Idempotency-Key": "rf-action-create-001"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        formula = create_resp.json()["data"]
+        formula_id = formula.get("formula_id") or formula.get("id")
+        action_resp = client.post(
+            "/bff/v1/commands",
+            json={
+                "command": "RankingFormulaAction",
+                "target": {"type": "RankingFormula", "id": formula_id},
+                "action": "activate",
+                "params": {
+                    "action_id": "activate",
+                    "entity_type": "ranking-formula",
+                    "entity_id": formula_id,
+                },
+                "audit_context": {"reason": "activate ranking formula"},
+            },
+            headers={**HEADERS, "Idempotency-Key": "rf-action-001"},
+        )
+        assert action_resp.status_code == 202, action_resp.text
+
 
 
 # ---------------------------------------------------------------------------
@@ -551,72 +614,57 @@ def test_bff_ranking_formula_action_accepted() -> None:
 
 def test_bff_rebalances_list_returns_200() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/rebalances", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "data" in body
-            assert "meta" in body
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.get("/bff/rebalances", headers=HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "data" in body
+        assert "meta" in body
+
 
 
 def test_bff_rebalance_create_requires_capital_pool_id() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.post(
-                "/bff/rebalances",
-                json={"reason": "quarterly"},
-                headers={**HEADERS, "Idempotency-Key": "rb-no-pool-001"},
-            )
-            assert resp.status_code == 422, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/rebalances",
+            json={"reason": "quarterly"},
+            headers={**HEADERS, "Idempotency-Key": "rb-no-pool-001"},
+        )
+        assert resp.status_code == 422, resp.text
+
 
 
 def test_bff_rebalance_create_rejects_legacy_payload_without_lineage() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.post(
-                "/bff/rebalances",
-                json={"capital_pool_id": "pool-alpha", "reason": "quarterly rebalance"},
-                headers={**HEADERS, "Idempotency-Key": "rb-create-001"},
-            )
-            assert resp.status_code == 422, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/rebalances",
+            json={"capital_pool_id": "pool-alpha", "reason": "quarterly rebalance"},
+            headers={**HEADERS, "Idempotency-Key": "rb-create-001"},
+        )
+        assert resp.status_code == 422, resp.text
+
 
 
 def test_bff_rebalance_detail_404_unknown() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/rebalances/nonexistent-rb", headers=HEADERS)
-            assert resp.status_code == 404, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.get("/bff/rebalances/nonexistent-rb", headers=HEADERS)
+        assert resp.status_code == 404, resp.text
+
 
 
 def test_bff_rebalance_create_requires_idempotency_key() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.post(
-                "/bff/rebalances",
-                json={"capital_pool_id": "pool-alpha"},
-                headers=HEADERS,
-            )
-            assert resp.status_code == 400, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/rebalances",
+            json={"capital_pool_id": "pool-alpha"},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 400, resp.text
+
 
 
 # ---------------------------------------------------------------------------
@@ -625,42 +673,33 @@ def test_bff_rebalance_create_requires_idempotency_key() -> None:
 
 def test_bff_rankings_list_returns_200() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/rankings", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "data" in body
-            assert "meta" in body
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.get("/bff/rankings", headers=HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "data" in body
+        assert "meta" in body
+
 
 
 def test_bff_ranking_detail_404_unknown() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/rankings/nonexistent-rk", headers=HEADERS)
-            assert resp.status_code == 404, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.get("/bff/rankings/nonexistent-rk", headers=HEADERS)
+        assert resp.status_code == 404, resp.text
+
 
 
 def test_bff_ranking_action_404_for_unknown_entity() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.post(
-                "/bff/rankings/nonexistent-rk/actions/refresh",
-                json={},
-                headers={**HEADERS, "Idempotency-Key": "rk-action-001"},
-            )
-            assert resp.status_code == 404, resp.text
-        finally:
-            bff_main.read_store = original
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/rankings/nonexistent-rk/actions/refresh",
+            json={},
+            headers={**HEADERS, "Idempotency-Key": "rk-action-001"},
+        )
+        assert resp.status_code == 404, resp.text
+
 
 
 # ---------------------------------------------------------------------------
@@ -765,9 +804,6 @@ def test_read_store_rankings_empty_by_default() -> None:
 # ---------------------------------------------------------------------------
 
 def test_ranking_router_routes_uniqueness() -> None:
-    from fastapi import FastAPI
-    from management_read_models.ranking_router import create_ranking_formulas_router
-
     router = create_ranking_formulas_router()
     app = FastAPI()
     app.include_router(router)
@@ -786,9 +822,6 @@ def test_ranking_router_routes_uniqueness() -> None:
 
 
 def test_ranking_router_standalone_crud_and_idempotency() -> None:
-    from fastapi import FastAPI
-    from management_read_models.ranking_router import create_ranking_formulas_router
-
     with tempfile.TemporaryDirectory() as td:
         store = CapitalRankingTestReadPorts(
             allow_local_snapshot_fallback=True,

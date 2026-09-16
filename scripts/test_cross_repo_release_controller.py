@@ -34,6 +34,9 @@ NONPROD_WORKFLOW = (
 COMPENSATION_SCRIPT = (
     ROOT / "scripts" / "compensate_cross_repo_release.sh"
 ).read_text(encoding="utf-8")
+COMPENSATION_EVIDENCE = (
+    ROOT / "scripts" / "dev_artifact_compensation_evidence.py"
+).read_text(encoding="utf-8")
 
 
 def _run(
@@ -693,10 +696,19 @@ def test_rejected_frontend_transaction_restores_and_proves_exact_pair() -> None:
         'PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_ROLLBACK_BACKEND_SHA}" \\\nPANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}"'
         in COMPENSATION_SCRIPT
     )
-    assert "${DEV_BFF_URL%/}/bff/version" in COMPENSATION_SCRIPT
-    assert "${DEV_FE_URL%/}/deployment.json" in COMPENSATION_SCRIPT
-    assert "pantheon.cross-repo-release-compensation.v1" in COMPENSATION_SCRIPT
-    assert '"outcome": "compensated"' in COMPENSATION_SCRIPT
+    # Source-SHA equality is not evidence that the three retained image IDs and
+    # the exact frontend bytes survived a rejected candidate.  The v2 helper
+    # consumes the immutable same-run Actions artifacts, performs either an
+    # explicit image restore or a fully typed baseline verification, and emits
+    # a bounded readback before the compensation outcome can be written.
+    assert "dev_artifact_compensation_evidence.py" in COMPENSATION_SCRIPT
+    assert "--provenance actions-download" in COMPENSATION_SCRIPT
+    assert '"--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}"' in COMPENSATION_SCRIPT
+    assert "--artifact-readback-out" in COMPENSATION_SCRIPT
+    assert "pantheon.cross-repo-release-compensation.v2" in COMPENSATION_EVIDENCE
+    assert "PANTHEON_ARTIFACT_READBACK_V1" not in COMPENSATION_SCRIPT
+    assert "current_bff=" not in COMPENSATION_SCRIPT
+    assert '"outcome": "compensated"' in COMPENSATION_EVIDENCE
     assert "docker-compose.yml" not in COMPENSATION_SCRIPT
 
 

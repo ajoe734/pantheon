@@ -79,12 +79,13 @@ from .schemas import (  # noqa: F401  (back-compat re-export)
     WorkshopResearchRunRequest,
     WorkshopVersionCreateRequest,
 )
-from .store import WorkshopVersionProjectionConflict, make_workshop_store  # noqa: F401
+from .store import PostgresWorkshopStore, WorkshopVersionProjectionConflict, make_workshop_store  # noqa: F401
 
 from services.control_plane.privacy.private_content_store import (
     EphemeralKeyProvider,
     MemoryPrivateContentStore,
 )
+from services.control_plane.privacy.postgres_private_content_store import PostgresPrivateContentStore
 
 
 # --------------------------------------------------------------------------- #
@@ -114,7 +115,10 @@ def create_strategy_workshop_router(
         else WorkshopCanonicalOperations()
     )
     if private_content_store is None:
-        private_content_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
+        if isinstance(store, PostgresWorkshopStore):
+            private_content_store = PostgresPrivateContentStore(dsn=store.dsn, schema=store.schema)
+        else:
+            private_content_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
 
     ctx = build_admission_context(
         store=store,

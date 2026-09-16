@@ -1,17 +1,16 @@
 from __future__ import annotations
 
+import os
+import sys
 import time
 
 import pytest
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff.auth.handlers import create_auth_handlers
-from services.control_plane.bff.auth.policy import create_auth_dependencies
-from services.control_plane.bff.auth.router import create_auth_router
-from services.control_plane.bff.auth.service import AuthFacadeService
-from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+import main as bff_main
+from session_lifecycle_store import SessionLifecycleStore
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 
@@ -20,34 +19,14 @@ JWT_ISSUER = "pantheon-bff-auth-refresh-test"
 JWT_AUDIENCE = "bff-operators"
 
 
-_current_store: SessionLifecycleStore | None = None
-
-
 @pytest.fixture(autouse=True)
 def isolated_session_lifecycle_store(tmp_path):
-    global _current_store
-    _current_store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
-    yield _current_store
-    _current_store = None
-
-
-def _create_app(store: SessionLifecycleStore) -> FastAPI:
-    deps = create_auth_dependencies(session_lifecycle_store=store)
-    handlers = create_auth_handlers(dependencies=deps)
-    service = AuthFacadeService(
-        local_readiness=handlers["bff_auth_readiness"],
-        handlers=handlers,
-    )
-    app = FastAPI()
-
-    @app.exception_handler(HTTPException)
-    async def _http_exception_handler(request: Request, exc: HTTPException):
-        if isinstance(exc.detail, dict):
-            return JSONResponse(status_code=exc.status_code, content=exc.detail, headers=exc.headers)
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
-
-    app.include_router(create_auth_router(service=service))
-    return app
+    original_store = bff_main.session_lifecycle_store
+    bff_main.session_lifecycle_store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
+    try:
+        yield
+    finally:
+        bff_main.session_lifecycle_store = original_store
 
 
 def _strict_auth_env(monkeypatch) -> None:
@@ -77,9 +56,7 @@ def test_bff_auth_refresh_uses_bearer_refresh_credential(monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
     token = _jwt_token(extra={"sid": "session-bearer-refresh"})
 
-    assert _current_store is not None
-    client = TestClient(_create_app(_current_store))
-    response = client.post(
+    response = TestClient(bff_main.app).post(
         "/bff/auth/refresh",
         json={},
         headers={
@@ -104,8 +81,7 @@ def test_bff_auth_refresh_uses_refresh_cookie_credential(monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
     token = _jwt_token(extra={"sid": "session-cookie-refresh"})
 
-    assert _current_store is not None
-    client = TestClient(_create_app(_current_store))
+    client = TestClient(bff_main.app)
     client.cookies.set("pantheon_refresh", token)
     response = client.post("/bff/auth/refresh", json={})
 
@@ -120,9 +96,7 @@ def test_bff_auth_refresh_uses_refresh_cookie_credential(monkeypatch) -> None:
 def test_bff_auth_refresh_missing_refresh_path_returns_typed_401(monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
 
-    assert _current_store is not None
-    client = TestClient(_create_app(_current_store), raise_server_exceptions=False)
-    response = client.post(
+    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
         "/bff/auth/refresh",
         json={},
     )

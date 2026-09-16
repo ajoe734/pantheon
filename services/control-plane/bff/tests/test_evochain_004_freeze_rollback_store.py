@@ -1,15 +1,15 @@
 """EVOCHAIN-004 BFF service-client and surface-status contracts."""
 from __future__ import annotations
 
+import json
 import os
-import sys
 from typing import Any
 
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
+from services.control_plane.bff.evolution.router import create_evolution_router
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-evochain-004:operator,reviewer"}
 GOVERNANCE_URL = "http://governance:8082"
@@ -141,13 +141,30 @@ class FreezeRollbackTestStore:
         return []
 
 
+def _create_client(store: FreezeRollbackTestStore) -> TestClient:
+    def _dataset_surface_status(dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        source = store.dataset_source(dataset)
+        if source == "missing":
+            return {"status": "unavailable", "source": "missing", "dataset": dataset, "snapshot_at": snapshot_at}
+        if source == "local_snapshot":
+            return {"status": "degraded", "source": "local_snapshot", "dataset": dataset, "snapshot_at": snapshot_at}
+        return {"status": "ok", "source": source, "dataset": dataset, "snapshot_at": snapshot_at}
+
+    router = create_evolution_router(
+        get_read_store=lambda: store,
+        dataset_surface_status=_dataset_surface_status,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app)
+
+
 def _install_store(tmp_path, monkeypatch, *, allow_fallback: bool, fake_get) -> FreezeRollbackTestStore:
     _configure_service_urls(monkeypatch)
     store = FreezeRollbackTestStore(
         allow_local_snapshot_fallback=allow_fallback,
         fake_get=fake_get,
     )
-    monkeypatch.setattr(bff_main, "read_store", store)
     return store
 
 
@@ -164,7 +181,7 @@ def test_healthy_empty_service_is_ok_and_does_not_mix_local_seed(tmp_path, monke
     assert store.dataset_source("freeze_orders") == "service_client"
     assert store.dataset_source("all_rollbacks") == "service_client"
 
-    response = TestClient(bff_main.app).get(
+    response = _create_client(store).get(
         "/bff/management/evolution-journal",
         headers=OPERATOR_HEADERS,
     )
@@ -177,6 +194,7 @@ def test_healthy_empty_service_is_ok_and_does_not_mix_local_seed(tmp_path, monke
     assert surfaces["rollbacks"]["status"] == "ok"
     assert surfaces["rollbacks"]["source"] == "service_client"
     assert surfaces["mutation_review"]["status"] == "ok"
+    assert body["data"]["id"] == "management_evolution_journal"
     assert surfaces["management_evolution_journal"]["status"] == "ok"
 
 
@@ -256,7 +274,7 @@ def test_populated_service_records_are_filtered_sorted_and_projected(tmp_path, m
         )
     ] == ["rollback-latest"]
 
-    response = TestClient(bff_main.app).get(
+    response = _create_client(store).get(
         "/bff/management/evolution-journal",
         headers=OPERATOR_HEADERS,
     )
@@ -280,7 +298,7 @@ def test_invalid_or_not_found_list_payload_is_not_a_healthy_empty_store(tmp_path
     assert store.dataset_source("freeze_orders") == "missing"
     assert store.dataset_source("all_rollbacks") == "missing"
 
-    response = TestClient(bff_main.app).get(
+    response = _create_client(store).get(
         "/bff/management/evolution-journal",
         headers=OPERATOR_HEADERS,
     )

@@ -248,6 +248,18 @@ class CompleteRunBody(BaseModel):
     completed_at: Optional[str] = None
 
 
+class CancelRunBody(BaseModel):
+    reason: Optional[str] = "Research run canceled by operator."
+    actor_id: str = "operator"
+    canceled_at: Optional[str] = None
+
+
+class RetryRunBody(BaseModel):
+    actor_id: str = "operator"
+    idempotency_key: Optional[str] = None
+    requested_at: Optional[str] = None
+
+
 class ArtifactBody(BaseModel):
     artifact_type: str = "research_report"
     artifact_family: str = "research_orchestration"
@@ -892,6 +904,9 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         "id": run_id,
         "run_id": run_id,
         "task_id": task_id,
+        "attempt_number": 1,
+        "parent_run_id": None,
+        "root_run_id": run_id,
         "adapter": adapter,
         "requested_mode": requested_mode,
         "dispatch_mode": dispatch_mode,
@@ -1082,6 +1097,10 @@ def get_run_status(run_id: str) -> Dict[str, Any]:
         "run_id": run["run_id"],
         "task_id": run["task_id"],
         "status": run["status"],
+        "attempt_number": run.get("attempt_number", 1),
+        "parent_run_id": run.get("parent_run_id"),
+        "root_run_id": run.get("root_run_id"),
+        "cancellation_fence": run.get("cancellation_fence"),
         "adapter": run["adapter"],
         "requested_mode": run["requested_mode"],
         "dispatch_mode": run["dispatch_mode"],
@@ -1101,10 +1120,35 @@ def complete_run(run_id: str, body: CompleteRunBody) -> Dict[str, Any]:
     run = get_run(run_id)
     if str(run.get("status") or "").lower() == "rejected":
         raise HTTPException(status_code=409, detail="rejected research run cannot be completed")
+    run_status = str(run.get("status") or "").lower()
+    if run_status == "canceled" or run.get("cancellation_fence"):
+        timestamp = body.completed_at or utc_now()
+        events = list(run.get("events") or [])
+        events.append(
+            _event(
+                timestamp,
+                "late_completion_discarded",
+                f"Late completion rejected: run was already canceled. Summary: {body.summary}",
+                body.actor_id,
+                run_id,
+                events,
+            )
+        )
+        run["events"] = events
+        discarded = list(run.get("discarded_completions") or [])
+        discarded.append({"completed_at": timestamp, "summary": body.summary, "actor_id": body.actor_id})
+        run["discarded_completions"] = discarded
+        store.put_run(run)
+        store.append_event(events[-1])
+        raise HTTPException(
+            status_code=409,
+            detail="canceled research run cannot be completed; late completion fenced",
+        )
     timestamp = body.completed_at or utc_now()
     events = list(run.get("events") or [])
     events.append(_event(timestamp, "run_completed", body.summary, body.actor_id, run_id, events))
     run["status"] = body.status
+    run["completed_at"] = timestamp
     run["updated_at"] = timestamp
     run["events"] = events
     task = store.get_task(run["task_id"])
@@ -1115,6 +1159,142 @@ def complete_run(run_id: str, body: CompleteRunBody) -> Dict[str, Any]:
     store.put_run(run)
     store.append_event(events[-1])
     return run
+
+
+@app.post("/api/research-orchestrator/runs/{run_id}/cancel")
+def cancel_run(run_id: str, body: Optional[CancelRunBody] = None) -> Dict[str, Any]:
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="research run not found")
+    status = str(run.get("status") or "").lower()
+    if status == "canceled":
+        return run
+    if status in ("completed", "rejected"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"terminal research run in status '{status}' cannot be canceled",
+        )
+    b = body or CancelRunBody()
+    timestamp = b.canceled_at or utc_now()
+    events = list(run.get("events") or [])
+    events.append(
+        _event(
+            timestamp,
+            "run_canceled",
+            b.reason or "Run canceled",
+            b.actor_id,
+            run_id,
+            events,
+        )
+    )
+    run["status"] = "canceled"
+    run["completed_at"] = timestamp
+    run["cancellation_fence"] = timestamp
+    run["updated_at"] = timestamp
+    run["events"] = events
+
+    task = store.get_task(run["task_id"])
+    if task:
+        sibling_runs = [r for r in store.list_runs() if r.get("task_id") == run["task_id"] and r.get("run_id") != run_id]
+        if not any(str(r.get("status") or "").lower() in ACTIVE_STATUSES for r in sibling_runs):
+            task["status"] = "canceled"
+            task["updated_at"] = timestamp
+            store.put_task(task)
+
+    store.put_run(run)
+    store.append_event(events[-1])
+    return run
+
+
+@app.post("/api/research-orchestrator/runs/{run_id}/retry", status_code=201)
+def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any]:
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="research run not found")
+    status = str(run.get("status") or "").lower()
+    eligible_statuses = {"failed", "canceled", "timeout"}
+    if status not in eligible_statuses:
+        raise HTTPException(
+            status_code=409,
+            detail=f"only runs in eligible terminal states ({', '.join(sorted(eligible_statuses))}) can be retried; run '{run_id}' is in status '{status}'",
+        )
+    b = body or RetryRunBody()
+    if b.idempotency_key:
+        existing = _idempotent_match(store.list_runs(), b.idempotency_key)
+        if existing:
+            return existing
+
+    timestamp = b.requested_at or utc_now()
+    task_id = run["task_id"]
+    task = store.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="parent research task not found")
+
+    attempt_number = int(run.get("attempt_number") or 1) + 1
+    parent_run_id = run["run_id"]
+    root_run_id = run.get("root_run_id") or run["run_id"]
+
+    new_run_id = _next_id("rrun", timestamp, {str(r.get("run_id") or "") for r in store.list_runs()})
+
+    events: List[Dict[str, Any]] = []
+    events.append(
+        _event(
+            timestamp,
+            "run_queued",
+            f"Retry attempt #{attempt_number} queued (retrying parent run {parent_run_id}).",
+            b.actor_id,
+            new_run_id,
+            events,
+        )
+    )
+
+    new_run: Dict[str, Any] = {
+        "id": new_run_id,
+        "run_id": new_run_id,
+        "task_id": task_id,
+        "attempt_number": attempt_number,
+        "parent_run_id": parent_run_id,
+        "root_run_id": root_run_id,
+        "adapter": run.get("adapter", "stub"),
+        "requested_mode": run.get("requested_mode", "stub"),
+        "dispatch_mode": run.get("dispatch_mode", "stub"),
+        "status": "queued",
+        "production_activation": "disabled",
+        "input_refs": run.get("input_refs", []),
+        "parameters": run.get("parameters", {}),
+        "created_by": b.actor_id,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "idempotency_key": b.idempotency_key,
+        "events": events,
+        "artifact_refs": [],
+        "proposal_refs": [],
+        "registry_writebacks": [],
+    }
+
+    old_events = list(run.get("events") or [])
+    old_events.append(
+        _event(
+            timestamp,
+            "run_retried",
+            f"Run retried via new run {new_run_id} (attempt #{attempt_number}).",
+            b.actor_id,
+            run_id,
+            old_events,
+        )
+    )
+    run["events"] = old_events
+    run["updated_at"] = timestamp
+    store.put_run(run)
+    store.append_event(old_events[-1])
+
+    task["status"] = "running"
+    task["updated_at"] = timestamp
+    store.put_task(task)
+
+    store.put_run(new_run)
+    store.append_event(events[-1])
+    return new_run
 
 
 @app.post("/api/research-orchestrator/runs/{run_id}/artifacts", status_code=201)
@@ -1600,11 +1780,9 @@ def execute_research_stage(
                 VectorbtWorkflowError,
             )
             use_real = os.environ.get("PANTHEON_VECTORBT_BACKEND", "stub").lower() == "real"
-            try:
-                import vectorbt  # noqa: F401
-                backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
-            except ImportError:
-                backend_runner = StubVectorbtBackend()
+            # The real owner checks its dependencies; never fall back to a stub
+            # while retaining a real receipt label.
+            backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
             provenance = "real" if use_real else "simulation"
             vbt_config = BacktestConfig(
                 version="1.0.0",
@@ -1624,28 +1802,10 @@ def execute_research_stage(
                         records.append(rec)
                 ds_id = str(stage.get("dataset_id") or plan.get("dataset_id") or f"dataset:{run_id}")
                 st_id = str(plan.get("strategy_id") or f"strat:{run_id}")
-                insts = {r.get("instrument") for r in records if r.get("instrument")}
-                if len(insts) < 2 or any(sum(1 for r in records if r.get("instrument") == inst) < 30 for inst in insts):
-                    from datetime import date, timedelta
-                    start = date(2026, 1, 1)
-                    records = []
-                    for inst, base in (("AAA", 100.0), ("BBB", 50.0)):
-                        for i in range(35):
-                            d = (start + timedelta(days=i)).isoformat()
-                            p = base + i * 0.5
-                            records.append({
-                                "instrument": inst,
-                                "date": d,
-                                "open": p,
-                                "high": p + 1.0,
-                                "low": p - 0.5,
-                                "close": p + 0.2,
-                                "volume": 1000.0,
-                            })
                 vbt_dataset = {
                     "dataset_id": ds_id,
                     "strategy_id": st_id,
-                    "source_dataset_refs": [f"dataset:seed:{st_id}"],
+                    "source_dataset_refs": stage.get("source_dataset_refs") or plan.get("source_dataset_refs") or body.get("source_dataset_refs") or [],
                     "data_frequency": "daily",
                     "records": records,
                 }
@@ -1792,6 +1952,22 @@ def execute_research_stage(
             status_code=503,
             detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured",
         )
+
+    # A real engine does not turn explicitly simulated input into real evidence.
+    # This only downgrades provenance: an input label can never promote a stub.
+    inputs = [dataset_input]
+    records = dataset_input.get("records", []) if isinstance(dataset_input, dict) else dataset_input
+    if isinstance(records, list):
+        inputs.extend(records)
+    for value in inputs:
+        if not isinstance(value, dict):
+            continue
+        metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
+        if any(item.get("provenance") == "simulation" or item.get("is_real") is False for item in (value, metadata)):
+            provenance = "simulation"
+            for metric in metrics:
+                metric["provenance"] = provenance
+            break
 
     artifact_id = f"rart-{uuid.uuid4().hex[:12]}"
     artifact_record = {

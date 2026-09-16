@@ -205,7 +205,16 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 )
 
     def test_main_py_all_read_store_attributes_are_inventoried_and_mapped(self) -> None:
-        """Prove that all 56 read_store attributes in main.py are inventoried and mapped or isolated."""
+        """Prove that all 44 read_store attributes in main.py are inventoried and mapped or isolated.
+
+        BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001 moved the
+        `read_store.list_events_bff(...)` call for the assistant `recent_sse`
+        source out of main.py into
+        `services/control-plane/bff/assistant/source_collectors.py`, where it
+        is reached through the injected `deps.read_store` collaborator
+        instead of the main.py global -- main.py's static text no longer
+        contains that one attribute access, dropping this count from 45 to 44.
+        """
         main_py = BFF_DIR / "main.py"
         self.assertTrue(main_py.exists(), f"main.py not found at {main_py}")
         tree = ast.parse(main_py.read_text(encoding="utf-8"), filename=str(main_py))
@@ -216,7 +225,7 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 if isinstance(node.value, ast.Name) and node.value.id == "read_store":
                     read_store_attrs.add(node.attr)
 
-        self.assertEqual(len(read_store_attrs), 50, "Expected exactly 50 read_store attributes in main.py")
+        self.assertEqual(len(read_store_attrs), 44, "Expected exactly 44 read_store attributes in main.py")
 
         ports_instance = create_read_surface_ports()
 
@@ -237,9 +246,9 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
             [],
             f"Found uninventoried read_store attributes in main.py: {uninventoried}",
         )
-        self.assertEqual(len(mapped_reads), 49)
+        self.assertEqual(len(mapped_reads), 43)
         self.assertEqual(len(deferred_writes), 1)
-        self.assertEqual(len(mapped_reads) + len(deferred_writes), 50)
+        self.assertEqual(len(mapped_reads) + len(deferred_writes), 44)
 
 
 class TestAgoraPersonaClientMigration(unittest.TestCase):
@@ -469,6 +478,15 @@ class TestReadSurfacePortsRetainedCallerContracts(unittest.TestCase):
                     }
                 ],
             },
+            paper_runtime_monitoring_sessions_provider=lambda: [
+                {
+                    "session_id": "sess-drift-1",
+                    "id": "sess-drift-1",
+                    "runtime_id": "rt-100",
+                    "binding_id": "b-100",
+                    "active": True,
+                }
+            ],
         )
 
     def test_get_committee_session_memo_positional_and_keyword(self) -> None:
@@ -680,6 +698,15 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
                     }
                 ],
             },
+            paper_runtime_monitoring_sessions_provider=lambda: [
+                {
+                    "session_id": "sess-drift-1",
+                    "id": "sess-drift-1",
+                    "runtime_id": "rt-100",
+                    "binding_id": "b-100",
+                    "active": True,
+                }
+            ],
         )
         from services.control_plane.bff.bootstrap import AppDependencies
         from services.control_plane.bff.deployment.adapters import (
@@ -697,7 +724,8 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
             strategy_write_owner=bff_main.strategy_write_owner,
             settings_store=bff_main.settings_store,
         )
-        test_app = bff_main._build_bff_app()
+        from services.control_plane.bff.core.app_factory import build_bff_app
+        test_app = build_bff_app()
         test_app.include_router(
             create_deployment_router(
                 queries=self.deps.deployment_queries,

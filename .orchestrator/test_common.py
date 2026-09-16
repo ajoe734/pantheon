@@ -1112,6 +1112,45 @@ class ClaudeAuthTests(unittest.TestCase):
         run_command.assert_not_called()
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-new")
 
+    def test_claude_auth_uses_supplied_identity_for_expired_env_oauth(self) -> None:
+        env = {"HOME": "/tmp/test-home", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-old"}
+        status_payload = {"loggedIn": True, "organization": {"orgId": "unit-env-org"}}
+        expired_oauth = {
+            "accessToken": "sk-ant-oat01-old",
+            "refreshToken": "old-refresh",
+            "expiresAt": 1,
+        }
+        refreshed_oauth = {
+            "accessToken": "sk-ant-oat01-new",
+            "refreshToken": "new-refresh",
+            "expiresAt": int(common.time.time() * 1000) + 3_600_000,
+        }
+        with (
+            mock.patch.object(
+                common,
+                "load_claude_oauth_tokens",
+                return_value=({}, expired_oauth, Path("/tmp/.credentials.json")),
+            ),
+            mock.patch.object(
+                common, "refresh_claude_oauth_tokens", return_value=refreshed_oauth
+            ) as refresh,
+            mock.patch.object(common, "run_command") as run_command,
+        ):
+            self.assertTrue(
+                common.claude_auth_ready(
+                    "claude",
+                    env=env,
+                    account_lock_key="claude2",
+                    auth_status_payload=status_payload,
+                )
+            )
+
+        self.assertEqual(
+            refresh.call_args.kwargs["account_lock_key"],
+            common.claude_oauth_refresh_lock_key(status_payload, fallback="claude2"),
+        )
+        run_command.assert_not_called()
+
     def test_claude_auth_ready_prefers_fresh_credentials_over_stale_env_token(self) -> None:
         env = {"HOME": "/tmp/test-home", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-old"}
         fresh_oauth = {
@@ -1310,6 +1349,147 @@ class ClaudeAuthTests(unittest.TestCase):
             ):
                 common.refresh_claude_oauth_tokens({"HOME": "/tmp/synthetic"})
             write.assert_not_called()
+
+    def test_claude_oauth_refresh_lock_key_is_opaque_and_falls_back(self) -> None:
+        shared = {"loggedIn": True, "organization": {"orgId": "unit-shared-org"}}
+        same_shared_identity = {
+            "loggedIn": True,
+            "organization": {"orgId": "UNIT-SHARED-ORG"},
+        }
+        other = {"loggedIn": True, "organization": {"orgId": "unit-other-org"}}
+        email = {"loggedIn": True, "user": {"email": "Worker@Example.test"}}
+        same_email = {"loggedIn": True, "email": "worker@example.test"}
+
+        key = common.claude_oauth_refresh_lock_key(shared, fallback="claude1")
+        email_key = common.claude_oauth_refresh_lock_key(email, fallback="claude1")
+
+        self.assertEqual(key, common.claude_oauth_refresh_lock_key(same_shared_identity, fallback="claude2"))
+        self.assertNotEqual(key, common.claude_oauth_refresh_lock_key(other, fallback="claude2"))
+        self.assertEqual(email_key, common.claude_oauth_refresh_lock_key(same_email, fallback="claude2"))
+        self.assertRegex(key or "", r"^claude-oauth-[0-9a-f]{32}$")
+        self.assertRegex(email_key or "", r"^claude-oauth-[0-9a-f]{32}$")
+        self.assertNotIn("unit-shared-org", key or "")
+        self.assertNotIn("worker@example.test", email_key or "")
+        self.assertEqual(
+            common.claude_oauth_refresh_lock_key({"loggedIn": False}, fallback="claude2"),
+            "claude2",
+        )
+
+    def test_claude_auth_serializes_shared_identity_with_separate_account_fallbacks(self) -> None:
+        intervals: list[tuple[float, float]] = []
+        intervals_lock = threading.Lock()
+        shared_org = f"unit-shared-{uuid.uuid4()}"
+        status_payloads = (
+            {"loggedIn": True, "organization": {"orgId": shared_org}},
+            {"loggedIn": True, "organization": {"orgId": shared_org}},
+        )
+        start = threading.Barrier(2)
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600}
+                ).encode("utf-8")
+
+        def slow_urlopen(*_args, **_kwargs):
+            start = time.monotonic()
+            time.sleep(0.15)
+            with intervals_lock:
+                intervals.append((start, time.monotonic()))
+            return _Response()
+
+        def make_credentials(config_dir: str) -> None:
+            path = Path(config_dir) / ".credentials.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "claudeAiOauth": {
+                            "accessToken": "old-access",
+                            "refreshToken": "old-refresh",
+                            "expiresAt": 1,
+                            "scopes": ["user:profile"],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir_a, tempfile.TemporaryDirectory() as tmpdir_b:
+            make_credentials(tmpdir_a)
+            make_credentials(tmpdir_b)
+            results: list[bool] = [False, False]
+
+            def worker(
+                index: int, config_dir: str, fallback: str, status_payload: dict[str, object]
+            ) -> None:
+                start.wait(timeout=5)
+                results[index] = common.claude_auth_ready(
+                    "claude",
+                    env={"CLAUDE_CONFIG_DIR": config_dir},
+                    account_lock_key=fallback,
+                    auth_status_payload=status_payload,
+                )
+
+            with mock.patch.object(common.urllib.request, "urlopen", side_effect=slow_urlopen):
+                threads = [
+                    threading.Thread(target=worker, args=(0, tmpdir_a, "claude1", status_payloads[0])),
+                    threading.Thread(target=worker, args=(1, tmpdir_b, "claude2", status_payloads[1])),
+                ]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=5)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertTrue(all(results))
+        self.assertEqual(len(intervals), 2)
+        (start_a, end_a), (start_b, end_b) = intervals
+        self.assertFalse(start_a < end_b and start_b < end_a, intervals)
+
+    def test_claude_auth_derives_identity_lock_from_live_status(self) -> None:
+        status = mock.Mock(
+            returncode=0,
+            stdout=json.dumps({"loggedIn": True, "orgId": "unit-live-org"}),
+        )
+        expired_oauth = {
+            "accessToken": "old-access",
+            "refreshToken": "old-refresh",
+            "expiresAt": 1,
+        }
+        refreshed_oauth = {
+            "accessToken": "new-access",
+            "refreshToken": "new-refresh",
+            "expiresAt": int(common.time.time() * 1000) + 3_600_000,
+        }
+        with (
+            mock.patch.object(common, "run_command", return_value=status),
+            mock.patch.object(
+                common,
+                "load_claude_oauth_tokens",
+                return_value=({}, expired_oauth, Path("/tmp/.credentials.json")),
+            ),
+            mock.patch.object(
+                common, "refresh_claude_oauth_tokens", return_value=refreshed_oauth
+            ) as refresh,
+        ):
+            self.assertTrue(
+                common.claude_auth_ready(
+                    "claude", env={"HOME": "/tmp/test-home"}, account_lock_key="claude2"
+                )
+            )
+
+        self.assertEqual(
+            refresh.call_args.kwargs["account_lock_key"],
+            common.claude_oauth_refresh_lock_key(
+                {"loggedIn": True, "orgId": "unit-live-org"}, fallback="claude2"
+            ),
+        )
 
     def test_refresh_claude_oauth_tokens_serializes_same_account_lock_key(self) -> None:
         # Two distinct CLI identities (separate credentials files) that share
@@ -3878,6 +4058,236 @@ class TestWriteStatusPrecondition(unittest.TestCase):
             snapshot = task_state_store.load_snapshot(event_log)
             self.assertEqual(snapshot["event_count"], 2)
             self.assertEqual(snapshot["state"], payload)
+
+
+class ReviewBridgePolicyValidationTests(unittest.TestCase):
+    def test_valid_taskstore_only_mode(self) -> None:
+        config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                    ]
+                }
+            },
+        }
+        bridge_required, checks = common.validate_review_bridge_policy(config)
+        self.assertFalse(bridge_required)
+        self.assertEqual(
+            checks,
+            ("Commit trailers", "Runtime mirror guard", "Smoke acceptance"),
+        )
+        self.assertFalse(common.github_review_bridge_required(config))
+
+    def test_valid_external_bridge_mode(self) -> None:
+        config = {
+            "review_gate": {"github_review_bridge_required": True},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                        "Pantheon canonical review gate",
+                    ]
+                }
+            },
+        }
+        bridge_required, checks = common.validate_review_bridge_policy(config)
+        self.assertTrue(bridge_required)
+        self.assertEqual(
+            checks,
+            (
+                "Commit trailers",
+                "Runtime mirror guard",
+                "Smoke acceptance",
+                "Pantheon canonical review gate",
+            ),
+        )
+        self.assertTrue(common.github_review_bridge_required(config))
+
+    def test_contradictory_false_mode_with_canonical_gate_fails(self) -> None:
+        config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                        "Pantheon canonical review gate",
+                    ]
+                }
+            },
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            "contradictory review bridge policy: github_review_bridge_required is false, but 'Pantheon canonical review gate' is declared",
+        ):
+            common.validate_review_bridge_policy(config)
+
+        with self.assertRaisesRegex(ValueError, "contradictory review bridge policy"):
+            common.github_review_bridge_required(config)
+
+    def test_contradictory_true_mode_without_canonical_gate_fails(self) -> None:
+        config = {
+            "review_gate": {"github_review_bridge_required": True},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                    ]
+                }
+            },
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            "contradictory review bridge policy: github_review_bridge_required is true, but 'Pantheon canonical review gate' is missing",
+        ):
+            common.validate_review_bridge_policy(config)
+
+        with self.assertRaisesRegex(ValueError, "contradictory review bridge policy"):
+            common.github_review_bridge_required(config)
+
+    def test_missing_or_malformed_review_gate_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "review_gate configuration is required"):
+            common.validate_review_bridge_policy({"branch_workflow": {"task_pr": {"required_status_checks": []}}})
+
+        with self.assertRaisesRegex(ValueError, "review_gate.github_review_bridge_required is required"):
+            common.validate_review_bridge_policy({
+                "review_gate": {},
+                "branch_workflow": {"task_pr": {"required_status_checks": []}},
+            })
+
+        with self.assertRaisesRegex(ValueError, "review_gate.github_review_bridge_required must be a boolean"):
+            common.validate_review_bridge_policy({
+                "review_gate": {"github_review_bridge_required": "false"},
+                "branch_workflow": {"task_pr": {"required_status_checks": []}},
+            })
+
+    def test_missing_or_malformed_branch_workflow_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required"):
+            common.validate_review_bridge_policy({"review_gate": {"github_review_bridge_required": False}})
+
+        with self.assertRaisesRegex(ValueError, "branch_workflow.task_pr configuration is required"):
+            common.validate_review_bridge_policy({
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {},
+            })
+
+        with self.assertRaisesRegex(ValueError, "branch_workflow.task_pr.required_status_checks is required"):
+            common.validate_review_bridge_policy({
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {"task_pr": {}},
+            })
+
+    def test_duplicate_or_empty_checks_fail(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate check"):
+            common.validate_review_bridge_policy({
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": [
+                            "Commit trailers",
+                            "Commit trailers",
+                        ]
+                    }
+                },
+            })
+
+        with self.assertRaisesRegex(ValueError, "items must be non-empty strings"):
+            common.validate_review_bridge_policy({
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": [
+                            "Commit trailers",
+                            "  ",
+                        ]
+                    }
+                },
+            })
+
+    def test_load_config_rejects_contradictory_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "config.json"
+            cfg_path.write_text(
+                json.dumps({
+                    "review_gate": {"github_review_bridge_required": False},
+                    "branch_workflow": {
+                        "task_pr": {
+                            "required_status_checks": [
+                                "Commit trailers",
+                                "Pantheon canonical review gate",
+                            ]
+                        }
+                    },
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "contradictory review bridge policy"):
+                common.load_config(cfg_path)
+
+    def test_validate_review_bridge_policy_rejects_empty_and_non_dict(self) -> None:
+        with self.assertRaisesRegex(ValueError, "config must be a mapping"):
+            common.validate_review_bridge_policy(None)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "config must be a mapping"):
+            common.validate_review_bridge_policy("not a mapping")  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "review_gate configuration is required and must be a mapping"):
+            common.validate_review_bridge_policy({})
+
+    def test_load_config_rejects_empty_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "config.json"
+            cfg_path.write_text(json.dumps({}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "review_gate configuration is required and must be a mapping"):
+                common.load_config(cfg_path)
+
+    def test_load_config_rejects_missing_or_malformed_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "config.json"
+            # Missing review_gate
+            cfg_path.write_text(
+                json.dumps({"branch_workflow": {"task_pr": {"required_status_checks": ["Commit trailers"]}}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "review_gate configuration is required"):
+                common.load_config(cfg_path)
+
+            # Missing branch_workflow
+            cfg_path.write_text(
+                json.dumps({"review_gate": {"github_review_bridge_required": False}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required"):
+                common.load_config(cfg_path)
+
+            # Malformed review_gate section (not a mapping)
+            cfg_path.write_text(
+                json.dumps({
+                    "review_gate": "invalid",
+                    "branch_workflow": {"task_pr": {"required_status_checks": ["Commit trailers"]}},
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "review_gate configuration is required and must be a mapping"):
+                common.load_config(cfg_path)
+
+            # Malformed branch_workflow section (not a mapping)
+            cfg_path.write_text(
+                json.dumps({
+                    "review_gate": {"github_review_bridge_required": False},
+                    "branch_workflow": 12345,
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required and must be a mapping"):
+                common.load_config(cfg_path)
 
 
 if __name__ == "__main__":

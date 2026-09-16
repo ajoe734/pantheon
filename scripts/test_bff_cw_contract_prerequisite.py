@@ -399,7 +399,7 @@ def test_cw03_record_sponsor_decision_command_reuses_same_read_projection() -> N
             assert detail["allowedActions"]["canRecordSponsorDecision"] is True
 
             accepted = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers={"Authorization": OPERATOR_AUTH, "X-Idempotency-Key": "idmp-cw03-accept"},
                 json={
                     "command_type": "RecordSponsorDecision",
@@ -415,7 +415,7 @@ def test_cw03_record_sponsor_decision_command_reuses_same_read_projection() -> N
             assert accepted.status_code == 202, accepted.text
 
             reviewer_reject = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers={"Authorization": REVIEWER_AUTH, "X-Idempotency-Key": "idmp-cw03-reject"},
                 json={
                     "command_type": "RecordSponsorDecision",
@@ -428,7 +428,7 @@ def test_cw03_record_sponsor_decision_command_reuses_same_read_projection() -> N
             assert reviewer_reject.status_code == 403, reviewer_reject.text
 
             missing_committee = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers={"Authorization": OPERATOR_AUTH, "X-Idempotency-Key": "idmp-cw03-missing"},
                 json={
                     "command_type": "RecordSponsorDecision",

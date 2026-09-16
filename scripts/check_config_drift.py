@@ -38,6 +38,8 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "worker_runtime.worker_lease_seconds",
     "worker_runtime.work_progress_stale_seconds",
     "task_state_store.mode",
+    "review_gate.github_review_bridge_required",
+    "branch_workflow.task_pr.required_status_checks",
     # worker_reassignment governs who a task's owner/reviewer fails over to
     # (see supervisor.py's plan_task_assignment_pair / persist_task_reassignment).
     # Unlike agents.<id>.max_parallel below, it has no per-agent dynamic
@@ -78,6 +80,24 @@ def fleet_capacity_errors(repo_cfg: dict, live_cfg: dict) -> list[dict[str, str]
         try:
             validated_fleet_worker_cap(config)
         except ValueError as exc:
+            errors.append({"source": source, "error": str(exc)})
+    return errors
+
+
+def review_bridge_policy_errors(
+    repo_cfg: dict, live_cfg: dict
+) -> list[dict[str, str]]:
+    """Validate review bridge policy on both sides, even when equally invalid."""
+    orchestrator_dir = str(Path(__file__).resolve().parents[1] / ".orchestrator")
+    if orchestrator_dir not in sys.path:
+        sys.path.insert(0, orchestrator_dir)
+    from common import validate_review_bridge_policy
+
+    errors = []
+    for source, config in (("repo", repo_cfg), ("live", live_cfg)):
+        try:
+            validate_review_bridge_policy(config)
+        except (ValueError, TypeError) as exc:
             errors.append({"source": source, "error": str(exc)})
     return errors
 
@@ -326,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
 
     report = find_drift(repo_cfg, live_cfg)
     capacity_errors = fleet_capacity_errors(repo_cfg, live_cfg)
+    review_errors = review_bridge_policy_errors(repo_cfg, live_cfg)
     repository_source_roots = parse_repository_source_roots(args.repository_source_root)
     repository_source_drift = find_repository_source_drift(
         live_cfg, repository_source_roots
@@ -341,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
         behind = git_commits_behind(Path(args.dev_root), args.ref)
 
     fixed = []
-    if args.fix and report["drift"] and not capacity_errors:
+    if args.fix and report["drift"] and not capacity_errors and not review_errors:
         for item in report["drift"]:
             set_dotted(live_cfg, item["path"], item["repo"])
             fixed.append(item["path"])
@@ -356,11 +377,13 @@ def main(argv: list[str] | None = None) -> int:
         or bool(repository_source_drift)
         or bool(repository_integration_drift)
         or bool(capacity_errors)
+        or bool(review_errors)
     )
     exit_code = 1 if (drift_fail or behind_fail) else 0
 
     if args.json:
         print(json.dumps({**report, "fleet_capacity_errors": capacity_errors,
+                          "review_bridge_policy_errors": review_errors,
                           "repository_source_drift": repository_source_drift,
                           "repository_integration_drift": repository_integration_drift,
                           "dev_root_behind": behind,
@@ -377,6 +400,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[missing] {d['path']}: repo={d['repo']!r} live={d['live']!r}")
     for item in capacity_errors:
         print(f"[FLEET_CAPACITY_INVALID] {item['source']}: {item['error']}")
+    for item in review_errors:
+        print(f"[REVIEW_BRIDGE_POLICY_INVALID] {item['source']}: {item['error']}")
     for item in repository_source_drift:
         print(
             "[SOURCE_ROOT_DRIFT] "
@@ -398,6 +423,8 @@ def main(argv: list[str] | None = None) -> int:
         and not report["drift"]
         and not repository_source_drift
         and not repository_integration_drift
+        and not capacity_errors
+        and not review_errors
     ):
         print("OK: no actionable config drift.")
     return exit_code

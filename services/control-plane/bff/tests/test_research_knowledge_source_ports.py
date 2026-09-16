@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
     ResearchKnowledgeSourcePort,
+    ResearchWriteOwnerUnavailableError,
     _parse_rfc3339,
     _utc_now_rfc3339,
 )
@@ -313,6 +314,73 @@ def test_research_tickets_lifecycle():
     assert tickets[0]["ticket_id"] == ticket_id
 
 
+class _FakeResearchWriteOwner:
+    """Minimal stand-in for ``services.research.write_owner.ResearchWriteOwner``.
+
+    BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001 deletes the port's own
+    in-memory ``_experiments`` overlay: experiment persistence now belongs
+    exclusively to ``ResearchWriteOwner`` (Postgres). This fake is injected via
+    the port's ``research_write_owner`` constructor kwarg (legitimate
+    dependency injection for a unit test), not a hidden fallback the
+    production code reaches for on its own.
+    """
+
+    _CANCELABLE = frozenset({"queued", "running"})
+
+    def __init__(self) -> None:
+        self._experiments: dict[str, dict] = {}
+
+    def create_research_experiment(
+        self,
+        *,
+        ticket_id,
+        experiment_name,
+        strategy_selector,
+        parameter_set,
+        run_config,
+        launch_context,
+        queued_at=None,
+    ):
+        timestamp = queued_at or _utc_now_rfc3339()
+        date_part = timestamp[:10].replace("-", "")
+        exp_id = f"exp-{date_part}-{len(self._experiments) + 1:03d}"
+        record = {
+            "experiment_id": exp_id,
+            "ticket_id": ticket_id,
+            "experiment_name": experiment_name,
+            "status": "queued",
+            "queued_at": timestamp,
+            "strategy_selector": strategy_selector,
+            "parameter_set": parameter_set,
+            "run_config": run_config,
+            "launch_context": launch_context,
+            "allowedActions": {"canCancel": True},
+        }
+        self._experiments[exp_id] = record
+        return dict(record)
+
+    def get_research_experiment(self, experiment_id):
+        record = self._experiments.get(str(experiment_id))
+        return dict(record) if record else None
+
+    def list_research_experiments(self, *, ticket_id=None, status=None):
+        items = list(self._experiments.values())
+        if ticket_id:
+            items = [e for e in items if e.get("ticket_id") == ticket_id]
+        if status:
+            items = [e for e in items if e.get("status") == status]
+        return [dict(e) for e in items]
+
+    def cancel_research_experiment(self, experiment_id, *, completed_at=None):
+        record = self._experiments.get(str(experiment_id))
+        if record is None or record.get("status") not in self._CANCELABLE:
+            return None
+        record["status"] = "canceled"
+        record["completed_at"] = completed_at or _utc_now_rfc3339()
+        record["allowedActions"] = {"canCancel": False}
+        return dict(record)
+
+
 def test_research_analyses_and_experiments_no_overlays():
     port = DefaultResearchKnowledgeSourcePort(
         research_analyses_store={
@@ -324,7 +392,8 @@ def test_research_analyses_and_experiments_no_overlays():
                 "run_at": "2026-08-27T12:00:00Z",
                 "summary": {"headline": "Backtest successful", "verdict": "pass"},
             }
-        }
+        },
+        research_write_owner=_FakeResearchWriteOwner(),
     )
 
     analyses = port.list_research_analyses(ticket_id="rt-1")
@@ -351,6 +420,31 @@ def test_research_analyses_and_experiments_no_overlays():
     assert canceled is not None
     assert canceled["status"] == "canceled"
     assert canceled["allowedActions"]["canCancel"] is False
+
+
+def test_research_experiments_fail_closed_without_write_owner(monkeypatch):
+    """No in-memory fallback: an unconfigured ResearchWriteOwner must raise,
+    never silently return an empty/fake success (BFF-RESEARCH-JOBS-OWNER-BINDING
+    -CORRECTIVE-001)."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("RESEARCH_STORE_DSN", raising=False)
+    port = DefaultResearchKnowledgeSourcePort()
+
+    with pytest.raises(ResearchWriteOwnerUnavailableError):
+        port.list_research_experiments()
+
+    with pytest.raises(ResearchWriteOwnerUnavailableError):
+        port.create_research_experiment(
+            ticket_id="rt-1",
+            experiment_name="Should Fail Closed",
+            strategy_selector={},
+            parameter_set={},
+            run_config={},
+            launch_context={},
+        )
+
+    with pytest.raises(ResearchWriteOwnerUnavailableError):
+        port.cancel_research_experiment("exp-does-not-matter")
 
 
 def test_research_artifacts_comparison():

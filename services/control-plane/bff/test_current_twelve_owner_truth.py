@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-import sys
 from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -11,18 +10,19 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 from unittest.mock import MagicMock, patch
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
+from services.control_plane.bff import loop_inventory as loop_inventory_model
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.downstream_health_monitor import _probe_http
+from services.control_plane.bff.management_read_models import loop_truth
+
 
 BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-import loop_inventory as loop_inventory_model  # noqa: E402
-from downstream_health_monitor import _probe_http  # noqa: E402
-
-
 REPO_ROOT = BFF_DIR.parents[2]
 TENANT_ID = "tenant-twelve-truth"
 ENVIRONMENT = "dev"
@@ -81,17 +81,23 @@ def _scoped_health_client(
     with (
         patch.dict(os.environ, env_overrides, clear=False),
         patch.object(
-            bff_main.loop_truth,
+            loop_truth,
             "fetch_controller_store_health_records",
             new=_fetch_controller_records,
         ),
-        patch.object(
-            bff_main,
-            "downstream_health_monitor",
-            downstream_monitor,
-        ),
     ):
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
+        app = FastAPI()
+        register_error_handlers(app)
+        app.include_router(
+            create_control_loops_router(
+                downstream_health_monitor=downstream_monitor,
+                extract_identity=auth_policy.extract_identity,
+                require_read_role=auth_policy.require_read_role,
+                require_operator_role=auth_policy.require_operator_role,
+                bff_error=auth_policy.bff_error,
+            )
+        )
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 def _build_valid_controller_row(

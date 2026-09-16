@@ -2,21 +2,81 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Dict, Iterator, List, Optional
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.console_gap.route_policies import create_route_policies_router
+from services.control_plane.bff.console_gap.workflows_hooks import create_workflows_hooks_router
+from services.control_plane.bff.jobs.router import create_jobs_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer op-console:operator"}
+
+
+def _extract_identity(authorization: Optional[str] = None) -> Any:
+    class _Identity:
+        operator_id = "op-console"
+        roles = ["operator"]
+
+    return _Identity()
+
+
+def _require_read_role(_identity: Any) -> None:
+    return None
+
+
+def _utc_now() -> str:
+    return "2026-06-15T00:00:00Z"
+
+
+def _page_slice(items: List[Any], page_token: Optional[str], page_size: int):
+    start = int(page_token) if page_token else 0
+    page_items = list(items[start : start + page_size])
+    next_token = str(start + page_size) if start + page_size < len(items) else None
+    return page_items, next_token
+
+
+def _dataset_surface_status(dataset: str, *, snapshot_at: Optional[str] = None, **_: Any) -> Dict[str, Any]:
+    return {"status": "ok", "source": "service_store", "dataset": dataset, "snapshot_at": snapshot_at}
+
+
+def _read_surface_meta(
+    dataset: str,
+    surface_key: str,
+    *,
+    snapshot_at: Optional[str] = None,
+    total: Optional[int] = None,
+    surface: Optional[Dict[str, Any]] = None,
+    **_: Any,
+) -> Dict[str, Any]:
+    surf = surface or _dataset_surface_status(dataset, snapshot_at=snapshot_at)
+    meta: Dict[str, Any] = {"snapshot_at": snapshot_at, "surfaces": {surface_key: surf}}
+    if total is not None:
+        meta["total"] = total
+    return meta
+
+
+def _raise_if_read_surface_unavailable(surface: Dict[str, Any], *, label: str) -> None:
+    return None
+
+
+def _bff_error(status_code: int, code: Any, message: str, *args: Any, **kwargs: Any) -> Exception:
+    return Exception(f"{status_code}: {message}")
+
+
+def _reject_body_idempotency_key(_payload: Dict[str, Any]) -> None:
+    return None
+
+
+def _resolve_final_idempotency_key(primary: Optional[str], alternate: Optional[str]) -> str:
+    return primary or alternate or str(uuid.uuid4())
 
 _ENV_TO_FILE = {
     "PANTHEON_BFF_ROUTE_POLICY_STORE": "route_policies.json",
@@ -26,9 +86,37 @@ _ENV_TO_FILE = {
 }
 
 
+def _client(ports) -> TestClient:
+    app = FastAPI()
+    common = {"extract_identity": _extract_identity, "require_read_role": _require_read_role}
+    app.include_router(create_route_policies_router(read_surface=ports, **common))
+    app.include_router(
+        create_workflows_hooks_router(
+            workflow_hook_port=ports,
+            snapshot_now=_utc_now,
+            **common,
+        )
+    )
+    app.include_router(
+        create_jobs_router(
+            read_surface=ports,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            page_slice=_page_slice,
+            read_surface_meta=_read_surface_meta,
+            dataset_surface_status=_dataset_surface_status,
+            raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
+            reject_body_idempotency_key=_reject_body_idempotency_key,
+            resolve_final_idempotency_key=_resolve_final_idempotency_key,
+            submit_job_action=lambda *a, **k: {},
+            **common,
+        )
+    )
+    return TestClient(app)
+
+
 @contextmanager
 def _projected_store_client() -> Iterator[TestClient]:
-    original_store = bff_main.read_store
     original_env = {key: os.environ.get(key) for key in _ENV_TO_FILE}
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -95,10 +183,8 @@ def _projected_store_client() -> Iterator[TestClient]:
             )
             ports.list_jobs_bff = lambda **_kwargs: list(payloads["jobs.json"].values())
             ports.dataset_source = lambda _dataset: "service_store"
-            bff_main.read_store = ports
-            yield TestClient(bff_main.app)
+            yield _client(ports)
         finally:
-            bff_main.read_store = original_store
             for env_name, value in original_env.items():
                 if value is None:
                     os.environ.pop(env_name, None)

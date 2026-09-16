@@ -1,0 +1,139 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+  "batch_id": "B03_auth_session_jwks",
+  "title": "Auth, sessions, and JWKS",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "delivery_state": "ready_for_review",
+  "base_ref": "origin/dev@c337215c33afb99f1d2223d11172a167378ea24c",
+  "base_sha": "c337215c33afb99f1d2223d11172a167378ea24c",
+  "head_binding_policy": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py. This evidence manifest does not claim a commit can contain its own SHA.",
+  "delivery_nature": {
+    "test_suite_decoupling": true,
+    "statement": "Decoupled all 6 test and support files in the B03 auth_session_jwks partition from the composition root (services/control-plane/bff/main.py) and sys.path surgery while preserving full test contracts, error schemas, and invariants using retained production seams and isolated test harnesses."
+  },
+  "inventory": {
+    "total_files": 6,
+    "files": [
+      "services/control-plane/bff/test_bff_auth_facade.py",
+      "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py",
+      "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+      "services/control-plane/bff/tests/test_auth_jwks_strict.py",
+      "services/control-plane/bff/tests/test_bff_jwks_prewarm.py",
+      "services/control-plane/bff/tests/test_confirm_token_lifecycle.py"
+    ]
+  },
+  "changed_files": [
+    "services/control-plane/bff/test_bff_auth_facade.py",
+    "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py",
+    "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+    "services/control-plane/bff/tests/test_auth_jwks_strict.py",
+    "services/control-plane/bff/tests/test_bff_jwks_prewarm.py",
+    "services/control-plane/bff/tests/test_confirm_token_lifecycle.py",
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001/evidence.json"
+  ],
+  "decoupling_summary": {
+    "composition_root_references": {
+      "before": 6,
+      "after": 0,
+      "notes": "Zero import main or from main import across all 6 files."
+    },
+    "sys_path_surgery": {
+      "before": 10,
+      "after": 0,
+      "notes": "All top-level sys.path.insert and sys.path mutations removed across all 6 files."
+    },
+    "global_monkeypatching": {
+      "before": "Global monkeypatching of bff_main.session_lifecycle_store, bff_main.auth_facade_service, bff_main.app, and CommandStore.",
+      "after": "Zero global monkeypatching on composition root; tests construct isolated test harness apps with local session lifecycle stores and explicit router factories."
+    }
+  },
+  "importer_disposition": {
+    "baseline_main_importers": 6,
+    "residual_main_importers": 0,
+    "disposition_by_file": {
+      "services/control-plane/bff/test_bff_auth_facade.py": {
+        "layer": "auth",
+        "imports_main": false,
+        "disposition": "DECOUPLED",
+        "rationale": "Decoupled from main.py by directly exercising services.control_plane.bff.auth.policy seams and create_settings_router with register_error_handlers."
+      },
+      "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py": {
+        "layer": "session",
+        "imports_main": false,
+        "disposition": "DECOUPLED",
+        "rationale": "Decoupled from main.py using isolated ManagementSessionHarness and DynamicHarness with explicit SessionLifecycleStore."
+      },
+      "services/control-plane/bff/test_bff_session_auth_me_contract.py": {
+        "layer": "session",
+        "imports_main": false,
+        "disposition": "DECOUPLED",
+        "rationale": "Decoupled from main.py using isolated ManagementSessionHarness mounting real auth, personas, strategies, and management domain routers."
+      },
+      "services/control-plane/bff/tests/test_auth_jwks_strict.py": {
+        "layer": "auth_jwks",
+        "imports_main": false,
+        "disposition": "DECOUPLED",
+        "rationale": "Decoupled from main.py by exercising production CORS seams in services.control_plane.bff.core.http_security and auth policy seams."
+      },
+      "services/control-plane/bff/tests/test_bff_jwks_prewarm.py": {
+        "layer": "jwks",
+        "imports_main": false,
+        "disposition": "DECOUPLED",
+        "rationale": "Decoupled from main.py by removing sys.path mutations and using package-qualified imports."
+      },
+      "services/control-plane/bff/tests/test_confirm_token_lifecycle.py": {
+        "layer": "auth_token",
+        "imports_main": false,
+        "disposition": "DECOUPLED",
+        "rationale": "Decoupled from main.py by creating an isolated FastAPI app mounting create_command_adapters_router with register_error_handlers and local CommandStore."
+      }
+    }
+  },
+  "verification": {
+    "git_fetch_origin_dev": {
+      "exit_status": 0
+    },
+    "exact_scope_ast_scan": {
+      "exit_status": 0,
+      "source_file_count": 6,
+      "bff_main_importer_count": 0,
+      "sys_path_mutation_count": 0,
+      "command": "python3 -c \"<ast_check_all_6_files>\"",
+      "result": "ALL 6 FILES CLEAN: 0 main imports, 0 sys.path mutations"
+    },
+    "focused_tests": {
+      "exit_status": 0,
+      "total_tests": 193,
+      "passed": 193,
+      "failed": 0,
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py services/control-plane/bff/tests/test_bff_jwks_prewarm.py services/control-plane/bff/tests/test_confirm_token_lifecycle.py",
+      "breakdown": {
+        "services/control-plane/bff/test_bff_auth_facade.py": 85,
+        "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py": 13,
+        "services/control-plane/bff/test_bff_session_auth_me_contract.py": 62,
+        "services/control-plane/bff/tests/test_auth_jwks_strict.py": 26,
+        "services/control-plane/bff/tests/test_bff_jwks_prewarm.py": 5,
+        "services/control-plane/bff/tests/test_confirm_token_lifecycle.py": 2
+      }
+    },
+    "existing_architecture_tests": {
+      "exit_status": 0,
+      "total_tests": 8,
+      "passed": 8,
+      "failed": 0,
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "8 passed in 1.15s"
+    }
+  },
+  "review_decision": {
+    "status": "review_pending",
+    "reviewer": "Claude"
+  },
+  "delivery": {
+    "pr_number": 5749,
+    "target_branch": "dev",
+    "auto_merge": false
+  }
+}

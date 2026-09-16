@@ -127,6 +127,16 @@ class SupervisorRecoveryProcessE2ETests(unittest.TestCase):
         self.addCleanup(setattr, common, "ROOT", self.original_common_root)
 
         self.config = config_fixture(self.status_root)
+        self.config["review_gate"] = {"github_review_bridge_required": False}
+        self.config["branch_workflow"] = {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                ],
+            },
+        }
         self.config["paths"]["approval_queue"] = str(
             self.status_root / ".orchestrator" / "approval-queue.json"
         )
@@ -258,6 +268,8 @@ class SupervisorRecoveryProcessE2ETests(unittest.TestCase):
 
     def _child(self, body: str, *, expected_returncode: int) -> None:
         env = os.environ.copy()
+        for leaked_env in ("ORCH_RUNNER_STATUS_PATH", "ORCH_HEARTBEAT_PATH"):
+            env.pop(leaked_env, None)
         env["PYTHONPATH"] = os.pathsep.join(
             [str(ORCHESTRATOR_ROOT), str(REPOSITORY_ROOT), env.get("PYTHONPATH", "")]
         )
@@ -298,6 +310,15 @@ class SupervisorRecoveryProcessE2ETests(unittest.TestCase):
             event_log=event_log,
         )
         environment = os.environ.copy()
+        for leaked_env in (
+            "ORCH_RUNNER_STATUS_PATH",
+            "ORCH_HEARTBEAT_PATH",
+            "ORCH_TASK_ID",
+            "ORCH_AGENT_ID",
+            "ORCH_PROVIDER",
+            "ORCH_RUN_ID",
+        ):
+            environment.pop(leaked_env, None)
         environment.update(
             {
                 "PANTHEON_LIVE_SUPERVISOR_CONFIG": str(
@@ -728,6 +749,8 @@ class SupervisorRecoveryProcessE2ETests(unittest.TestCase):
         runtime_state.save_runtime_state(self.config, runtime_state.default_state())
 
         environment = os.environ.copy()
+        for leaked_env in ("ORCH_RUNNER_STATUS_PATH", "ORCH_HEARTBEAT_PATH"):
+            environment.pop(leaked_env, None)
         environment.update(
             {
                 "PANTHEON_COMMAND_ROOT": str(self.command_root),

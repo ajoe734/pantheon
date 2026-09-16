@@ -1,40 +1,64 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator, Optional
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from command_queue import CommandStore
+from services.control_plane.bff.auth.policy import extract_identity as _auth_extract_identity
+from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.models import OperatorIdentity
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 APPROVER_TOKEN = "Bearer op-6:approver"
 ADMIN_MFA_TOKEN = "Bearer op-admin:admin:mfa"
 
+_current_command_store: Optional[CommandStore] = None
 
-async def _noop_process_command(_command_id: str) -> None:
-    return None
+
+class _StoreProxy:
+    def _get_all_commands(self) -> list[dict[str, Any]]:
+        if _current_command_store is None:
+            return []
+        return _current_command_store._get_all_commands()
+
+
+command_store = _StoreProxy()
+
+
+def _extract_identity(authorization: Optional[str] = None, **kwargs: Any) -> OperatorIdentity:
+    return _auth_extract_identity(authorization, **kwargs)
 
 
 @contextmanager
 def _isolated_client() -> Iterator[TestClient]:
+    global _current_command_store
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.command_store
-        original_worker = bff_main._process_command_stub
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._process_command_stub = _noop_process_command
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        _current_command_store = store
+        svc = CommandAdapterService(
+            command_store=store,
+            read_surface=None,
+            extract_identity=_extract_identity,
+        )
+        app = FastAPI()
+        register_error_handlers(app)
+        router = create_command_adapters_router(
+            service=svc,
+            submit_command_admission=svc.submit_command_admission,
+        )
+        app.include_router(router)
         try:
-            yield TestClient(bff_main.app)
+            yield TestClient(app)
         finally:
-            bff_main.command_store = original_store
-            bff_main._process_command_stub = original_worker
+            _current_command_store = None
 
 
 def _assert_precondition_error(
@@ -64,7 +88,7 @@ def _assert_precondition_error(
     assert detail["foundation_error"]["error_code"] == code
     assert detail["audit_action"]["action_type"] == "bff.command.rejected"
     assert response.headers["X-Correlation-Id"] == correlation_id
-    assert bff_main.command_store._get_all_commands() == []
+    assert command_store._get_all_commands() == []
 
 
 def test_bff_v1_commands_missing_confirm_token_returns_428_envelope() -> None:
@@ -119,7 +143,7 @@ def test_bff_v1_commands_missing_approval_returns_409_envelope() -> None:
         _assert_precondition_error(
             response,
             status_code=409,
-            code="APPROVAL_REQUIRED",
+            code="HUMAN_GATE_PENDING",
             action_id="ApproveDecision",
             entity_type="ApprovalDecision",
             entity_id="appr-final-precondition-001",
@@ -154,7 +178,7 @@ def test_bff_v1_commands_missing_two_man_returns_409_envelope() -> None:
         _assert_precondition_error(
             response,
             status_code=409,
-            code="TWO_MAN_REQUIRED",
+            code="TWO_MAN_SIGNATURE_REQUIRED",
             action_id="ActivateKillSwitch",
             entity_type="KillSwitchOrder",
             entity_id="ks-final-precondition-001",
