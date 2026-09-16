@@ -30,63 +30,6 @@ from services.control_plane.bff.management_read_models.ranking_router import (
 )
 
 
-class _FakeResearchWriteOwner:
-    """Minimal stand-in for ``services.research.write_owner.ResearchWriteOwner``.
-
-    BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001 deletes
-    ``DefaultResearchKnowledgeSourcePort``'s in-memory ``_experiments``
-    overlay: experiment persistence now belongs exclusively to
-    ``ResearchWriteOwner`` (Postgres). This fake is injected via the port's
-    ``research_write_owner`` constructor kwarg (legitimate dependency
-    injection for a fixture), not a hidden fallback the production code
-    reaches for on its own.
-    """
-
-    _CANCELABLE = frozenset({"queued", "running"})
-
-    def __init__(self, seed: Mapping[str, Any] | None = None) -> None:
-        self._experiments: dict[str, dict[str, Any]] = {
-            str(exp_id): dict(record) for exp_id, record in (seed or {}).items()
-        }
-
-    def create_research_experiment(self, **fields: Any) -> dict[str, Any]:
-        exp_id = f"exp-{len(self._experiments) + 1:03d}"
-        record = {"experiment_id": exp_id, "status": "queued", **fields}
-        self._experiments[exp_id] = record
-        return dict(record)
-
-    def _projected(self, record: dict[str, Any]) -> dict[str, Any]:
-        projected = dict(record)
-        projected.setdefault(
-            "allowedActions", {"canCancel": record.get("status") in self._CANCELABLE}
-        )
-        return projected
-
-    def get_research_experiment(self, experiment_id: Any) -> dict[str, Any] | None:
-        record = self._experiments.get(str(experiment_id))
-        return self._projected(record) if record else None
-
-    def list_research_experiments(
-        self, *, ticket_id: Any = None, status: Any = None
-    ) -> list[dict[str, Any]]:
-        items = list(self._experiments.values())
-        if ticket_id:
-            items = [e for e in items if e.get("ticket_id") == ticket_id]
-        if status:
-            items = [e for e in items if e.get("status") == status]
-        return [self._projected(e) for e in items]
-
-    def cancel_research_experiment(
-        self, experiment_id: Any, *, completed_at: Any = None
-    ) -> dict[str, Any] | None:
-        record = self._experiments.get(str(experiment_id))
-        if record is None or record.get("status") not in self._CANCELABLE:
-            return None
-        record["status"] = "canceled"
-        record["completed_at"] = completed_at
-        return dict(record)
-
-
 # `_tw_qlib_research_experiment_default` (and its small, fully self-contained
 # dependency chain of pure helpers/constants) IS practical to port locally, so it is
 # reproduced here verbatim instead of importing it from read_store.
@@ -410,7 +353,7 @@ def _make_store(
         },
         research_knowledge_source_kwargs={
             "strategy_specs_store": data.get("strategy_specs") or {},
-            "research_write_owner": _FakeResearchWriteOwner(seed=research_experiments),
+            "research_experiments_store": research_experiments,
             "research_artifacts_store": data.get("research_artifacts") or {},
             "research_tickets_store": data.get("research_tickets") or {},
             "research_notes_store": data.get("research_notes") or {},

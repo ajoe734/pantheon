@@ -15,88 +15,6 @@ from ports import DefaultResearchKnowledgeSourcePort
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
 
-
-class _FakeResearchWriteOwner:
-    """Minimal stand-in for ``services.research.write_owner.ResearchWriteOwner``.
-
-    BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001 deletes the port's own
-    in-memory ``_experiments`` overlay: experiment persistence now belongs
-    exclusively to ``ResearchWriteOwner`` (Postgres). This fake is injected via
-    the port's ``research_write_owner`` constructor kwarg (legitimate
-    dependency injection for a unit test), not a hidden fallback the
-    production code reaches for on its own.
-    """
-
-    _CANCELABLE = frozenset({"queued", "running"})
-
-    def __init__(self, seed=None) -> None:
-        self._experiments: dict = {
-            exp_id: dict(record) for exp_id, record in (seed or {}).items()
-        }
-
-    def create_research_experiment(
-        self,
-        *,
-        ticket_id,
-        experiment_name,
-        strategy_selector,
-        parameter_set,
-        run_config,
-        launch_context,
-        queued_at=None,
-    ):
-        from ports.research_knowledge_source import _utc_now_rfc3339
-
-        timestamp = queued_at or _utc_now_rfc3339()
-        date_part = timestamp[:10].replace("-", "")
-        exp_id = f"exp-{date_part}-{len(self._experiments) + 1:03d}"
-        record = {
-            "experiment_id": exp_id,
-            "ticket_id": ticket_id,
-            "experiment_name": experiment_name,
-            "status": "queued",
-            "queued_at": timestamp,
-            "started_at": None,
-            "completed_at": None,
-            "progress": None,
-            "strategy_selector": strategy_selector,
-            "parameter_set": parameter_set,
-            "run_config": run_config,
-            "launch_context": launch_context,
-            "failure": {"reason_code": None, "message": None},
-            "allowedActions": {"canCancel": True},
-        }
-        self._experiments[exp_id] = record
-        return dict(record)
-
-    def _projected(self, record):
-        projected = dict(record)
-        projected["allowedActions"] = {"canCancel": record.get("status") in self._CANCELABLE}
-        return projected
-
-    def get_research_experiment(self, experiment_id):
-        record = self._experiments.get(str(experiment_id))
-        return self._projected(record) if record else None
-
-    def list_research_experiments(self, *, ticket_id=None, status=None):
-        items = list(self._experiments.values())
-        if ticket_id:
-            items = [e for e in items if e.get("ticket_id") == ticket_id]
-        if status:
-            items = [e for e in items if e.get("status") == status]
-        return [self._projected(e) for e in items]
-
-    def cancel_research_experiment(self, experiment_id, *, completed_at=None):
-        from ports.research_knowledge_source import _utc_now_rfc3339
-
-        record = self._experiments.get(str(experiment_id))
-        if record is None or record.get("status") not in self._CANCELABLE:
-            return None
-        record["status"] = "canceled"
-        record["completed_at"] = completed_at or _utc_now_rfc3339()
-        record["allowedActions"] = {"canCancel": False}
-        return dict(record)
-
 _SEEDED_EXPERIMENTS = {
     "exp-20260419-012": {
         "experiment_id": "exp-20260419-012",
@@ -183,7 +101,7 @@ def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
         bff_main.read_store = DefaultResearchKnowledgeSourcePort(
-            research_write_owner=_FakeResearchWriteOwner(seed=_SEEDED_EXPERIMENTS),
+            research_experiments_store=_SEEDED_EXPERIMENTS,
         )
         client = TestClient(bff_main.app)
         try:
@@ -197,9 +115,7 @@ def _no_fallback_client():
     """Client with allow_local_snapshot_fallback=False — the production path."""
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = DefaultResearchKnowledgeSourcePort(
-            research_write_owner=_FakeResearchWriteOwner(),
-        )
+        bff_main.read_store = DefaultResearchKnowledgeSourcePort()
         client = TestClient(bff_main.app)
         try:
             yield client
