@@ -17372,6 +17372,13 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         reassign_event: bool = True,
         intervening_event: str | None = None,
         scope_overrides: dict[str, Any] | None = None,
+        reopen_event: bool = False,
+        reopen_actor: str = "Human/Ops",
+        reopen_op_mode: str = "local_human_ops",
+        reopen_ts: str = "2026-08-01T15:00:00Z",
+        reopen_valid_id: bool = True,
+        reassign_actor: str = "Human/Ops",
+        post_reopen_event: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, dict[str, str]]:
         delivery_root = self.root / "execute-plans"
         delivery_sha = self._init_git_repo(
@@ -17578,6 +17585,22 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             import_ev["event_id"] = f"human-ops-import-{digest}"
             ai_status.append_log(import_ev)
 
+        if reopen_event:
+            reopen_ev = {
+                "ts": reopen_ts,
+                "agent": reopen_actor,
+                "operator_mode": reopen_op_mode,
+                "type": "reopen",
+                "task_id": "REG-002",
+                "message": "Operator reopened task for triage",
+            }
+            if reopen_valid_id:
+                reopen_digest = ai_status._canonical_json_sha256(reopen_ev)
+                reopen_ev["event_id"] = f"human-ops-reopen-{reopen_digest}"
+            else:
+                reopen_ev["event_id"] = "unauthenticated-reopen-id"
+            ai_status.append_log(reopen_ev)
+
         if reassign_event:
             ev = audited_reassignment_event(
                 task_id="REG-002",
@@ -17587,11 +17610,12 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                 new_reviewer=reassign_new_reviewer,
                 timestamp=reassign_ts,
                 message="Auto-reassign REG-002",
-                actor="Human/Ops",
+                actor=reassign_actor,
                 old_generation=archive_gen,
                 new_generation=active_gen,
             )
-            ev["operator_mode"] = "local_human_ops"
+            if reassign_actor == "Human/Ops":
+                ev["operator_mode"] = "local_human_ops"
             ai_status.append_log(ev)
 
         if intervening_event is not None:
@@ -17604,6 +17628,9 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                     "message": f"intervening {intervening_event}",
                 }
             )
+
+        if post_reopen_event is not None:
+            ai_status.append_log(post_reopen_event)
 
         return state, snapshot, config, ai_status._canonical_json_sha256(snapshot), reconcile_env
 
@@ -17705,6 +17732,169 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.assertEqual(len(reconcile_events), 1)
         self.assertEqual(reconcile_events[0]["retired_stale_active_row"]["generation"], 2)
         self.assertIn("archive_resurrection_proof", reconcile_events[0])
+
+    def test_positive_archive_resurrection_zero_delivery_reopen(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            reassign_actor="Orchestrator",
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+
+        # 1. Diagnostic
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertTrue(diag["eligible"])
+        self.assertEqual(diag["reason"], "eligible_for_stale_role_recovery")
+        proof = diag["proof"]
+        self.assertEqual(proof["retired_active_row"]["generation"], 2)
+        self.assertEqual(proof["retired_active_row"]["owner"], "Codex2")
+        self.assertEqual(proof["retired_active_row"]["reviewer"], "Claude")
+        self.assertEqual(proof["archive_generation"], 1)
+        self.assertIn("reopen_event_id", proof["audit_proof_range"])
+
+        # 2. Command show via isolated CLI
+        show_proc = self._run_cli(["show", "REG-002"])
+        self.assertEqual(show_proc.returncode, 0, show_proc.stderr)
+        show_out = json.loads(show_proc.stdout)
+        self.assertEqual(show_out["source"], "active")
+        self.assertTrue(show_out["archive_resurrection_diagnostic"]["eligible"])
+
+        # 3. Preflight and reconcile via real isolated CLI
+        rec_proc = self._run_cli(["reconcile_merged_done", "REG-002", "Reconcile zero-delivery reopen recovery."])
+        self.assertEqual(rec_proc.returncode, 0, rec_proc.stderr)
+
+        # 4. Outbox recovery / drain via CLI recover
+        recover_proc = self._run_cli(["recover"])
+        self.assertEqual(recover_proc.returncode, 0, recover_proc.stderr)
+
+        # 5. Assertions on final state:
+        final_state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(final_state, "REG-002"))
+        self.assertIsNone(final_state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
+        term_fact = final_state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]
+        self.assertEqual(term_fact["generation"], 1)
+        self.assertEqual(term_fact["recorded_at"], "2026-08-01T10:00:00Z")
+        self.assertEqual(term_fact["terminal_outcome"], "completed")
+
+        on_disk_snapshot = ai_status.load_archived_snapshot("REG-002")
+        self.assertEqual(ai_status._canonical_json_sha256(on_disk_snapshot), orig_sha)
+        self.assertEqual(on_disk_snapshot, snapshot)
+
+        receipt = final_state[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
+        self.assertEqual(receipt["snapshot_sha256"], orig_sha)
+        self.assertEqual(final_state["blockers"], [])
+
+        # Verify dependency resolution for downstream task REG-003
+        resolver = task_archive.TaskResolver(final_state)
+        reg_003 = ai_status.get_task(final_state, "REG-003")
+        self.assertTrue(task_archive.dependency_satisfied_for(reg_003, "REG-002", resolver))
+
+        # 6. Audit log entries
+        logs = [
+            json.loads(line)
+            for line in self.log_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        retired_events = [e for e in logs if e.get("type") == "stale_archive_resurrection_retired"]
+        self.assertEqual(len(retired_events), 1)
+        self.assertEqual(retired_events[0]["retired_generation"], 2)
+        self.assertEqual(retired_events[0]["archive_generation"], 1)
+
+        reconcile_events = [e for e in logs if e.get("type") == "reconcile_merged_done"]
+        self.assertEqual(len(reconcile_events), 1)
+        self.assertEqual(reconcile_events[0]["retired_stale_active_row"]["generation"], 2)
+        self.assertIn("archive_resurrection_proof", reconcile_events[0])
+
+    def test_negative_zero_delivery_reopen_with_new_commit(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            post_reopen_event={
+                "ts": "2026-08-02T12:00:00Z",
+                "agent": "Codex2",
+                "type": "note",
+                "task_id": "REG-002",
+                "commit": "a" * 40,
+                "message": "Pushed commit after reopen",
+            },
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("post-reopen delivery activity detected (commit)", diag["reason"])
+        self._assert_cli_retirement_refused("post-reopen delivery activity detected (commit)")
+
+    def test_negative_zero_delivery_reopen_with_changed_delivery(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            scope_overrides={
+                "delivery_binding": {
+                    "kind": "pull_request",
+                    "pr_number": 999,
+                    "head_sha": "b" * 40,
+                }
+            },
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("existing archive snapshot conflicts with terminal task", diag["reason"])
+        self._assert_cli_retirement_refused("existing archive snapshot conflicts with terminal task")
+
+    def test_negative_zero_delivery_reopen_with_invalidated_review(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            scope_overrides={
+                "github_review_bridge": {
+                    "decision": "reject",
+                    "message": "Independent review rejected deliverable",
+                }
+            },
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("github review bridge indicates review rejection (reject)", diag["reason"])
+        self._assert_cli_retirement_refused("github review bridge indicates review rejection (reject)")
+
+    def test_negative_zero_delivery_reopen_with_altered_scope(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            scope_overrides={"acceptance": ["completely altered acceptance scope"]},
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("existing archive snapshot conflicts with terminal task", diag["reason"])
+        self._assert_cli_retirement_refused("existing archive snapshot conflicts with terminal task")
+
+    def test_negative_zero_delivery_reopen_unauthorized_actor(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            reopen_actor="Codex",
+            reopen_op_mode="",
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("intervening reopen event detected", diag["reason"])
+        self._assert_cli_retirement_refused("intervening reopen event detected")
+
+    def test_negative_zero_delivery_reopen_unauthenticated_id(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            reopen_valid_id=False,
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("unauthenticated event_id", diag["reason"])
+        self._assert_cli_retirement_refused("unauthenticated event_id")
 
     def test_negative_missing_import_lineage(self) -> None:
         state, snapshot, config, orig_sha, rec_env = self._build_fixture(import_event=False)
