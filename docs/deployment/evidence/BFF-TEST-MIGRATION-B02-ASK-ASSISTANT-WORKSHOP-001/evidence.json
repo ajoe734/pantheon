@@ -1,0 +1,155 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+  "base_sha": "338a73a778b04a80629a399fdbfcfbe81dbd935f",
+  "batch_group": "B02_ask_assistant_workshop",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "depends_on": [
+    "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+    "BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001",
+    "BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
+  ],
+  "pairwise_disjoint_scope": {
+    "target_files_count": 4,
+    "target_files": [
+      "services/control-plane/bff/tests/test_assistant_agora_ask.py",
+      "services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "services/control-plane/bff/tests/test_console_data_agora_projection.py",
+      "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py"
+    ],
+    "retained_parent_foundation_untouched": [
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ]
+  },
+  "results": {
+    "test_assistant_agora_ask": {
+      "file": "services/control-plane/bff/tests/test_assistant_agora_ask.py",
+      "changes": "Removed import main as bff_main and sys.path mutations; mounted create_identity_router on isolated FastAPI app with injected AgoraService instance; updated mock targets to patch.object(ops_module, 'OpenClawOpsClient', ...)",
+      "tests_passed": 8,
+      "tests_total": 8,
+      "disposition": "DECOUPLED"
+    },
+    "test_assistant_context_pack": {
+      "file": "services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "changes": "Decoupled from bff/main.py composition root using the BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001 extraction seam (collect_assistant_context_source and AssistantSourceCollectorDeps); mounted create_assistant_router on isolated FastAPI app with injected compose_context_pack; eliminated all main imports and global read_store monkeypatching",
+      "tests_passed": 5,
+      "tests_total": 5,
+      "disposition": "DECOUPLED"
+    },
+    "test_console_data_agora_projection": {
+      "file": "services/control-plane/bff/tests/test_console_data_agora_projection.py",
+      "changes": "Removed import main as bff_main, global read_store monkeypatching, and sys.path mutations; mounted create_agora_router with read_surface=ports; bound in-memory journal with tenant-isolated projections",
+      "tests_passed": 1,
+      "tests_total": 1,
+      "disposition": "DECOUPLED"
+    },
+    "test_workshop_stream_ag_be_sw_004": {
+      "file": "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "changes": "Removed sys.path.insert(0, BFF_DIR) and unused _workshop_client importing main; qualified agora imports to services.control_plane.bff.agora; mounted create_strategy_workshop_router on isolated FastAPI instance for fail-closed route validation",
+      "tests_passed": 25,
+      "tests_total": 25,
+      "disposition": "DECOUPLED"
+    }
+  },
+  "residual_disposition": {
+    "summary": "All 4 B02 test suites fully decoupled from bff/main.py composition root and passing cleanly; 0 residual blockers",
+    "decoupled_suites": [
+      "services/control-plane/bff/tests/test_assistant_agora_ask.py",
+      "services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "services/control-plane/bff/tests/test_console_data_agora_projection.py",
+      "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py"
+    ],
+    "residual_suite": null,
+    "residual_analysis": null
+  },
+  "static_checks": {
+    "main_composition_root_imports": 0,
+    "sys_path_mutations": 0,
+    "global_read_store_monkeypatches": 0,
+    "global_read_store_monkeypatch_details": "none; 0 global read_store monkeypatches",
+    "dynamic_imports": 0,
+    "subprocess_calls": 0,
+    "verdict": "clean"
+  },
+  "inventory_scan_results": {
+    "services/control-plane/bff/tests/test_assistant_agora_ask.py": {
+      "main_imports": [],
+      "dynamic_imports": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": [],
+      "global_read_store_monkeypatches": []
+    },
+    "services/control-plane/bff/tests/test_assistant_context_pack.py": {
+      "main_imports": [],
+      "dynamic_imports": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": [],
+      "global_read_store_monkeypatches": []
+    },
+    "services/control-plane/bff/tests/test_console_data_agora_projection.py": {
+      "main_imports": [],
+      "dynamic_imports": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": [],
+      "global_read_store_monkeypatches": []
+    },
+    "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py": {
+      "main_imports": [],
+      "dynamic_imports": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": [],
+      "global_read_store_monkeypatches": []
+    }
+  },
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_assistant_agora_ask.py",
+      "result": "8 passed, 1 warning in 4.66s",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "result": "5 passed, 2 warnings in 3.86s",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_console_data_agora_projection.py",
+      "result": "1 passed, 1 warning in 4.18s",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "result": "25 passed, 1 warning in 10.36s",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/tests/test_assistant_context_pack.py services/control-plane/bff/tests/test_console_data_agora_projection.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "result": "39 passed, 4 warnings in 18.04s",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -c \"import ast, json, sys; from pathlib import Path; files = sys.argv[1:]; res = {}; [res.setdefault(f, {'main_imports': [n.lineno for n in ast.walk(ast.parse(Path(f).read_text())) if (isinstance(n, ast.Import) and any(a.name in ('main','bff_main') or a.name.endswith('.main') for a in n.names)) or (isinstance(n, ast.ImportFrom) and (n.module in ('main','bff_main') or (n.module and (n.module.endswith('.main') or any(a.name=='main' for a in n.names)))))], 'dynamic_imports': [n.lineno for n in ast.walk(ast.parse(Path(f).read_text())) if (isinstance(n, ast.Call) and ((isinstance(n.func, ast.Name) and n.func.id == '__import__') or (isinstance(n.func, ast.Attribute) and n.func.attr == 'import_module'))) or (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Attribute) and n.value.attr == 'modules' and isinstance(n.slice, ast.Constant) and n.slice.value in ('main','bff_main'))], 'subprocess_calls': [n.lineno for n in ast.walk(ast.parse(Path(f).read_text())) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ('run','Popen','check_output','check_call') and isinstance(n.func.value, ast.Name) and n.func.value.id == 'subprocess'], 'sys_path_mutations': [n.lineno for n in ast.walk(ast.parse(Path(f).read_text())) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ('insert','append') and isinstance(n.func.value, ast.Attribute) and n.func.value.attr == 'path' and isinstance(n.func.value.value, ast.Name) and n.func.value.value.id == 'sys']}) for f in files]; print(json.dumps(res, indent=2))\" services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/tests/test_assistant_context_pack.py services/control-plane/bff/tests/test_console_data_agora_projection.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "result": "services/control-plane/bff/tests/test_assistant_agora_ask.py: 0 main, 0 dynamic, 0 subprocess, 0 sys.path; services/control-plane/bff/tests/test_assistant_context_pack.py: 0 main, 0 dynamic, 0 subprocess, 0 sys.path; services/control-plane/bff/tests/test_console_data_agora_projection.py: 0 main, 0 dynamic, 0 subprocess, 0 sys.path; services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py: 0 main, 0 dynamic, 0 subprocess, 0 sys.path",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -c \"import ast, json, sys; from pathlib import Path; files = sys.argv[1:]; res = {}; [res.setdefault(f, {'global_read_store_monkeypatches': [n.lineno for n in ast.walk(ast.parse(Path(f).read_text())) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == 'setattr' and any(isinstance(a, ast.Constant) and 'read_store' in str(a.value) for a in n.args)]}) for f in files]; print(json.dumps(res, indent=2))\" services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/tests/test_assistant_context_pack.py services/control-plane/bff/tests/test_console_data_agora_projection.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "result": "services/control-plane/bff/tests/test_assistant_agora_ask.py: 0 global read_store monkeypatches; services/control-plane/bff/tests/test_assistant_context_pack.py: 0 global read_store monkeypatches; services/control-plane/bff/tests/test_console_data_agora_projection.py: 0 global read_store monkeypatches; services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py: 0 global read_store monkeypatches",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "result": "clean, 0 whitespace errors or conflict markers",
+      "exit_code": 0
+    }
+  ],
+  "review": {
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "decision": "ready_for_review",
+    "notes": "All 4 B02 suites decoupled from bff/main.py composition root and passing cleanly via the extracted production collector seam (BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001). 0 main imports, 0 dynamic imports, 0 subprocess calls, 0 sys.path mutations, 0 global read_store monkeypatches across all 4 suites."
+  }
+}
