@@ -12,21 +12,39 @@ review + merge round trip.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 os.environ.setdefault("REGISTRY_STORE_BACKEND", "memory")
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports, create_strategy_write_owner  # noqa: E402
+from services.control_plane.bff.auth.policy import (  # noqa: E402
+    bff_error,
+    bff_me_tenant_payload,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.management_read_models.ranking_router import (  # noqa: E402
+    create_rankings_long_tail_router,
+)
+from services.control_plane.bff.models import ErrorCode  # noqa: E402
+from services.control_plane.bff.models import utc_now as _utc_now  # noqa: E402
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports, create_strategy_write_owner  # noqa: E402
+from services.control_plane.bff.strategies.router import create_strategies_router  # noqa: E402
+from services.control_plane.bff.strategies.routes.common import (  # noqa: E402
+    default_page_slice,
+    default_read_surface_meta,
+)
 from services.source_ingestion.strategy_seed_builder import (  # noqa: E402
     StrategySpecSeed,
     StrategySpecSeedStatus,
@@ -37,26 +55,222 @@ OPERATOR_HEADERS = {"Authorization": "Bearer strat-rank-op:operator:tenant-corp"
 IDEMPOTENT_HEADERS = {**OPERATOR_HEADERS, "Idempotency-Key": "strat-rank-test-key-1"}
 
 
+# --- Local mirrors of bff/main.py's self-contained helper functions -------
+# These are simple pure functions in main.py with no dependency on its
+# composition-root globals; they are reproduced verbatim here so tests can
+# construct the real strategies/rankings routers without importing main.py.
+
+_STRATEGY_BFF_LIFECYCLE_MAP = {
+    "draft": "draft",
+    "candidate": "review",
+    "review": "review",
+    "approved": "approved",
+    "active": "deployed",
+    "deployed": "deployed",
+    "paused": "paused",
+    "retired": "retired",
+    "paper": "paper_running",
+    "paper_running": "paper_running",
+    "canary": "canary_running",
+    "canary_running": "canary_running",
+    "canary_authorized_not_started": "canary_authorized_not_started",
+    "live": "live_running",
+    "live_running": "live_running",
+    "needs_human_approval": "needs_human_approval",
+    "rollback_required": "rollback_required",
+    "stopped": "stopped",
+    "failed": "failed",
+    "provisioning": "provisioning",
+}
+_STRATEGY_BFF_RISK_MAP = {
+    "info": "info",
+    "low": "low",
+    "medium": "medium",
+    "moderate": "medium",
+    "high": "high",
+    "critical": "critical",
+}
+
+
+def _normalize_lifecycle_state(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return _STRATEGY_BFF_LIFECYCLE_MAP.get(text, "draft")
+
+
+def _normalize_risk_level(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return _STRATEGY_BFF_RISK_MAP.get(text, "medium")
+
+
+def _stable_json_hash(payload: Dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _resolve_final_idempotency_key(
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+) -> str:
+    canonical = str(idempotency_key or "").strip()
+    if canonical:
+        return canonical
+    alias = str(x_idempotency_key or "").strip()
+    if alias:
+        return alias
+    raise bff_error(
+        400,
+        ErrorCode.VALIDATION_FAILED,
+        "Idempotency-Key is required for operator commands",
+        (
+            "Final contract routes require a non-empty Idempotency-Key header; "
+            "X-Idempotency-Key is accepted as a temporary compatibility alias"
+        ),
+        precondition_failed="idempotency_key",
+        suggestion="Retry with Idempotency-Key set to a stable client retry key",
+    )
+
+
+def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
+    body_key = "idempotencyKey" if "idempotencyKey" in payload else "idempotency_key" if "idempotency_key" in payload else None
+    if body_key is not None:
+        raise bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            f"{body_key} must not appear in the request body",
+            (
+                "Final contract routes require idempotency via the Idempotency-Key header, "
+                "not the request body"
+            ),
+            precondition_failed="body_idempotency_key",
+            suggestion=f"Remove {body_key} from the body and set the Idempotency-Key header",
+        )
+
+
+def _make_strategy_persona_idempotency_check(store: Dict[str, Any]):
+    def _check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
+        existing = store.get(resolved_key)
+        if existing is None:
+            return None
+        if existing.get("request_hash") != request_hash:
+            raise bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different request hash",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+        return deepcopy(existing.get("result"))
+
+    return _check
+
+
+_PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
+_PATH_DEDUPE_SUNSET_HTTP_DATE = "Mon, 25 May 2026 00:00:00 GMT"
+
+
+def _deprecated_bff_path_response(*, route: str, replacement: str):
+    from starlette.responses import JSONResponse
+
+    message = f"{route} is deprecated; use {replacement}."
+    headers = {
+        "Deprecation": "true",
+        "Sunset": _PATH_DEDUPE_SUNSET_HTTP_DATE,
+        "Link": f'<{replacement}>; rel="successor-version"',
+        "Warning": f'299 - "{message}"',
+        "X-Deprecated": "true",
+        "X-Deprecated-At": _PATH_DEDUPE_DEPRECATED_SINCE,
+        "X-Pantheon-Deprecated-Route": route,
+        "X-Pantheon-Replacement-Route": replacement,
+    }
+    return JSONResponse(
+        status_code=410,
+        headers=headers,
+        content={
+            "detail": {
+                "error": {
+                    "code": ErrorCode.OPERATION_NOT_ALLOWED.value,
+                    "message": "Deprecated BFF route",
+                    "details": {
+                        "reason": "route_deprecated",
+                        "route": route,
+                        "replacement": replacement,
+                        "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
+                    },
+                }
+            },
+            "meta": {
+                "deprecated": True,
+                "deprecation": {
+                    "route": route,
+                    "replacement": replacement,
+                    "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
+                },
+            },
+        },
+    )
+
+
+def _build_app(read_store, strategy_write_owner) -> FastAPI:
+    app = FastAPI()
+    app.state.read_store = read_store
+    app.state.strategy_write_owner = strategy_write_owner
+    persona_idempotency: Dict[str, Any] = {}
+    app.state.strategy_persona_idempotency = persona_idempotency
+
+    app.include_router(
+        create_strategies_router(
+            read_surface=lambda: app.state.read_store,
+            strategy_write_owner=lambda: app.state.strategy_write_owner,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=_utc_now,
+            page_slice=default_page_slice,
+            read_surface_meta=default_read_surface_meta,
+            reject_body_idempotency_key=_reject_body_idempotency_key,
+            resolve_final_idempotency_key=_resolve_final_idempotency_key,
+            stable_json_hash=_stable_json_hash,
+            normalize_lifecycle_state=_normalize_lifecycle_state,
+            normalize_risk_level=_normalize_risk_level,
+            strategy_persona_idempotency_check=_make_strategy_persona_idempotency_check(persona_idempotency),
+            bff_me_tenant_payload=bff_me_tenant_payload,
+            list_strategy_summaries=lambda: list(app.state.read_store.list_strategy_specs() or []),
+            strategy_persona_idempotency_store=persona_idempotency,
+        )
+    )
+    app.include_router(
+        create_rankings_long_tail_router(
+            read_surface=lambda: app.state.read_store,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=_utc_now,
+            page_slice=default_page_slice,
+            read_surface_meta=default_read_surface_meta,
+            deprecated_bff_path_response=_deprecated_bff_path_response,
+        )
+    )
+    return app
+
+
 @contextmanager
 def _client(store: Optional[Any] = None):
-    original_store = bff_main.read_store
-    original_writer = getattr(bff_main, "strategy_write_owner", None)
     read_store = store if store is not None else create_in_memory_read_surface_ports()
-    bff_main.read_store = read_store
     if store is not None:
         if hasattr(store, "upsert_strategy") or hasattr(store, "create_strategy_spec"):
-            bff_main.strategy_write_owner = create_strategy_write_owner(store=store)
+            strategy_write_owner = create_strategy_write_owner(store=store)
         else:
-            bff_main.strategy_write_owner = None
+            strategy_write_owner = None
     else:
-        bff_main.strategy_write_owner = create_strategy_write_owner()
-    bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    try:
-        yield TestClient(bff_main.app)
-    finally:
-        bff_main.read_store = original_store
-        bff_main.strategy_write_owner = original_writer
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+        strategy_write_owner = create_strategy_write_owner()
+    yield TestClient(_build_app(read_store, strategy_write_owner))
 
 
 def _seed(seed_id: str, *, status=StrategySpecSeedStatus.DRAFT) -> StrategySpecSeed:
@@ -104,7 +318,6 @@ def _seed(seed_id: str, *, status=StrategySpecSeedStatus.DRAFT) -> StrategySpecS
 
 @contextmanager
 def _seed_review_client():
-    original_store = bff_main.read_store
     tracked = os.environ.get("STRATEGY_SEED_STORE_PATH")
     with tempfile.TemporaryDirectory() as td:
         seed_store_path = Path(td) / "strategy_seeds.jsonl"
@@ -112,13 +325,10 @@ def _seed_review_client():
         store = StrategySpecSeedStore(path=seed_store_path)
         store.save(_seed("strat-rank-seed-a"))
         store.save(_seed("strat-rank-seed-b"))
-        bff_main.read_store = create_in_memory_read_surface_ports()
-        bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
+        read_store = create_in_memory_read_surface_ports()
         try:
-            yield TestClient(bff_main.app), seed_store_path
+            yield TestClient(_build_app(read_store, create_strategy_write_owner())), seed_store_path
         finally:
-            bff_main.read_store = original_store
-            bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
             if tracked is None:
                 os.environ.pop("STRATEGY_SEED_STORE_PATH", None)
             else:
@@ -135,7 +345,7 @@ def test_bff_strategy_create_list_get_round_trip() -> None:
         assert create_resp.status_code == 201, create_resp.text
         strategy_id = create_resp.json()["data"]["id"]
 
-        rks = getattr(bff_main.read_store, "research_knowledge_source", None)
+        rks = getattr(client.app.state.read_store, "research_knowledge_source", None)
         if rks and hasattr(rks, "_strategy_specs"):
             rks._strategy_specs[strategy_id] = {
                 "strategy_id": strategy_id,
@@ -161,7 +371,7 @@ def test_strategy_routes_bind_verified_principal_and_reject_foreign_patch(monkey
     store = RegistryStore()
     writer = CanonicalStrategyWriteOwner(store)
     with _client() as client:
-        monkeypatch.setattr(bff_main, "strategy_write_owner", writer)
+        monkeypatch.setattr(client.app.state, "strategy_write_owner", writer)
         create = client.post("/bff/strategies", headers={
             "Authorization": "Bearer tenant-owner:operator:tenant-a", "Idempotency-Key": "tenant-create",
         }, json={"name": "Original", "actor": {"tenant": "tenant-b", "roles": ["admin"]},
@@ -177,13 +387,13 @@ def test_strategy_routes_bind_verified_principal_and_reject_foreign_patch(monkey
             def get_strategy_spec(self, strategy_id):
                 return writer.get_strategy(strategy_id)
 
-        monkeypatch.setattr(bff_main, "read_store", ReadProjection())
+        monkeypatch.setattr(client.app.state, "read_store", ReadProjection())
         denied = client.patch(f"/bff/strategies/{sid}", headers={
             "Authorization": "Bearer intruder:operator:tenant-b", "Idempotency-Key": "foreign-patch",
         }, json={"name": "Foreign overwrite", "actor": before["last_actor"]})
         assert denied.status_code == 403, denied.text
         assert store.list_by_strategy(sid)[0].to_dict() == before
-        assert "foreign-patch" not in bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY
+        assert "foreign-patch" not in client.app.state.strategy_persona_idempotency
         allowed_headers = {"Authorization": "Bearer tenant-owner:operator:tenant-a",
                            "Idempotency-Key": "owner-patch"}
         allowed = client.patch(f"/bff/strategies/{sid}", headers=allowed_headers, json={"name": "After"})
@@ -203,7 +413,7 @@ def test_strategy_create_rejects_tenantless_principal():
             "Authorization": "Bearer tenantless:operator", "Idempotency-Key": "tenantless-create",
         }, json={"name": "Untrusted", "tenant_id": "tenant-a"})
         assert response.status_code == 403, response.text
-        assert "tenantless-create" not in bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY
+        assert "tenantless-create" not in client.app.state.strategy_persona_idempotency
 
 
 def test_bff_strategy_get_missing_returns_404() -> None:

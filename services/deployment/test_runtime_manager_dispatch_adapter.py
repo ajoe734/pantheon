@@ -266,6 +266,29 @@ class TestNewDispatch:
         assert result.error_code == "BINDING_READBACK_MISMATCH"
         assert field in (result.error_message or "")
 
+    @pytest.mark.parametrize("stale_status", ["paused", "pending_pause", "failed", "retired"])
+    def test_non_active_readback_status_is_terminal_not_fabricated_success(
+        self, stale_status
+    ):
+        """A binding that exists but is not active (stale/failed/paused/retired)
+        must surface a real BINDING_READBACK_MISMATCH reason and must never be
+        reported as a successful dispatch outcome."""
+        readback = _make_binding()
+        readback["status"] = stale_status
+        client = _make_client(deploy_return=_make_binding(), get_return=readback)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+        assert result.error_code == "BINDING_READBACK_MISMATCH"
+        assert "status" in (result.error_message or "")
+        assert stale_status in (result.error_message or "")
+        assert not result.succeeded()
+
 
 def test_stage_promotion_dispatch_uses_promote_and_validates_child_readback():
     saga = {
@@ -739,3 +762,62 @@ class TestDispatchResult:
     def test_is_terminal_helper(self):
         assert DispatchResult(outcome=DispatchOutcome.TERMINAL_ERROR).is_terminal()
         assert not DispatchResult(outcome=DispatchOutcome.SUCCESS).is_terminal()
+
+
+# ---------------------------------------------------------------------------
+# LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001: reproduction of the recorded dev
+# hosted-redeploy failure (docs/deployment/evidence/
+# LOOP-L08-PERSONA-PROVISIONING-RECONCILE-001/evidence.json).
+#
+# Root cause mechanism #1 from that evidence packet: RuntimeManagerClient.
+# list_by_plan(plan_id) returned 0 active bindings because the deployment
+# outbox consumer had not yet (or could not) dispatch the approved
+# DeploymentPlan to the runtime-manager.  This class proves the exact
+# observed shape (zero bindings, no dispatch attempted) at the dispatch
+# adapter's unit boundary, and proves that once dispatch_to_runtime_manager
+# runs, it produces exactly one authoritative active binding rather than a
+# parallel/duplicate promotion path.
+# ---------------------------------------------------------------------------
+
+class TestReproduceRecordedZeroBindingFailure:
+    def test_admitted_plan_has_zero_bindings_before_dispatch_is_ever_called(self):
+        """Matches the recorded observation: before the outbox consumer has
+        dispatched an approved plan, RuntimeManagerClient.list_by_plan(plan_id)
+        returns an empty list -- there is no active RuntimeBinding yet, and no
+        fabricated binding is invented to mask that absence."""
+        client = MagicMock()
+        client.list_by_plan.return_value = []
+
+        observed = client.list_by_plan("plan-001")
+
+        assert observed == []
+        client.deploy.assert_not_called()
+
+    def test_single_dispatch_call_promotes_plan_to_exactly_one_active_binding(self):
+        """Once the outbox consumer's single integration point (dispatch_to_
+        runtime_manager) is invoked for the approved plan, it creates exactly
+        one authoritative active RuntimeBinding via the existing runtime-
+        manager dispatch path -- no second/parallel promotion path is used."""
+        client = _make_client(deploy_return=_make_binding(), get_return=_make_binding())
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.succeeded()
+        assert result.binding_id == "rb-abc123"
+        assert client.deploy.call_count == 1
+        # Idempotent replay of the same saga must not call deploy() again --
+        # confirming there is exactly one binding-creation path, not two.
+        replay_saga = _make_saga(binding_id=result.binding_id)
+        replay_client = _make_client(get_return=_make_binding())
+        replay_result = dispatch_to_runtime_manager(
+            saga=replay_saga,
+            deploy_context=_make_deploy_context(),
+            client=replay_client,
+        )
+        assert replay_result.succeeded()
+        assert replay_result.idempotent_replay is True
+        replay_client.deploy.assert_not_called()

@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import io
 import os
-import sys
+import tempfile
 import urllib.error
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from paper_eligibility_proof import (
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.paper_eligibility_proof import (
     BENCHMARK_VERSION,
     EXPECTED_IDEMPOTENCY_KEY,
     PaperEligibilityObservationStore,
@@ -21,6 +23,11 @@ from paper_eligibility_proof import (
     build_telemetry_event,
     run_positive_control,
 )
+from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.personas.router import create_personas_router
+from services.control_plane.bff.personas.routes import lifecycle as personas_lifecycle
+from services.control_plane.bff.personas.service import PersonaService
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 PERSONA_ID = "persona-34ac77f34d030185079d"
@@ -29,15 +36,75 @@ RUNTIME_ID = "runtime-ppl-alloc-009"
 TEST_OBSERVED_AT = "2026-07-24T17:30:00Z"
 
 
+# ---------------------------------------------------------------------------
+# Production seam: build the real Persona domain router (no main.py import).
+#
+# ``bff_main._extract_identity`` used to be swapped process-wide via
+# monkeypatch; the router built by ``create_personas_router`` instead closes
+# over whatever ``extract_identity_fn`` it is given once at construction
+# time. ``_IDENTITY_OVERRIDE`` lets individual tests still override identity
+# resolution per-test the same way the old monkeypatch did, without rebuilding
+# the app for every test.
+# ---------------------------------------------------------------------------
+_IDENTITY_OVERRIDE: dict[str, Any] = {}
+
+
+def _resolve_identity(
+    authorization: str | None,
+    mfa_token: str | None = None,
+    session_cookie: str | None = None,
+) -> OperatorIdentity:
+    override = _IDENTITY_OVERRIDE.get("fn")
+    if override is not None:
+        return override(authorization, mfa_token, session_cookie)
+    return personas_service._extract_identity(
+        authorization, mfa_token=mfa_token, session_cookie=session_cookie
+    )
+
+
+_READ_STORE = create_in_memory_read_surface_ports()
+_COMMAND_STORE = CommandStore(
+    os.path.join(tempfile.mkdtemp(prefix="ppl-alloc-009-paper-eligibility-"), "commands.jsonl")
+)
+_PERSONA_SERVICE = PersonaService(
+    write_owner=_READ_STORE,
+    read_store=_READ_STORE,
+    ranking_write_owner=_READ_STORE,
+    command_store=_COMMAND_STORE,
+)
+_APP = FastAPI()
+
+
+@_APP.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request: Any, exc: StarletteHTTPException) -> JSONResponse:
+    detail = exc.detail
+    if isinstance(detail, dict) and "error" in detail:
+        return JSONResponse(status_code=exc.status_code, content=detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": "ERROR", "message": str(detail)}},
+    )
+
+
+_APP.include_router(
+    create_personas_router(
+        service=_PERSONA_SERVICE,
+        get_read_store=lambda: _READ_STORE,
+        get_command_store=lambda: _COMMAND_STORE,
+        extract_identity_fn=_resolve_identity,
+    )
+)
+
+
 def _identity(
     authorization: str | None,
     mfa_token: str | None = None,
     session_cookie: str | None = None,
-) -> bff_main.OperatorIdentity:
+) -> OperatorIdentity:
     del session_cookie
     token = str(authorization or "").removeprefix("Bearer ")
     roles = ["viewer"] if token.startswith("viewer") else ["operator"]
-    return bff_main.OperatorIdentity(
+    return OperatorIdentity(
         operator_id=token or "missing",
         roles=roles,
         mfa_verified=bool(mfa_token) or token.endswith(":mfa"),
@@ -86,9 +153,9 @@ def _enable_strict_dev(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED", "true")
     monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry:8083")
     monkeypatch.setenv("PANTHEON_PPL_ALLOC_009_READBACK_TIMEOUT_SECONDS", "0")
-    monkeypatch.setattr(bff_main, "_extract_identity", _identity)
+    monkeypatch.setitem(_IDENTITY_OVERRIDE, "fn", _identity)
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_ppl_alloc_009_eligibility_observation_store",
         type(
             "FixedObservationStore",
@@ -148,7 +215,7 @@ def _accepted_event_readback() -> dict[str, Any]:
 
 def _mock_success_dependencies(monkeypatch) -> list[dict[str, Any]]:
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_ppl_alloc_009_paper_eligibility_context",
         lambda **_kwargs: _success_context(),
     )
@@ -158,19 +225,19 @@ def _mock_success_dependencies(monkeypatch) -> list[dict[str, Any]]:
         emitted.append(event)
         return {"status": "accepted"}
 
-    monkeypatch.setattr(bff_main, "_post_json", owner_post)
+    monkeypatch.setattr(personas_lifecycle, "_post_json", owner_post)
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_get_json",
         lambda _url: _accepted_event_readback(),
     )
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_pm12_persona_league_rows",
         lambda **_kwargs: [{"persona_id": PERSONA_ID}],
     )
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_pm12_persona_league_ranking_item",
         lambda row: {
             **row,
@@ -237,28 +304,33 @@ def _mock_context_dependencies(
     runtime_binding: dict[str, Any],
     plan: dict[str, Any] | None,
 ) -> None:
+    # These tests call ``_ppl_alloc_009_paper_eligibility_context`` directly,
+    # outside of any request, so the request-scoped active-PersonaService
+    # context var is unset; fall back to the module-level read_store global
+    # that ``_get_active_read_store`` reads in that case.
+    monkeypatch.setattr(personas_service, "read_store", _READ_STORE)
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_bff_me_tenant_payload",
         lambda _identity, requested_tenant=None: {"id": "tenant-dev"},
     )
     monkeypatch.setattr(
-        bff_main.read_store,
+        _READ_STORE,
         "get_persona",
         lambda _persona_id: persona,
     )
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_pm12_persona_league_rows",
         lambda **_kwargs: [{"persona_id": PERSONA_ID}],
     )
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_pm12_persona_league_ranking_item",
         lambda _row: ranking_item,
     )
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_ppl_alloc_009_paper_capital_context",
         lambda **_kwargs: {
             "capital_pool_id": "pool-persona-paper-ppl-alloc-009",
@@ -267,12 +339,12 @@ def _mock_context_dependencies(
         },
     )
     monkeypatch.setattr(
-        bff_main.read_store,
+        _READ_STORE,
         "list_runtime_bindings",
         lambda: [runtime_binding],
     )
     monkeypatch.setattr(
-        bff_main.read_store,
+        _READ_STORE,
         "get_deployment_plan",
         lambda _plan_id: plan,
     )
@@ -345,12 +417,12 @@ def test_route_feature_flag_defaults_off_before_owner_write(monkeypatch) -> None
     monkeypatch.delenv("PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED")
     owner_calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_post_json",
         lambda _url, payload: owner_calls.append(payload),
     )
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(),
         json=_request_body(),
@@ -380,12 +452,12 @@ def test_route_strict_dev_safety_matrix_fails_before_owner_write(
     monkeypatch.setenv(env_name, value)
     owner_calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_post_json",
         lambda _url, payload: owner_calls.append(payload),
     )
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(),
         json=_request_body(),
@@ -409,12 +481,12 @@ def test_route_requires_operator_and_mfa(
     _enable_strict_dev(monkeypatch)
     owner_calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_post_json",
         lambda _url, payload: owner_calls.append(payload),
     )
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(authorization=authorization),
         json=_request_body(),
@@ -441,12 +513,12 @@ def test_route_rejects_client_metric_capital_and_execution_overrides(
     _enable_strict_dev(monkeypatch)
     owner_calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_post_json",
         lambda _url, payload: owner_calls.append(payload),
     )
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(),
         json={**_request_body(), **override},
@@ -460,12 +532,12 @@ def test_route_rejects_wrong_idempotency_key_before_owner_write(monkeypatch) -> 
     _enable_strict_dev(monkeypatch)
     owner_calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_post_json",
         lambda _url, payload: owner_calls.append(payload),
     )
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(idempotency_key="ppl-alloc-009-wrong-retry"),
         json=_request_body(),
@@ -529,7 +601,7 @@ def test_context_rejects_wrong_authority_and_lineage(
     )
 
     with pytest.raises(Exception) as exc_info:
-        bff_main._ppl_alloc_009_paper_eligibility_context(
+        personas_lifecycle._ppl_alloc_009_paper_eligibility_context(
             persona_id=PERSONA_ID,
             identity=_identity("Bearer paper-operator:mfa"),
             observed_at=TEST_OBSERVED_AT,
@@ -551,7 +623,7 @@ def test_context_accepts_authoritative_deployment_plan_strategy_id(
         plan=plan,
     )
 
-    context = bff_main._ppl_alloc_009_paper_eligibility_context(
+    context = personas_lifecycle._ppl_alloc_009_paper_eligibility_context(
         persona_id=PERSONA_ID,
         identity=_identity("Bearer paper-operator:mfa"),
         observed_at=TEST_OBSERVED_AT,
@@ -567,7 +639,7 @@ def test_route_emits_to_owner_and_returns_governed_response_schema(
     emitted = _mock_success_dependencies(monkeypatch)
     benchmark = run_positive_control()
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(),
         json=_request_body(),
@@ -615,12 +687,12 @@ def test_route_reconciles_owner_http_409_as_idempotent_replay(
     _enable_strict_dev(monkeypatch)
     _mock_success_dependencies(monkeypatch)
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_post_json",
         lambda _url, _event: (_ for _ in ()).throw(_http_error(409)),
     )
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(),
         json=_request_body(),
@@ -639,14 +711,14 @@ def test_route_reconciles_uncertain_timeout_when_owner_readback_exists(
     _enable_strict_dev(monkeypatch)
     _mock_success_dependencies(monkeypatch)
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_post_json",
         lambda _url, _event: (_ for _ in ()).throw(
             TimeoutError("owner timed out after accepting")
         ),
     )
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(),
         json=_request_body(),
@@ -679,14 +751,14 @@ def test_route_fails_closed_on_owner_rejection_or_malformed_receipt(
             raise owner_result
         return owner_result
 
-    monkeypatch.setattr(bff_main, "_post_json", owner_post)
+    monkeypatch.setattr(personas_lifecycle, "_post_json", owner_post)
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_get_json",
         lambda url: readback_calls.append(url),
     )
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(),
         json=_request_body(),
@@ -703,19 +775,19 @@ def test_route_fails_closed_when_timeout_has_no_owner_readback(
     _enable_strict_dev(monkeypatch)
     _mock_success_dependencies(monkeypatch)
     monkeypatch.setattr(
-        bff_main,
+        personas_lifecycle,
         "_post_json",
         lambda _url, _event: (_ for _ in ()).throw(
             TimeoutError("owner outcome uncertain")
         ),
     )
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_get_json",
         lambda _url: (_ for _ in ()).throw(_http_error(404)),
     )
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(),
         json=_request_body(),
@@ -751,9 +823,9 @@ def test_route_polls_boundedly_until_exact_owner_event_is_available(
             raise result
         return result
 
-    monkeypatch.setattr(bff_main, "_get_json", eventual_readback)
+    monkeypatch.setattr(personas_service, "_get_json", eventual_readback)
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(),
         json=_request_body(),
@@ -791,9 +863,9 @@ def test_route_rejects_non_exact_owner_event_readback(
     def mismatched_readback(_url: str) -> dict[str, Any]:
         return {**emitted[-1], field: value}
 
-    monkeypatch.setattr(bff_main, "_get_json", mismatched_readback)
+    monkeypatch.setattr(personas_service, "_get_json", mismatched_readback)
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(_APP, raise_server_exceptions=False).post(
         _route_path(),
         headers=_headers(),
         json=_request_body(),
@@ -804,7 +876,7 @@ def test_route_rejects_non_exact_owner_event_readback(
 
 
 def test_pm12_promotion_thresholds_and_weights_remain_unchanged() -> None:
-    assert bff_main._PM12_LEAGUE_SCORE_WEIGHTS == {
+    assert personas_service._PM12_LEAGUE_SCORE_WEIGHTS == {
         "pnl": 0.35,
         "risk": 0.25,
         "execution": 0.25,
@@ -826,8 +898,8 @@ def test_pm12_promotion_thresholds_and_weights_remain_unchanged() -> None:
     }
 
     assert "promote_to_canary_candidate" not in (
-        bff_main._pm12_recommendation_action_ids(below_threshold)
+        personas_service._pm12_recommendation_action_ids(below_threshold)
     )
     assert "promote_to_canary_candidate" in (
-        bff_main._pm12_recommendation_action_ids(at_threshold)
+        personas_service._pm12_recommendation_action_ids(at_threshold)
     )
