@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from ports.operations_consultation import create_operations_consultation_port
-from ports import create_read_surface_ports
+from services.control_plane.bff.auth.policy import extract_identity as _auth_extract_identity
+from services.control_plane.bff.console_gap.workflows_hooks import create_workflows_hooks_router
+from services.control_plane.bff.ports import create_read_surface_ports
+from services.control_plane.bff.ports.operations_consultation import create_operations_consultation_port
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-bffgap:operator"}
@@ -22,6 +21,16 @@ NO_AUTH_HEADERS: dict = {}
 
 _WORKFLOW_ENV = "PANTHEON_BFF_WORKFLOW_TEMPLATE_STORE"
 _HOOK_ENV = "PANTHEON_BFF_HOOK_REGISTRY_STORE"
+
+
+def _extract_identity(auth: Optional[str]) -> Any:
+    return _auth_extract_identity(auth)
+
+
+def _require_read_role(identity: Any) -> None:
+    roles = getattr(identity, "roles", [])
+    if not any(r in {"operator", "admin", "analyst", "viewer", "approver", "reviewer"} for r in roles):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 
 class _WorkflowsHooksTestStore:
@@ -75,7 +84,6 @@ def _fresh_client(
     workflows: list[dict[str, Any]] | None = None,
     hooks: list[dict[str, Any]] | None = None,
 ) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
     original_env = {
         _WORKFLOW_ENV: os.environ.get(_WORKFLOW_ENV),
         _HOOK_ENV: os.environ.get(_HOOK_ENV),
@@ -91,10 +99,17 @@ def _fresh_client(
             hook_path = Path(td) / "hook_registry.json"
             hook_path.write_text(json.dumps(hooks), encoding="utf-8")
             os.environ[_HOOK_ENV] = str(hook_path)
-        bff_main.read_store = _WorkflowsHooksTestStore(td)
-        yield TestClient(bff_main.app)
+        store = _WorkflowsHooksTestStore(td)
+        app = FastAPI()
+        app.include_router(
+            create_workflows_hooks_router(
+                read_store_provider=lambda: store,
+                extract_identity=_extract_identity,
+                require_read_role=_require_read_role,
+            )
+        )
+        yield TestClient(app)
     finally:
-        bff_main.read_store = original_store
         for key, value in original_env.items():
             if value is None:
                 os.environ.pop(key, None)
