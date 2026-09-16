@@ -1,0 +1,196 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001",
+  "title": "Executable RuntimeBinding owner and paper worker heartbeat owner for dev paper baseline",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "target_repo": "pantheon",
+  "base_sha": "1bad1e9045b019e7227a7958de2512110786903d",
+  "recorded_at": "2026-09-16T00:00:00Z",
+  "scope": {
+    "declared_artifacts": [
+      "services/deployment/outbox_consumer_worker.py",
+      "services/deployment/runtime_manager_dispatch_adapter.py",
+      "services/deployment/test_runtime_manager_dispatch_adapter.py",
+      "services/runtime-manager/runtime_manager_client.py",
+      "services/runtime-manager/test_runtime_manager.py",
+      "services/control-plane/governance/paper_runtime_binding.py",
+      "services/control-plane/governance/test_paper_runtime_binding.py",
+      "services/execution/lean_runtime/paper_runtime.py",
+      "services/execution/lean_runtime/test_paper_runtime.py",
+      "scripts/ensure_devloop_paper_runtime_worker.sh",
+      "docs/deployment/evidence/LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001/evidence.json"
+    ],
+    "exact_artifact_count": 11,
+    "evidence_manifest": "docs/deployment/evidence/LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001/evidence.json",
+    "files_modified": [
+      "services/control-plane/governance/paper_runtime_binding.py",
+      "services/control-plane/governance/test_paper_runtime_binding.py",
+      "services/deployment/test_runtime_manager_dispatch_adapter.py",
+      "services/runtime-manager/test_runtime_manager.py",
+      "services/execution/lean_runtime/test_paper_runtime.py"
+    ],
+    "files_verified_unmodified": [
+      "services/deployment/outbox_consumer_worker.py",
+      "services/deployment/runtime_manager_dispatch_adapter.py",
+      "services/runtime-manager/runtime_manager_client.py",
+      "services/execution/lean_runtime/paper_runtime.py",
+      "scripts/ensure_devloop_paper_runtime_worker.sh"
+    ]
+  },
+  "root_cause_analysis": {
+    "prior_task_diagnosis": "LOOP-L08-PERSONA-PROVISIONING-RECONCILE-001 recorded that dev hosted redeploy failed because RuntimeManagerClient.list_by_plan(plan_id) returned 0 active bindings and list_authoritative_paper_runtime_monitoring_sessions() returned 0 sessions, and it explicitly punted the two 'missing owners' (RuntimeBinding creation, paper worker heartbeat publication) to this task.",
+    "finding_1_runtime_binding_owner_already_complete": "services/deployment/outbox_consumer_worker.py (event_type == 'runtime.binding.requested' branch, ~lines 2160-2308) is already the single, fully-wired integration point that the deployment saga uses to promote an approved DeploymentPlan into an active RuntimeBinding. It: (a) preflights via RuntimeManagerClient.list_by_plan(plan_id) to recover any binding the saga may have lost track of (fail-closed on ambiguous/unreadable state, line ~2172-2184), (b) calls services/deployment/runtime_manager_dispatch_adapter.py::dispatch_to_runtime_manager which is the sole binding-creation/verification path (deploy() or promote(), never a parallel path), (c) requires an authoritative GET readback (not just the POST receipt) before reporting success (dispatch_adapter.py lines 566-615), and (d) records binding_created/runtime_active saga transitions only after that authoritative readback. services/runtime-manager/runtime_manager_client.py::list_by_plan (lines 154-159) and ::deploy/get/promote are the sole HTTP/local dispatch surface; RuntimeBindingStore is never touched directly by control-plane code. No functional gap, TODO, stub, or wrong condition was found in this path. The recorded zero-binding observation on the dev host reflects that no admitted DeploymentPlan had yet been dispatched through this path on that host (an upstream trigger/deploy-authority concern outside this artifact set), not a defect inside the declared owner code.",
+    "finding_2_paper_worker_heartbeat_owner_already_complete": "services/execution/lean_runtime/paper_runtime.py::PaperRuntimeService.start() (line 2565) unconditionally emits a startup heartbeat (_maybe_emit_heartbeat, line 3196) and then starts a dedicated heartbeat thread (_heartbeat_loop, line 2742) that emits on a fixed cadence independent of signal-drain backlog. RuntimeTelemetryEmitter.emit_heartbeat (line 2011) -> RuntimeBindingResolver.resolve() (line 1620) fails closed (returns None, records a real last_error, never fabricates a binding_id or a default identifier) when no active RuntimeBinding exists for the worker's runtime_id, and RuntimeTelemetryEmitter.build_event refuses to build a payload without every required identity field (binding_id, runtime_id, capital_pool_id, artifact_id, artifact_version, plan_id, persona_capital_binding_id all required, line 1759-1770). services/paper_fleet_reconciler/paper_fleet_reconciler.py (out of scope, read for context only) spawns exactly one paper_runtime.py subprocess per active RuntimeBinding returned by the runtime-manager's fleet desired-state endpoint, and separately polls telemetry's /api/telemetry/runtime-summaries to populate monitoring_sessions with last_heartbeat_at, which services/control-plane/bff/ports/read_surface_ports.py::list_authoritative_paper_runtime_monitoring_sessions() reads from the reconciler's /api/fleet/state. scripts/ensure_devloop_paper_runtime_worker.sh already targets the correct compose service name ('paper-fleet-reconciler', matching docker-compose.yml line 2208) and container name ('pantheon-paper-fleet-reconciler-1'); it is not a source of the failure. The recorded zero-session observation on the dev host is therefore explained by finding 1 (no active binding existed for the reconciler to spawn a worker against), not by a defect inside paper_runtime.py's own boot/heartbeat code.",
+    "bug_fixed_stale_importlib_path": "services/control-plane/governance/paper_runtime_binding.py hardcoded an importlib.util.spec_from_file_location path to services/execution/runtime-manager/runtime_binding.py. Commit 1a21a81bf (ACG-RUNTIME-MANAGER-20260828) moved RuntimeBinding to services/runtime_manager/runtime_binding.py (a proper importable package, per that commit's own message 'Replace sys.path and importlib path loading with standard Python imports') but never updated this caller, leaving it importing a file that no longer exists. Every import of paper_runtime_binding.py raised FileNotFoundError at module load time, breaking services/control-plane/governance/test_paper_runtime_binding.py collection entirely (pre-existing, unrelated to the dev deploy failure itself, but blocking this task's own test execution). Fixed by removing the importlib.util dynamic-loader dance and replacing it with the standard 'from services.runtime_manager.runtime_binding import RuntimeBinding, RuntimeBindingError, RuntimeBindingStatus, validate_binding' import, matching the pattern used by every other already-consolidated caller (services/runtime_manager/service.py, services/runtime-manager/runtime_manager_client.py, services/control-plane/bff/runtime/router.py, services/governance/ep5_proof/rollback_drill_harness.py)."
+  },
+  "acceptance_criteria_verification": {
+    "ac1_failure_reproduced": {
+      "status": "satisfied",
+      "proof": "services/runtime-manager/test_runtime_manager.py::RuntimeManagerClientTests::test_reproduces_recorded_zero_active_bindings_before_deploy proves list_by_plan(plan_id) returns exactly [] before any dispatch, matching the recorded observed value; services/deployment/test_runtime_manager_dispatch_adapter.py::TestReproduceRecordedZeroBindingFailure::test_admitted_plan_has_zero_bindings_before_dispatch_is_ever_called and ::test_single_dispatch_call_promotes_plan_to_exactly_one_active_binding prove the same zero-binding state at the dispatch adapter boundary and that dispatch produces exactly one binding with no parallel path; services/execution/lean_runtime/test_paper_runtime.py::TestRuntimeTelemetryEmitter::test_reproduces_zero_authoritative_sessions_when_binding_never_resolves proves emit_heartbeat() returns False (no session-producing heartbeat is ever sent) when no RuntimeBinding resolves, matching the recorded zero-session observation."
+    },
+    "ac2_runtime_binding_owner": {
+      "status": "satisfied_no_code_change_required",
+      "proof": "services/deployment/outbox_consumer_worker.py's runtime.binding.requested handler (lines ~2160-2308) together with services/deployment/runtime_manager_dispatch_adapter.py::dispatch_to_runtime_manager and services/runtime-manager/runtime_manager_client.py already constitute the single, complete, authoritative-readback-gated promotion path from an approved DeploymentPlan to an active RuntimeBinding. Reviewed for a functional gap (wrong condition, stub, swallowed error, unreachable branch) and found none. Strengthened with TestReproduceRecordedZeroBindingFailure (see AC1) proving single-path idempotent promotion. No parallel promotion path was introduced."
+    },
+    "ac3_paper_worker_heartbeat_owner": {
+      "status": "satisfied_no_code_change_required",
+      "proof": "services/execution/lean_runtime/paper_runtime.py::PaperRuntimeService.start()/. _heartbeat_loop()/RuntimeTelemetryEmitter.emit_heartbeat() already boot a dedicated heartbeat thread independent of signal-drain backlog and publish heartbeat telemetry events carrying the resolved RuntimeBinding's authoritative identity fields. Existing tests (test_start_emits_heartbeat_before_background_lifecycle_replay, test_dedicated_heartbeat_continues_while_replay_is_blocked) plus the new test_reproduces_zero_authoritative_sessions_when_binding_never_resolves prove a session only ever appears when an underlying worker with a resolved binding is actually publishing -- a session reporting health without an underlying worker is not possible because build_event() refuses to construct a payload without a resolved binding's full identity."
+    },
+    "ac4_owner_boundary_check": {
+      "status": "not_triggered",
+      "detail": "Neither missing owner proved to sit outside the declared artifact contract; both RuntimeBinding creation (services/deployment/outbox_consumer_worker.py + runtime_manager_dispatch_adapter.py + runtime_manager_client.py) and paper worker heartbeat publication (services/execution/lean_runtime/paper_runtime.py) are already fully implemented inside the declared artifacts. No block condition was hit; no code outside the declared artifact list was touched."
+    },
+    "ac5_negative_paths": {
+      "status": "satisfied",
+      "proof": "Absent binding: services/deployment/test_runtime_manager_dispatch_adapter.py::TestIdempotentReplay::test_binding_not_found_is_terminal_inconsistency and TestNewDispatch::test_missing_authoritative_readback_is_retryable. Stale/failed binding: new parametrized test_non_active_readback_status_is_terminal_not_fabricated_success (paused/pending_pause/failed/retired) asserts a real BINDING_READBACK_MISMATCH reason naming the offending status is surfaced and result.succeeded() is False -- never a fabricated success. Absent heartbeat/binding for the worker: services/execution/lean_runtime/test_paper_runtime.py::test_binding_resolver_fails_closed_when_exact_worker_binding_missing (real last_error surfaced, no default identifier) and new test_reproduces_zero_authoritative_sessions_when_binding_never_resolves (emit_heartbeat returns False, urlopen never called, no fabricated payload). Stale heartbeat delivery failure: RuntimeTelemetryEmitter.emit_payload already records self._last_error and returns False on any HTTP/network failure rather than reporting success, covered by existing emitter tests."
+    },
+    "ac6_regression_recorded": {
+      "status": "satisfied",
+      "proof": "See test_executions below. 0 failures across 210 tests + 30 subtests in the combined declared-artifact test run; no positives were replaced by skips."
+    },
+    "ac7_scope_discipline": {
+      "status": "satisfied",
+      "detail": "All changes are source-file edits and unit/regression test additions within the declared artifact list plus this evidence manifest. No hosted deployment, no docker-compose changes, no redeploy, no live trading or capital-affecting code path was touched."
+    }
+  },
+  "source_files_proof": {
+    "services/deployment/outbox_consumer_worker.py": {
+      "bytes": 115590,
+      "lines": 2872,
+      "sha256": "aad428bdd2508a1501539e91ddf053107d85a7f8049c489633f08f251b1ef7db",
+      "modified": false
+    },
+    "services/deployment/runtime_manager_dispatch_adapter.py": {
+      "bytes": 25542,
+      "lines": 621,
+      "sha256": "a9a2ae142b2998eaf14055a8bb963d6087d623ddcaaac880f061c49337424c69",
+      "modified": false
+    },
+    "services/deployment/test_runtime_manager_dispatch_adapter.py": {
+      "bytes": 31961,
+      "lines": 823,
+      "sha256": "4bcd3c661d939bf245611b49dbf4fee4072a9a178d37ac0d06d19395e3ab7f23",
+      "modified": true
+    },
+    "services/runtime-manager/runtime_manager_client.py": {
+      "bytes": 15996,
+      "lines": 381,
+      "sha256": "9b9e13e2f13918070b845b7bdaec98f011d921fbe1a0a6cc4ff472e3db424243",
+      "modified": false
+    },
+    "services/runtime-manager/test_runtime_manager.py": {
+      "bytes": 102291,
+      "lines": 2391,
+      "sha256": "52e3a96bc4375a588980e0a68dabd429606eb1ac0c1e3f6c088bef9ff2d25c48",
+      "modified": true
+    },
+    "services/control-plane/governance/paper_runtime_binding.py": {
+      "bytes": 24272,
+      "lines": 576,
+      "sha256": "9c75a440b64db2db4495643c00f57360c75ed7d6d7b1c02433309961c3f027fd",
+      "modified": true
+    },
+    "services/control-plane/governance/test_paper_runtime_binding.py": {
+      "bytes": 8247,
+      "lines": 180,
+      "sha256": "af01a01c997d434ff4f0c53606c445e7c25ad2fd1ce9084477e7c6f50e6333f3",
+      "modified": true
+    },
+    "services/execution/lean_runtime/paper_runtime.py": {
+      "bytes": 154475,
+      "lines": 3680,
+      "sha256": "44dd20fbec6fe87b42cc39e2aa10498959c0a96773888994af6b49aa8a7ee64c",
+      "modified": false
+    },
+    "services/execution/lean_runtime/test_paper_runtime.py": {
+      "bytes": 111418,
+      "lines": 2694,
+      "sha256": "86dd8d0606927a854d048454ec8a6c3a162d5daf03baf26be8b1c6bec278ef37",
+      "modified": true
+    },
+    "scripts/ensure_devloop_paper_runtime_worker.sh": {
+      "bytes": 1562,
+      "lines": 41,
+      "sha256": "356fa10ebcc2f54f1705ba5d73427252076033b743134d1d8f9f474d900f613b",
+      "modified": false
+    }
+  },
+  "test_executions": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest --collect-only services/control-plane/governance/test_paper_runtime_binding.py",
+      "note": "reproduces pre-fix collection failure",
+      "exit_code": 2,
+      "collected": 0,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 0,
+      "error": "FileNotFoundError: services/execution/runtime-manager/runtime_binding.py (stale importlib path, fixed in this task)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/governance/test_paper_runtime_binding.py -q",
+      "exit_code": 0,
+      "collected": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/deployment/test_runtime_manager_dispatch_adapter.py -q",
+      "exit_code": 0,
+      "collected": 53,
+      "passed": 53,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/runtime-manager/test_runtime_manager.py -q",
+      "exit_code": 0,
+      "collected": 89,
+      "passed": 89,
+      "failed": 0,
+      "skipped": 0,
+      "subtests_passed": 3,
+      "note": "21 pre-existing failures observed on first run were caused by a stale system typing_extensions==4.10.0 shadowing pydantic_core's requirement (unrelated to this task's changes, environment-only); resolved by 'pip install typing_extensions>=4.16' into .venv-pantheon, no repository file changed."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_paper_runtime.py -q",
+      "exit_code": 0,
+      "collected": 62,
+      "passed": 62,
+      "failed": 0,
+      "skipped": 0,
+      "subtests_passed": 27
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/deployment/test_runtime_manager_dispatch_adapter.py services/runtime-manager/test_runtime_manager.py services/control-plane/governance/test_paper_runtime_binding.py services/execution/lean_runtime/test_paper_runtime.py -q",
+      "exit_code": 0,
+      "collected": 210,
+      "passed": 210,
+      "failed": 0,
+      "skipped": 0,
+      "subtests_passed": 30,
+      "duration_seconds": 64.96
+    }
+  ]
+}
