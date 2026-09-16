@@ -137,6 +137,7 @@ class ProgramActionRequest(BaseModel):
     decision_id: Optional[str] = None
     mutation_id: Optional[str] = None
     generation_id: Optional[Any] = None
+    idempotency_key: Optional[str] = None
     payload: Optional[Dict[str, Any]] = None
 
 

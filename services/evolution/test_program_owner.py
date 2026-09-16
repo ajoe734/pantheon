@@ -554,6 +554,55 @@ def _run_router_actions(make_store) -> None:
     assert resp.status_code == 409
     assert "cannot resume stopped program" in resp.json()["detail"].lower()
 
+    # Router idempotency key handling via Idempotency-Key HTTP header
+    resp_p2 = client.post("/api/evolution/programs", json={"name": "Idemp Header Test", "actor_id": "act-1"})
+    pid2 = resp_p2.json()["program_id"]
+    client.post(f"/api/evolution/programs/{pid2}/actions/submit_evolution_review", json={"actor_id": "act-1"})
+    client.post(f"/api/evolution/programs/{pid2}/actions/approve_program", json={"actor_id": "appr-1", "actor_role": "approver"})
+
+    # 1. Initial execution with Idempotency-Key header
+    resp_idem1 = client.post(
+        f"/api/evolution/programs/{pid2}/actions/pause_program",
+        json={"actor_id": "act-1"},
+        headers={"Idempotency-Key": "header-idem-123"},
+    )
+    assert resp_idem1.status_code == 200
+    assert resp_idem1.json()["idempotent_replay"] is False
+    assert resp_idem1.json()["program_status"] == "paused"
+
+    # 2. Idempotent replay with matching Idempotency-Key header returns 200 with idempotent_replay=True
+    resp_idem2 = client.post(
+        f"/api/evolution/programs/{pid2}/actions/pause_program",
+        json={"actor_id": "act-1"},
+        headers={"Idempotency-Key": "header-idem-123"},
+    )
+    assert resp_idem2.status_code == 200
+    assert resp_idem2.json()["idempotent_replay"] is True
+    assert resp_idem2.json()["receipt_id"] == resp_idem1.json()["receipt_id"]
+
+    # 3. Divergent replay with same Idempotency-Key header raises 409 conflict
+    resp_divergent = client.post(
+        f"/api/evolution/programs/{pid2}/actions/pause_program",
+        json={"actor_id": "act-divergent"},
+        headers={"Idempotency-Key": "header-idem-123"},
+    )
+    assert resp_divergent.status_code == 409
+
+    # 4. Fallback: idempotency_key in body when header is absent
+    resp_body_idem1 = client.post(
+        f"/api/evolution/programs/{pid2}/actions/create_constraint",
+        json={"actor_id": "act-1", "idempotency_key": "body-idem-456", "name": "cst_test", "value": 10},
+    )
+    assert resp_body_idem1.status_code == 200
+    assert resp_body_idem1.json()["idempotent_replay"] is False
+
+    resp_body_idem2 = client.post(
+        f"/api/evolution/programs/{pid2}/actions/create_constraint",
+        json={"actor_id": "act-1", "idempotency_key": "body-idem-456", "name": "cst_test", "value": 10},
+    )
+    assert resp_body_idem2.status_code == 200
+    assert resp_body_idem2.json()["idempotent_replay"] is True
+
 
 class TestJsonProgramStore:
     """Runs unconditionally against the JSON dev backend."""

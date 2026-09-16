@@ -134,6 +134,11 @@ def test_adapter_dispatches_all_canonical_actions(action_id: str) -> None:
             assert call_payload.get("idempotency_key") == "idem-key-1"
             assert call_payload.get("payload") == {"param": "val"}
 
+            call_headers = mock_http.call_args[1].get("headers", {})
+            assert call_headers.get("Idempotency-Key") == "idem-key-1"
+            assert call_headers.get("X-Idempotency-Key") == "idem-key-1"
+            assert "X-Tenant-Id" in call_headers
+
     # Validate build_domain_receipt structure
     assert receipt["command_id"] == command_id
     assert receipt["entity_type"] == "EvolutionProgram"
@@ -181,6 +186,39 @@ def test_adapter_handles_idempotent_replay() -> None:
             assert receipt["idempotent_replay"] is True
             assert receipt["status"] == "paused"
             assert receipt["live_capital_side_effects"] is False
+
+
+def test_adapter_propagates_idempotency_and_tenant_headers() -> None:
+    adapter = EvolutionCommandAdapter()
+    program_id = "evp-header-test"
+
+    with patch.dict(os.environ, {
+        "PANTHEON_EVOLUTION_API_URL": "http://mock-evolution:8000",
+        "EVOLUTION_AUTH_TOKEN": "backend-auth-token",
+        "EVOLUTION_DEFAULT_TENANT_ID": "tenant-env-default",
+    }):
+        with patch(
+            "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+            return_value={"receipt_id": "rcpt-hdr", "program_id": program_id, "status": "active"},
+        ) as mock_http:
+            adapter.execute(
+                command_id="cmd-hdr-1",
+                command_type="EvolutionProgramAction",
+                params={
+                    "action_id": "submit_evolution_review",
+                    "program_id": program_id,
+                    "idempotency_key": "unique-idemp-12345",
+                    "tenant_id": "tenant-custom-xyz",
+                },
+            )
+
+            assert mock_http.called
+            kwargs = mock_http.call_args[1]
+            headers = kwargs.get("headers", {})
+            assert headers.get("Idempotency-Key") == "unique-idemp-12345"
+            assert headers.get("X-Idempotency-Key") == "unique-idemp-12345"
+            assert headers.get("X-Tenant-Id") == "tenant-custom-xyz"
+            assert kwargs.get("auth_token") == "backend-auth-token"
 
 
 def test_adapter_propagates_409_conflict() -> None:
@@ -379,13 +417,16 @@ def test_adapter_end_to_end_with_real_program_router(tmp_path) -> None:
     )
     backend_client = TestClient(backend_app)
 
-    def dispatch_to_backend(url: str, method: str = "POST", payload: Optional[Dict[str, Any]] = None, **kwargs):
+    def dispatch_to_backend(url: str, method: str = "POST", payload: Optional[Dict[str, Any]] = None, headers: Optional[Dict[str, str]] = None, **kwargs):
         parsed = urlparse(url)
         path = parsed.path
+        req_headers = {"X-Tenant-Id": "tenant-e2e"}
+        if headers:
+            req_headers.update(headers)
         if method.upper() == "POST":
-            resp = backend_client.post(path, json=payload, headers={"X-Tenant-Id": "tenant-e2e"})
+            resp = backend_client.post(path, json=payload, headers=req_headers)
         else:
-            resp = backend_client.get(path, headers={"X-Tenant-Id": "tenant-e2e"})
+            resp = backend_client.get(path, headers=req_headers)
 
         if resp.status_code >= 400:
             err_detail = resp.json().get("detail", resp.text) if resp.headers.get("content-type", "").startswith("application/json") else resp.text
@@ -492,3 +533,54 @@ def test_adapter_end_to_end_with_real_program_router(tmp_path) -> None:
                 )
             assert exc_info.value.downstream_status == 409
             assert "cannot resume stopped program" in str(exc_info.value).lower()
+
+            # Test 6: Idempotent replay end-to-end via real router with header transport
+            p2_init, _ = service.create_program(tenant_id="tenant-e2e", actor_id="admin-1", name="Idempotency E2E Program")
+            p2_id = p2_init["program_id"]
+            service.execute_action(tenant_id="tenant-e2e", actor_id="admin-1", program_id=p2_id, action_id="submit_evolution_review")
+            service.execute_action(tenant_id="tenant-e2e", actor_id="admin-1", actor_role="approver", program_id=p2_id, action_id="approve_program")
+
+            # First pause with idempotency key
+            receipt_pause1 = adapter.execute(
+                command_id="cmd-pause-1",
+                command_type="EvolutionProgramAction",
+                params={
+                    "action_id": "pause_program",
+                    "program_id": p2_id,
+                    "actor_id": "op-e2e",
+                    "idempotency_key": "e2e-idem-key-999",
+                },
+            )
+            assert receipt_pause1["status"] == "paused"
+            assert receipt_pause1["idempotent_replay"] is False
+
+            # Second pause with the SAME idempotency key (header transported to real router/store)
+            # Without header transport, pause on an already-paused program would raise 409 conflict.
+            receipt_pause2 = adapter.execute(
+                command_id="cmd-pause-2",
+                command_type="EvolutionProgramAction",
+                params={
+                    "action_id": "pause_program",
+                    "program_id": p2_id,
+                    "actor_id": "op-e2e",
+                    "idempotency_key": "e2e-idem-key-999",
+                },
+            )
+            assert receipt_pause2["status"] == "paused"
+            assert receipt_pause2["idempotent_replay"] is True
+            assert receipt_pause2["receipt_id"] == receipt_pause1["receipt_id"]
+
+            # Test 7: Divergent replay detection end-to-end via real router
+            # Same idempotency key with different payload triggers 409 conflict
+            with pytest.raises(ActionUnavailableError) as exc_info:
+                adapter.execute(
+                    command_id="cmd-pause-divergent",
+                    command_type="EvolutionProgramAction",
+                    params={
+                        "action_id": "pause_program",
+                        "program_id": p2_id,
+                        "actor_id": "different-actor-divergent",
+                        "idempotency_key": "e2e-idem-key-999",
+                    },
+                )
+            assert exc_info.value.downstream_status == 409

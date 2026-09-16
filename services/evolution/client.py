@@ -150,6 +150,7 @@ class EvolutionClient:
         payload = {"name": name, "actor_id": actor_id}
 
         should_close_client = False
+        client = client or self._async_client
         if client is None:
             client = httpx.AsyncClient(timeout=self.timeout)
             should_close_client = True
@@ -182,6 +183,7 @@ class EvolutionClient:
         headers = self._get_headers()
 
         should_close_client = False
+        client = client or self._async_client
         if client is None:
             client = httpx.AsyncClient(timeout=self.timeout)
             should_close_client = True
@@ -215,6 +217,7 @@ class EvolutionClient:
         headers = self._get_headers()
 
         should_close_client = False
+        client = client or self._async_client
         if client is None:
             client = httpx.AsyncClient(timeout=self.timeout)
             should_close_client = True
@@ -265,6 +268,7 @@ class EvolutionClient:
         payload = {"name": name, "actor_id": actor_id, "expected_revision": expected_revision}
 
         should_close_client = False
+        client = client or self._async_client
         if client is None:
             client = httpx.AsyncClient(timeout=self.timeout)
             should_close_client = True
@@ -315,6 +319,7 @@ class EvolutionClient:
             body["expected_revision"] = expected_revision
 
         should_close_client = False
+        client = client or self._async_client
         if client is None:
             client = httpx.AsyncClient(timeout=self.timeout)
             should_close_client = True
@@ -354,6 +359,7 @@ class EvolutionClient:
         headers = self._get_headers()
 
         should_close_client = False
+        client = client or self._async_client
         if client is None:
             client = httpx.AsyncClient(timeout=self.timeout)
             should_close_client = True

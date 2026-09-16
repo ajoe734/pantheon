@@ -141,32 +141,35 @@ def http_request_json(
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
     timeout: Optional[int] = None,
+    headers: Optional[Dict[str, str]] = None,
 ) -> Any:
     """Execute HTTP request to a domain authority endpoint and parse JSON response."""
     from services.control_plane.bff import command_executor
     normalized_method = method.upper()
     if normalized_method == "GET" and hasattr(command_executor, "_get_json"):
-        return command_executor._get_json(url, auth_token=auth_token, mfa_token=mfa_token)
+        return command_executor._get_json(url, auth_token=auth_token, mfa_token=mfa_token, headers=headers)
     if normalized_method == "POST" and hasattr(command_executor, "_post_json"):
         # _post_json hardcodes method="POST"; PATCH/PUT/DELETE must not reuse
         # it or they would silently be sent as POST against a route that
         # doesn't accept it.
-        return command_executor._post_json(url, payload or {}, auth_token=auth_token, mfa_token=mfa_token)
+        return command_executor._post_json(url, payload or {}, auth_token=auth_token, mfa_token=mfa_token, headers=headers)
 
     req_timeout = timeout or _DEFAULT_REQUEST_TIMEOUT
-    headers: Dict[str, str] = {"Accept": "application/json"}
+    req_headers: Dict[str, str] = {"Accept": "application/json"}
     data: Optional[bytes] = None
 
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
+        req_headers["Content-Type"] = "application/json"
 
     if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}" if not auth_token.startswith("Bearer ") else auth_token
+        req_headers["Authorization"] = f"Bearer {auth_token}" if not auth_token.startswith("Bearer ") else auth_token
     if mfa_token:
-        headers["X-MFA-Token"] = mfa_token
+        req_headers["X-MFA-Token"] = mfa_token
+    if headers:
+        req_headers.update(headers)
 
-    req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+    req = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
     try:
         with urllib.request.urlopen(req, timeout=req_timeout) as resp:
             status_code = int(resp.status)
@@ -188,6 +191,7 @@ def http_request_json_with_headers(
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
     timeout: Optional[int] = None,
+    headers: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, Dict[str, str], Any]:
     """Like :func:`http_request_json`, but returns ``(status_code, headers, body)``.
 
@@ -200,19 +204,21 @@ def http_request_json_with_headers(
     headers) so this works uniformly for every HTTP method.
     """
     req_timeout = timeout or _DEFAULT_REQUEST_TIMEOUT
-    headers: Dict[str, str] = {"Accept": "application/json"}
+    req_headers: Dict[str, str] = {"Accept": "application/json"}
     data: Optional[bytes] = None
 
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
+        req_headers["Content-Type"] = "application/json"
 
     if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}" if not auth_token.startswith("Bearer ") else auth_token
+        req_headers["Authorization"] = f"Bearer {auth_token}" if not auth_token.startswith("Bearer ") else auth_token
     if mfa_token:
-        headers["X-MFA-Token"] = mfa_token
+        req_headers["X-MFA-Token"] = mfa_token
+    if headers:
+        req_headers.update(headers)
 
-    req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+    req = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
     try:
         with urllib.request.urlopen(req, timeout=req_timeout) as resp:
             status_code = int(resp.status)

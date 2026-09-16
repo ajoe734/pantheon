@@ -186,7 +186,7 @@ def create_program_router(
     ) -> Dict[str, Any]:
         req_body = body or ProgramActionRequest(actor_id="operator")
         tenant_id = _resolve_tenant(req_body.tenant_id)
-        key = _idempotency_key(idempotency_key, x_idempotency_key)
+        key = _idempotency_key(idempotency_key, x_idempotency_key) or req_body.idempotency_key
         payload = req_body.model_dump(exclude_unset=True)
         nested = payload.get("payload")
         if isinstance(nested, dict):

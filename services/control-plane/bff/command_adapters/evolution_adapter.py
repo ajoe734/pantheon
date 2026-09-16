@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import urllib.error
 from typing import Any, Dict, Optional
 from urllib.parse import quote
@@ -266,11 +267,40 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             payload["artifact_digest"] = digest
 
         payload["payload"] = sub_payload
-        if "idempotency_key" in params:
-            payload["idempotency_key"] = params["idempotency_key"]
+        idempotency_key = (
+            params.get("idempotency_key")
+            or params.get("idempotencyKey")
+            or sub_payload.get("idempotency_key")
+            or sub_payload.get("idempotencyKey")
+        )
+        if idempotency_key:
+            payload["idempotency_key"] = idempotency_key
+
+        tenant_id = (
+            params.get("tenant_id")
+            or sub_payload.get("tenant_id")
+            or os.getenv("EVOLUTION_DEFAULT_TENANT_ID")
+            or os.getenv("PANTHEON_TENANT_ID")
+            or "default"
+        )
+        dispatch_headers: Dict[str, str] = {
+            "X-Tenant-Id": str(tenant_id),
+        }
+        if idempotency_key:
+            dispatch_headers["Idempotency-Key"] = str(idempotency_key)
+            dispatch_headers["X-Idempotency-Key"] = str(idempotency_key)
+
+        auth = auth_token or os.getenv("EVOLUTION_AUTH_TOKEN")
 
         try:
-            body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
+            body = http_request_json(
+                url,
+                method="POST",
+                payload=payload,
+                auth_token=auth,
+                mfa_token=mfa_token,
+                headers=dispatch_headers,
+            )
         except urllib.error.HTTPError as exc:
             err_body = {}
             try:
