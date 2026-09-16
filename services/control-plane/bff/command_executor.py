@@ -242,21 +242,18 @@ def _post_json(
     payload: Dict[str, Any],
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
-    headers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """POST JSON to url and return parsed response. Raises on HTTP error."""
     data = json.dumps(payload).encode("utf-8")
-    req_headers: Dict[str, str] = {"Content-Type": "application/json"}
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
     if auth_token:
-        req_headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
+        headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:
-        req_headers["X-MFA-Token"] = mfa_token
-    if headers:
-        req_headers.update(headers)
+        headers["X-MFA-Token"] = mfa_token
     req = urllib.request.Request(
         url,
         data=data,
-        headers=req_headers,
+        headers=headers,
         method="POST",
     )
     try:
@@ -277,17 +274,14 @@ def _get_json(
     url: str,
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
-    headers: Optional[Dict[str, str]] = None,
 ) -> Any:
     """GET JSON from an owner API for post-error receipt reconciliation."""
-    req_headers: Dict[str, str] = {"Accept": "application/json"}
+    headers: Dict[str, str] = {"Accept": "application/json"}
     if auth_token:
-        req_headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
+        headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:
-        req_headers["X-MFA-Token"] = mfa_token
-    if headers:
-        req_headers.update(headers)
-    req = urllib.request.Request(url, headers=req_headers, method="GET")
+        headers["X-MFA-Token"] = mfa_token
+    req = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
             status_code = int(resp.status)

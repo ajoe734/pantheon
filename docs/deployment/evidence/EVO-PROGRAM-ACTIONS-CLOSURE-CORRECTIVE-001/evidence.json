@@ -5,9 +5,7 @@
   "source_baseline_commit": "3addf32a1971312656575cd3484dd853edf22978",
   "changed_files": [
     "services/control-plane/bff/action_catalog.py",
-    "services/control-plane/bff/command_adapters/base.py",
     "services/control-plane/bff/command_adapters/evolution_adapter.py",
-    "services/control-plane/bff/command_executor.py",
     "services/control-plane/bff/evolution/router.py",
     "services/control-plane/bff/tests/test_evolution_program_action_receipts.py",
     "services/evolution/client.py",
@@ -16,16 +14,13 @@
     "services/evolution/program_service.py",
     "services/evolution/program_store.py",
     "services/evolution/test_program_owner.py",
-    "services/evolution/tests/test_client.py",
     "docs/deployment/evidence/EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json"
   ],
   "scope_path_disposition": {
     "docs/deployment/evidence/EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json": "CREATED -- review evidence manifest for EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001 (U8B).",
     "services/control-plane/bff/action_catalog.py": "MODIFIED -- registered all §8.6 Evolution program lifecycle commands (SubmitEvolutionReview, ApproveEvolutionProgram, PauseEvolutionProgram, ResumeEvolutionProgram, CompleteEvolutionProgram, RetireEvolutionProgram, StopEvolutionProgram, FreezeEvolutionGeneration, PromoteEvolutionCandidatePaper, PromoteEvolutionCandidateLive) with explicit endpoint paths, risk levels, and descriptions.",
-    "services/control-plane/bff/command_adapters/base.py": "MODIFIED -- updated http_request_json and http_request_json_with_headers to accept and forward optional headers dict to _post_json / _get_json / urllib.request.",
-    "services/control-plane/bff/command_adapters/evolution_adapter.py": "MODIFIED -- wired _execute_program_action to dispatch to Evolution service POST /api/evolution/programs/{id}/actions/{action_id} via HTTP with tenant/actor headers and idempotency key (transporting Idempotency-Key, X-Idempotency-Key, and X-Tenant-Id as real HTTP headers); flattens outbound payload matching ProgramActionRequest schema (candidate_id, run_id, mutation_id, artifact_id, etc.) while retaining backward-compatible nested payload dict; returns build_domain_receipt with authoritative readback, idempotent replay flag, and live_capital_side_effects: False; fails closed with ActionUnavailableError (downstream 422, 409, 503) when backend is unconfigured, rejects, or fails.",
+    "services/control-plane/bff/command_adapters/evolution_adapter.py": "MODIFIED -- wired _execute_program_action to dispatch to Evolution service POST /api/evolution/programs/{id}/actions/{action_id} via HTTP with tenant/actor headers and idempotency key (transporting Idempotency-Key, X-Idempotency-Key, and X-Tenant-Id as real HTTP headers via adapter-level http_request_json); flattens outbound payload matching ProgramActionRequest schema (candidate_id, run_id, mutation_id, artifact_id, etc.) while retaining backward-compatible nested payload dict; returns build_domain_receipt with authoritative readback, idempotent replay flag, and live_capital_side_effects: False; fails closed with ActionUnavailableError (downstream 422, 409, 503) when backend is unconfigured, rejects, or fails.",
     "services/control-plane/bff/command_adapters/registry.py": "REVIEWED, NOT MODIFIED -- EvolutionCommandAdapter is already registered in _DEFAULT_ADAPTERS; can_handle correctly routes EvolutionProgramAction and all canonical action names.",
-    "services/control-plane/bff/command_executor.py": "MODIFIED -- added optional headers parameter to _post_json and _get_json to support forwarding Idempotency-Key and X-Tenant-Id headers to domain services.",
     "services/control-plane/bff/evolution/router.py": "MODIFIED -- added _APPROVER_PROGRAM_ACTIONS role-gating set; enforces 403 FORBIDDEN when operator lacks approver/admin role for approver actions (approve_program, retire_program, freeze_generation, promote_candidate_paper, promote_candidate_live, approve_mutation, reject_mutation); forwards Idempotency-Key and payload cleanly to submit_program_action.",
     "services/control-plane/bff/evolution/service.py": "REVIEWED, NOT MODIFIED -- evolution read/write service separation preserved; action submissions route through command adapters.",
     "services/control-plane/bff/main.py": "REVIEWED, NOT MODIFIED -- submit_program_action is already wired to _gov_bff_action_command for ObjectType.EVOLUTION_PROGRAM with CommandType.EVOLUTION_PROGRAM_ACTION, which dispatches through CommandAdapterService and EvolutionCommandAdapter.",
@@ -39,8 +34,7 @@
     "services/evolution/program_router.py": "MODIFIED -- mounted POST /api/evolution/programs/{program_id}/actions/{action_id} with tenant authorization, header resolution (Idempotency-Key and X-Idempotency-Key headers with body fallback), payload unwrapping for flat and nested fields, error mappings (404, 409, 422, 503), and receipt response model.",
     "services/evolution/program_service.py": "MODIFIED -- implemented execute_action with CAS idempotency handling in namespace 'execute_program_action', strict state machine validation for all 12 actions, approver role verification, distinct pause (paused) and stop (stopped) states where resume_program refuses to reverse a stop (409 conflict), retire_program accepting completed or stopped, D2 freeze blocking mutations/promotions, D3 steering actions (constraints, formulas, mutation rules), promotion tracking with capital_authority='none', required caller mutation_id (rejecting synthetic ID fabrication with 422), and divergent replay detection.",
     "services/evolution/program_store.py": "MODIFIED -- added namespace parameter to patch_metadata_cas in ProgramStore protocol, PostgresProgramStore, and JsonProgramStore for clean idempotency receipt key isolation.",
-    "services/evolution/test_program_owner.py": "MODIFIED -- added test_action_scenarios and test_router_program_actions covering full lifecycle sequence (draft -> under_review -> active -> paused -> active -> completed -> retired), stop -> stopped with resume refusal, generation freeze/unfreeze, steering actions, candidate promotions (flat and nested), mutation approval/rejection with real caller IDs, validation rejection for missing mutation_id, role gating, Idempotency-Key header transport and replay, and divergent replay rejection.",
-    "services/evolution/tests/test_client.py": "MODIFIED -- migrated test fixtures to @pytest.mark.anyio and added test_evolution_client_execute_program_action verifying HTTP request URL, auth header, X-Tenant-Id, and X-Idempotency-Key header transport."
+    "services/evolution/test_program_owner.py": "MODIFIED -- added test_action_scenarios, test_router_program_actions, and test_evolution_client_execute_program_action covering full lifecycle sequence (draft -> under_review -> active -> paused -> active -> completed -> retired), stop -> stopped with resume refusal, generation freeze/unfreeze, steering actions, candidate promotions (flat and nested), mutation approval/rejection with real caller IDs, validation rejection for missing mutation_id, role gating, Idempotency-Key header transport and replay, divergent replay rejection, and EvolutionClient execute_program_action header transport."
   },
   "test_execution": {
     "python": "/tmp/pantheon-worker-worktrees/pantheon/evo-program-actions-closure-corrective-001/.venv-pantheon/bin/python3",
@@ -50,8 +44,8 @@
         "result": "33 passed, 0 failed, 2 warnings in 8.87s"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -v services/evolution/test_program_owner.py services/evolution/tests/test_client.py",
-        "result": "9 passed, 3 skipped (Postgres unconfigured), 0 failed, 2 warnings in 3.18s"
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/evolution/test_program_owner.py",
+        "result": "6 passed, 3 skipped (Postgres unconfigured), 0 failed in 2.45s"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_evolution_program_owner_contract.py",
@@ -63,7 +57,7 @@
       },
       {
         "command": "PYTHONPATH=. .venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
-        "result": "26 passed, 0 failed in 1.407s (OK)"
+        "result": "26 passed, 0 failed in 1.620s (OK)"
       }
     ]
   },

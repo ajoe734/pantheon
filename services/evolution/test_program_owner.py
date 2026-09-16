@@ -678,3 +678,54 @@ class TestPostgresProgramStore:
 
     def test_restart_recovery(self, pg_store_factory) -> None:
         _run_restart_recovery(pg_store_factory)
+
+
+@pytest.mark.anyio
+async def test_evolution_client_execute_program_action():
+    from services.evolution.client import EvolutionClient
+
+    captured_requests = []
+
+    class DummyResponse:
+        def __init__(self, status_code, json_data=None):
+            self.status_code = status_code
+            self._json_data = json_data or {}
+            self.text = ""
+
+        def json(self):
+            return self._json_data
+
+    class MockHttpClient:
+        async def post(self, url, json, headers):
+            captured_requests.append({"url": url, "json": json, "headers": headers})
+            return DummyResponse(200, {"receipt_id": "rcpt-1", "status": "active", "program_status": "active"})
+
+    client = EvolutionClient(
+        base_url="http://evolution-test:8093",
+        auth_token="secret-token-123",
+        tenant_id="tenant-test-1",
+        async_client=MockHttpClient(),
+    )
+
+    result = await client.execute_program_action(
+        "evp-123",
+        "approve_program",
+        actor_id="admin-1",
+        actor_role="approver",
+        expected_revision=3,
+        idempotency_key="idemp-key-xyz",
+        payload={"note": "Approval note"},
+    )
+
+    assert result["receipt_id"] == "rcpt-1"
+    assert len(captured_requests) == 1
+    req = captured_requests[0]
+    assert req["url"] == "http://evolution-test:8093/api/evolution/programs/evp-123/actions/approve_program"
+    assert req["headers"]["X-Tenant-Id"] == "tenant-test-1"
+    assert req["headers"]["Authorization"] == "Bearer secret-token-123"
+    assert req["headers"]["X-Idempotency-Key"] == "idemp-key-xyz"
+    assert req["json"]["actor_id"] == "admin-1"
+    assert req["json"]["actor_role"] == "approver"
+    assert req["json"]["expected_revision"] == 3
+    assert req["json"]["note"] == "Approval note"
+
