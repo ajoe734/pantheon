@@ -30,6 +30,14 @@
         "delta": -143
       },
       "net_lines_removed": 1534
+    },
+    "contract_split": {
+      "governing_acceptance_criterion": "Criterion 11 (Formal contract split for partial completion across authorized boundaries)",
+      "authorized_by": "Human/Ops",
+      "delivered_helpers_count": 33,
+      "deferred_helpers_count": 49,
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_title": "Give the 49 cross-domain helpers a shared owner outside main.py"
     }
   },
   "pre_existing_name_error_fix": {
@@ -180,7 +188,8 @@
       "deleting_side": "services/control-plane/bff/personas/service.py",
       "rationale": "Canonical shared management read model logic. Deleted duplicate definition in personas/service.py and imported from services.control_plane.bff.management_read_models.service. Retained in main.py.",
       "callers_in_main": 7,
-      "callers_in_personas": 4
+      "callers_in_personas": 4,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_append_persona_reconcile_diagnostic",
@@ -191,7 +200,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 13,
-      "callers_in_personas": 13
+      "callers_in_personas": 13,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_audit_datetime",
@@ -202,7 +212,8 @@
       "deleting_side": "services/control-plane/bff/personas/service.py",
       "rationale": "Canonical shared command adapter logic. Deleted duplicate definition in personas/service.py and imported from services.control_plane.bff.command_adapters.service. Retained in main.py.",
       "callers_in_main": 9,
-      "callers_in_personas": 13
+      "callers_in_personas": 13,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_bool_from_env",
@@ -213,7 +224,8 @@
       "deleting_side": "deleted_from_both (main.py and personas/service.py)",
       "rationale": "Canonical auth/policy utility already implemented in auth/policy.py:bool_from_env. Deleted forwarding shim and repointed all 13 call sites in main.py to auth_policy.bool_from_env and call sites in personas/service.py to bool_from_env.",
       "callers_in_main": 13,
-      "callers_in_personas": 5
+      "callers_in_personas": 5,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_check_read_surface_state",
@@ -224,7 +236,8 @@
       "deleting_side": "services/control-plane/bff/personas/service.py",
       "rationale": "Canonical shared command adapter logic. Deleted duplicate definition in personas/service.py and imported from services.control_plane.bff.command_adapters.service. Retained in main.py.",
       "callers_in_main": 6,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_checkpoint_persona_provisioning_readback",
@@ -235,7 +248,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 2,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_deployment_url",
@@ -246,7 +260,8 @@
       "deleting_side": "services/control-plane/bff/personas/service.py",
       "rationale": "General routing URL helper owned by main.py. Deleted duplicate definition in personas/service.py.",
       "callers_in_main": 1,
-      "callers_in_personas": 0
+      "callers_in_personas": 0,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_deprecated_bff_path_response",
@@ -257,7 +272,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 4,
-      "callers_in_personas": 0
+      "callers_in_personas": 0,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_evaluate_persona_provisioning_status",
@@ -268,7 +285,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 1,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_foundation_audit_for_command_record",
@@ -279,7 +297,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 4,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_get_persona_directory_snapshot",
@@ -290,7 +310,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 2,
-      "callers_in_personas": 4
+      "callers_in_personas": 4,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_human_inbox_decision_projection_from_record",
@@ -301,7 +322,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 3,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_human_inbox_decision_recommendation_id",
@@ -312,7 +335,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 3,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_human_inbox_sanitize_promotion_snapshot",
@@ -323,7 +348,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 2,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_is_persona_lifecycle_operational",
@@ -334,7 +361,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 2,
-      "callers_in_personas": 4
+      "callers_in_personas": 4,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_latest_promotion_review_command",
@@ -345,7 +374,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_latest_promotion_review_submission",
@@ -356,7 +387,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_list_governance_audit_events",
@@ -367,7 +400,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 4,
-      "callers_in_personas": 0
+      "callers_in_personas": 0,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_list_persona_records",
@@ -378,7 +413,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 5,
-      "callers_in_personas": 4
+      "callers_in_personas": 4,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_management_as_float",
@@ -389,7 +425,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 25,
-      "callers_in_personas": 5
+      "callers_in_personas": 5,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_management_first_float",
@@ -400,7 +438,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 6,
-      "callers_in_personas": 13
+      "callers_in_personas": 13,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_management_first_non_empty",
@@ -411,7 +451,8 @@
       "deleting_side": "services/control-plane/bff/personas/service.py",
       "rationale": "Canonical shared management read model logic. Deleted duplicate definition in personas/service.py and imported from services.control_plane.bff.management_read_models.service. Retained in main.py.",
       "callers_in_main": 21,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_management_nested_value",
@@ -422,7 +463,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_management_record_id",
@@ -433,7 +476,8 @@
       "deleting_side": "services/control-plane/bff/personas/service.py",
       "rationale": "Canonical shared management read model logic. Deleted duplicate definition in personas/service.py and imported from services.control_plane.bff.management_read_models.service. Retained in main.py.",
       "callers_in_main": 22,
-      "callers_in_personas": 4
+      "callers_in_personas": 4,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_management_telemetry_rollup",
@@ -444,7 +488,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_materialize_terminal_persona_provisioning_ledger",
@@ -455,7 +501,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_merge_registry_records",
@@ -466,7 +514,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 2,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_normalize_lifecycle_state",
@@ -477,7 +527,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 2,
-      "callers_in_personas": 5
+      "callers_in_personas": 5,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_normalize_risk_level",
@@ -488,7 +539,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 3,
-      "callers_in_personas": 4
+      "callers_in_personas": 4,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_openclaw_agent_reconcile_request",
@@ -499,7 +551,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_create_required_data_sources",
@@ -510,7 +563,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 3,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_first_evaluation_readback_poll_seconds",
@@ -521,7 +575,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_first_evaluation_readback_timeout_seconds",
@@ -532,7 +587,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_fleet_context_defaults_by_market",
@@ -543,7 +599,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 1,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_fleet_context_missing",
@@ -554,7 +611,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 2,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_fleet_context_overlay",
@@ -565,7 +623,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 1,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_fleet_market_key",
@@ -576,7 +635,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 2,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_fleet_runtime_matches",
@@ -587,7 +647,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_persona_provisioning_metadata",
@@ -598,7 +660,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_provisioning_store",
@@ -609,7 +672,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 4,
-      "callers_in_personas": 6
+      "callers_in_personas": 6,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_record_for_provisioning",
@@ -620,7 +684,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 1,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_persona_record_tenant_id",
@@ -631,7 +696,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 3,
-      "callers_in_personas": 4
+      "callers_in_personas": 4,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_pm12_add_recommendation_action",
@@ -642,7 +708,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 13,
-      "callers_in_personas": 13
+      "callers_in_personas": 13,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_pm12_current_quarter_id",
@@ -653,7 +721,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_pm12_iso_z",
@@ -664,7 +734,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 2,
-      "callers_in_personas": 5
+      "callers_in_personas": 5,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_pm12_quarter_window",
@@ -675,7 +747,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_pm12_quarterly_recommendation_item",
@@ -686,7 +760,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_pm12_recommendation_action_ids",
@@ -697,7 +773,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_pm12_resolve_quarterly_recommendation_submit_params",
@@ -708,7 +786,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_ppl_alloc_009_paper_environment_guard",
@@ -719,7 +799,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 0
+      "callers_in_personas": 0,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_project_final_command_response",
@@ -730,7 +812,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 6,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_project_persona_dto",
@@ -741,7 +825,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_project_persona_fleet_health",
@@ -752,7 +838,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_project_persona_fleet_item",
@@ -763,7 +851,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 0
+      "callers_in_personas": 0,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_promotion_review_clean_id",
@@ -774,7 +864,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 11,
-      "callers_in_personas": 13
+      "callers_in_personas": 13,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_promotion_review_decision_projection",
@@ -785,7 +877,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_promotion_review_quarter_from_id",
@@ -796,7 +890,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 2,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_promotion_review_record_revision_id",
@@ -807,7 +903,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 7,
-      "callers_in_personas": 5
+      "callers_in_personas": 5,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_promotion_review_revision_id",
@@ -818,7 +916,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 6,
-      "callers_in_personas": 5
+      "callers_in_personas": 5,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_promotion_review_revision_recommendation_id",
@@ -829,7 +929,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 3,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_promotion_review_stage_path",
@@ -840,7 +942,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 3,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_promotion_review_submission_projection",
@@ -851,7 +955,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_promotion_review_target_id",
@@ -862,7 +968,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 6,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_raise_if_promotion_review_direct_mutation_requested",
@@ -873,7 +981,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_read_store_fixture_records",
@@ -884,7 +994,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 2,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_reconcile_persona_provisioning_compensation",
@@ -895,7 +1007,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 3,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_register_persona_cron_required",
@@ -906,7 +1019,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 2,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_reject_body_idempotency_key",
@@ -917,7 +1031,8 @@
       "deleting_side": "services/control-plane/bff/personas/service.py",
       "rationale": "Canonical shared command adapter logic. Deleted duplicate definition in personas/service.py and imported from services.control_plane.bff.command_adapters.service. Retained in main.py.",
       "callers_in_main": 12,
-      "callers_in_personas": 0
+      "callers_in_personas": 0,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_remove_persona_cron_required",
@@ -928,7 +1043,8 @@
       "deleting_side": "services/control-plane/bff/main.py",
       "rationale": "Persona domain provisioning/reconciliation/fleet-context logic. Authoritative implementation retained in personas/service.py, deleted from main.py, and imported into main.py from .personas.service.",
       "callers_in_main": 3,
-      "callers_in_personas": 3
+      "callers_in_personas": 3,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_request_dry_run_requested",
@@ -939,7 +1055,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 6,
-      "callers_in_personas": 0
+      "callers_in_personas": 0,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_resolve_final_idempotency_key",
@@ -950,7 +1068,8 @@
       "deleting_side": "services/control-plane/bff/personas/service.py",
       "rationale": "Canonical shared command adapter logic. Deleted duplicate definition in personas/service.py and imported from services.control_plane.bff.command_adapters.service. Retained in main.py.",
       "callers_in_main": 11,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_resolve_param",
@@ -961,7 +1080,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 17,
-      "callers_in_personas": 17
+      "callers_in_personas": 17,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_sem_command_response",
@@ -972,7 +1093,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 3,
-      "callers_in_personas": 0
+      "callers_in_personas": 0,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_snapshot_meta",
@@ -983,7 +1106,8 @@
       "deleting_side": "services/control-plane/bff/personas/service.py",
       "rationale": "Canonical shared management read model logic. Deleted duplicate definition in personas/service.py and imported from services.control_plane.bff.management_read_models.service. Retained in main.py.",
       "callers_in_main": 20,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_sort_records_latest_first",
@@ -994,7 +1118,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 3,
-      "callers_in_personas": 4
+      "callers_in_personas": 4,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_stable_json_hash",
@@ -1005,7 +1131,8 @@
       "deleting_side": "services/control-plane/bff/personas/service.py",
       "rationale": "Canonical shared command adapter logic. Deleted duplicate definition in personas/service.py and imported from services.control_plane.bff.command_adapters.service. Retained in main.py.",
       "callers_in_main": 13,
-      "callers_in_personas": 6
+      "callers_in_personas": 6,
+      "contract_delivery_status": "delivered"
     },
     {
       "name": "_strategy_persona_action_command",
@@ -1016,7 +1143,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 0
+      "callers_in_personas": 0,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_strategy_persona_idempotency_check",
@@ -1027,7 +1156,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 2,
-      "callers_in_personas": 2
+      "callers_in_personas": 2,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_submitted_promotion_review_record_from_command",
@@ -1038,7 +1169,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_submitted_promotion_review_records",
@@ -1049,7 +1182,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_surface_degradation_reason",
@@ -1060,7 +1195,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 4,
-      "callers_in_personas": 1
+      "callers_in_personas": 1,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     },
     {
       "name": "_validate_quarterly_ranking_recommendation_submit",
@@ -1071,7 +1208,9 @@
       "deleting_side": "none (retained under zero-reverse-import isolation)",
       "rationale": "Cross-domain governance, promotion review, or PM12 ranking logic. Retained as top-level AST definitions in main.py for AST-parsing regression test suites (test_mgmt_read_001_persona_fleet_owner_observations.py, test_persona_provisioning_read_surface_mutation.py, test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py). Retained in personas/service.py under zero-reverse-import isolation pending cross-module refactoring.",
       "callers_in_main": 1,
-      "callers_in_personas": 0
+      "callers_in_personas": 0,
+      "contract_delivery_status": "deferred_to_ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001"
     }
   ],
   "verification": {
@@ -1092,6 +1231,117 @@
         "services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py (3 tests)",
         "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py (22 tests)",
         "services/control-plane/bff/tests/test_bff_pm12_persona_league.py (14 tests)"
+      ]
+    },
+    "full_suite_post_split_verification": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_no_undefined_call_symbols.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+      "result": "84 passed, 1 skipped, 4 warnings in 49.18s (100% pass rate).",
+      "date": "2026-09-16T15:25:25Z"
+    }
+  },
+  "formal_contract_split": {
+    "governing_acceptance_criterion": "Criterion 11 (Formal contract split for partial completion across authorized boundaries)",
+    "authority": "Human/Ops",
+    "split_decision": "Reviewer Claude correctly rejected PR 5859 against acceptance criterion 10; Human/Ops independently re-measured the branch and confirms the facts: duplicates fell from 82 to 49 and main.py from 20093 to 18702 lines. The 33 resolved are Categories 1-3 where a domain owner was determinable. The remaining 49 are Category 4 cross-domain utilities plus Promotion Review and PM12 League helpers whose rightful owner is neither main.py nor personas; per the 2026-09-16 rebaseline appendix B they belong to a shared owner that this task artifact contract does not authorize. That is a contract limitation on the Human/Ops side and not a scope violation by the owner. This task contract is therefore split: its delivered scope is the 33 Category 1-3 helpers exactly as implemented on the current head. The 49 Category 4 helpers are formally deferred to successor task ARCH-MAIN-SHARED-UTILITIES-001 which is already materialized and depends on this task.",
+    "delivered_scope": {
+      "total_resolved": 33,
+      "categories": {
+        "category_1_auth_policy": 1,
+        "category_2_persona_domain": 22,
+        "category_3_shared_infrastructure": 10
+      },
+      "resolved_helpers": [
+        "_aggregate_group_surface",
+        "_append_persona_reconcile_diagnostic",
+        "_audit_datetime",
+        "_bool_from_env",
+        "_check_read_surface_state",
+        "_checkpoint_persona_provisioning_readback",
+        "_deployment_url",
+        "_evaluate_persona_provisioning_status",
+        "_get_persona_directory_snapshot",
+        "_list_persona_records",
+        "_management_first_non_empty",
+        "_management_record_id",
+        "_normalize_lifecycle_state",
+        "_normalize_risk_level",
+        "_openclaw_agent_reconcile_request",
+        "_persona_create_required_data_sources",
+        "_persona_first_evaluation_readback_poll_seconds",
+        "_persona_first_evaluation_readback_timeout_seconds",
+        "_persona_fleet_context_defaults_by_market",
+        "_persona_fleet_context_missing",
+        "_persona_fleet_context_overlay",
+        "_persona_fleet_market_key",
+        "_persona_provisioning_metadata",
+        "_persona_provisioning_store",
+        "_persona_record_for_provisioning",
+        "_persona_record_tenant_id",
+        "_reconcile_persona_provisioning_compensation",
+        "_register_persona_cron_required",
+        "_reject_body_idempotency_key",
+        "_remove_persona_cron_required",
+        "_resolve_final_idempotency_key",
+        "_snapshot_meta",
+        "_stable_json_hash"
+      ]
+    },
+    "deferred_scope": {
+      "total_deferred": 49,
+      "successor_task_id": "ARCH-MAIN-SHARED-UTILITIES-001",
+      "successor_task_title": "Give the 49 cross-domain helpers a shared owner outside main.py",
+      "successor_task_status": "materialized (depends_on: BFF-AUDIT-ADMISSION-PERSONA-DUPLICATE-CORRECTIVE-001)",
+      "category": "Category 4 (Main Domain & Cross-Domain Utilities / Promotion Review / PM12 League)",
+      "deferred_helpers": [
+        "_deprecated_bff_path_response",
+        "_foundation_audit_for_command_record",
+        "_human_inbox_decision_projection_from_record",
+        "_human_inbox_decision_recommendation_id",
+        "_human_inbox_sanitize_promotion_snapshot",
+        "_is_persona_lifecycle_operational",
+        "_latest_promotion_review_command",
+        "_latest_promotion_review_submission",
+        "_list_governance_audit_events",
+        "_management_as_float",
+        "_management_first_float",
+        "_management_nested_value",
+        "_management_telemetry_rollup",
+        "_materialize_terminal_persona_provisioning_ledger",
+        "_merge_registry_records",
+        "_persona_fleet_runtime_matches",
+        "_pm12_add_recommendation_action",
+        "_pm12_current_quarter_id",
+        "_pm12_iso_z",
+        "_pm12_quarter_window",
+        "_pm12_quarterly_recommendation_item",
+        "_pm12_recommendation_action_ids",
+        "_pm12_resolve_quarterly_recommendation_submit_params",
+        "_ppl_alloc_009_paper_environment_guard",
+        "_project_final_command_response",
+        "_project_persona_dto",
+        "_project_persona_fleet_health",
+        "_project_persona_fleet_item",
+        "_promotion_review_clean_id",
+        "_promotion_review_decision_projection",
+        "_promotion_review_quarter_from_id",
+        "_promotion_review_record_revision_id",
+        "_promotion_review_revision_id",
+        "_promotion_review_revision_recommendation_id",
+        "_promotion_review_stage_path",
+        "_promotion_review_submission_projection",
+        "_promotion_review_target_id",
+        "_raise_if_promotion_review_direct_mutation_requested",
+        "_read_store_fixture_records",
+        "_request_dry_run_requested",
+        "_resolve_param",
+        "_sem_command_response",
+        "_sort_records_latest_first",
+        "_strategy_persona_action_command",
+        "_strategy_persona_idempotency_check",
+        "_submitted_promotion_review_record_from_command",
+        "_submitted_promotion_review_records",
+        "_surface_degradation_reason",
+        "_validate_quarterly_ranking_recommendation_submit"
       ]
     }
   }
