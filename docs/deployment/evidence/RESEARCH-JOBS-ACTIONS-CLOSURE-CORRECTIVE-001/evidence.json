@@ -1,0 +1,79 @@
+{
+  "task_id": "RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001",
+  "planning_unit": "U10B",
+  "decision_document": "docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md",
+  "source_baseline_commit": "93d8f4353bb34a9f9c39e541aed722ae36a05934",
+  "exact_scope_boundary": "Strictly bounded to the 13 declared artifacts in dispatch-map.json. Frontend delivery belongs exclusively to FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001 in ajoe734/execute-plans.",
+  "changed_files": [
+    "docs/deployment/evidence/RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json",
+    "services/control-plane/bff/command_adapters/experiment_adapter.py",
+    "services/control-plane/bff/command_adapters/job_adapter.py",
+    "services/control-plane/bff/jobs/projection.py",
+    "services/control-plane/bff/ports/job_read.py",
+    "services/control-plane/bff/ports/research_commands.py",
+    "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+    "services/research/main.py",
+    "services/research/write_owner.py"
+  ],
+  "scope_path_disposition": {
+    "docs/deployment/evidence/RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json": "CREATED -- (this file) authoritative evidence manifest for U10B backend action execution closure.",
+    "services/control-plane/bff/action_catalog.py": "REVIEWED, NOT MODIFIED -- catalog entries for ExperimentAction and JobAction at /bff/experiments/{experiment_id}/actions/{action_id} and /bff/jobs/{job_id}/actions/{action_id} remain canonical and accurate.",
+    "services/control-plane/bff/command_adapters/experiment_adapter.py": "MODIFIED -- wired real execution to ResearchWriteOwner for cancel, retry, archive, and invalidate; fails closed on promote with 409 citing GOV-PROMOTE-001 and target registry verification; fails closed on unhandled actions with ActionUnavailableError.",
+    "services/control-plane/bff/command_adapters/job_adapter.py": "MODIFIED -- wired real execution to ResearchCommandsPort for orchestrator runs (cancel with cancellation fence, retry with attempt lineage); fails closed on orchestrator archive and promote with 409 (operator retention and governance gates); fails closed on worker-gateway, training-session, source-ingestion, and policy-learning with 503 citing their explicit follow-up tasks (GW-STOP-FENCE-001, TS-CANCEL-001, SI-CANCEL-001, PL-CANCEL-001); fails closed on openclaw with 400 (permanently read-only diagnostics).",
+    "services/control-plane/bff/command_adapters/registry.py": "REVIEWED, NOT MODIFIED -- ExperimentCommandAdapter and JobCommandAdapter remain registered ahead of EvolutionCommandAdapter in _DEFAULT_ADAPTERS.",
+    "services/control-plane/bff/jobs/projection.py": "CREATED -- unified Job read and action projection service computing truthful allowedActions (canCancel on active orchestrator runs, canRetry on terminal orchestrator runs, all False for other sources until follow-up tasks complete).",
+    "services/control-plane/bff/jobs/router.py": "REVIEWED, NOT MODIFIED -- router already delegates to submit_job_action and dispatches through registry, mapping JobSourceUnavailableError to 503.",
+    "services/control-plane/bff/ports/job_read.py": "MODIFIED -- delegates job projection and allowedActions calculation to canonical jobs.projection module.",
+    "services/control-plane/bff/ports/research_commands.py": "CREATED -- typed ResearchCommandsPort executing real HTTP command dispatch to services/research (cancel_run and retry_run) with error mapping.",
+    "services/control-plane/bff/research/routes/experiments.py": "REVIEWED, NOT MODIFIED -- router already delegates experiment actions to submit_experiment_action, which dispatches through registry to ExperimentCommandAdapter.",
+    "services/control-plane/bff/tests/test_research_jobs_action_receipts.py": "CREATED -- comprehensive test suite verifying orchestrator cancel fence, late completion discard, retry lineage, job adapter receipts, experiment adapter receipts, fail-closed boundaries, and truthful affordances (19 tests, 100% pass).",
+    "services/research/main.py": "MODIFIED -- added cancel endpoint (/api/research-orchestrator/runs/{run_id}/cancel) recording cancellation_fence timestamp, added retry endpoint (/api/research-orchestrator/runs/{run_id}/retry) creating linked attempt lineage (attempt_number, parent_run_id, root_run_id) under the same parent task, and updated complete_run to reject late completions arriving after cancellation_fence with 409.",
+    "services/research/write_owner.py": "MODIFIED -- added retry_research_experiment, archive_research_experiment, invalidate_research_experiment methods, cancellation_fence on cancel, dynamic allowedActions calculation, and store injection in __init__ for isolated testing."
+  },
+  "unresolved_composition_obligations": [
+    {
+      "obligation_id": "GW-STOP-FENCE-001",
+      "target_service": "services/research-worker-gateway/",
+      "status": "preserved_failing_closed",
+      "handling": "JobCommandAdapter returns 503 ActionUnavailableError citing GW-STOP-FENCE-001 for worker-gateway actions until worker process kill and cancellation fence are implemented."
+    },
+    {
+      "obligation_id": "TS-CANCEL-001",
+      "target_service": "services/training-session/",
+      "status": "preserved_failing_closed",
+      "handling": "JobCommandAdapter returns 503 ActionUnavailableError citing TS-CANCEL-001 for training-session actions until preview evaluation cancellation endpoint is implemented."
+    },
+    {
+      "obligation_id": "SI-CANCEL-001",
+      "target_service": "services/source_ingestion/",
+      "status": "preserved_failing_closed",
+      "handling": "JobCommandAdapter returns 503 ActionUnavailableError citing SI-CANCEL-001 for source-ingestion actions until connector extraction cancellation endpoint is implemented."
+    },
+    {
+      "obligation_id": "PL-CANCEL-001",
+      "target_service": "services/policy-learning/",
+      "status": "preserved_failing_closed",
+      "handling": "JobCommandAdapter returns 503 ActionUnavailableError citing PL-CANCEL-001 for policy-learning actions until worker process halt endpoint is implemented."
+    },
+    {
+      "obligation_id": "GOV-PROMOTE-001",
+      "target_service": "services/governance/ and services/control-plane/bff/",
+      "status": "preserved_failing_closed",
+      "handling": "Direct promotion on orchestrator runs and experiments is rejected with 409 Conflict citing GOV-PROMOTE-001 until cross-service Governance promotion tokens and target registry readback verification are completed."
+    }
+  ],
+  "verification": {
+    "test_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/control-plane/bff/tests/test_jobs_source_owner_contract.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/research/tests/test_research_orchestrator_http_service.py",
+    "test_summary": "163 passed, 253 warnings in 73.35s (0:01:13)",
+    "exit_code": 0,
+    "suite_breakdown": {
+      "test_research_jobs_action_receipts.py": "19 passed",
+      "test_jobs_source_owner_contract.py": "29 passed",
+      "test_research_knowledge_source_ports.py": "16 passed",
+      "test_bff_evolution_experiment_jobs_events_contract.py": "29 passed",
+      "test_exp002_bff_research_experiments_contract.py": "17 passed",
+      "test_bff_b2_002_evolution_jobs_ops.py": "32 passed",
+      "test_research_orchestrator_http_service.py": "21 passed"
+    }
+  }
+}
