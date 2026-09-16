@@ -6,7 +6,7 @@
     "owner": "Antigravity2",
     "reviewer": "Codex",
     "base_branch": "dev",
-    "base_sha": "1bad1e9045b019e7227a7958de2512110786903d",
+    "base_sha": "9cc4a75e8f383c6b4564deb20c26c86f676fd5f7",
     "task_branch": "task/OPS-ARCHIVE-RESURRECTION-REOPEN-AMENDMENT-001"
   },
   "acceptance_clauses_audit": {
