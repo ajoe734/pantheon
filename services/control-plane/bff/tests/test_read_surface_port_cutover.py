@@ -338,6 +338,46 @@ class TestOodaManagementPortCutover(unittest.TestCase):
         self.assertEqual(approval_items[0]["decision_id"], "dec-1")
 
 
+class _FakeResearchWriteOwner:
+    """Minimal stand-in for ``services.research.write_owner.ResearchWriteOwner``.
+
+    BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001 deletes the port's own
+    in-memory ``_experiments`` overlay: experiment persistence now belongs
+    exclusively to ``ResearchWriteOwner`` (Postgres). This fake is injected
+    via the port's ``research_write_owner`` constructor kwarg (legitimate
+    dependency injection for a unit test).
+    """
+
+    def __init__(self, seed: Dict[str, Dict[str, Any]] | None = None) -> None:
+        self._experiments = {k: dict(v) for k, v in (seed or {}).items()}
+
+    def get_research_experiment(self, experiment_id: Any) -> Any:
+        record = self._experiments.get(str(experiment_id))
+        return dict(record) if record else None
+
+    def list_research_experiments(self, *, ticket_id: Any = None, status: Any = None) -> List[Dict[str, Any]]:
+        items = list(self._experiments.values())
+        if ticket_id:
+            items = [e for e in items if e.get("ticket_id") == ticket_id]
+        if status:
+            items = [e for e in items if e.get("status") == status]
+        return [dict(e) for e in items]
+
+    def create_research_experiment(self, **fields: Any) -> Dict[str, Any]:
+        exp_id = f"exp-{len(self._experiments) + 1:03d}"
+        record = {"experiment_id": exp_id, **fields}
+        self._experiments[exp_id] = record
+        return dict(record)
+
+    def cancel_research_experiment(self, experiment_id: Any, *, completed_at: Any = None) -> Any:
+        record = self._experiments.get(str(experiment_id))
+        if record is None:
+            return None
+        record["status"] = "canceled"
+        record["completed_at"] = completed_at
+        return dict(record)
+
+
 class TestResearchKnowledgeSourcePortCutover(unittest.TestCase):
     """Verifies Research, Knowledge, Memory, Search, and Source reads."""
 
@@ -374,9 +414,9 @@ class TestResearchKnowledgeSourcePortCutover(unittest.TestCase):
             research_analyses_store={
                 "ana-1": {"analysis_id": "ana-1", "title": "Analysis 1"},
             },
-            research_experiments_store={
-                "exp-1": {"experiment_id": "exp-1", "name": "Exp 1"},
-            },
+            research_write_owner=_FakeResearchWriteOwner(
+                seed={"exp-1": {"experiment_id": "exp-1", "name": "Exp 1"}},
+            ),
         )
 
     def test_dataset_source_and_surface_status(self) -> None:
