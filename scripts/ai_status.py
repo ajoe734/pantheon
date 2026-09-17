@@ -6317,6 +6317,147 @@ def _verified_reassignment_chain(
     }
 
 
+def _verified_archive_reviewer_reassignment(
+    task: Mapping[str, Any],
+    *,
+    evidence_reviewer: str,
+    current_reviewer: str,
+) -> dict[str, Any] | None:
+    """Accept the immutable archive's own review_evidence.reviewer_reassignment
+    record when live activity audit sources hold no chain for a pre-rebuild hop."""
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return None
+
+    raw_bytes = load_archived_raw_bytes(task_id)
+    if raw_bytes is None:
+        return None
+
+    snapshot = load_archived_snapshot(task_id)
+    if not isinstance(snapshot, Mapping):
+        return None
+
+    try:
+        validated_snapshot = _validate_status_archive_snapshot(deepcopy(dict(snapshot)))
+    except Exception:
+        return None
+
+    if str(validated_snapshot.get("terminal_outcome") or "") != "completed":
+        return None
+
+    try:
+        parsed_from_raw = json.loads(raw_bytes.decode("utf-8"))
+    except Exception:
+        return None
+
+    if _canonical_json_sha256(parsed_from_raw) != _canonical_json_sha256(validated_snapshot):
+        return None
+
+    archived_task = validated_snapshot.get("task")
+    if not isinstance(archived_task, Mapping):
+        return None
+
+    archived_delivery = archived_task.get("delivery")
+    if not isinstance(archived_delivery, Mapping):
+        return None
+
+    review_evidence = archived_delivery.get("review_evidence")
+    if not isinstance(review_evidence, Mapping):
+        return None
+
+    rec = review_evidence.get("reviewer_reassignment")
+    if not isinstance(rec, Mapping):
+        return None
+
+    rec_old = canonical_agent_name(rec.get("old_reviewer"))
+    rec_new = canonical_agent_name(rec.get("new_reviewer"))
+    ev_reviewer = canonical_agent_name(evidence_reviewer)
+    cur_reviewer = canonical_agent_name(current_reviewer)
+    archived_row_reviewer = canonical_agent_name(archived_task.get("reviewer"))
+
+    if not rec_old or not rec_new:
+        return None
+    if rec_old != ev_reviewer:
+        return None
+    if rec_new != cur_reviewer or rec_new != archived_row_reviewer:
+        return None
+
+    event_id = str(rec.get("event_id") or "").strip()
+    if not event_id:
+        return None
+
+    rec_ts = str(rec.get("ts") or "").strip()
+    if not rec_ts:
+        return None
+    rec_message = str(rec.get("message") or "").strip()
+    if not rec_message:
+        return None
+
+    archived_owner = canonical_agent_name(archived_task.get("owner"))
+    if not archived_owner:
+        return None
+
+    raw_old_gen = rec.get("old_generation")
+    raw_gen = rec.get("generation")
+    old_gen = None
+    gen = None
+    if raw_old_gen is not None and raw_gen is not None:
+        try:
+            old_gen = int(raw_old_gen)
+            gen = int(raw_gen)
+        except (ValueError, TypeError):
+            return None
+
+    accepted_prefixes = (
+        "supervisor-reassign-",
+        "supervisor-task-reassigned-",
+        "human-ops-task-reassigned-",
+        "human-ops-reassign-",
+    )
+    if not any(event_id.startswith(prefix) for prefix in accepted_prefixes):
+        return None
+
+    expected_digest = task_machine._assignment_activity_event_digest(
+        task_id=task_id,
+        timestamp=rec_ts,
+        old_owner=archived_owner,
+        new_owner=archived_owner,
+        old_reviewer=rec_old,
+        new_reviewer=rec_new,
+        old_generation=old_gen,
+        generation=gen,
+        message=rec_message,
+    )
+
+    accepted_ids = {f"{prefix}{expected_digest}" for prefix in accepted_prefixes}
+    if old_gen is not None and gen is not None:
+        expected_digest_legacy = task_machine._assignment_activity_event_digest(
+            task_id=task_id,
+            timestamp=rec_ts,
+            old_owner=archived_owner,
+            new_owner=archived_owner,
+            old_reviewer=rec_old,
+            new_reviewer=rec_new,
+            old_generation=None,
+            generation=None,
+            message=rec_message,
+        )
+        for prefix in accepted_prefixes:
+            accepted_ids.add(f"{prefix}{expected_digest_legacy}")
+
+    if event_id not in accepted_ids:
+        return None
+
+    return {
+        "event_id": event_id,
+        "ts": rec_ts,
+        "old_reviewer": rec_old,
+        "new_reviewer": rec_new,
+        "hops": 1,
+        "message": rec_message,
+    }
+
+
 def _verified_reviewer_reassignment(
     task: dict[str, Any],
     *,
@@ -6324,12 +6465,26 @@ def _verified_reviewer_reassignment(
     current_reviewer: str,
 ) -> dict[str, Any]:
     """Return the exact canonical reassignment chain that explains reviewer drift."""
-    return _verified_reassignment_chain(
-        task,
-        role="reviewer",
-        evidence_agent=evidence_reviewer,
-        current_agent=current_reviewer,
+    failure_message = (
+        "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata "
+        "and no exact task_reassigned audit event chain explains the drift."
     )
+    try:
+        return _verified_reassignment_chain(
+            task,
+            role="reviewer",
+            evidence_agent=evidence_reviewer,
+            current_agent=current_reviewer,
+        )
+    except SystemExit:
+        archive_reassignment = _verified_archive_reviewer_reassignment(
+            task,
+            evidence_reviewer=evidence_reviewer,
+            current_reviewer=current_reviewer,
+        )
+        if archive_reassignment is not None:
+            return archive_reassignment
+        raise SystemExit(failure_message)
 
 
 def _verified_owner_reassignment(

@@ -17379,6 +17379,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         reopen_valid_id: bool = True,
         reassign_actor: str = "Human/Ops",
         post_reopen_event: dict[str, Any] | None = None,
+        archive_reviewer_reassignment: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, dict[str, str]]:
         delivery_root = self.root / "execute-plans"
         delivery_sha = self._init_git_repo(
@@ -17472,6 +17473,11 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                 "status": "review_approved",
             },
         }
+        if archive_reviewer_reassignment is not None:
+            archived_delivery["review_evidence"]["reviewer_reassignment"] = deepcopy(
+                archive_reviewer_reassignment
+            )
+            archived_delivery["review_evidence"]["canonical_reviewer"] = archive_reviewer
         base_scope: dict[str, Any] = {
             "title": "Positive archive resurrection candidate",
             "phase": "Release",
@@ -18977,6 +18983,323 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.assertIsNotNone(task)
         self.assertEqual(task.get("generation"), 2)
         self.assertNotIn("REG-002", final_state.get(ai_status.ARCHIVE_RECEIPTS_KEY, {}))
+
+    def _make_archive_reviewer_hop(
+        self,
+        *,
+        task_id: str = "REG-002",
+        owner: str = "Codex",
+        old_reviewer: str = "Claude",
+        new_reviewer: str = "Codex2",
+        timestamp: str = "2026-07-19T23:52:06Z",
+        message: str = "Auto-reassigned REG-002 away from unavailable lane Claude; reviewer Claude -> Codex2.",
+        prefix: str = "supervisor-reassign-",
+        old_generation: int | None = None,
+        generation: int | None = None,
+    ) -> dict[str, Any]:
+        digest = task_machine._assignment_activity_event_digest(
+            task_id=task_id,
+            timestamp=timestamp,
+            old_owner=owner,
+            new_owner=owner,
+            old_reviewer=old_reviewer,
+            new_reviewer=new_reviewer,
+            old_generation=old_generation,
+            generation=generation,
+            message=message,
+        )
+        rec: dict[str, Any] = {
+            "event_id": f"{prefix}{digest}",
+            "ts": timestamp,
+            "old_reviewer": old_reviewer,
+            "new_reviewer": new_reviewer,
+            "message": message,
+        }
+        if old_generation is not None and generation is not None:
+            rec["old_generation"] = old_generation
+            rec["generation"] = generation
+        return rec
+
+    def test_positive_archive_resurrection_archive_reviewer_hop(self) -> None:
+        hop = self._make_archive_reviewer_hop()
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            archive_owner="Codex",
+            archive_reviewer="Codex2",
+            evidence_owner="Codex",
+            evidence_reviewer="Claude",
+            active_owner="Codex2",
+            active_reviewer="Claude",
+            reassign_old_owner="Codex",
+            reassign_new_owner="Codex2",
+            reassign_old_reviewer="Codex2",
+            reassign_new_reviewer="Claude",
+            archive_reviewer_reassignment=hop,
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+
+        # 1. Diagnostic
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertTrue(diag["eligible"])
+        self.assertEqual(diag["reason"], "eligible_for_stale_role_recovery")
+        proof = diag["proof"]
+        self.assertEqual(proof["retired_active_row"]["generation"], 2)
+        self.assertEqual(proof["retired_active_row"]["owner"], "Codex2")
+        self.assertEqual(proof["retired_active_row"]["reviewer"], "Claude")
+        self.assertEqual(proof["archive_generation"], 1)
+
+        # 2. Command show via isolated CLI
+        show_proc = self._run_cli(["show", "REG-002"])
+        self.assertEqual(show_proc.returncode, 0, show_proc.stderr)
+        show_out = json.loads(show_proc.stdout)
+        self.assertEqual(show_out["source"], "active")
+        self.assertTrue(show_out["archive_resurrection_diagnostic"]["eligible"])
+
+        # 3. Preflight and reconcile via real isolated CLI
+        rec_proc = self._run_cli(["reconcile_merged_done", "REG-002", "Reconcile archive reviewer hop."])
+        self.assertEqual(rec_proc.returncode, 0, rec_proc.stderr)
+
+        # 4. Outbox recovery / drain via CLI recover
+        recover_proc = self._run_cli(["recover"])
+        self.assertEqual(recover_proc.returncode, 0, recover_proc.stderr)
+
+        # 5. Assertions on final state:
+        final_state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(final_state, "REG-002"))
+        self.assertIsNone(final_state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
+        term_fact = final_state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]
+        self.assertEqual(term_fact["generation"], 1)
+        self.assertEqual(term_fact["recorded_at"], "2026-08-01T10:00:00Z")
+        self.assertEqual(term_fact["terminal_outcome"], "completed")
+
+        on_disk_snapshot = ai_status.load_archived_snapshot("REG-002")
+        self.assertEqual(ai_status._canonical_json_sha256(on_disk_snapshot), orig_sha)
+        self.assertEqual(on_disk_snapshot, snapshot)
+
+        receipt = final_state[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
+        self.assertEqual(receipt["snapshot_sha256"], orig_sha)
+        self.assertEqual(final_state["blockers"], [])
+
+        # Verify dependency resolution for downstream task REG-003
+        resolver = task_archive.TaskResolver(final_state)
+        reg_003 = ai_status.get_task(final_state, "REG-003")
+        self.assertTrue(task_archive.dependency_satisfied_for(reg_003, "REG-002", resolver))
+
+        # 6. Audit log entries
+        logs = [
+            json.loads(line)
+            for line in self.log_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        retired_events = [e for e in logs if e.get("type") == "stale_archive_resurrection_retired"]
+        self.assertEqual(len(retired_events), 1)
+        self.assertEqual(retired_events[0]["retired_generation"], 2)
+        self.assertEqual(retired_events[0]["archive_generation"], 1)
+
+        reconcile_events = [e for e in logs if e.get("type") == "reconcile_merged_done"]
+        self.assertEqual(len(reconcile_events), 1)
+        self.assertEqual(reconcile_events[0]["retired_stale_active_row"]["generation"], 2)
+        self.assertIn("archive_resurrection_proof", reconcile_events[0])
+
+    def test_negative_archive_reviewer_hop_tampered_block(self) -> None:
+        hop = self._make_archive_reviewer_hop()
+        hop["message"] = "tampered message that invalidates digest"
+        self._build_fixture(
+            archive_owner="Codex",
+            archive_reviewer="Codex2",
+            evidence_owner="Codex",
+            evidence_reviewer="Claude",
+            active_owner="Codex2",
+            active_reviewer="Claude",
+            reassign_old_owner="Codex",
+            reassign_new_owner="Codex2",
+            reassign_old_reviewer="Codex2",
+            reassign_new_reviewer="Claude",
+            archive_reviewer_reassignment=hop,
+        )
+        self._assert_cli_retirement_refused(
+            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
+        )
+
+    def test_negative_archive_reviewer_hop_mismatched_endpoints(self) -> None:
+        # 1. Old reviewer mismatch (e.g. Antigravity instead of Claude)
+        hop1 = self._make_archive_reviewer_hop(old_reviewer="Antigravity")
+        self._build_fixture(
+            archive_owner="Codex",
+            archive_reviewer="Codex2",
+            evidence_owner="Codex",
+            evidence_reviewer="Claude",
+            active_owner="Codex2",
+            active_reviewer="Claude",
+            reassign_old_owner="Codex",
+            reassign_new_owner="Codex2",
+            reassign_old_reviewer="Codex2",
+            reassign_new_reviewer="Claude",
+            archive_reviewer_reassignment=hop1,
+        )
+        self._assert_cli_retirement_refused(
+            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
+        )
+
+        # 2. New reviewer mismatch (e.g. Antigravity instead of Codex2)
+        self.setUp()
+        hop2 = self._make_archive_reviewer_hop(new_reviewer="Antigravity")
+        self._build_fixture(
+            archive_owner="Codex",
+            archive_reviewer="Codex2",
+            evidence_owner="Codex",
+            evidence_reviewer="Claude",
+            active_owner="Codex2",
+            active_reviewer="Claude",
+            reassign_old_owner="Codex",
+            reassign_new_owner="Codex2",
+            reassign_old_reviewer="Codex2",
+            reassign_new_reviewer="Claude",
+            archive_reviewer_reassignment=hop2,
+        )
+        self._assert_cli_retirement_refused(
+            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
+        )
+
+    def test_negative_archive_reviewer_hop_missing_or_unauthenticated_id(self) -> None:
+        # 1. Missing event_id
+        hop1 = self._make_archive_reviewer_hop()
+        hop1["event_id"] = ""
+        self._build_fixture(
+            archive_owner="Codex",
+            archive_reviewer="Codex2",
+            evidence_owner="Codex",
+            evidence_reviewer="Claude",
+            active_owner="Codex2",
+            active_reviewer="Claude",
+            reassign_old_owner="Codex",
+            reassign_new_owner="Codex2",
+            reassign_old_reviewer="Codex2",
+            reassign_new_reviewer="Claude",
+            archive_reviewer_reassignment=hop1,
+        )
+        self._assert_cli_retirement_refused(
+            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
+        )
+
+        # 2. Unauthenticated event_id prefix
+        self.setUp()
+        hop2 = self._make_archive_reviewer_hop(prefix="unauthenticated-reassign-")
+        self._build_fixture(
+            archive_owner="Codex",
+            archive_reviewer="Codex2",
+            evidence_owner="Codex",
+            evidence_reviewer="Claude",
+            active_owner="Codex2",
+            active_reviewer="Claude",
+            reassign_old_owner="Codex",
+            reassign_new_owner="Codex2",
+            reassign_old_reviewer="Codex2",
+            reassign_new_reviewer="Claude",
+            archive_reviewer_reassignment=hop2,
+        )
+        self._assert_cli_retirement_refused(
+            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
+        )
+
+    def test_negative_archive_reviewer_hop_drifted_archive_bytes(self) -> None:
+        hop = self._make_archive_reviewer_hop()
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            archive_owner="Codex",
+            archive_reviewer="Codex2",
+            evidence_owner="Codex",
+            evidence_reviewer="Claude",
+            active_owner="Codex2",
+            active_reviewer="Claude",
+            reassign_old_owner="Codex",
+            reassign_new_owner="Codex2",
+            reassign_old_reviewer="Codex2",
+            reassign_new_reviewer="Claude",
+            archive_reviewer_reassignment=hop,
+        )
+        path = task_archive.archive_task_path("REG-002")
+        before_bytes = path.read_bytes()
+
+        # 1. Byte-only drift after preflight rejects execution and leaves active task intact
+        active_task = ai_status.get_task(state, "REG-002")
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+        ):
+            preflight = ai_status.prepare_external_mutation_preflight(
+                "reconcile_merged_done", active_task, ["REG-002", "probe"]
+            )
+            path.write_bytes(before_bytes + b"\n ")
+            with self.assertRaises(SystemExit) as ctx:
+                with ai_status.bound_external_mutation_preflight(preflight):
+                    ai_status.command_reconcile_merged_done(state, ["REG-002", "probe"])
+            self.assertIn("archive file bytes changed after external evidence was prepared", str(ctx.exception))
+
+            current_task = ai_status.get_task(state, "REG-002")
+            self.assertIsNotNone(current_task)
+            self.assertEqual(current_task.get("generation"), 2)
+
+        # 2. Corrupted archive file bytes fail closed via CLI
+        path.write_bytes(before_bytes + b"\n corrupted-tail")
+        self._assert_cli_retirement_refused(
+            "Failed to load archive snapshot safely"
+        )
+
+        # 3. Tampered archive review evidence content fails closed via CLI
+        self.setUp()
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            archive_owner="Codex",
+            archive_reviewer="Codex2",
+            evidence_owner="Codex",
+            evidence_reviewer="Claude",
+            active_owner="Codex2",
+            active_reviewer="Claude",
+            reassign_old_owner="Codex",
+            reassign_new_owner="Codex2",
+            reassign_old_reviewer="Codex2",
+            reassign_new_reviewer="Claude",
+            archive_reviewer_reassignment=hop,
+        )
+        path = task_archive.archive_task_path("REG-002")
+        tampered_snap = json.loads(path.read_text(encoding="utf-8"))
+        tampered_snap["task"]["delivery"]["review_evidence"]["reviewer_reassignment"]["old_reviewer"] = "Antigravity"
+        path.write_text(json.dumps(tampered_snap, indent=2) + "\n", encoding="utf-8")
+        self._assert_cli_retirement_refused(
+            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
+        )
+
+    def test_archive_reviewer_hop_live_sources_precedence(self) -> None:
+        hop = self._make_archive_reviewer_hop(message="Archive record hop")
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            archive_owner="Codex",
+            archive_reviewer="Codex2",
+            evidence_owner="Codex",
+            evidence_reviewer="Claude",
+            active_owner="Codex",
+            active_reviewer="Codex2",
+            reassign_old_owner="Codex",
+            reassign_new_owner="Codex",
+            reassign_old_reviewer="Claude",
+            reassign_new_reviewer="Codex2",
+            archive_reviewer_reassignment=hop,
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+        ):
+            chain = ai_status._verified_reviewer_reassignment(
+                active_task,
+                evidence_reviewer="Claude",
+                current_reviewer="Codex2",
+            )
+            # The returned chain must come from live activity sources (_verified_reassignment_chain),
+            # with the live audit event's message, rather than the archive's record.
+            self.assertEqual(chain["message"], "Auto-reassign REG-002")
+            self.assertTrue(str(chain.get("event_id") or "").startswith("human-ops-task-reassigned-"))
+            self.assertEqual(chain["hops"], 1)
 
 
 if __name__ == "__main__":
