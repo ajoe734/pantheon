@@ -1,0 +1,475 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "PPL-ALLOC-009",
+  "base_ref": "dev@4193fcfcfe300dc2f4431d6ab636c4300e70c9ca",
+  "task_details": {
+    "title": "Closeout and dev publish",
+    "phase": "Persona Promotion Allocation / Wave 3 closeout",
+    "summary_zh": "彙整所有任務 PR、測試、merge、dev publish 與 hosted smoke，證明 create->paper、paper->real review、real allocation、emergency containment 閉環。",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "fleet_lane": "production-closeout"
+  },
+  "depends_on": "PPL-ALLOC-002 (done), PPL-ALLOC-003 (done), PPL-ALLOC-004 (done), PPL-ALLOC-005 (done), PPL-ALLOC-006 (done), PPL-ALLOC-007 (done), PPL-ALLOC-008 (done)",
+  "child_task_dependencies": {
+    "PPL-ALLOC-002": {
+      "status": "done",
+      "satisfied": true,
+      "title": "Contract and schema for persona promotion and allocation"
+    },
+    "PPL-ALLOC-003": {
+      "status": "done",
+      "satisfied": true,
+      "title": "BFF allocation evaluation simulation service"
+    },
+    "PPL-ALLOC-004": {
+      "status": "done",
+      "satisfied": true,
+      "title": "Governed quarterly ranking snapshot and promotion proposal"
+    },
+    "PPL-ALLOC-005": {
+      "status": "done",
+      "satisfied": true,
+      "title": "Paper capital ledger and pool binding"
+    },
+    "PPL-ALLOC-006": {
+      "status": "done",
+      "satisfied": true,
+      "title": "Promotion-allocation workbench and navigation"
+    },
+    "PPL-ALLOC-007": {
+      "status": "done",
+      "satisfied": true,
+      "title": "Governance decision and approval flow"
+    },
+    "PPL-ALLOC-008": {
+      "status": "done",
+      "satisfied": true,
+      "title": "Emergency containment policy"
+    }
+  },
+  "contract_revision": {
+    "action": "remove",
+    "artifact": "execute-plans:src",
+    "current_artifacts": [
+      "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive",
+      "docs/deployment/evidence/PPL-ALLOC-009/evidence.json"
+    ],
+    "previous_artifacts": [
+      "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive",
+      "execute-plans:src",
+      "docs/deployment/evidence/PPL-ALLOC-009/evidence.json"
+    ],
+    "reason": "Operator requested duplicate implementation responsibility removed/merged while preserving full acceptance. 2026-09-06 current canonical/source audit: PPL-ALLOC-009 is hosted smoke plus closeout/PR/SHA/deployed-identity validation, not a second product source owner. Existing first-release BFF/FE owners and later dependency-serialized simplification owners retain their actual implementations. Remove only broad BFF/FE edit authority; do not delete code or waive child completion, full causal hosted path, strict verified actors, distinct approval, safe profiles, exact pair/rollback or residual-risk evidence. Keep the existing archive output and one precise standard evidence manifest. Any genuine source defect returns to its existing scoped owner.",
+    "updated_at": "2026-09-06T06:39:28Z",
+    "updated_by": "Human/Ops"
+  },
+  "archive_artifacts": {
+    "evidence_index": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive/PPL-ALLOC-009-B1-B3-EVIDENCE-INDEX-2026-07-26.json",
+    "production_closeout_doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive/PPL-ALLOC-009-PRODUCTION-CLOSEOUT-2026-07-25.md",
+    "policy_recheck_json": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive/PPL-ALLOC-009-POLICY-BOUNDARY-RECHECK-2026-07-23.json",
+    "truth_correction_json": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive/PPL-ALLOC-009-HOSTED-TRUTH-CORRECTION-2026-07-25.json"
+  },
+  "delivery_inventory": {
+    "pantheon": [
+      {
+        "pr": 4056,
+        "merge_commit": "763c98b1761f6d56b379b3a07e48d5e18d3e8d16",
+        "purpose": "governed paper allocation path"
+      },
+      {
+        "pr": 4061,
+        "merge_commit": "99ece708c8e48c6889b224047a9f70a1179af7eb",
+        "purpose": "governed hosted acceptance workflow"
+      },
+      {
+        "pr": 4063,
+        "merge_commit": "33ee1d4b906a27ffc30a8c26dbfbb0bbfc4f0db0",
+        "purpose": "guarded paper eligibility producer"
+      },
+      {
+        "pr": 4079,
+        "merge_commit": "789f5e0865b4a87294def470f06079ae83baf07f",
+        "purpose": "retry-safe telemetry proof"
+      },
+      {
+        "pr": 4127,
+        "merge_commit": "72afd991b9133dc7e73c775978dc854e6d3877ce",
+        "purpose": "real browser identity inputs"
+      },
+      {
+        "pr": 4128,
+        "merge_commit": "5e5a3ff072c325173040704c495ea77aa2a36b4e",
+        "purpose": "prior truth correction"
+      },
+      {
+        "pr": 4130,
+        "merge_commit": "dab595770df46db98c7dd692b058704da81b5102",
+        "purpose": "strict lineage resume pair"
+      },
+      {
+        "pr": 4131,
+        "merge_commit": "8bdb85b6441536bd095426abb5c4226a1bd7828b",
+        "purpose": "applied-owner resume pair"
+      },
+      {
+        "pr": 4133,
+        "merge_commit": "f9851d0f4702776e77e5d6560150664ebd639116",
+        "purpose": "accessibility pair"
+      },
+      {
+        "pr": 4134,
+        "merge_commit": "d8c1a81756e5ad904d173c2ffeea83373d4f2d97",
+        "purpose": "browser navigation pair"
+      },
+      {
+        "pr": 4136,
+        "merge_commit": "ea25a615fe89e400f071c48a79f987a2b1b09a72",
+        "purpose": "isolated final browser pair"
+      }
+    ],
+    "execute_plans": [
+      {
+        "pr": 528,
+        "merge_commit": "9defed5029c4422bb5a0a4b4c79e2ad637eb4bca",
+        "purpose": "exact-pair acceptance harness"
+      },
+      {
+        "pr": 531,
+        "merge_commit": "7492ad7fd0b430df40dd7fe7b6b0d187d8742350",
+        "purpose": "immutable action repair"
+      },
+      {
+        "pr": 533,
+        "merge_commit": "6d74db4d1ffb327224080642dd9cdae5c5f9a017",
+        "purpose": "genuine eligibility wait"
+      },
+      {
+        "pr": 535,
+        "merge_commit": "ecb78bd9b647bbb4ffcbe83069aea38b642d0bb0",
+        "purpose": "canonical run identity"
+      },
+      {
+        "pr": 537,
+        "merge_commit": "861b02a5254c57f84bb31a4dee6d6532e37303fb",
+        "purpose": "retry-safe proof identity"
+      },
+      {
+        "pr": 544,
+        "merge_commit": "3bf97323f7c72bd47256c7a60618dd7f837cd592",
+        "purpose": "real GCP browser identity"
+      },
+      {
+        "pr": 547,
+        "merge_commit": "694ecdf28f90773f8c127b6038c8475b9d68a00b",
+        "purpose": "strict rebalance lineage resume"
+      },
+      {
+        "pr": 548,
+        "merge_commit": "69888404584d31caacf394b1e4c7dc99bb26191f",
+        "purpose": "approved/applied owner resume"
+      },
+      {
+        "pr": 550,
+        "merge_commit": "acd2d6610d01845cd361db3f36266c006ea47ce6",
+        "purpose": "ranking accessibility"
+      },
+      {
+        "pr": 551,
+        "merge_commit": "59844bab22006bcc16f5c18ef0543d7657b562a4",
+        "purpose": "login/navigation settling"
+      },
+      {
+        "pr": 552,
+        "merge_commit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
+        "purpose": "isolated final browser proof"
+      }
+    ]
+  },
+  "accepted_exact_pair": {
+    "deployment_state": "accepted",
+    "pair_id": "c05fc6b0abea92ceb1805cde8c2f3f4d7bcfab12fb77ac45be0a4241ea5874cf",
+    "frontend": {
+      "repository": "ajoe734/execute-plans",
+      "commit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
+      "gate_run_id": 30192097967
+    },
+    "bff": {
+      "repository": "ajoe734/pantheon",
+      "runtime_commit": "be956c07aca889043ef301389412b6744452f20b",
+      "auth_mode": "strict",
+      "mfa_required": true
+    },
+    "safe_build_mode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    }
+  },
+  "hosted_acceptance": {
+    "repository": "ajoe734/pantheon",
+    "run_id": 30194836870,
+    "run_attempt": 1,
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/30194836870",
+    "workflow_head_sha": "09159159fbac9b43d3e97011a12a224699677620",
+    "conclusion": "success",
+    "diagnostic_only": false,
+    "active_test": "correlates governed B1 and proves the same identity on desktop and 393px mobile",
+    "artifact": {
+      "artifact_id": 8629787902,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/30194836870/artifacts/8629787902",
+      "retention_days": 90,
+      "json_sha256": "8f13eb7c9632ae61c3e020db00cee54396f26b2a90f76485f2a9a487fa0c21df",
+      "zip_sha256": "2968a40f3ae17434c1f57661005bb306117d9d5d4123645dfaa08efdf934bd3d"
+    }
+  },
+  "chain_evidence": {
+    "gate": "B1",
+    "status": "passed_governed_paper_only_chain",
+    "tenant_id": "tenant-dev",
+    "persona_id": "persona-34ac77f34d030185079d",
+    "runtime_id": "rt-bc3d8bbd",
+    "runtime_binding_id": "rb-b174499b69484ee7b207f6e437605cd9",
+    "current_paper_session_id": "prmon-rb-b174499b69484ee7b207f6e437605cd9-621fd2b0",
+    "eligibility_event_id": "b07c14a3-c3e5-5004-85e1-8ec11879dbc6",
+    "ranking_snapshot_id": "ranking-quarterly-2026-q3-507a8d36f7269e406f429d3f",
+    "promotion_review_id": "pm12-2026-q3-persona-34ac77f34d030185079d-promote_to_canary_candidate--snapshot-221d3a44f5a0ac9bb6141685209e888b",
+    "allocation_evaluation_id": "paper-allocation-evaluation-84beb9ef6a8067bcb85a1845",
+    "paper_ledger_id": "paper-ledger-75b390797fd9861f92c6",
+    "capital_binding_id": "pcb-persona-paper-75b390797fd9861f92c6",
+    "capital_pool_id": "pool-persona-paper-75b390797fd9861f92c6",
+    "rebalance_id": "rb-20260725-3be1a73f7b06",
+    "approval_decision_id": "approval-30095677466",
+    "apply_command_id": "cmd-a39c04a4a90743d7a88056275f3f6b0e",
+    "identity_separation": {
+      "approval_actor": {
+        "operator_id": "pantheon-dev-approver",
+        "identity_class": "approver",
+        "roles": [
+          "approver"
+        ],
+        "mfa_verified": true
+      },
+      "apply_actor": {
+        "operator_id": "pantheon-dev-operator-a",
+        "identity_class": "operator_a",
+        "roles": [
+          "operator"
+        ],
+        "mfa_verified": true
+      },
+      "distinct_approval_and_apply": true
+    },
+    "authoritative_responses": {
+      "eligibility_owner_receipt": {
+        "service": "telemetry",
+        "status": "accepted",
+        "accepted_event_id": "b07c14a3-c3e5-5004-85e1-8ec11879dbc6",
+        "reconciliation": "accepted",
+        "readback_attempts": 1,
+        "readback_event_id": "b07c14a3-c3e5-5004-85e1-8ec11879dbc6"
+      },
+      "allocation_owner": {
+        "status": "applied",
+        "policy_version": "persona-paper-allocation-simulation-v1",
+        "ranking_snapshot_id": "ranking-quarterly-2026-q3-507a8d36f7269e406f429d3f",
+        "allocation_evaluation_id": "paper-allocation-evaluation-84beb9ef6a8067bcb85a1845",
+        "rebalance_id": "rb-20260725-3be1a73f7b06",
+        "approval_ref": "approval-30095677466",
+        "authoritative_capital_readback": true
+      }
+    },
+    "request_response_checkpoints": [
+      {
+        "label": "persona-create-paper-bundle",
+        "method": "POST",
+        "status": 201
+      },
+      {
+        "label": "persona-provisioning-reconcile",
+        "method": "POST",
+        "status": 200
+      },
+      {
+        "label": "paper-eligibility-proof",
+        "method": "POST",
+        "status": 202
+      },
+      {
+        "label": "quarterly-ranking",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "label": "promotion-submit",
+        "method": "POST",
+        "status": 202
+      },
+      {
+        "label": "promotion-human-decision",
+        "method": "POST",
+        "status": 202
+      },
+      {
+        "label": "paper-allocation-evaluate",
+        "method": "POST",
+        "status": 200
+      },
+      {
+        "label": "rebalance-resume-owner-list",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "label": "rebalance-approval",
+        "method": "POST",
+        "status": 201
+      },
+      {
+        "label": "apply-confirm-token",
+        "method": "POST",
+        "status": 201
+      },
+      {
+        "label": "rebalance-apply",
+        "method": "POST",
+        "status": 202
+      },
+      {
+        "label": "apply-command-receipt",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "label": "authoritative-capital-readback",
+        "method": "GET",
+        "status": 200
+      }
+    ]
+  },
+  "browser_proof": {
+    "gate": "B3",
+    "status": "passed_exact_pair_desktop_and_393px_mobile",
+    "identity_provider": "gcp_identity_platform",
+    "session_bootstrap": "hosted_firebase_email_password_sign_in",
+    "synthetic_session": false,
+    "desktop": {
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "routes": [
+        "quarterly-ranking",
+        "recommendations",
+        "capital"
+      ],
+      "axe_passed": true,
+      "console_passed": true,
+      "network_passed": true,
+      "overflow_passed": true,
+      "page_errors_passed": true
+    },
+    "mobile": {
+      "viewport": {
+        "width": 393,
+        "height": 852
+      },
+      "routes": [
+        "quarterly-ranking",
+        "recommendations",
+        "capital"
+      ],
+      "axe_passed": true,
+      "console_passed": true,
+      "network_passed": true,
+      "overflow_passed": true,
+      "page_errors_passed": true
+    }
+  },
+  "independent_reviewer_decision": {
+    "gate": "B5",
+    "reviewer": "Claude2",
+    "decided_at": "2026-07-26T10:48:28Z",
+    "decision": "accept",
+    "disposition": "canonical_rankings_governance_decisions_and_performance_centers_supersede_original_primary_workbench_contract",
+    "reopened_ui_task": false,
+    "verified_frontend_commit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
+    "governing_route_matrix": "docs/04/pantheon_management_performance_ranking_ia_gap_2026-07-11/archive/ROUTE_MIGRATION_MATRIX.md"
+  },
+  "safety_posture": {
+    "paper_only": true,
+    "authoritative_capital_readback": true,
+    "canary_execution_enabled": false,
+    "live_capital_side_effects": false,
+    "real_writes_enabled": false,
+    "safe_restore": {
+      "run_id": 30194930965,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/30194930965",
+      "conclusion": "success",
+      "proof_enabled": false
+    },
+    "current_posture_reconfirmation": {
+      "run_id": 30195508721,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/30195508721",
+      "conclusion": "success",
+      "proof_enabled": false,
+      "rollback_required": false
+    }
+  },
+  "residual_risks": [
+    {
+      "risk": "the emergency-actions to governance-decisions capital-tab mapping exists in the accepted frontend route manifest but is not listed in the governing route matrix Primary Pages table",
+      "owner": "MGMT-PERF-IA lane",
+      "blocking": false,
+      "expiry": null,
+      "mitigation": "track as a documentation follow-up in the owning IA lane; the accepted runtime mapping and PPL-ALLOC-009 B5 disposition are unaffected"
+    },
+    {
+      "risk": "full GitHub artifact retention is 90 days",
+      "owner": "Codex",
+      "blocking": false,
+      "expiry": "90 days from run date",
+      "mitigation": "repository index preserves digest, IDs, response statuses, pair identity, safety posture, and browser verdicts"
+    },
+    {
+      "risk": "paper result grants no canary, live, broker, or real-capital authority",
+      "owner": "Human/Ops",
+      "blocking": false,
+      "expiry": null,
+      "mitigation": "all such authority remains disabled and out of scope"
+    }
+  ],
+  "acceptance_check": {
+    "child_tasks_completed": true,
+    "hosted_smoke_proves_full_path": true,
+    "closeout_records_prs_and_shas": true,
+    "deployed_commits_verified": true,
+    "identity_separation_distinct_actors": true,
+    "browser_desktop_and_mobile_verified": true,
+    "safe_posture_and_restore_verified": true,
+    "residual_risks_documented": true,
+    "b5_ia_supersession_decision_accepted": true
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "python3 -m json.tool docs/deployment/evidence/PPL-ALLOC-009/evidence.json",
+        "result": "valid json"
+      },
+      {
+        "command": "python3 -m json.tool docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive/PPL-ALLOC-009-B1-B3-EVIDENCE-INDEX-2026-07-26.json",
+        "result": "valid json"
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit code 0 (clean)"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review"
+  }
+}

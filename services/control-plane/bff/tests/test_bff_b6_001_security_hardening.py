@@ -11,8 +11,12 @@ from typing import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
+    get_management_nl_read_store,
+    get_management_nl_sse_buffer,
+    management_nl_test_client,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -106,7 +110,6 @@ def _seeded_client(
         monkeypatch.delenv("PANTHEON_BFF_EVIDENCE_REF_STORE", raising=False)
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
-    original_store = bff_main.read_store
     store = create_in_memory_read_surface_ports()
     capital_pools = list(seeded_data["capital_pools"].values())
     runtime_bindings = list(seeded_data["runtime_bindings"].values())
@@ -166,17 +169,8 @@ def _seeded_client(
         ]
 
     store.list_evidence_refs = list_evidence_refs
-    bff_main.read_store = store
-    bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
-        storage_path="off",
-        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
-    )
-    bff_main._sse_buffers["ask"].clear()
-    try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
-    finally:
-        bff_main.read_store = original_store
-        bff_main._sse_buffers["ask"].clear()
+    with management_nl_test_client(store, raise_server_exceptions=False) as client:
+        yield client
 
 
 def test_nl_ask_tenant_scopes_portfolio_summary(tmp_path, monkeypatch) -> None:
@@ -281,7 +275,7 @@ def test_high_risk_classifier_uses_boundaries_and_cjk_synonyms(tmp_path, monkeyp
 
 def test_happy_path_audit_failure_fails_closed_before_session_side_effects(tmp_path, monkeypatch) -> None:
     with _seeded_client(tmp_path, monkeypatch) as client:
-        store = bff_main.read_store
+        store = get_management_nl_read_store()
 
         def fail_audit(event: dict) -> dict:
             raise OSError("audit store unavailable")
@@ -303,4 +297,4 @@ def test_happy_path_audit_failure_fails_closed_before_session_side_effects(tmp_p
         # behavioural guarantee under test (no session/SSE side effects
         # were committed before the fail-closed audit-write error) is still
         # covered by the assertions above.
-        assert list(bff_main._sse_buffers["ask"]) == []
+        assert get_management_nl_sse_buffer("ask") == []

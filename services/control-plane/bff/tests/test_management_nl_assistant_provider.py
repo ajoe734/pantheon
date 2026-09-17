@@ -14,7 +14,15 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
+    clear_management_nl_sse_buffer,
+    get_management_nl_module,
+    get_management_nl_read_store,
+    get_management_nl_sse_buffer,
+    set_management_nl_read_store,
+)
+
+bff_main = get_management_nl_module()
 from services.control_plane.bff.assistant.control_mode import ControlModeStore
 from services.control_plane.bff.assistant.models import AssistantMode
 from services.control_plane.bff.management_nl_command_idempotency import (
@@ -321,7 +329,7 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
         store._data.setdefault("agora_audit_events", {})[event_id] = record
         return json.loads(json.dumps(record))
     store.record_agora_audit_event = _record_agora_audit_event
-    bff_main.read_store = store
+    set_management_nl_read_store(store)
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     bff_main._sse_buffers["ask"].clear()
     bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
@@ -591,7 +599,7 @@ def test_management_nl_request_exception_marks_reservation_uncertain_immediately
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     try:
         _clear_provider_env(monkeypatch)
         _enable_management_nl_command_idempotency(tmp_path, monkeypatch)
@@ -632,7 +640,7 @@ def test_management_nl_request_exception_marks_reservation_uncertain_immediately
             "idempotency_recovery_required"
         )
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
 
@@ -641,7 +649,7 @@ def test_management_nl_concurrent_exact_request_invokes_provider_once_and_replay
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     provider = BlockingProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -685,7 +693,7 @@ def test_management_nl_concurrent_exact_request_invokes_provider_once_and_replay
         assert [turn["role"] for turn in turns] == ["user", "assistant"]
     finally:
         provider.release.set()
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
 
@@ -694,7 +702,7 @@ def test_management_nl_concurrent_conflict_returns_409_before_second_side_effect
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     provider = BlockingProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -743,7 +751,7 @@ def test_management_nl_concurrent_conflict_returns_409_before_second_side_effect
         assert asyncio.run(exercise()).status_code == 202
     finally:
         provider.release.set()
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
 
@@ -1214,7 +1222,7 @@ def test_openclaw_client_registers_assistant_provider_metadata(monkeypatch) -> N
 
 
 def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -1239,12 +1247,12 @@ def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_pat
         assert body["data"]["context_pack"]["backend"]["management_nl"]["data"]["tenant_id"] == "tenant-alpha"
         assert fake.calls == []
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_provider_enabled_invokes_openclaw_with_tenant_scoped_context(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -1282,12 +1290,12 @@ def test_provider_enabled_invokes_openclaw_with_tenant_scoped_context(tmp_path, 
         source_ids = {source["source_id"] for source in call["context_pack"]["sources"]}
         assert "persona_health" in source_ids
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_management_nl_persona_fleet_summary_includes_health_items(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -1311,12 +1319,12 @@ def test_management_nl_persona_fleet_summary_includes_health_items(tmp_path, mon
         assert isinstance(items_by_id["persona-alpha"]["health"]["reasons"], list)
         assert "persona-beta" not in json.dumps(fleet_context)
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_management_nl_passes_conversation_and_ui_context_to_provider(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -1384,13 +1392,13 @@ def test_management_nl_passes_conversation_and_ui_context_to_provider(tmp_path, 
         ]
         assert fake.calls[0]["context_pack"]["frontend"]["route"] == "/management/personas"
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_management_nl_context_pack_reflects_active_control_mode(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
     control_store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
     control_store.activate(
@@ -1430,7 +1438,7 @@ def test_management_nl_context_pack_reflects_active_control_mode(tmp_path, monke
         assert management_context["control_mode"]["mode"] == "kernel_debug"
         assert "controlMode" not in management_context
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
@@ -1440,7 +1448,7 @@ def test_management_nl_context_pack_excludes_development_orchestrator_status(
     tmp_path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     status_root = tmp_path / "status-root"
     orchestrator_dir = status_root / ".orchestrator"
     orchestrator_dir.mkdir(parents=True)
@@ -1508,13 +1516,13 @@ def test_management_nl_context_pack_excludes_development_orchestrator_status(
         assert "orchestrator_status" not in source_ids
         assert "backend.orchestrator_status" not in fake.calls[0]["prompt"]
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_management_nl_provider_uses_active_kernel_debug_mode(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
     control_store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
     control_store.activate(
@@ -1562,7 +1570,7 @@ def test_management_nl_provider_uses_active_kernel_debug_mode(tmp_path, monkeypa
         assert "read-only workspace" in call["prompt"]
         assert "You are operating in user mode." not in call["prompt"]
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
@@ -1572,7 +1580,7 @@ def test_management_nl_direct_passphrase_activates_control_mode_without_provider
     tmp_path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
     passphrase = "九條好漢在一班"
     control_store = ControlModeStore(storage_path="off", initial_passphrase=passphrase)
@@ -1643,14 +1651,14 @@ def test_management_nl_direct_passphrase_activates_control_mode_without_provider
         assert passphrase not in serialized_audit
         assert "[CONTROL MODE COMMAND REDACTED]" in serialized_audit
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
     passphrase = "九條好漢在一班"
     control_store = ControlModeStore(storage_path="off", initial_passphrase=passphrase)
@@ -1707,7 +1715,7 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
         assert len(user_turns) == 3
         assert all(turn["text"] == "[CONTROL MODE COMMAND REDACTED]" for turn in user_turns)
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
@@ -1715,7 +1723,7 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
 
 
 def test_management_nl_stream_control_status_uses_bff_interceptor(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
     control_store = ControlModeStore(storage_path="off", initial_passphrase="九條好漢在一班")
     try:
@@ -1749,7 +1757,7 @@ def test_management_nl_stream_control_status_uses_bff_interceptor(tmp_path, monk
         events = audit_body["data"]["items"]
         assert any(event.get("control_command") == "status" for event in events)
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
@@ -1967,7 +1975,7 @@ def test_management_nl_stream_does_not_offer_unallowed_or_failed_actions(tmp_pat
 
 
 def test_management_nl_chat_control_command_requires_authorized_operator(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
     passphrase = "九條好漢在一班"
     control_store = ControlModeStore(storage_path="off", initial_passphrase=passphrase)
@@ -1997,14 +2005,14 @@ def test_management_nl_chat_control_command_requires_authorized_operator(tmp_pat
         assert fake.calls == []
         assert passphrase not in json.dumps(list(bff_main._MGMT_AI_AUDIT_EVENTS), ensure_ascii=False)
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_management_nl_filters_provider_actions_to_ui_allowlist(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient(
         result={
             "status": "ok",
@@ -2093,13 +2101,13 @@ def test_management_nl_filters_provider_actions_to_ui_allowlist(tmp_path, monkey
         assert completed["action_count"] == 2
         assert completed["actions"] == actions
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_provider_enabled_extracts_codex_item_completed_text(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient(
         result={
             "status": "ok",
@@ -2145,12 +2153,12 @@ def test_provider_enabled_extracts_codex_item_completed_text(tmp_path, monkeypat
         assert "providerStatus" not in body["data"]
         assert "reason" not in body["data"]["provider_status"]
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient(
         result={
             "status": "ok",
@@ -2209,7 +2217,7 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         assert fake.calls[0]["trace_id"] == "mgmt-audit-trace"
         assert fake.calls[0]["metadata"]["trace_id"] == "mgmt-audit-trace"
 
-        assert bff_main.read_store.get_agora_session("mgmt-audit-session") is None
+        assert get_management_nl_read_store().get_agora_session("mgmt-audit-session") is None
 
         conversation_resp = client.get(
             "/bff/management/ai/conversations/mgmt-audit-session?trace_id=mgmt-audit-trace",
@@ -2256,7 +2264,7 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         assert completed["output_summary"]["assistant_messages"] == ["Audited provider answer."]
         assert "Authorization" not in json.dumps(events)
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2401,7 +2409,7 @@ def test_management_ai_conversation_reader_returns_full_session_and_ignores_trac
     tmp_path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient(
         result={
             "status": "ok",
@@ -2469,13 +2477,13 @@ def test_management_ai_conversation_reader_returns_full_session_and_ignores_trac
         assert "sessionId" not in sessions[0]
         assert "turnCount" not in sessions[0]
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_management_ai_persists_30_messages_as_60_ordered_turns(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -2521,7 +2529,7 @@ def test_management_ai_persists_30_messages_as_60_ordered_turns(tmp_path, monkey
         assert len(last_management_context["conversation"]["recent_turns"]) == 59
         assert last_management_context["conversation"]["recent_turns"][0]["content"] == "Persistence question 1?"
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2530,7 +2538,7 @@ def test_management_ai_uses_server_history_when_fe_recent_turns_are_truncated(
     tmp_path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -2583,7 +2591,7 @@ def test_management_ai_uses_server_history_when_fe_recent_turns_are_truncated(
             }
         ]
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2615,7 +2623,7 @@ def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
     tmp_path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -2645,7 +2653,7 @@ def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
         assert [turn["role"] for turn in turns] == ["user", "assistant"]
         assert len(fake.calls) == 1
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2654,7 +2662,7 @@ def test_management_ai_idempotency_replay_survives_store_restart_without_duplica
     tmp_path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     conversation_path = str(tmp_path / "management-ai-conversations.json")
     try:
@@ -2696,7 +2704,7 @@ def test_management_ai_idempotency_replay_survives_store_restart_without_duplica
         ]
         assert len(fake.calls) == 1
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2705,7 +2713,7 @@ def test_management_ai_conversation_missing_session_returns_404(
     tmp_path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     try:
         client = _seeded_client(tmp_path, monkeypatch)
         resp = client.get(
@@ -2717,7 +2725,7 @@ def test_management_ai_conversation_missing_session_returns_404(
         assert body["error"]["code"] == "RESOURCE_NOT_FOUND"
         assert body["error"]["details"]["precondition_failed"] == "management_ai_session"
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2726,7 +2734,7 @@ def test_management_ai_conversation_get_enforces_owner_or_tenant_scope(
     tmp_path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     try:
         client = _seeded_client(tmp_path, monkeypatch)
         store = bff_main._MGMT_AI_CONVERSATION_STORE
@@ -2780,7 +2788,7 @@ def test_management_ai_conversation_get_enforces_owner_or_tenant_scope(
         assert scoped_resp.status_code == 404, scoped_resp.text
         assert scoped_resp.json()["error"]["details"]["precondition_failed"] == "management_ai_session"
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2789,7 +2797,7 @@ def test_management_ai_inline_attachment_is_stored_and_read_back_as_proxy_url(
     tmp_path,
     monkeypatch,
 ) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     image_bytes = b"not-a-real-png-but-stable"
     encoded = base64.b64encode(image_bytes).decode("ascii")
@@ -2853,13 +2861,13 @@ def test_management_ai_inline_attachment_is_stored_and_read_back_as_proxy_url(
         metadata_attachments = fake.calls[0]["metadata"]["attachments"]
         assert metadata_attachments[0]["url"] == attachment["url"]
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_provider_degraded_falls_back_to_deterministic_answer(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient(
         exc=OpenClawOpsClientError(
             "adapter unavailable",
@@ -2891,7 +2899,7 @@ def test_provider_degraded_falls_back_to_deterministic_answer(tmp_path, monkeypa
         assert provider_status["used"] is False
         assert len(fake.calls) == 1
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -2923,7 +2931,7 @@ def test_management_nl_inner_degraded_response_uses_configured_provider_failover
                 },
             }
 
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FailoverProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -2960,7 +2968,7 @@ def test_management_nl_inner_degraded_response_uses_configured_provider_failover
         assert [call["provider"] for call in fake.calls] == ["openclaw", "codex_cli"]
         assert all(0 < call["timeout_seconds"] <= 7 for call in fake.calls)
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -2980,7 +2988,7 @@ def test_management_nl_inner_degraded_response_is_typed_not_an_answer(tmp_path, 
                 },
             }
 
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = DegradedProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -3014,12 +3022,12 @@ def test_management_nl_inner_degraded_response_is_typed_not_an_answer(tmp_path, 
             }
         ]
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_codex_auth_unavailable_status_has_operator_notice(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient(
         exc=OpenClawOpsClientError(
             "Codex service-user account session is unavailable or expired.",
@@ -3057,12 +3065,12 @@ def test_codex_auth_unavailable_status_has_operator_notice(tmp_path, monkeypatch
         assert provider_status["used"] is False
         assert len(fake.calls) == 1
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_provider_enabled_requires_read_role_before_invocation(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -3079,12 +3087,12 @@ def test_provider_enabled_requires_read_role_before_invocation(tmp_path, monkeyp
         assert resp.status_code == 401, resp.text
         assert fake.calls == []
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_high_risk_refusal_runs_before_provider_invocation(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -3102,7 +3110,7 @@ def test_high_risk_refusal_runs_before_provider_invocation(tmp_path, monkeypatch
         assert resp.json()["error"]["details"]["precondition_failed"] == "high_risk_nl_policy"
         assert fake.calls == []
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -3164,7 +3172,7 @@ def test_openclaw_client_unsupported_provider_raises_error(monkeypatch) -> None:
 
 
 def test_claude_provider_enabled_invokes_openclaw_claude_route(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     recorded_calls: list[dict[str, Any]] = []
 
     class FakeClaudeProviderClient:
@@ -3201,13 +3209,13 @@ def test_claude_provider_enabled_invokes_openclaw_claude_route(tmp_path, monkeyp
         provider_status = body["data"]["provider_status"]
         assert provider_status["used"] is True
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
 def test_claude_provider_degraded_falls_back_to_deterministic_answer(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient(
         exc=OpenClawOpsClientError(
             "claude binary not found",
@@ -3238,7 +3246,7 @@ def test_claude_provider_degraded_falls_back_to_deterministic_answer(tmp_path, m
         assert provider_status["used"] is False
         assert len(fake.calls) == 1
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -3250,7 +3258,7 @@ def test_provider_async_returns_processing_under_slow_provider(tmp_path, monkeyp
             _time.sleep(1.5)
             return super().invoke_assistant_provider(**kwargs)
 
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = SlowProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -3282,7 +3290,7 @@ def test_provider_async_returns_processing_under_slow_provider(tmp_path, monkeyp
         assert body["data"]["answer"].startswith("Management summary for question:")
         assert body["meta"]["status"] == "processing"
     finally:
-        bff_main.read_store = original_store
+        set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
 

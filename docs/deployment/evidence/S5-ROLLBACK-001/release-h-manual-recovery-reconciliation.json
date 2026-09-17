@@ -1,0 +1,112 @@
+{
+  "reconciliation_scope": "Release H manual recovery after GitHub API 500 interruption",
+  "workflow": {
+    "repository": "ajoe734/pantheon",
+    "workflow_file": ".github/workflows/nonprod-deploy.yml",
+    "run_id": "34749911751",
+    "run_attempt": "1",
+    "trigger": "pull_request / workflow_dispatch"
+  },
+  "execution_mode": "manual_recovery_via_existing_compensation_entrypoint",
+  "interruption_cause": "GitHub API 500 error interrupted Actions runner execution; automated workflow compensation could not complete in Actions",
+  "recovery_mechanism": {
+    "entrypoint": "recover-H-prior.py (existing deployment and compensation driver)",
+    "recovery_working_directory": "pantheon-release-rollback-34749911751-1-C8b0Tr",
+    "automation_claim": "explicitly_manual_recovery_not_claimed_as_fully_automatic"
+  },
+  "release_candidate_id": "2677e22ccf35cb3c7322301523f70f28b64eb3c8d26f19dfb1c0cad253488252",
+  "operation": "restore",
+  "outcome": "compensated",
+  "provenance": "actions-download",
+  "rejected_pair": {
+    "backend_sha": "d7ce1036d87640a61f30aa3382200c55ef2165cd",
+    "frontend_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "controller_failure_log_sha256": "d382a0b809db4b6e070cba254b7936945916c3f7eac518f2159b13093e1d0cea"
+  },
+  "restored_pair": {
+    "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+    "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+    "pair_baseline_identity": "exact_prior_pair_E"
+  },
+  "artifact_readback": {
+    "schema_version": "pantheon.dev-artifact-readback.v1",
+    "baseline_nonsecret_config_verified": true,
+    "image_readback_verified": true,
+    "protected_owners_unchanged": true,
+    "frontend": {
+      "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+      "dist_sha256": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+      "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+      "manifest_sha256": "54d73cbfd331c04d0f0839ae8b141bdaaa84ba95ed39b6eb429648dcf5a7dfba",
+      "target": "/var/www/pantheon-dev-fe-releases/20260913T074001Z-ba0b47f44551-gate-34744818811-34745406166-1-240646"
+    },
+    "images": {
+      "agora-interaction-worker": "sha256:45847dcc4ab19673b743bcc7ff596e0cd99f90a197c9ab8402bd9578518bcbab",
+      "loop-run-projector-scheduler": "sha256:9d5ec8482a1c07d13a431b71def7e744c13ea5208d2a8dc8a3b785814b5084ad",
+      "operator-bff": "sha256:bef3371f6e0df6eec4d100905021b6c709cfbe454a6fa00057a3c00ba91228b7"
+    },
+    "manifest_sha256": "cbd0405315d68a3e5eb6fb27a805331181e42d60ec0cd35352b958fc3e5a24be",
+    "public": {
+      "authenticated_viewer_readback_verified": true,
+      "fe_manifest_bytes_verified": true,
+      "source_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+      "strict_auth_denials_verified": true
+    },
+    "owners": {
+      "capital": {
+        "container_id": "662b7af5d6c5585d12738de19511675aeaf2ef7fa9326c7546eee61ee86e70e2",
+        "image_id": "sha256:7a88321919051043c56161ce053fddc6d0c1370a4d018157465f243b202d4958",
+        "restart_count": 0,
+        "started_at": "2026-09-13T05:53:52.894783494Z"
+      },
+      "deployment": {
+        "container_id": "4e5b3ecf17bee5c029ede8b0823ac94bc64b8f6914641e10c6acd9e296d84799",
+        "image_id": "sha256:4dc651b7563200f3d0e6d90b19f07bdab63b89fd1d7f70826b19d2346289cb68",
+        "restart_count": 0,
+        "started_at": "2026-09-13T05:54:00.874141611Z"
+      },
+      "deployment-outbox-consumer": {
+        "container_id": "34a5f0d97025277b329a1a0884de0edcdf7873d095ac15b958c733e5bb6ff15b",
+        "image_id": "sha256:1c121829e3c9a9737756e98aa99feba2ac57e14205fc48bf78e7b9ea36bc470e",
+        "restart_count": 0,
+        "started_at": "2026-09-13T05:54:59.384260033Z"
+      },
+      "dev-paper-principal-issuer": {
+        "container_id": "f697b24d66e8d35711810f51f560ac8dc7e29b6f8011f6436e23566c0164f5ae",
+        "image_id": "sha256:1d386d3a1eabaa5f53ae291eccbdb03b3debade5fa9614cdf335ee9ce44f432b",
+        "restart_count": 0,
+        "started_at": "2026-09-13T09:42:23.331402933Z"
+      },
+      "governance": {
+        "container_id": "f83a6f9f2b4b9da9fe0be9edbda3dbaf549407ba3cababd4a160a6e9ca2f7c07",
+        "image_id": "sha256:595fce31aa9dea1516f16e98f7b51d09bc42357e3a53bf3322f67d37ec298750",
+        "restart_count": 0,
+        "started_at": "2026-09-13T05:53:52.937097152Z"
+      },
+      "registry": {
+        "container_id": "65b79948795299dd1cfe68a0861e1e507294d841d41cd4006fb5742c3b76efdf",
+        "image_id": "sha256:f4820e7d671f8fccf7703122103e0a3502beb2e31986e198eed54180c8d0ce50",
+        "restart_count": 0,
+        "started_at": "2026-09-13T05:53:52.894749768Z"
+      },
+      "runtime-manager": {
+        "container_id": "8d8c2065d05c233f6f856cbc39a531ce34aaae0337b41501f97f5210cabfc30b",
+        "image_id": "sha256:798723c5b2ab95e3de7de7a1252b969bcccd2de085646ee1fd1b86c19f45a06b",
+        "restart_count": 0,
+        "started_at": "2026-09-13T05:54:53.651094234Z"
+      }
+    }
+  },
+  "artifacts": {
+    "baseline_actions_artifact": {
+      "artifact_id": "10315616868",
+      "artifact_sha256": "daa5aafba2bfb28707052289bf0f19086252421231206ebcf4beb2a408e045df"
+    },
+    "candidate_actions_artifact": {
+      "artifact_id": "10315547745",
+      "artifact_sha256": "a07e9bb8c4c086465d482792fcebaee499c28d2bbc82010c4aca8e5f7f874dd5"
+    },
+    "baseline_manifest_sha256": "cbd0405315d68a3e5eb6fb27a805331181e42d60ec0cd35352b958fc3e5a24be",
+    "candidate_image_manifest_sha256": "b21873917f1cd04af49abfb9f08c057182f3c6e532a8eae181c816f13cb6e1d6"
+  }
+}
