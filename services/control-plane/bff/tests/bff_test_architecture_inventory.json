@@ -31,14 +31,20 @@
     "test_inc001_rebaseline_incidents_contract.py",
     "test_incident_stream_route_order.py",
     "test_loop_auto_bff004_cross_loop_drill.py",
+    "test_openclaw_ops_surface.py",
     "test_pkt001_deployment_review_console_contract.py",
     "test_settings_contract.py",
     "tests/test_agora_performance_transport_and_isolated_store.py",
+    "tests/test_bff_b6_001_security_hardening.py",
+    "tests/test_bff_b6_003_nl_high_risk_refusal.py",
+    "tests/test_bff_b6_management_nl_ask.py",
     "tests/test_bff_management_cockpit.py",
     "tests/test_governance_router.py",
     "tests/test_incident_router.py",
     "tests/test_legacy_command_write_retirement.py",
     "tests/test_management_domain_actions.py",
+    "tests/test_management_nl_assistant_provider.py",
+    "tests/test_management_nl_single_owner.py",
     "tests/test_management_read_budget.py",
     "tests/test_operations_consultation_ports.py",
     "tests/test_pint_003_durable_opinions.py",
@@ -53,17 +59,17 @@
     "router": 116
   },
   "main_by_layer": {
-    "adapter": 4,
-    "application": 42,
+    "adapter": 2,
+    "application": 23,
     "composition": 9,
     "hosted": 1,
-    "router": 35
+    "router": 25
   },
   "disposition_summary": {
     "DECOUPLED": 303,
-    "MIGRATED": 11,
+    "MIGRATED": 17,
     "ALLOWLIST": 15,
-    "PLANNED": 55
+    "PLANNED": 49
   },
   "tests": [
     {
@@ -1000,9 +1006,9 @@
     {
       "file": "test_openclaw_ops_surface.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "test_p0_paper_operating_loop_smoke.py",
@@ -1924,23 +1930,23 @@
     {
       "file": "tests/test_bff_b6_001_security_hardening.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "tests/test_bff_b6_003_nl_high_risk_refusal.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "tests/test_bff_b6_management_nl_ask.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "tests/test_bff_capital_pool_bindings.py",
@@ -2323,16 +2329,16 @@
     {
       "file": "tests/test_management_nl_assistant_provider.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "tests/test_management_nl_single_owner.py",
       "layer": "adapter",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: adapter)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "tests/test_management_projection_test_doubles.py",
@@ -2755,7 +2761,7 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 55,
+  "live_scan_non_whitelisted_main_importer_ceiling": 49,
   "live_scan_non_whitelisted_main_importers": [
     "test_ask_001_sessions_contract.py",
     "test_ask_003_committee_lifecycle.py",
@@ -2780,7 +2786,6 @@
     "test_mgmt_ooda_004_bff_routes.py",
     "test_mgmt_qlib_006_artifact_research_linkage.py",
     "test_mgmt_syn_006_conflict_log_view.py",
-    "test_openclaw_ops_surface.py",
     "test_pkt016_knowledge_workbench_contract.py",
     "test_research_oss_preactivation_contract.py",
     "test_rw01_research_ticket_contract.py",
@@ -2796,9 +2801,6 @@
     "test_tw04_teaching_replay_contract.py",
     "tests/test_bff_b2_004_research_search.py",
     "tests/test_bff_b3_trading_pulse.py",
-    "tests/test_bff_b6_001_security_hardening.py",
-    "tests/test_bff_b6_003_nl_high_risk_refusal.py",
-    "tests/test_bff_b6_management_nl_ask.py",
     "tests/test_bff_consol_skills_mcp_registry_contract.py",
     "tests/test_bff_knowledge_inbox.py",
     "tests/test_bff_management_data_sources_contract.py",
@@ -2807,8 +2809,6 @@
     "tests/test_bff_rebalance_proposals.py",
     "tests/test_console_research_projection.py",
     "tests/test_jobs_source_owner_contract.py",
-    "tests/test_management_nl_assistant_provider.py",
-    "tests/test_management_nl_single_owner.py",
     "tests/test_overlay_retirement.py",
     "tests/test_ppl_alloc_009_assertion_semantics.py",
     "tests/test_ppl_alloc_012_ranking_projection.py"
