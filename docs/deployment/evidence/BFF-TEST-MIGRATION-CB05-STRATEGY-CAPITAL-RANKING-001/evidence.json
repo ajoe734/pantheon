@@ -6,8 +6,27 @@
   "reviewer": "Antigravity2",
   "target_repo": "ajoe734/pantheon",
   "base_sha": "27e49d598",
-  "head_sha": "3dcb3db8c3449922b1db622ee176696c33aadde8",
+  "head_sha": "362281962f53278e9de004d33d506ec4b92cae7a",
   "delivery_state": "ready_for_independent_review",
+  "reconciliation_addendum": {
+    "reason": "PR #5892 went DIRTY against dev (bff_test_architecture_inventory.json and rebalance_authority_test_support.py conflicted with unrelated tasks merged into dev in the interim). Reopened by Human/Ops for owner reconciliation; no implementation or verification redone.",
+    "merge_commit": "362281962f53278e9de004d33d506ec4b92cae7a",
+    "merged_dev_tip": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
+    "conflict_resolution": [
+      "rebalance_authority_test_support.py: kept both sides' imports (tempfile and contextlib.contextmanager), both are used elsewhere in the file.",
+      "bff_test_architecture_inventory.json: merged migrated_suites list (union of this task's test_bff_b3_trading_pulse.py entry and unrelated dev-side entries); recomputed layer_summary/main_by_layer/disposition_summary from the already-merged (non-conflicting) tests array; recomputed live_scan_non_whitelisted_main_importers and the ceiling via a fresh live AST scan (test_bff_test_architecture.py::_live_scan_non_whitelisted_main_importers), giving 48 offenders and ceiling=48 (never raised; prior dev-side value was 49)."
+    ],
+    "post_merge_reverification": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+        "result": "13 passed (unchanged from prior approval)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+        "result": "2 passed, 25 failed (unchanged from prior approval; matches documented pre-existing baseline)"
+      }
+    ]
+  },
   "contract_revision": {
     "kind": "artifact_contract",
     "action": "scope_split_under_acceptance_criterion_11",
