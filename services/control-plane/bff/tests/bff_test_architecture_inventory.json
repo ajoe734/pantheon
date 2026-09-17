@@ -24,11 +24,22 @@
   "migrated_suites": [
     "agora/performance/test_performance.py",
     "test_bff_performance_ranking_read_model_contract.py",
+    "test_bff_v5_loop_sentinel_contract.py",
     "test_cw01_consult_request_contract.py",
     "test_cw02_debate_transcript_contract.py",
     "test_cw04_redteam_memo_contract.py",
+    "test_inc001_rebaseline_incidents_contract.py",
+    "test_incident_stream_route_order.py",
+    "test_loop_auto_bff004_cross_loop_drill.py",
+    "test_pkt001_deployment_review_console_contract.py",
+    "test_settings_contract.py",
     "tests/test_agora_performance_transport_and_isolated_store.py",
+    "tests/test_bff_management_cockpit.py",
     "tests/test_governance_router.py",
+    "tests/test_incident_router.py",
+    "tests/test_legacy_command_write_retirement.py",
+    "tests/test_management_domain_actions.py",
+    "tests/test_management_read_budget.py",
     "tests/test_operations_consultation_ports.py",
     "tests/test_pint_003_durable_opinions.py",
     "tests/test_pint_013_durable_interactions.py",
@@ -50,9 +61,9 @@
   },
   "disposition_summary": {
     "ALLOWLIST": 15,
-    "DECOUPLED": 292,
+    "DECOUPLED": 306,
     "MIGRATED": 11,
-    "PLANNED": 66
+    "PLANNED": 52
   },
   "tests": [
     {
@@ -632,9 +643,9 @@
     {
       "file": "test_bff_v5_loop_sentinel_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "test_bff_write_gap_2026_05_28.py",
@@ -807,16 +818,16 @@
     {
       "file": "test_inc001_rebaseline_incidents_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "test_incident_stream_route_order.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "test_kw01_institutional_memory_contract.py",
@@ -863,9 +874,9 @@
     {
       "file": "test_loop_auto_bff004_cross_loop_drill.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "test_loop_auto_dep004_stage_truth.py",
@@ -1087,9 +1098,9 @@
     {
       "file": "test_pkt001_deployment_review_console_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "test_pkt001_governance_review_queue_contract.py",
@@ -1360,9 +1371,9 @@
     {
       "file": "test_settings_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "test_source_connector_service_client.py",
@@ -1997,9 +2008,9 @@
     {
       "file": "tests/test_bff_management_cockpit.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "tests/test_bff_management_data_sources_contract.py",
@@ -2270,9 +2281,9 @@
     {
       "file": "tests/test_incident_router.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "tests/test_jobs_source_owner_contract.py",
@@ -2291,9 +2302,9 @@
     {
       "file": "tests/test_legacy_command_write_retirement.py",
       "layer": "adapter",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: adapter)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "tests/test_lifecycle_telemetry_governance_ports.py",
@@ -2305,9 +2316,9 @@
     {
       "file": "tests/test_management_domain_actions.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "tests/test_management_nl_assistant_provider.py",
@@ -2333,9 +2344,9 @@
     {
       "file": "tests/test_management_read_budget.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "tests/test_management_read_models_router.py",
@@ -2744,7 +2755,7 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 56,
+  "live_scan_non_whitelisted_main_importer_ceiling": 45,
   "live_scan_non_whitelisted_main_importers": [
     "test_ask_001_sessions_contract.py",
     "test_ask_003_committee_lifecycle.py",
@@ -2759,15 +2770,10 @@
     "test_bff_mgmt_ops_006_operator_actions_contract.py",
     "test_bff_pm12_portfolio_book_contract.py",
     "test_bff_promotion_review_governance.py",
-    "test_bff_v5_loop_sentinel_contract.py",
     "test_exp002_bff_research_experiments_contract.py",
-    "test_inc001_rebaseline_incidents_contract.py",
-    "test_incident_stream_route_order.py",
-    "test_loop_auto_bff004_cross_loop_drill.py",
     "test_mgmt_load_005_read_concurrency.py",
     "test_mgmt_qlib_006_artifact_research_linkage.py",
     "test_openclaw_ops_surface.py",
-    "test_pkt001_deployment_review_console_contract.py",
     "test_pkt016_knowledge_workbench_contract.py",
     "test_research_oss_preactivation_contract.py",
     "test_rw01_research_ticket_contract.py",
@@ -2775,7 +2781,6 @@
     "test_rw03_analyze_contract.py",
     "test_rw04_experiment_launch_contract.py",
     "test_rw05_artifact_compare_contract.py",
-    "test_settings_contract.py",
     "test_trn002_trainer_session_contract.py",
     "test_trn003_rapid_eval_contract.py",
     "test_tw01_teaching_dialog_contract.py",
@@ -2788,17 +2793,12 @@
     "tests/test_bff_b6_003_nl_high_risk_refusal.py",
     "tests/test_bff_b6_management_nl_ask.py",
     "tests/test_bff_knowledge_inbox.py",
-    "tests/test_bff_management_cockpit.py",
     "tests/test_bff_path_dedupe.py",
     "tests/test_bff_rebalance_proposals.py",
     "tests/test_console_research_projection.py",
-    "tests/test_incident_router.py",
     "tests/test_jobs_source_owner_contract.py",
-    "tests/test_legacy_command_write_retirement.py",
-    "tests/test_management_domain_actions.py",
     "tests/test_management_nl_assistant_provider.py",
     "tests/test_management_nl_single_owner.py",
-    "tests/test_management_read_budget.py",
     "tests/test_overlay_retirement.py",
     "tests/test_ppl_alloc_009_assertion_semantics.py",
     "tests/test_ppl_alloc_012_ranking_projection.py"
