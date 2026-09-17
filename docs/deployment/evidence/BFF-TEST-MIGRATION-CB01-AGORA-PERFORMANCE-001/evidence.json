@@ -1,0 +1,148 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-CB01-AGORA-PERFORMANCE-001",
+  "batch_id": "CB01_agora_performance",
+  "plan": "PLAN-002 (B19)",
+  "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "title": "Decouple Agora performance transport, core and interaction test suites",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "delivery_state": "ready_for_independent_review",
+  "target_repo": "ajoe734/pantheon",
+  "base_ref": "dev@8778521b4726e22c05a1aebe19a971e0f9dca5e7",
+  "base_sha": "8778521b4726e22c05a1aebe19a971e0f9dca5e7",
+  "summary": "Decoupled 6 target test suites (104 test cases across Agora core, performance transport, isolated store, interaction workers/opinions, and strict browser readiness) from BFF main.py composition root imports, global monkeypatching (read_store, session_lifecycle_store), and sys.path surgery. Replaced composition root dependencies with isolated router factories, local test doubles, and standalone FastAPI applications while preserving all test assertions and contracts. Decreased inventory live_scan_non_whitelisted_main_importer_ceiling from 86 to 80, registered all 6 suites in migrated_suites, verified all 8 architecture invariant tests pass, and achieved 100% pass rate (104/104 passed) across the migrated test suites.",
+  "target_suites": [
+    "services/control-plane/bff/agora/performance/test_performance.py",
+    "services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py",
+    "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
+    "services/control-plane/bff/tests/test_pint_003_durable_opinions.py",
+    "services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
+    "services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py"
+  ],
+  "receiver_modules_untouched": [
+    "services/control-plane/bff/agora/router.py",
+    "services/control-plane/bff/agora/service.py",
+    "services/control-plane/bff/main.py"
+  ],
+  "changed_files": [
+    "services/control-plane/bff/agora/performance/test_performance.py",
+    "services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
+    "services/control-plane/bff/tests/test_pint_003_durable_opinions.py",
+    "services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
+    "services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py",
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-CB01-AGORA-PERFORMANCE-001/evidence.json"
+  ],
+  "inventory_update": {
+    "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "ceiling_before": 86,
+    "ceiling_after": 80,
+    "migrated_suites_count_before": 5,
+    "migrated_suites_count_after": 11,
+    "disposition_summary": {
+      "ALLOWLIST": 15,
+      "DECOUPLED": 278,
+      "MIGRATED": 11,
+      "PLANNED": 80
+    },
+    "main_by_layer": {
+      "adapter": 4,
+      "application": 42,
+      "composition": 9,
+      "hosted": 1,
+      "router": 35
+    }
+  },
+  "file_dispositions": {
+    "services/control-plane/bff/agora/performance/test_performance.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 38,
+      "tests_failed": 0,
+      "technique": "Removed import main as bff_main; mounted create_performance_router on standalone FastAPI app with test-scoped ReadSurfacePorts double; removed bff_main.read_store and bff_main.app references."
+    },
+    "services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py": {
+      "disposition": "MIGRATED",
+      "layer": "router",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 7,
+      "tests_failed": 0,
+      "technique": "Removed import main as bff_main and sys.path manipulation; mounted production routers create_performance_attribution_router, create_personas_router, create_ranking_formulas_router, and create_capital_router onto isolated FastAPI test application; resolved blocking seam from prior wave."
+    },
+    "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py": {
+      "disposition": "MIGRATED",
+      "layer": "adapter",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "technique": "Decoupled services.incidents.main reference by constructing local _make_incidents_test_app fixture using incidents router; removed bff_main references; preserved transport and isolated store assertions."
+    },
+    "services/control-plane/bff/tests/test_pint_003_durable_opinions.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 10,
+      "tests_failed": 0,
+      "technique": "Removed import main as bff_main; mounted create_agora_router on standalone FastAPI app with AgoraInteractionWorker constructed with test-local stores and context_resolver bound with four-argument _bff_error handler."
+    },
+    "services/control-plane/bff/tests/test_pint_013_durable_interactions.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 37,
+      "tests_failed": 0,
+      "technique": "Removed bff_main._resolve_agora_interaction_context_ref in favor of _resolve_agora_interaction_context_ref_bound; monkeypatched utc_now on model module and sys.modules[__name__] cleanly without referencing bff_main."
+    },
+    "services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 7,
+      "tests_failed": 0,
+      "technique": "Removed import main as bff_main; built standalone FastAPI test app mounting create_auth_router with AuthFacadeService, _SessionStoreProxy wrapping tmp_path SessionLifecycleStore, and create_agora_router with _Pint016Middleware."
+    }
+  },
+  "verification": {
+    "architecture_invariants": {
+      "command": "/tmp/bff-b06-dependencies/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py -v",
+      "exit_code": 0,
+      "passed": 8,
+      "failed": 0,
+      "invariants": [
+        "test_inventory_file_is_present_and_well_formed",
+        "test_all_five_architectural_layers_represented",
+        "test_every_entry_has_valid_layer_and_disposition",
+        "test_composition_allowlist_is_strictly_contained_and_retained",
+        "test_migrated_suites_do_not_import_main",
+        "test_migrated_suites_do_not_mutate_sys_path",
+        "test_no_global_monkeypatching_in_migrated_suites",
+        "test_non_whitelisted_main_importers_is_live_scanned_and_bounded"
+      ]
+    },
+    "migrated_test_suites": {
+      "command": "/tmp/bff-b06-dependencies/bin/pytest services/control-plane/bff/agora/performance/test_performance.py services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/tests/test_pint_003_durable_opinions.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py -v",
+      "exit_code": 0,
+      "total_tests": 104,
+      "passed": 104,
+      "failed": 0,
+      "pass_rate": "100%"
+    },
+    "ast_live_scan": {
+      "live_scan_non_whitelisted_main_importers_count": 80,
+      "ceiling": 80,
+      "bounded": true,
+      "zero_main_imports_in_migrated_suites": true,
+      "zero_sys_path_mutations_in_migrated_suites": true,
+      "zero_global_monkeypatching_in_migrated_suites": true
+    }
+  }
+}

@@ -4,27 +4,35 @@ import os
 import json
 import sys
 import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-import main as bff_main
-import agora.interaction.runner as interaction_runner
-from agora.interaction.worker import AgoraInteractionWorker
-from openclaw_ops_client import OpenClawOpsClientError
-from agora.strategy_workshop.router import _ws_replay_after
+from services.control_plane.bff.agora.interaction.worker import AgoraInteractionWorker
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.agora.strategy_workshop.router import _ws_replay_after
+from services.control_plane.bff.agora.interaction.context_resolver import resolve_agora_interaction_context_ref
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+    _get_persona_directory_snapshot,
+    _persona_record_tenant_id,
+)
+from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
+import services.control_plane.bff.agora.interaction.runner as interaction_runner
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClientError
 
 AUTH = {"Authorization": "Bearer interaction-user:operator", "Idempotency-Key": "idem-context-p3"}
 
 
-def _run_worker(provider=None):
-    worker = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
-        client_factory=(lambda: provider) if provider else None,
-    )
-    return worker.run_once(limit=10)
+def _now_fn() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class FakeReadStore:
@@ -36,8 +44,77 @@ class FakeReadStore:
             {"persona_id": "research", "tenant_id": "pantheon-dev", "display_name": "Research", "lifecycle_state": "active", "environment_ceiling": "research"},
         ]
 
+    def get_persona(self, persona_id):
+        return next((p for p in self.list_personas() if p["persona_id"] == persona_id), None)
+
     def get_capability_snapshot_for_persona(self, persona_id):
         return {"snapshot_id": f"snap-{persona_id}", "capabilities": ["persona_opinion"]}
+
+    def get_strategy_spec_detail(self, strategy_id, *, version_selector=None):
+        if strategy_id != "strategy-1" or version_selector != "v1":
+            return None
+        return {
+            "strategy_id": strategy_id,
+            "strategy_spec_registry_id": version_selector,
+        }
+
+
+_active_read_store = FakeReadStore()
+
+
+def _context_ref_resolver(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    return resolve_agora_interaction_context_ref(
+        *args,
+        read_store=_active_read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        persona_directory_snapshot_fn=_get_persona_directory_snapshot,
+        persona_record_tenant_id_fn=_persona_record_tenant_id,
+        trade_journal_allowed_fn=_trade_journal_allowed,
+        utc_now=_now_fn,
+        **kwargs,
+    )
+
+
+router = create_agora_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    require_write_role=_require_operator_role,
+    require_operator_role=_require_operator_role,
+    require_journal_write_role=_require_operator_role,
+    bff_error=_bff_error,
+    utc_now=_now_fn,
+    get_read_store=lambda: _active_read_store,
+    read_surface=lambda: _active_read_store,
+    sync_servant_agent=lambda p: {"agent": {"agent_id": p.get("id") or p.get("persona_id")}, "execution_authority": "none"},
+    canonical_context_ref_resolver=_context_ref_resolver,
+)
+interaction_lifecycle = router.interaction_lifecycle
+workshop_store = router.workshop_store
+
+app = FastAPI()
+
+
+@app.exception_handler(HTTPException)
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request, exc):
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+
+app.include_router(router)
+
+
+def _run_worker(provider=None):
+    worker = AgoraInteractionWorker(
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=_active_read_store,
+        client_factory=(lambda: provider) if provider else None,
+    )
+    return worker.run_once(limit=10)
 
 
 class FakeProvider:
@@ -195,9 +272,26 @@ def test_adapter_shaped_transient_degraded_reason_remains_retryable(monkeypatch,
 def client(monkeypatch, provider=None):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    monkeypatch.setattr(bff_main, "read_store", FakeReadStore())
+    global _active_read_store
+    _active_read_store = FakeReadStore()
+    if interaction_lifecycle.backend == "memory":
+        with interaction_lifecycle._lock:
+            interaction_lifecycle._requests.clear()
+            interaction_lifecycle._idempotency.clear()
+            interaction_lifecycle._invocations.clear()
+            interaction_lifecycle._syntheses.clear()
+            interaction_lifecycle._outbox.clear()
+            interaction_lifecycle._candidate_links.clear()
+            interaction_lifecycle._audits.clear()
+            interaction_lifecycle._retry_commands.clear()
+            interaction_lifecycle._context_bindings.clear()
+            interaction_lifecycle._context_binding_latest.clear()
+    if hasattr(workshop_store, "_sessions"):
+        workshop_store._sessions.clear()
+        workshop_store._events.clear()
+        workshop_store._cards.clear()
     monkeypatch.setattr(interaction_runner, "OpenClawOpsClient", lambda: provider or FakeProvider())
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def context_payload(version="v1"):

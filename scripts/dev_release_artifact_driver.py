@@ -602,8 +602,9 @@ def _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, ht
     _check_compose_config(folder / "baseline-compose.yml", outer["baseline_nonsecret_config"], docker)
     drift_sha = _drift_recovery_source(args)
     allowed_revisions = (drift_sha,) if drift_sha else ()
+    expected_source_sha = drift_sha if drift_sha is not None else args.previous_backend_sha
     a.validate_images(a.manifest_bytes(outer["image_bundle"]), expected_sha256=outer["image_bundle_sha256"],
-                      expected_source_sha=args.previous_backend_sha, archive_root=ROOT / "images",
+                      expected_source_sha=expected_source_sha, archive_root=ROOT / "images",
                       allowed_revisions=allowed_revisions)
     a.verify_frontend(outer["frontend"], release_store=args.fe_release_store, live_link=args.fe_live_link)
     _public(args, outer["frontend"], http, barrier)
@@ -683,7 +684,8 @@ def run(args, *, docker, http, barrier):
             raise a.ArtifactError("capture already sealed; use verify with its trusted digest")
         drift_sha = _drift_recovery_source(args)
         allowed_revisions = (drift_sha,) if drift_sha else ()
-        bundle = a.capture_images(docker=docker, archive_root=images, source_sha=args.previous_backend_sha,
+        expected_source_sha = drift_sha if drift_sha is not None else args.previous_backend_sha
+        bundle = a.capture_images(docker=docker, archive_root=images, source_sha=expected_source_sha,
                                   check_lease=barrier.check, allowed_revisions=allowed_revisions)
         a.verify_frontend(frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)
         if _owners(docker) != owners_before: raise a.ArtifactError("protected owners changed during capture")
@@ -709,8 +711,9 @@ def run(args, *, docker, http, barrier):
         raise a.ArtifactError("baseline Compose bytes mismatch")
     drift_sha = _drift_recovery_source(args)
     allowed_revisions = (drift_sha,) if drift_sha else ()
+    expected_source_sha = drift_sha if drift_sha is not None else args.previous_backend_sha
     bundle_raw = a.manifest_bytes(outer["image_bundle"])
-    a.validate_images(bundle_raw, expected_sha256=outer["image_bundle_sha256"], expected_source_sha=args.previous_backend_sha,
+    a.validate_images(bundle_raw, expected_sha256=outer["image_bundle_sha256"], expected_source_sha=expected_source_sha,
                       archive_root=images, allowed_revisions=allowed_revisions)
     # FE compensation remains FE-owned. Do not mutate even BFF if FE did not
     # restore its exact prior target and bytes first.
@@ -728,7 +731,7 @@ def run(args, *, docker, http, barrier):
         # injection prevents ambient values from filling a baseline absence;
         # exact post-recreate equality remains mandatory, never inferred.
         os.environ.update({key: value or "" for key, value in outer["baseline_nonsecret_config"].items()})
-        a.restore_images(bundle_raw, expected_sha256=outer["image_bundle_sha256"], expected_source_sha=args.previous_backend_sha,
+        a.restore_images(bundle_raw, expected_sha256=outer["image_bundle_sha256"], expected_source_sha=expected_source_sha,
                          archive_root=images, compose_files=((args.compose_file, compose_digest),), docker=cas,
                          check_lease=cas.check, environment="dev", allowed_revisions=allowed_revisions)
     observed = {service: a._current(docker, service)["image_id"] for service in a.SERVICES}
