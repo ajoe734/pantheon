@@ -17,33 +17,35 @@ from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 import pytest
-from fastapi import FastAPI
-
-
-BFF_DIR = Path(__file__).resolve().parents[1]
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
-
-from services.control_plane.bff.auth.handlers import (
-    create_auth_dependencies,
-    create_auth_handlers,
-)
-from services.control_plane.bff.auth.policy import (
-    bff_error,
-    extract_identity_stub,
-    require_operator_role,
-    require_read_role,
-)
-from services.control_plane.bff.auth.router import create_auth_router
-from services.control_plane.bff.auth.service import AuthFacadeService
-from services.control_plane.bff.command_adapters.router import create_command_adapters_router
-from services.control_plane.bff.command_adapters.service import CommandAdapterService
-from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.control_loops.router import create_control_loops_router
-from services.control_plane.bff.core.errors import register_error_handlers
-from services.control_plane.bff.models import utc_now
-from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
-from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+try:
+    from fastapi import FastAPI
+    from services.control_plane.bff.auth.handlers import (
+        create_auth_dependencies,
+        create_auth_handlers,
+    )
+    from services.control_plane.bff.auth.policy import (
+        bff_error,
+        extract_identity_stub,
+        require_operator_role,
+        require_read_role,
+    )
+    from services.control_plane.bff.auth.router import create_auth_router
+    from services.control_plane.bff.auth.service import AuthFacadeService
+    from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+    from services.control_plane.bff.command_adapters.service import CommandAdapterService
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.control_loops.router import create_control_loops_router
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.models import utc_now
+    from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+    from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+    _HAS_BFF_APP_DEPS = True
+except ImportError:
+    FastAPI = Any  # type: ignore
+    ReadSurfacePorts = object  # type: ignore
+    SessionLifecycleStore = Any  # type: ignore
+    CommandStore = Any  # type: ignore
+    _HAS_BFF_APP_DEPS = False
 
 
 def build_auth_session_app(session_lifecycle_store: SessionLifecycleStore) -> FastAPI:
@@ -56,6 +58,8 @@ def build_auth_session_app(session_lifecycle_store: SessionLifecycleStore) -> Fa
     defaults, which read the same ``PANTHEON_BFF_*`` environment variables
     that ``main.py`` reads. No symbol is imported from ``main.py``.
     """
+    if not _HAS_BFF_APP_DEPS:
+        raise RuntimeError("FastAPI and BFF dependencies are required to build auth session app")
     deps = create_auth_dependencies(session_lifecycle_store=session_lifecycle_store)
     handlers = create_auth_handlers(dependencies=deps)
     service = AuthFacadeService(
@@ -76,10 +80,12 @@ def extract_identity_from_bearer_stub(
 ) -> Any:
     """Adapt the canonical stub extractor to the ``(auth, mfa_token=...)`` shape
     used by the command-adapters/control-loops router factories."""
+    if not _HAS_BFF_APP_DEPS:
+        raise RuntimeError("FastAPI and BFF dependencies are required")
     return extract_identity_stub(authorization)
 
 
-class ApprovalDecisionReadSurface(ReadSurfacePorts):
+class ApprovalDecisionReadSurface(ReadSurfacePorts):  # type: ignore
     """Real ``ReadSurfacePorts`` composition with an appendable, in-memory
     approval-decisions list wired through the real
     ``ooda_management_kwargs={"approval_decisions": ...}`` seam (the same
@@ -90,6 +96,8 @@ class ApprovalDecisionReadSurface(ReadSurfacePorts):
     """
 
     def __init__(self) -> None:
+        if not _HAS_BFF_APP_DEPS:
+            raise RuntimeError("FastAPI and BFF dependencies are required")
         self.approval_decisions: List[Dict[str, Any]] = []
         base = create_in_memory_read_surface_ports(
             ooda_management_kwargs={"approval_decisions": self.approval_decisions}
@@ -129,6 +137,8 @@ def build_command_security_app(
     ``ports.read_surface_ports``-backed read surface. No symbol is imported
     from ``main.py``.
     """
+    if not _HAS_BFF_APP_DEPS:
+        raise RuntimeError("FastAPI and BFF dependencies are required")
     service = CommandAdapterService(
         command_store=lambda: command_store,
         read_surface=lambda: read_store,

@@ -2,8 +2,8 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001",
   "group": "CB03_auth_session_security",
-  "owner": "Claude",
-  "reviewer": "Antigravity",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
   "target_repo": "ajoe734/pantheon",
   "base_sha": "27e49d598",
   "delivery_state": "ready_for_independent_review",
@@ -160,7 +160,7 @@
   "composition_allowlist_follow_up_request": {
     "request": "Add services/control-plane/bff/tests/test_bff_path_dedupe.py to bff_test_architecture_inventory.json's composition_allowlist, alongside its sibling tests/test_http_auth_composition_owner.py.",
     "reasoning": "Per Human/Ops's independently verified revision-2 scope decision (recorded in this task's ai-status.json contract_revision), test_bff_path_dedupe.py builds TestClient(bff_main.app) and walks the entire assembled route table to detect duplicate paths and deprecated-alias wiring, so it exercises the composition root itself, not a boundable single-router seam. It is the same class of test as tests/test_http_auth_composition_owner.py, which is already on the composition_allowlist. Leaving it recorded as PLANNED (or DECOUPLED without actually being migrated) would either misstate its status or cause the live AST scan to keep counting it as an outstanding unmigrated importer indefinitely, since no B05-style single-router technique can express what it asserts.",
-    "requested_by": "Claude (task owner)",
+    "requested_by": "Antigravity (task owner; continuing delivery originally prepared by Claude)",
     "requested_of": "Human/Ops",
     "status": "not yet applied in this delivery -- raised here as the separate request the task brief directed; this task's own contract does not include the inventory's composition_allowlist edit for this file, only the ceiling/disposition updates for the 7 files it does own",
     "consequence_if_deferred": "test_bff_path_dedupe.py remains counted as a live-scanned non-whitelisted main importer (contributing 1 to the 73-count reflected in this delivery) until a future task applies this allowlist addition."
