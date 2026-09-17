@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -11,10 +9,31 @@ from typing import Iterator
 from fastapi.testclient import TestClient
 
 import pytest
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.command_adapters.contracts import (
+    build_foundation_command_context,
+    serialize_foundation_context,
+)
+from services.control_plane.bff.command_adapters.preconditions import (
+    _TWO_MAN_SIGNER_FIELDS,
+    _TWO_MAN_SIGNER_LIST_FIELDS,
+    _two_man_signers,
+)
 from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.models import CommandStatus
-from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.models import (
+    AuditContext,
+    CommandStatus,
+    CommandType,
+    ObjectType,
+    OperatorCommand,
+    TargetObject,
+    utc_now,
+)
+from services.control_plane.bff.auth.policy import extract_identity_stub
+from services.control_plane.bff.tests.command_security_app_support import (
+    ApprovalDecisionReadSurface,
+    build_command_security_app,
+    noop_process_command,
+)
 
 
 PRIMARY_HEADERS = {
@@ -29,34 +48,32 @@ SECONDARY_HEADERS = {
 }
 
 
-async def _noop_process_command(_command_id: str) -> None:
-    return None
+class _State:
+    def __init__(self) -> None:
+        self.command_store: CommandStore | None = None
+        self.read_store: ApprovalDecisionReadSurface | None = None
+        self.app = None
+
+
+_state = _State()
 
 
 @contextmanager
 def _isolated_security_client() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_command_store = bff_main.command_store
-        original_read_store = bff_main.read_store
-        original_worker = bff_main._process_command_stub
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        store = create_in_memory_read_surface_ports()
-        store._data = {"approval_decisions": {}}
-        store.get_approval_decision = (  # type: ignore[method-assign]
-            lambda decision_id: store._data["approval_decisions"].get(decision_id)
+        _state.command_store = CommandStore(f"{td}/commands.jsonl")
+        _state.read_store = ApprovalDecisionReadSurface()
+        _state.app = build_command_security_app(
+            command_store=_state.command_store,
+            read_store=_state.read_store,
+            process_command_task=lambda cmd_id: noop_process_command(cmd_id),
         )
-        bff_main.read_store = store
-        bff_main._process_command_stub = _noop_process_command
-        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-        bff_main._COMMAND_AUTH_CONTEXT.clear()
         try:
-            yield TestClient(bff_main.app)
+            yield TestClient(_state.app)
         finally:
-            bff_main.command_store = original_command_store
-            bff_main.read_store = original_read_store
-            bff_main._process_command_stub = original_worker
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._COMMAND_AUTH_CONTEXT.clear()
+            _state.command_store = None
+            _state.read_store = None
+            _state.app = None
 
 
 def _seed_approval_decision(
@@ -66,9 +83,7 @@ def _seed_approval_decision(
     target_id: str = "int-sec-001",
     state: str = "approved",
 ) -> None:
-    if not hasattr(bff_main.read_store, "_data"):
-        bff_main.read_store._data = {}
-    bff_main.read_store._data.setdefault("approval_decisions", {})[decision_id] = {
+    _state.read_store.seed_approval_decision({
         "id": decision_id,
         "decision_id": decision_id,
         "outcome": "approved",
@@ -78,7 +93,7 @@ def _seed_approval_decision(
         "target_id": target_id,
         "reviewer": "governance",
         "risk_level": "critical",
-    }
+    })
 
 
 def _error_reason(response) -> str:
@@ -132,7 +147,7 @@ def _create_bound_two_man_signature(
         )
         assert response.status_code == 202, response.text
         command_id = response.json()["data"]["command_id"]
-        stored = bff_main.command_store.get_command(command_id)
+        stored = _state.command_store.get_command(command_id)
         assert stored is not None
         assert stored["status"] == CommandStatus.EXECUTED.value
     return command_id
@@ -176,7 +191,7 @@ def test_final_command_validates_bound_preconditions_and_redacts_bearer() -> Non
         assert response.status_code == 202, response.text
         records = [
             record
-            for record in bff_main.command_store._get_all_commands()
+            for record in _state.command_store._get_all_commands()
             if record["type"] == "RemediateSentinelIntervention"
         ]
         assert len(records) == 1
@@ -242,13 +257,13 @@ def test_specialized_remediation_consumes_token_and_preserves_same_key_replay() 
         assert _error_reason(reused) == "CONFIRM_TOKEN_INVALID"
         guarded_records = [
             record
-            for record in bff_main.command_store._get_all_commands()
+            for record in _state.command_store._get_all_commands()
             if record["type"] == "RemediateSentinelIntervention"
         ]
         redemption_records = [
             record
-            for record in bff_main.command_store._get_all_commands()
-            if record["type"] == bff_main.CommandType.CONFIRM_TOKEN_REDEEM.value
+            for record in _state.command_store._get_all_commands()
+            if record["type"] == CommandType.CONFIRM_TOKEN_REDEEM.value
             and record.get("target", {}).get("id") == "ct-specialized-001"
         ]
         assert len(guarded_records) == 1
@@ -269,18 +284,23 @@ def test_specialized_remediation_replays_preupgrade_foundation_record() -> None:
             "twoManSignatureId": "tms-specialized-upgrade",
         }
         merged_params = {**payload, "intervention_id": target_id}
-        identity = bff_main._extract_identity(PRIMARY_HEADERS["Authorization"])
-        cmd = bff_main.OperatorCommand(
-            command=bff_main.CommandType.REMEDIATE_SENTINEL_INTERVENTION,
-            target=bff_main.TargetObject(
-                type=bff_main.ObjectType.SENTINEL_INTERVENTION,
+        identity = extract_identity_stub(PRIMARY_HEADERS["Authorization"])
+        cmd = OperatorCommand(
+            command=CommandType.REMEDIATE_SENTINEL_INTERVENTION,
+            target=TargetObject(
+                type=ObjectType.SENTINEL_INTERVENTION,
                 id=target_id,
             ),
             action="remediate_sentinel_intervention",
             params=merged_params,
-            audit_context=bff_main.AuditContext(reason=payload["reason"]),
+            audit_context=AuditContext(reason=payload["reason"]),
         )
-        foundation = bff_main._build_foundation_command_context(
+        # Build the seeded "pre-upgrade" record with the same real foundation
+        # context builder the live admission path uses
+        # (command_adapters.contracts.build_foundation_command_context), so
+        # this exercises genuine backward-compat replay behavior rather than
+        # a synthetic shape invented by the test.
+        foundation = build_foundation_command_context(
             cmd=cmd,
             identity=identity,
             raw_payload={**payload, "intervention_id": target_id},
@@ -294,10 +314,12 @@ def test_specialized_remediation_replays_preupgrade_foundation_record() -> None:
             "succeeded",
             result_ref=f"command:{command_id}",
         )
-        submitted_at = bff_main.utc_now()
-        stored_params = bff_main._stored_command_params(cmd, identity)
-        serialized_foundation = bff_main._serialize_foundation_context(foundation)
-        bff_main.command_store.submit_command(
+        submitted_at = utc_now()
+        stored_params = dict(cmd.params)
+        stored_params["idempotency_key"] = idempotency_key
+        stored_params["request_hash"] = foundation["idempotency_record"].request_hash
+        serialized_foundation = serialize_foundation_context(foundation)
+        _state.command_store.submit_command(
             command_id=command_id,
             command_type=cmd.command,
             target=cmd.target,
@@ -315,7 +337,7 @@ def test_specialized_remediation_replays_preupgrade_foundation_record() -> None:
             },
             foundation_context=serialized_foundation,
         )
-        bff_main.command_store.update_status(command_id, CommandStatus.EXECUTED)
+        _state.command_store.update_status(command_id, CommandStatus.EXECUTED)
 
         replay = client.post(
             f"/bff/v5/interventions/{target_id}/remediate",
@@ -336,7 +358,7 @@ def test_specialized_remediation_replays_preupgrade_foundation_record() -> None:
         assert token_state.json()["data"]["status"] == "redeemed"
         guarded_records = [
             record
-            for record in bff_main.command_store._get_all_commands()
+            for record in _state.command_store._get_all_commands()
             if record["type"] == "RemediateSentinelIntervention"
         ]
         assert len(guarded_records) == 1
@@ -467,7 +489,7 @@ def test_two_man_sign_uses_only_authenticated_actor_and_rejects_reviewer() -> No
             },
         )
         assert forged_victim.status_code == 202, forged_victim.text
-        record = bff_main.command_store.get_command(
+        record = _state.command_store.get_command(
             forged_victim.json()["data"]["command_id"]
         )
         assert record is not None
@@ -505,8 +527,8 @@ def test_two_man_sign_uses_only_authenticated_actor_and_rejects_reviewer() -> No
 @pytest.mark.parametrize(
     "signer_alias",
     (
-        *bff_main._TWO_MAN_SIGNER_LIST_FIELDS,
-        *bff_main._TWO_MAN_SIGNER_FIELDS,
+        *_TWO_MAN_SIGNER_LIST_FIELDS,
+        *_TWO_MAN_SIGNER_FIELDS,
     ),
 )
 def test_every_two_man_signer_alias_is_server_sanitized(
@@ -521,7 +543,7 @@ def test_every_two_man_signer_alias_is_server_sanitized(
 
         forged_value: object = (
             ["op-primary", "op-victim"]
-            if signer_alias in bff_main._TWO_MAN_SIGNER_LIST_FIELDS
+            if signer_alias in _TWO_MAN_SIGNER_LIST_FIELDS
             else "op-victim"
         )
         signed = client.post(
@@ -539,11 +561,11 @@ def test_every_two_man_signer_alias_is_server_sanitized(
             },
         )
         assert signed.status_code == 202, signed.text
-        record = bff_main.command_store.get_command(
+        record = _state.command_store.get_command(
             signed.json()["data"]["command_id"]
         )
         assert record is not None
-        assert bff_main._two_man_signers(record) == {"op-primary"}
+        assert _two_man_signers(record) == {"op-primary"}
         assert record["params"]["signerOperatorIds"] == ["op-primary"]
         if signer_alias != "signerOperatorIds":
             assert signer_alias not in record["params"]
@@ -582,7 +604,7 @@ def test_generic_v5_and_claim_routes_cannot_forge_two_man_evidence() -> None:
             },
         )
         assert generic.status_code == 202, generic.text
-        bff_main.command_store.update_status(
+        _state.command_store.update_status(
             generic.json()["data"]["command_id"], CommandStatus.EXECUTED
         )
 
@@ -612,7 +634,7 @@ def test_generic_v5_and_claim_routes_cannot_forge_two_man_evidence() -> None:
             },
         )
         assert claim.status_code == 202, claim.text
-        bff_main.command_store.update_status(
+        _state.command_store.update_status(
             claim.json()["data"]["command_id"], CommandStatus.EXECUTED
         )
 
@@ -633,9 +655,10 @@ def test_generic_v5_and_claim_routes_cannot_forge_two_man_evidence() -> None:
 def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -> None:
     with _isolated_security_client() as client:
         signature_id = "tms-race-shared"
+        app = _state.app
 
         def sign(headers: dict[str, str]) -> dict:
-            local_client = TestClient(bff_main.app)
+            local_client = TestClient(app)
             response = local_client.post(
                 "/bff/v5/interventions/int-sec-001/two-man-sign",
                 headers={**headers, "Idempotency-Key": "shared-concurrent-tms-key"},
@@ -665,7 +688,7 @@ def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -
         assert secondary["meta"]["idempotency"]["replayed"] is False
         sign_records = [
             record
-            for record in bff_main.command_store._get_all_commands()
+            for record in _state.command_store._get_all_commands()
             if record["type"] == "V5InterventionAction"
         ]
         assert len(sign_records) == 2
@@ -712,7 +735,7 @@ def test_idempotency_replay_is_scoped_by_operator_id() -> None:
         )
         assert first.status_code == 202, first.text
         first_id = first.json()["data"]["command_id"]
-        bff_main.command_store.update_status(first_id, CommandStatus.EXECUTED)
+        _state.command_store.update_status(first_id, CommandStatus.EXECUTED)
 
         second = client.post(
             "/bff/v1/commands",

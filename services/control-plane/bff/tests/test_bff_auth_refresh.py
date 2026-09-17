@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-import os
-import sys
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.tests.auth_session_app_support import build_auth_session_app
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 
@@ -20,13 +16,9 @@ JWT_AUDIENCE = "bff-operators"
 
 
 @pytest.fixture(autouse=True)
-def isolated_session_lifecycle_store(tmp_path):
-    original_store = bff_main.session_lifecycle_store
-    bff_main.session_lifecycle_store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
-    try:
-        yield
-    finally:
-        bff_main.session_lifecycle_store = original_store
+def app(tmp_path):
+    store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
+    return build_auth_session_app(store)
 
 
 def _strict_auth_env(monkeypatch) -> None:
@@ -52,11 +44,11 @@ def _jwt_token(*, subject: str = "op-refresh", roles: list[str] | None = None, e
     return encode_jwt_hs256(payload, secret=JWT_SECRET)
 
 
-def test_bff_auth_refresh_uses_bearer_refresh_credential(monkeypatch) -> None:
+def test_bff_auth_refresh_uses_bearer_refresh_credential(app, monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
     token = _jwt_token(extra={"sid": "session-bearer-refresh"})
 
-    response = TestClient(bff_main.app).post(
+    response = TestClient(app).post(
         "/bff/auth/refresh",
         json={},
         headers={
@@ -77,11 +69,11 @@ def test_bff_auth_refresh_uses_bearer_refresh_credential(monkeypatch) -> None:
     assert payload["meta"]["auth"]["refreshCredentialSource"] == "bearer"
 
 
-def test_bff_auth_refresh_uses_refresh_cookie_credential(monkeypatch) -> None:
+def test_bff_auth_refresh_uses_refresh_cookie_credential(app, monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
     token = _jwt_token(extra={"sid": "session-cookie-refresh"})
 
-    client = TestClient(bff_main.app)
+    client = TestClient(app)
     client.cookies.set("pantheon_refresh", token)
     response = client.post("/bff/auth/refresh", json={})
 
@@ -93,10 +85,10 @@ def test_bff_auth_refresh_uses_refresh_cookie_credential(monkeypatch) -> None:
     assert data["session"]["last_refresh_credential_source"] == "refresh_cookie"
 
 
-def test_bff_auth_refresh_missing_refresh_path_returns_typed_401(monkeypatch) -> None:
+def test_bff_auth_refresh_missing_refresh_path_returns_typed_401(app, monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
 
-    response = TestClient(bff_main.app, raise_server_exceptions=False).post(
+    response = TestClient(app, raise_server_exceptions=False).post(
         "/bff/auth/refresh",
         json={},
     )

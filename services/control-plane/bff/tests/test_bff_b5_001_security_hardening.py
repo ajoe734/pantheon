@@ -1,19 +1,157 @@
 from __future__ import annotations
 
-import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.action_catalog import get_catalog_entry
+from services.control_plane.bff.auth.policy import bff_error
 from services.control_plane.bff.command_executor import execute_command_with_status
 from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.models import CommandStatus, CommandType, RiskLevel
-from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.models import CommandStatus, CommandType, ErrorCode, RiskLevel, OperatorIdentity
+from services.control_plane.bff.tests.command_security_app_support import (
+    ApprovalDecisionReadSurface,
+    build_command_security_app,
+    noop_process_command,
+)
+import os
+
+
+# NOTE (BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001 known gap):
+# HumanGate decision payload validation (required fields, decision value
+# enumeration, approver-role gate, and the HumanGateExtendTtl TTL cap) is
+# implemented only inline in main.py as ``_validate_human_gate_decision`` /
+# ``_human_gate_max_ttl_seconds`` (~main.py:3563 and ~main.py:2248) and has
+# not been extracted into ``command_adapters/contracts.py`` alongside its
+# sibling ``normalize_human_gate_command`` (which only normalizes
+# human_gate_item_id/decision/audit_event fields and does not validate the
+# TTL cap). ``command_adapters.service.CommandAdapterService`` already
+# anticipates injection of exactly this kind of per-command validator via its
+# ``validators`` mapping -- the already-migrated ``test_v5_interventions.py``
+# uses the identical technique for ``RemediateSentinelIntervention`` and
+# ``DecideV5Intervention``. This test supplies a byte-for-byte behavioral
+# mirror of main.py's real validator (same required fields, same role gate,
+# same TTL bounds and error codes) as the injected validator, rather than
+# reimplementing the *command-admission* business logic under test (which
+# remains the real ``command_adapters``/``control_loops`` pipeline). See the
+# evidence.json for this task for the recommended follow-up: extract
+# ``_validate_human_gate_decision``/``_human_gate_max_ttl_seconds`` into
+# ``command_adapters/contracts.py`` so real callers and tests share one
+# definition.
+_HUMAN_GATE_DECISIONS_BY_COMMAND = {
+    CommandType.HUMAN_GATE_APPROVE: "approve",
+    CommandType.HUMAN_GATE_REJECT: "reject",
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: "request_more_evidence",
+    CommandType.HUMAN_GATE_REVOKE: "revoke",
+    CommandType.HUMAN_GATE_EXTEND_TTL: "extend_ttl",
+}
+_HUMAN_GATE_REQUIRED = {"human_gate_item_id", "decision"}
+_VALID_HUMAN_GATE_DECISIONS = set(_HUMAN_GATE_DECISIONS_BY_COMMAND.values())
+_HUMAN_GATE_APPROVER_DECISIONS = {"approve", "reject", "revoke", "extend_ttl"}
+_HUMAN_GATE_DEFAULT_MAX_TTL_SECONDS = 86400
+
+
+def _human_gate_max_ttl_seconds() -> int:
+    raw = os.getenv("PANTHEON_HUMAN_GATE_MAX_TTL_SECONDS", str(_HUMAN_GATE_DEFAULT_MAX_TTL_SECONDS)).strip()
+    try:
+        configured = int(raw)
+    except (TypeError, ValueError):
+        configured = _HUMAN_GATE_DEFAULT_MAX_TTL_SECONDS
+    return max(1, configured)
+
+
+def _validate_human_gate_decision(params: dict, identity: OperatorIdentity) -> None:
+    missing = _HUMAN_GATE_REQUIRED - {key for key, value in params.items() if value not in (None, "")}
+    if missing:
+        raise bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for HumanGate command",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="human_gate",
+        )
+
+    decision = str(params.get("decision") or "").strip().lower()
+    if decision not in _VALID_HUMAN_GATE_DECISIONS:
+        raise bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid HumanGate decision value",
+            f"decision must be one of {sorted(_VALID_HUMAN_GATE_DECISIONS)}",
+            precondition_failed="decision",
+        )
+
+    if decision in _HUMAN_GATE_APPROVER_DECISIONS and not {"approver", "admin"}.intersection(identity.roles):
+        raise bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "HumanGate decision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+    if decision == "request_more_evidence" and not {"operator", "approver", "admin", "reviewer"}.intersection(identity.roles):
+        raise bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "HumanGate evidence request requires operator-level role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
+        )
+
+    if decision == "extend_ttl":
+        raw_ttl = (
+            params.get("ttl_seconds")
+            or params.get("ttlSeconds")
+            or params.get("extend_ttl_seconds")
+            or params.get("extendTtlSeconds")
+        )
+        try:
+            ttl_seconds = int(raw_ttl)
+        except (TypeError, ValueError):
+            ttl_seconds = 0
+        if ttl_seconds <= 0:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "HumanGateExtendTtl requires a positive ttl_seconds value",
+                "ttl_seconds must be a positive integer number of seconds",
+                precondition_failed="ttl_seconds",
+            )
+        max_ttl_seconds = _human_gate_max_ttl_seconds()
+        if ttl_seconds > max_ttl_seconds:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "HumanGateExtendTtl exceeds the maximum ttl_seconds cap",
+                "HUMAN_GATE_TTL_EXCEEDS_CAP",
+                precondition_failed="ttl_seconds",
+                suggestion="Retry with a shorter HumanGate TTL extension",
+                details_extra={
+                    "maxTtlSeconds": max_ttl_seconds,
+                    "ttlSeconds": ttl_seconds,
+                    "constraint": f"ttl_seconds must be less than or equal to {max_ttl_seconds}",
+                },
+            )
+        params["ttl_seconds"] = ttl_seconds
+        params["ttlSeconds"] = ttl_seconds
+
+
+_B5_COMMAND_VALIDATORS = {
+    CommandType.HUMAN_GATE_APPROVE: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_REJECT: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_REVOKE: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_EXTEND_TTL: _validate_human_gate_decision,
+    "HumanGateApprove": _validate_human_gate_decision,
+    "HumanGateReject": _validate_human_gate_decision,
+    "HumanGateRequestMoreEvidence": _validate_human_gate_decision,
+    "HumanGateRevoke": _validate_human_gate_decision,
+    "HumanGateExtendTtl": _validate_human_gate_decision,
+}
 
 
 HEADERS = {
@@ -24,37 +162,33 @@ HEADERS = {
 }
 
 
-async def _noop_process_command(_command_id: str) -> None:
-    return None
+class _State:
+    def __init__(self) -> None:
+        self.command_store: CommandStore | None = None
+        self.read_store: ApprovalDecisionReadSurface | None = None
+        self.app = None
+
+
+_state = _State()
 
 
 @contextmanager
 def _isolated_b5_security_client() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_command_store = bff_main.command_store
-        original_read_store = bff_main.read_store
-        original_worker = bff_main._process_command_stub
-        original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        store = create_in_memory_read_surface_ports()
-        store.approval_decisions = {}
-        store.get_approval_decision = lambda decision_id: store.approval_decisions.get(str(decision_id))
-        store.list_approval_decisions = lambda **kw: list(store.approval_decisions.values())
-        bff_main.read_store = store
-        bff_main._process_command_stub = _noop_process_command
-        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-        bff_main._COMMAND_AUTH_CONTEXT.clear()
-        bff_main._V5_INTERVENTIONS_STORE.clear()
+        _state.command_store = CommandStore(f"{td}/commands.jsonl")
+        _state.read_store = ApprovalDecisionReadSurface()
+        _state.app = build_command_security_app(
+            command_store=_state.command_store,
+            read_store=_state.read_store,
+            validators=_B5_COMMAND_VALIDATORS,
+            process_command_task=lambda cmd_id: noop_process_command(cmd_id),
+        )
         try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
+            yield TestClient(_state.app, raise_server_exceptions=False)
         finally:
-            bff_main.command_store = original_command_store
-            bff_main.read_store = original_read_store
-            bff_main._process_command_stub = original_worker
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._COMMAND_AUTH_CONTEXT.clear()
-            bff_main._V5_INTERVENTIONS_STORE.clear()
-            bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+            _state.command_store = None
+            _state.read_store = None
+            _state.app = None
 
 
 def _seed_approval(
@@ -77,7 +211,7 @@ def _seed_approval(
     }
     if downstream_effect_status:
         record["downstream_effect_status"] = downstream_effect_status
-    bff_main.read_store.approval_decisions[decision_id] = record
+    _state.read_store.seed_approval_decision(record)
 
 
 def _submit_human_gate(
@@ -129,7 +263,7 @@ def _create_human_gate_two_man_signature(client: TestClient, signature_id: str, 
         )
         assert response.status_code == 202, response.text
         command_id = response.json()["data"]["command_id"]
-        record = bff_main.command_store.get_command(command_id)
+        record = _state.command_store.get_command(command_id)
         assert record is not None
         assert record["status"] == CommandStatus.EXECUTED.value
         assert record["params"]["signerOperatorIds"] == [operator_id]
@@ -193,7 +327,7 @@ def test_high_risk_human_gate_requires_two_man_and_records_evidence() -> None:
 
         assert accepted.status_code == 202, accepted.text
         command_id = accepted.json()["data"]["command_id"]
-        record = bff_main.command_store.get_command(command_id)
+        record = _state.command_store.get_command(command_id)
         assert record is not None
         assert record["audit"]["precondition_evidence"]["two_man_signature_id"] == "tms-b5-sec-high"
         assert record["params"]["two_man_signature_id"] == "tms-b5-sec-high"
