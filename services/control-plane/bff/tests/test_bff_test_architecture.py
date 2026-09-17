@@ -45,10 +45,71 @@ TASK_REVIEW_EVIDENCE = {
 VALID_LAYERS = {"composition", "router", "application", "adapter", "hosted"}
 VALID_DISPOSITIONS = {"ALLOWLIST", "MIGRATED", "PLANNED", "DECOUPLED"}
 
+# Not the BFF's composition root; a distinct service with its own "main".
+_NON_BFF_MAIN_PREFIXES = ("services.research.main",)
+
 
 def _load_inventory() -> Dict[str, Any]:
     assert INVENTORY_PATH.is_file(), f"Inventory missing: {INVENTORY_PATH}"
     return json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+
+
+def _file_imports_bff_main(path: Path) -> bool:
+    """AST-scan a single file for an import of the BFF composition root (main.py).
+
+    Matches: ``import main`` / ``import <pkg>.main``; ``from main import ...`` /
+    ``from <pkg>.main import ...``; and the absolute
+    ``from services.control_plane.bff import main`` form. Excludes other
+    services' own ``main`` modules (for example ``services.research.main``).
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name
+                if name.startswith(_NON_BFF_MAIN_PREFIXES):
+                    continue
+                if name == "main" or name.endswith(".main"):
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module
+            if not module:
+                continue
+            if module.startswith(_NON_BFF_MAIN_PREFIXES):
+                continue
+            if module == "main" or module.endswith(".main"):
+                return True
+            if module == "services.control_plane.bff" and any(
+                alias.name == "main" for alias in node.names
+            ):
+                return True
+    return False
+
+
+def _discover_test_files() -> List[Path]:
+    """Live scan of every test module on disk under the BFF tree.
+
+    Deliberately independent of the inventory file's own ``tests`` list, so a
+    newly added test file cannot silently import ``main`` without being
+    counted. Matches pytest's own default test-module discovery convention.
+    """
+    files: List[Path] = []
+    for path in BFF_DIR.rglob("*.py"):
+        if ".venv" in path.parts:
+            continue
+        name = path.name
+        if name.startswith("test_") or name.startswith("smoke_test"):
+            files.append(path.relative_to(BFF_DIR))
+    return files
+
+
+def _live_scan_non_whitelisted_main_importers(allowlist: Set[str]) -> List[str]:
+    offenders = [
+        str(rel)
+        for rel in _discover_test_files()
+        if str(rel) not in allowlist and _file_imports_bff_main(BFF_DIR / rel)
+    ]
+    return sorted(offenders)
 
 
 def test_inventory_file_is_present_and_well_formed() -> None:
@@ -167,10 +228,30 @@ def test_no_global_monkeypatching_in_migrated_suites() -> None:
     assert not offenders, f"Migrated suites must not patch global read_store:\n{msg}"
 
 
-def test_total_main_importers_is_bounded_and_strictly_decreased() -> None:
-    data = _load_inventory()
-    baseline = data["audited_baseline_main_importers"]
-    current = data["current_main_importers"]
+def test_non_whitelisted_main_importers_is_live_scanned_and_bounded() -> None:
+    """The only real gate: a live AST scan of every test file on disk, not a
+    self-reported JSON count. A new test file that starts importing the BFF
+    composition root fails this test unless it is added to the reviewed
+    ``composition_allowlist`` and the ceiling is not exceeded.
 
-    assert current <= 211, f"Expected current main importers <= 211, got {current}"
-    assert current < baseline, f"Current ({current}) must be strictly less than baseline ({baseline})"
+    The ceiling records the actual live-scanned count at the time it was set
+    and may only be lowered by a subsequent PR (never raised) as suites are
+    migrated off the composition root.
+    """
+    data = _load_inventory()
+    allowlist = set(data["composition_allowlist"])
+    ceiling = data["live_scan_non_whitelisted_main_importer_ceiling"]
+    recorded = set(data["live_scan_non_whitelisted_main_importers"])
+
+    live_offenders = _live_scan_non_whitelisted_main_importers(allowlist)
+
+    assert live_offenders == sorted(recorded), (
+        "Inventory's live_scan_non_whitelisted_main_importers is stale; "
+        f"live scan found:\n{live_offenders}\nrecorded:\n{sorted(recorded)}"
+    )
+    assert len(live_offenders) <= ceiling, (
+        f"Live-scanned non-whitelisted BFF main importers ({len(live_offenders)}) "
+        f"exceed the recorded ceiling ({ceiling}). Either migrate suites off "
+        "main, or add a reviewed composition_allowlist entry with a rationale.\n"
+        + "\n".join(f"  {o}" for o in live_offenders)
+    )
