@@ -1,67 +1,528 @@
 {
-  "captured_at": "2026-09-17T04:39:12.292Z",
+  "captured_at": "2026-09-17T04:54:35.503Z",
   "task_id": "S5-JOURNEYS-001",
   "execution_posture": {
     "mode": "user",
     "capabilities": {
       "shell": false,
+      "repo": false,
       "repo_write": false,
+      "docker": false,
       "live_capital": false,
       "command_broker": false,
       "secret_store": false,
       "paper_only": true
     },
+    "control_mode_state": "inactive",
     "mode_response": {
-      "error": {
-        "code": "AUTH_REQUIRED",
-        "i18nKey": "errors.AUTH_REQUIRED",
-        "message": "Unauthorized: missing Bearer token",
-        "retryable": false,
-        "userActionable": true,
-        "details": {
-          "reason": "401",
-          "precondition_failed": null,
-          "suggestion": "Re-authenticate with a valid JWT bearer token"
+      "data": {
+        "product_default_mode": "user",
+        "kernel_enabled": true,
+        "user_mode": {
+          "mode": "user",
+          "context": "bff_curated_only",
+          "command_broker": false,
+          "shell": false,
+          "repo": false,
+          "repo_write": false,
+          "docker": false,
+          "secret_store": false,
+          "raw_logs": false,
+          "repair": false,
+          "provider_session_access": false,
+          "allowed_command_classes": []
+        },
+        "control_mode": {
+          "state": "inactive",
+          "active": false,
+          "reason": "not_active",
+          "configured": true,
+          "requiresRole": [
+            "admin",
+            "operator"
+          ],
+          "requires_role": [
+            "admin",
+            "operator"
+          ],
+          "requiresCapabilityPrefix": "assistant.kernel",
+          "requires_capability_prefix": "assistant.kernel",
+          "requiresMfa": true,
+          "requires_mfa": true,
+          "changePassphraseHref": "/bff/assistant/control-mode/passphrase",
+          "change_passphrase_href": "/bff/assistant/control-mode/passphrase"
         }
-      },
-      "meta": {
-        "correlationId": "a109c886-43da-4e5a-9d14-8093abe0bcde"
       }
     }
   },
   "providers_posture": {
     "providers": {
-      "error": {
-        "code": "AUTH_REQUIRED",
-        "i18nKey": "errors.AUTH_REQUIRED",
-        "message": "Unauthorized: missing Bearer token",
-        "retryable": false,
-        "userActionable": true,
-        "details": {
-          "reason": "401",
-          "precondition_failed": null,
-          "suggestion": "Re-authenticate with a valid JWT bearer token"
+      "status": "ok",
+      "data": [
+        {
+          "provider": "openclaw",
+          "provider_id": "openclaw",
+          "runtime": "openclaw_gateway_agent_cli",
+          "agent_id": "main",
+          "gateway_url_configured": true,
+          "usage": {
+            "status": "unknown",
+            "source": "not_configured",
+            "remaining": null,
+            "remainingPercent": null,
+            "remaining_percent": null,
+            "limit": null,
+            "used": null,
+            "unit": null,
+            "resetAt": null,
+            "reset_at": null,
+            "updatedAt": null,
+            "updated_at": null,
+            "checkedAt": "2026-09-17T04:54:35.529194Z",
+            "checked_at": "2026-09-17T04:54:35.529194Z",
+            "reason": "provider_usage_source_not_configured"
+          },
+          "quota": {
+            "status": "unknown",
+            "source": "not_configured",
+            "remaining": null,
+            "remainingPercent": null,
+            "remaining_percent": null,
+            "limit": null,
+            "used": null,
+            "unit": null,
+            "resetAt": null,
+            "reset_at": null,
+            "updatedAt": null,
+            "updated_at": null,
+            "checkedAt": "2026-09-17T04:54:35.529194Z",
+            "checked_at": "2026-09-17T04:54:35.529194Z",
+            "reason": "provider_usage_source_not_configured"
+          },
+          "answer_probe": {
+            "status": "not_run",
+            "deadline_seconds": 20.0
+          },
+          "ready": false,
+          "status": "not_checked",
+          "reason": "answer_probe_not_run",
+          "reauth_supported": false,
+          "reauthSupported": false
+        },
+        {
+          "provider": "codex_cli",
+          "provider_name": "codex",
+          "runtime": "openclaw_gateway_cli_mount",
+          "checked_at": "2026-09-17T04:54:35.529322Z",
+          "binary_path": "/usr/local/bin/codex",
+          "version": "codex-cli 0.136.0",
+          "auth": "unavailable",
+          "auth_status": "mount_unavailable",
+          "credential_mount": {
+            "ready": false,
+            "status": "wrong_owner",
+            "host_source": "dedicated_service_user",
+            "container_target": "codex_home",
+            "mount_mode": "rw",
+            "owner_check": "mismatch"
+          },
+          "mount_mode": "rw",
+          "usage": {
+            "status": "unknown",
+            "source": "not_configured",
+            "remaining": null,
+            "remainingPercent": null,
+            "remaining_percent": null,
+            "limit": null,
+            "used": null,
+            "unit": null,
+            "resetAt": null,
+            "reset_at": null,
+            "updatedAt": null,
+            "updated_at": null,
+            "checkedAt": "2026-09-17T04:54:35.529484Z",
+            "checked_at": "2026-09-17T04:54:35.529484Z",
+            "reason": "provider_usage_source_not_configured"
+          },
+          "quota": {
+            "status": "unknown",
+            "source": "not_configured",
+            "remaining": null,
+            "remainingPercent": null,
+            "remaining_percent": null,
+            "limit": null,
+            "used": null,
+            "unit": null,
+            "resetAt": null,
+            "reset_at": null,
+            "updatedAt": null,
+            "updated_at": null,
+            "checkedAt": "2026-09-17T04:54:35.529484Z",
+            "checked_at": "2026-09-17T04:54:35.529484Z",
+            "reason": "provider_usage_source_not_configured"
+          },
+          "capabilities": {
+            "read": true,
+            "repairWrite": false,
+            "repair_write": false
+          },
+          "last_refresh_check_time": null,
+          "ready": false,
+          "status": "degraded",
+          "degraded_reason": "codex_mount_wrong_owner",
+          "reauth_supported": true,
+          "reauthSupported": true
+        },
+        {
+          "provider": "claude",
+          "provider_name": "claude",
+          "runtime": "openclaw_gateway_cli_mount",
+          "checked_at": "2026-09-17T04:54:35.731927Z",
+          "binary_path": "/usr/local/bin/claude",
+          "version": "2.1.161 (Claude Code)",
+          "auth": "unavailable",
+          "auth_status": "mount_unavailable",
+          "credential_mount": {
+            "ready": false,
+            "status": "wrong_owner",
+            "host_source": "dedicated_service_user",
+            "container_target": "claude_config",
+            "mount_mode": "rw",
+            "owner_check": "mismatch"
+          },
+          "mount_mode": "rw",
+          "usage": {
+            "status": "unknown",
+            "source": "not_configured",
+            "remaining": null,
+            "remainingPercent": null,
+            "remaining_percent": null,
+            "limit": null,
+            "used": null,
+            "unit": null,
+            "resetAt": null,
+            "reset_at": null,
+            "updatedAt": null,
+            "updated_at": null,
+            "checkedAt": "2026-09-17T04:54:35.732158Z",
+            "checked_at": "2026-09-17T04:54:35.732158Z",
+            "reason": "provider_usage_source_not_configured"
+          },
+          "quota": {
+            "status": "unknown",
+            "source": "not_configured",
+            "remaining": null,
+            "remainingPercent": null,
+            "remaining_percent": null,
+            "limit": null,
+            "used": null,
+            "unit": null,
+            "resetAt": null,
+            "reset_at": null,
+            "updatedAt": null,
+            "updated_at": null,
+            "checkedAt": "2026-09-17T04:54:35.732158Z",
+            "checked_at": "2026-09-17T04:54:35.732158Z",
+            "reason": "provider_usage_source_not_configured"
+          },
+          "last_refresh_check_time": null,
+          "ready": false,
+          "status": "degraded",
+          "degraded_reason": "claude_mount_wrong_owner",
+          "reauth_supported": true,
+          "reauthSupported": true
         }
-      },
-      "meta": {
-        "correlationId": "1fba4e61-b939-419f-ae9b-bc90b0fedb6a"
-      }
+      ]
     },
     "usage_summary": {
-      "error": {
-        "code": "AUTH_REQUIRED",
-        "i18nKey": "errors.AUTH_REQUIRED",
-        "message": "Unauthorized: missing Bearer token",
-        "retryable": false,
-        "userActionable": true,
-        "details": {
-          "reason": "401",
-          "precondition_failed": null,
-          "suggestion": "Re-authenticate with a valid JWT bearer token"
+      "status": "ok",
+      "data": {
+        "providers": [
+          {
+            "provider": "claude",
+            "provider_name": "claude",
+            "runtime": "openclaw_gateway_cli_mount",
+            "ready": false,
+            "auth_status": "mount_unavailable",
+            "status": "degraded",
+            "live_auth": false,
+            "calls": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "started_count": 0,
+            "prompt_bytes": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "duration_ms": 0,
+            "average_duration_ms": null,
+            "last_used_at": null,
+            "last_status": null,
+            "last_error": null,
+            "quota": {
+              "status": "unknown",
+              "source": "not_configured",
+              "remaining": null,
+              "remaining_percent": null,
+              "limit": null,
+              "used": null,
+              "unit": null,
+              "reset_at": null,
+              "updated_at": null,
+              "checked_at": "2026-09-17T04:54:36.155357Z",
+              "reason": "provider_usage_source_not_configured"
+            },
+            "persona_dependencies": {
+              "status": "unavailable",
+              "count": null,
+              "personas": [],
+              "source": null,
+              "reason": "persona_dependency_inventory_unavailable"
+            },
+            "observed_usage": {
+              "source": "management_ai_bff_audit",
+              "coverage": "bff_observed_management_ai_only",
+              "coverage_label": "BFF observed",
+              "truth_policy": "observed_bff_events_only",
+              "calls": 0,
+              "success_count": 0,
+              "failed_count": 0,
+              "prompt_bytes": 0,
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "last_observed_at": null,
+              "age_hours": null,
+              "stale": false,
+              "stale_after_hours": 24,
+              "window_hours": 168,
+              "event_limit": 500,
+              "message": "Only Management AI calls observed by the BFF audit stream are counted; direct provider CLI usage is not included."
+            },
+            "models": [],
+            "provider_auth": {
+              "status": "mount_unavailable",
+              "authenticated": false,
+              "source": "provider_probe"
+            },
+            "live_smoke": {
+              "status": "not_checked",
+              "passed": false,
+              "checked_at": null,
+              "reason": null
+            },
+            "reauth": {
+              "status": "not_started",
+              "code_entry_required": false,
+              "readiness_recheck_required": false
+            },
+            "readiness": {
+              "ready": false,
+              "proof": "provider_probe",
+              "mount_ready_is_sufficient": false,
+              "reason": null
+            }
+          },
+          {
+            "provider": "codex_cli",
+            "provider_name": "codex",
+            "runtime": "openclaw_gateway_cli_mount",
+            "ready": false,
+            "auth_status": "mount_unavailable",
+            "status": "degraded",
+            "live_auth": false,
+            "calls": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "started_count": 0,
+            "prompt_bytes": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "duration_ms": 0,
+            "average_duration_ms": null,
+            "last_used_at": null,
+            "last_status": null,
+            "last_error": null,
+            "quota": {
+              "status": "unknown",
+              "source": "not_configured",
+              "remaining": null,
+              "remaining_percent": null,
+              "limit": null,
+              "used": null,
+              "unit": null,
+              "reset_at": null,
+              "updated_at": null,
+              "checked_at": "2026-09-17T04:54:35.935231Z",
+              "reason": "provider_usage_source_not_configured"
+            },
+            "persona_dependencies": {
+              "status": "unavailable",
+              "count": null,
+              "personas": [],
+              "source": null,
+              "reason": "persona_dependency_inventory_unavailable"
+            },
+            "observed_usage": {
+              "source": "management_ai_bff_audit",
+              "coverage": "bff_observed_management_ai_only",
+              "coverage_label": "BFF observed",
+              "truth_policy": "observed_bff_events_only",
+              "calls": 0,
+              "success_count": 0,
+              "failed_count": 0,
+              "prompt_bytes": 0,
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "last_observed_at": null,
+              "age_hours": null,
+              "stale": false,
+              "stale_after_hours": 24,
+              "window_hours": 168,
+              "event_limit": 500,
+              "message": "Only Management AI calls observed by the BFF audit stream are counted; direct provider CLI usage is not included."
+            },
+            "models": [],
+            "provider_auth": {
+              "status": "mount_unavailable",
+              "authenticated": false,
+              "source": "provider_probe"
+            },
+            "live_smoke": {
+              "status": "not_checked",
+              "passed": false,
+              "checked_at": null,
+              "reason": null
+            },
+            "reauth": {
+              "status": "not_started",
+              "code_entry_required": false,
+              "readiness_recheck_required": false
+            },
+            "readiness": {
+              "ready": false,
+              "proof": "provider_probe",
+              "mount_ready_is_sufficient": false,
+              "reason": null
+            }
+          },
+          {
+            "provider": "openclaw",
+            "provider_name": "OpenClaw",
+            "runtime": "openclaw_gateway_agent_cli",
+            "ready": false,
+            "auth_status": "not_checked",
+            "status": "not_checked",
+            "live_auth": false,
+            "calls": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "started_count": 0,
+            "prompt_bytes": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "duration_ms": 0,
+            "average_duration_ms": null,
+            "last_used_at": null,
+            "last_status": null,
+            "last_error": null,
+            "quota": {
+              "status": "unknown",
+              "source": "not_configured",
+              "remaining": null,
+              "remaining_percent": null,
+              "limit": null,
+              "used": null,
+              "unit": null,
+              "reset_at": null,
+              "updated_at": null,
+              "checked_at": "2026-09-17T04:54:35.934952Z",
+              "reason": "provider_usage_source_not_configured"
+            },
+            "persona_dependencies": {
+              "status": "unavailable",
+              "count": null,
+              "personas": [],
+              "source": null,
+              "reason": "persona_dependency_inventory_unavailable"
+            },
+            "observed_usage": {
+              "source": "management_ai_bff_audit",
+              "coverage": "bff_observed_management_ai_only",
+              "coverage_label": "BFF observed",
+              "truth_policy": "observed_bff_events_only",
+              "calls": 0,
+              "success_count": 0,
+              "failed_count": 0,
+              "prompt_bytes": 0,
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "last_observed_at": null,
+              "age_hours": null,
+              "stale": false,
+              "stale_after_hours": 24,
+              "window_hours": 168,
+              "event_limit": 500,
+              "message": "Only Management AI calls observed by the BFF audit stream are counted; direct provider CLI usage is not included."
+            },
+            "models": [],
+            "provider_auth": {
+              "status": "not_checked",
+              "authenticated": false,
+              "source": "provider_probe"
+            },
+            "live_smoke": {
+              "status": "not_checked",
+              "passed": false,
+              "checked_at": null,
+              "reason": null
+            },
+            "reauth": {
+              "status": "not_started",
+              "code_entry_required": false,
+              "readiness_recheck_required": false
+            },
+            "readiness": {
+              "ready": false,
+              "proof": "provider_probe",
+              "mount_ready_is_sufficient": false,
+              "reason": "answer_probe_not_run"
+            }
+          }
+        ],
+        "totals": {
+          "providers": 3,
+          "live_auth_count": 0,
+          "calls": 0,
+          "success_count": 0,
+          "failed_count": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        },
+        "quota": {
+          "truth_policy": "provider_snapshot_only",
+          "missing_source_means": "quota remaining is unknown, not zero"
+        },
+        "usage": {
+          "truth_policy": "observed_bff_events_only",
+          "coverage": "bff_observed_management_ai_only",
+          "source": "management_ai_bff_audit",
+          "stale_after_hours": 24,
+          "missing_source_means": "direct provider CLI usage is unknown unless a provider usage source is configured"
         }
       },
       "meta": {
-        "correlationId": "26aceddf-eed8-4dff-88ab-113baec34264"
+        "auth_probe": false,
+        "event_limit": 500,
+        "event_count": 0,
+        "window_hours": 168,
+        "since": "2026-09-10T04:54:35.932382Z",
+        "provider_snapshot_status": "ok"
       }
     },
     "live_adapter_status": {

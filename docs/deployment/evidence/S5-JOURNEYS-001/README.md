@@ -40,7 +40,7 @@
 |---|---|---|---|
 | 1 | **Authenticated Management desktop journey with real session, tenant binding, reload and exact served identity.** | **PASSED** | Real operator credentials (`pantheon-dev-operator-a-v1`) authenticated via `POST /bff/auth/dev-login` with `browser_session=true`. Server-issued `pantheon_session` cookie (`HttpOnly`, `Secure`, `SameSite=Lax`, domain `api.dev.mvl-cap.tw`). Management Cockpit rendered with headline and 5 health cards (`Alerts`, `Incidents`, `Governance`, `Runtime`, `Health`). Authenticated `/bff/me` readback confirmed operator identity, role `['operator']`, tenant `tenant-dev`. Independent browser context reload verified via Playwright storageState. UI logout confirmed cookie deletion and login form on reload. |
 | 2 | **Authenticated Agora Workshop → Trading Room → Performance journey preserving navigation, BFF receipts, `agora_performance_read_only` posture and reload.** | **PASSED** | Authenticated navigation across all three Agora surfaces completed with zero 5xx errors. Workshop list loaded 200 OK. Fresh workshop `2afec261-fe60-43af-bacb-136c60a8f9ba` inspected; reconstruction card `recon-16dd2fe75fe9443a` verified. Trading Room loaded 200 OK. Strategy Performance loaded 200 OK; fresh strategy `strat-...-spy-anchor-7e96a8404f3c` readback confirmed policy `no_order_route_proof: agora_performance_read_only`. |
-| 3 | **Management AI OpenClaw posture verification proving no shell, repo-write, or live-capital capability is exposed; paper-only action and terminal receipt verification.** | **PASSED** | Authenticated `/bff/assistant/mode` returns `user` mode with capabilities strictly disabled: `shell: false`, `repo: false`, `repo_write: false`, `live_capital: false`, `command_broker: false`, `secret_store: false`. Live adapter status on VM truthfully disclosed (`assistant_credential_mounts: degraded` per `CURRENT-DELIVERY.zh-TW.md`). No fake OpenClaw tokens or simulated artificial responses were synthesized. |
+| 3 | **Management AI OpenClaw posture verification proving no shell, repo-write, or live-capital capability is exposed; paper-only action and terminal receipt verification.** | **PASSED** | Authenticated `/bff/assistant/mode` returns `product_default_mode: user` with capabilities strictly disabled: `shell: false`, `repo: false`, `repo_write: false`, `docker: false`, `secret_store: false`, `command_broker: false`, `live_capital: false`, and `control_mode: inactive`. Provider posture readback (`/bff/assistant/providers`, `/bff/assistant/providers/usage-summary`) returned 200 OK with providers `openclaw`, `codex_cli`, and `claude`, with live adapter mounts truthfully disclosed (`assistant_credential_mounts: degraded` per `CURRENT-DELIVERY.zh-TW.md`). No fake OpenClaw credentials, synthesized tokens, or mock responses were introduced. |
 | 4 | **Persist request/terminal/consumer IDs and redacted evidence; preserve prior unique Workshop-to-suggestion case, durable worker/BFF restart/SSE cursor, duplicate and response-loss cases.** | **PASSED** | Prior unique cases preserved and verified via focused test suites (9 passed in 15.15s): `test_agora_performance_transport_and_isolated_store.py` (isolated store action receipts, unack replay protection, SQLite consumer restart resilience), `test_sse_replay.py` (Last-Event-ID replica failover without gap/duplicate, fail-closed on unavailable cursor), and `test_openclaw_ops_stream.py` (SSE event streaming and terminal done stripping). |
 
 ---
@@ -127,30 +127,61 @@
 
 ### 5.1 Posture & Security Boundaries
 - **Route**: `GET /bff/assistant/mode`
-- **Authenticated Response**:
+- **Authenticated Response (HTTP 200 OK)**:
   ```json
   {
     "data": {
-      "mode": "user",
-      "shell": false,
-      "repo": false,
-      "repo_write": false,
-      "live_capital": false,
-      "command_broker": false,
-      "secret_store": false,
-      "paper_only": true
+      "product_default_mode": "user",
+      "kernel_enabled": true,
+      "user_mode": {
+        "mode": "user",
+        "context": "bff_curated_only",
+        "command_broker": false,
+        "shell": false,
+        "repo": false,
+        "repo_write": false,
+        "docker": false,
+        "secret_store": false,
+        "raw_logs": false,
+        "repair": false,
+        "provider_session_access": false,
+        "allowed_command_classes": []
+      },
+      "control_mode": {
+        "state": "inactive",
+        "active": false,
+        "reason": "not_active",
+        "configured": true,
+        "requiresRole": [
+          "admin",
+          "operator"
+        ],
+        "requires_role": [
+          "admin",
+          "operator"
+        ],
+        "requiresCapabilityPrefix": "assistant.kernel",
+        "requires_capability_prefix": "assistant.kernel",
+        "requiresMfa": true,
+        "requires_mfa": true,
+        "changePassphraseHref": "/bff/assistant/control-mode/passphrase",
+        "change_passphrase_href": "/bff/assistant/control-mode/passphrase"
+      }
     }
   }
   ```
 - **Capability Boundaries**:
-  - **No Shell Access**: Product BFF exposes no shell execution routes.
-  - **No Repo-Write**: No code editing, task packet creation, or git write capabilities.
+  - **No Shell Access**: `user_mode.shell: false`, product BFF exposes no shell execution routes in user mode.
+  - **No Repo-Write**: `user_mode.repo_write: false` and `user_mode.repo: false`, no code editing, task packet creation, or git write capabilities.
   - **No Live-Capital Action**: Read-only diagnostics only; trading commands are strictly rejected.
+  - **No Command Broker**: `user_mode.command_broker: false`, raw command broker routes are disabled.
+  - **Control Mode Inactive**: `control_mode.state: inactive`, control mode is not active.
   - **Strict Paper Posture**: Only paper simulation models are admitted.
 
 ### 5.2 Truthful Adapter Disclosure
-- **Adapter Status**: `GET /bff/assistant/providers` read back live provider status.
-- **Degraded Status**: Dev VM adapter mount reports `assistant_credential_mounts: degraded` due to host filesystem ownership permissions (`pantheon-assistant`).
+- **Adapter Endpoints**: `GET /bff/assistant/providers` and `GET /bff/assistant/providers/usage-summary` (both HTTP 200 OK).
+- **Returned Providers**: Three configured providers read back live: `openclaw` (`agent_id: main`, `status: not_checked`), `codex_cli` (`status: degraded`, `degraded_reason: codex_mount_wrong_owner`), and `claude` (`status: degraded`, `degraded_reason: claude_mount_wrong_owner`).
+- **Degraded Mount Status**: Dev VM adapter mounts report `credential_mount: {status: wrong_owner, owner_check: mismatch}` due to host filesystem ownership permissions (`pantheon-assistant`).
 - **Policy Compliance**: Per task instructions and `CURRENT-DELIVERY.zh-TW.md`, this state is reported truthfully. No fake OpenClaw credentials, synthesized tokens, or mock responses were introduced.
 
 ---

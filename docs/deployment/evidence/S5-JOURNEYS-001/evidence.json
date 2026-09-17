@@ -46,15 +46,17 @@
         "shell": false,
         "repo": false,
         "repo_write": false,
+        "docker": false,
         "live_capital": false,
         "command_broker": false,
         "secret_store": false,
         "paper_only": true
       },
+      "control_mode_state": "inactive",
       "fake_tokens_synthesized": false,
       "simulated_responses": false,
       "live_adapter_status": "degraded (assistant_credential_mounts on dev VM, documented non-blocking per CURRENT-DELIVERY.zh-TW.md)",
-      "details": "Management AI OpenClaw posture verified via authenticated GET /bff/assistant/mode. Confirmed user mode with shell, repo_write, and live_capital strictly false. VM adapter mounts status reported truthfully without fake credentials or simulation."
+      "details": "Management AI OpenClaw posture verified via authenticated GET /bff/assistant/mode, /bff/assistant/providers, and /bff/assistant/providers/usage-summary (all HTTP 200 OK). Confirmed product_default_mode='user' with user_mode capabilities (shell, repo, repo_write, command_broker, secret_store) strictly false and control_mode inactive. VM adapter mounts status reported truthfully without fake credentials or simulation."
     },
     "acceptance_4_prior_cases_sse_suggestions_and_fail_closed": {
       "status": "passed",
@@ -77,15 +79,15 @@
   "audit_seal": {
     "path": "docs/deployment/evidence/S5-JOURNEYS-001/audit-seal.json",
     "sealed_files_count": 11,
-    "sha256": "1b00498deb9ba8864d0f3c00b8d89c21e641ae8fe8aa1cbe30af486e70599a53"
+    "sha256": "ed66d749d005e59c9a58201d41e2a21dcd618b6c80bdc2206cb9d66cbf0f9b4c"
   },
   "delivered_files": {
-    "docs/deployment/evidence/S5-JOURNEYS-001/README.md": "4ca02d3371e8df1b15490ef80157717e59b3d1fdbdb47457337bc99c138b8686",
+    "docs/deployment/evidence/S5-JOURNEYS-001/README.md": "98545cf91d1cc51c776691c5917a6be93c82dd2decfd6bbfd1c78c232465c0ef",
     "docs/deployment/evidence/S5-JOURNEYS-001/agora-workshop-trading-performance.json": "2bef6941e62480d7bfe8fe030cedf07aee7aa069d85bfc67d47e149d17524d45",
-    "docs/deployment/evidence/S5-JOURNEYS-001/audit-seal.json": "1b00498deb9ba8864d0f3c00b8d89c21e641ae8fe8aa1cbe30af486e70599a53",
-    "docs/deployment/evidence/S5-JOURNEYS-001/desktop-journey-readback.json": "51ea2c7c792f3f111889eef8e69319eca3236792e9117bb2f0b27fdad60e2eeb",
+    "docs/deployment/evidence/S5-JOURNEYS-001/audit-seal.json": "ed66d749d005e59c9a58201d41e2a21dcd618b6c80bdc2206cb9d66cbf0f9b4c",
+    "docs/deployment/evidence/S5-JOURNEYS-001/desktop-journey-readback.json": "cb54b86e7712d902c54f1a69d20c855c737764453d0691238ae3a2f0bfce8dc4",
     "docs/deployment/evidence/S5-JOURNEYS-001/hosted-journey.json": "4aebdeaa6d76ffd2aa4b181ccf8759ddf6d32ba19dcee42547cc93149a041564",
-    "docs/deployment/evidence/S5-JOURNEYS-001/management-ai-openclaw-posture.json": "bfd82be823a7174c517591857b407e8c16ec2825defb6f9f7c27079606c4620f",
+    "docs/deployment/evidence/S5-JOURNEYS-001/management-ai-openclaw-posture.json": "3dca9fc534c810a9372c8aea003df074185eb8bb4678bf952e050457fe6e333b",
     "docs/deployment/evidence/S5-JOURNEYS-001/page-agora-strategy-performance.png": "ed99635be6562b30f680022de1978e687f78095fbde75c3b2e4c50bb22edca69",
     "docs/deployment/evidence/S5-JOURNEYS-001/page-agora-strategy-workshop.png": "252d1535847a56fa2f02aed2be6659e4d87ac51cf765411b5034cebf396c7ddb",
     "docs/deployment/evidence/S5-JOURNEYS-001/page-agora-trading-room.png": "822490a742301df818342a60c112f973933792f963d60886157a143f7c5bdf39",
