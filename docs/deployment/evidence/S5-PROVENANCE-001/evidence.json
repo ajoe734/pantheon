@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "task_id": "S5-PROVENANCE-001",
+  "task_title": "Verify Loop5 provenance, Loop8 executable RuntimeBinding and Loop9 paper lifecycle",
+  "phase": "step-5-semantic-gates",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "work_class": "hosted",
+  "target_repo": "pantheon",
+  "timestamp": "2026-09-17T01:50:00Z",
+  "stimulus_metadata": {
+    "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+    "generated_at": "2026-09-15T03:20:08Z",
+    "tenant_id": "tenant-dev",
+    "is_real": false,
+    "provenance": "simulation",
+    "source_container": "0a8d968a3ec3",
+    "historical_stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+  },
+  "acceptance_matrix": {
+    "acceptance_1_loop5_provenance": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "source_records": [
+        "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+        "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
+      ],
+      "retrieval_time": "2026-09-15T03:20:08Z",
+      "provenance_mode": "simulation",
+      "is_real": false,
+      "relabeled_as_real": false,
+      "research_identity": {
+        "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+        "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+        "reconstruction_id": "recon-16dd2fe75fe9443a",
+        "workshop_branch_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+        "authentic_adapter_wiring": "AuthenticStageAdapter_wired"
+      },
+      "five_field_status": "accepted",
+      "fields_verified_count": 5,
+      "details": "Loop 5 provenance audit confirmed: source retrieval time 2026-09-15T03:20:08Z, simulation provenance (is_real=false) preserved across all 5 levels, research identity bound, AuthenticStageAdapter wired, and 5/5 fields verified."
+    },
+    "acceptance_2_loop8_executable_runtime_binding": {
+      "status": "fail_closed_unaccepted",
+      "literal_criterion_satisfied": false,
+      "canonical_spec": "services/runtime_manager/runtime_binding.py",
+      "executable_runtime_binding_proven": false,
+      "strategy_state": "research_only",
+      "paper_json_insufficient": true,
+      "five_field_status": "unaccepted",
+      "fields_verified_count": 0,
+      "gap_id": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "functional_owner": "Human/Ops",
+      "deferral_directive": "2026-09-17T00:30:51Z",
+      "details": "Loop 8 fails closed truthfully: strategy R1 remains research_only. No executable RuntimeBinding was created, loaded, or transitioned. Static paper JSON alone is strictly insufficient."
+    },
+    "acceptance_3_loop9_natural_paper_lifecycle": {
+      "status": "fail_closed_unaccepted",
+      "literal_criterion_satisfied": false,
+      "canonical_spec": "services/execution/lean_runtime/paper_runtime.py",
+      "paper_lifecycle_executed": false,
+      "live_capital_side_effect": false,
+      "live_broker_fail_closed": true,
+      "runtime_count": 0,
+      "total_trades": 0,
+      "five_field_status": "unaccepted",
+      "fields_verified_count": 1,
+      "gap_id": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "functional_owner": "Human/Ops",
+      "deferral_directive": "2026-09-17T00:30:51Z",
+      "details": "Loop 9 fails closed truthfully: performance readback confirms strategy T1 has runtime_count=0 and total_trades=0. Zero live-capital side effects confirmed, but natural paper trading lifecycle was not executed on the causal stimulus chain."
+    },
+    "acceptance_4_cross_check_and_fail_closed": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "fail_closed_enforced": true,
+      "synthetic_success_rejected": true,
+      "details": "Cross-checked Loop 5, Loop 8, and Loop 9 against five-field receipts. Loop 5 is ACCEPTED (5/5). Loops 8 and 9 FAIL CLOSED as UNACCEPTED (0/5 and 1/5) per canonical rules."
+    }
+  },
+  "five_field_cross_checks": {
+    "loop_5": {
+      "canonical_id": "agora_interaction_evidence",
+      "loop_index": 5,
+      "trigger_id": "ws-session-2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "terminal_output_id": "recon-16dd2fe75fe9443a",
+      "next_consumer_receipt_id": "himi-draft-prop-recon-16dd2fe75fe9443a",
+      "owner_worker_identity": "operator-bff-workshop-service (dc15751a9b20)",
+      "durable_reload_readback": "verified HTTP 200 reconstruct.json, completeness.json, cards-reload.json",
+      "status": "accepted",
+      "fields_present": 5,
+      "crosscheck_file": "docs/deployment/evidence/S5-PROVENANCE-001/loop5-provenance-crosscheck.json"
+    },
+    "loop_8": {
+      "canonical_id": "promotion_deployment",
+      "loop_index": 8,
+      "trigger_id": null,
+      "terminal_output_id": null,
+      "next_consumer_receipt_id": null,
+      "owner_worker_identity": null,
+      "durable_reload_readback": null,
+      "status": "unaccepted",
+      "deferral_reason": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "fields_present": 0,
+      "crosscheck_file": "docs/deployment/evidence/S5-PROVENANCE-001/loop8-runtime-binding-crosscheck.json"
+    },
+    "loop_9": {
+      "canonical_id": "capital_pool_execution",
+      "loop_index": 9,
+      "trigger_id": null,
+      "terminal_output_id": null,
+      "next_consumer_receipt_id": null,
+      "owner_worker_identity": null,
+      "durable_reload_readback": "performance attribution reader lists T1 with runtime_count=0, total_trades=0",
+      "status": "unaccepted",
+      "deferral_reason": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "fields_present": 1,
+      "crosscheck_file": "docs/deployment/evidence/S5-PROVENANCE-001/loop9-paper-lifecycle-crosscheck.json"
+    }
+  },
+  "functional_gaps": [
+    {
+      "gap_id": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "affected_loop": "promotion_deployment",
+      "description": "Promotion pipeline to transition admitted strategy R1 from research_only to executable RuntimeBinding deferred per Human/Ops directive (2026-09-17T00:30:51Z).",
+      "functional_owner": "Human/Ops"
+    },
+    {
+      "gap_id": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "affected_loop": "capital_pool_execution",
+      "description": "Paper trading execution telemetry, signals, orders, and fills deferred per Human/Ops directive (2026-09-17T00:30:51Z).",
+      "functional_owner": "Human/Ops"
+    }
+  ],
+  "delivered_files": {
+    "docs/deployment/evidence/S5-PROVENANCE-001/README.md": "d6a43bdd7c2274ba9d8b1a6d5565c3c4eb144a993a6e8ecd628fcfcc8b5298a0",
+    "docs/deployment/evidence/S5-PROVENANCE-001/loop5-provenance-crosscheck.json": "29368507b7aa0cdae1d313d066f062df73d349390697274d2ebd135d33fe1333",
+    "docs/deployment/evidence/S5-PROVENANCE-001/loop8-runtime-binding-crosscheck.json": "e67ed8fc2d81155ea3eb570da7375bd45dfbd30c030702afab2dc5dbefc4ae06",
+    "docs/deployment/evidence/S5-PROVENANCE-001/loop9-paper-lifecycle-crosscheck.json": "04be7fa53892da45f6adf7d40543b4e6a4ec0701df60c971de9b8cf2758ffa65",
+    "docs/deployment/evidence/S5-PROVENANCE-001/audit-seal.json": "18c6f192f96392a6abb94ec5fe507a33b7160dba19cd014dac1aef6b0b1e01cb"
+  },
+  "audit_seal": {
+    "path": "docs/deployment/evidence/S5-PROVENANCE-001/audit-seal.json",
+    "sealed_files_count": 4,
+    "sha256": "18c6f192f96392a6abb94ec5fe507a33b7160dba19cd014dac1aef6b0b1e01cb"
+  },
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "task_branch": "task/S5-PROVENANCE-001"
+  },
+  "specification_reference": {
+    "loops_1_12_evidence": "/tmp/pantheon-delivery-20260913.MnZdSN/LOOPS-1-12-EVIDENCE.zh-TW.md",
+    "current_delivery": "/tmp/pantheon-delivery-20260913.MnZdSN/CURRENT-DELIVERY.zh-TW.md",
+    "remaining_product_gaps": "/tmp/pantheon-delivery-20260913.MnZdSN/REMAINING-PRODUCT-GAPS.zh-TW.md",
+    "s5_loops_evidence": "docs/deployment/evidence/S5-LOOPS-001/evidence.json",
+    "s5_loops_manifest": "docs/deployment/evidence/S5-LOOPS-001/loops-1-12-manifest.json",
+    "runtime_binding_contract": "services/runtime_manager/runtime_binding.py",
+    "paper_runtime_contract": "services/execution/lean_runtime/paper_runtime.py"
+  },
+  "verification_commands": [
+    "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/runtime_manager/test_runtime_binding.py services/control-plane/governance/test_paper_runtime_binding.py services/control-plane/bff/tests/test_research_default_provenance.py (76 passed in 11.79s)",
+    "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/trade_journey/test_canonical_paper_lifecycle_integration.py services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py (39 passed, 1 warning in 10.26s)",
+    "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q scripts/test_verify_e2e_binding_provenance.py (9 passed in 1.52s)",
+    "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q scripts/test_agora_compat_manifest.py scripts/test_cross_repo_release_controller.py scripts/test_dev_release_artifacts.py scripts/test_deploy_nonprod_vm.py scripts/test_check_shared_deploy_workflow_disabled.py tests/test_loop_catalog_registry.py (216 passed, 3 skipped in 109.15s)"
+  ]
+}
