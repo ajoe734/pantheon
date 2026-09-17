@@ -1,0 +1,111 @@
+{
+  "loop_index": 5,
+  "canonical_id": "agora_interaction_evidence",
+  "loop_name": "Agora Interaction Evidence & Research",
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+  "stimulus_timestamp": "2026-09-15T03:20:08Z",
+  "provenance_verification": {
+    "source_dataset": {
+      "source_records": [
+        "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+        "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
+      ],
+      "snapshot_id": "mss-5fd4452dc6869e10c8e965b9",
+      "symbols": ["SPY", "QQQ"],
+      "rows_per_symbol": 30,
+      "declared_is_real": false,
+      "declared_provenance": "simulation",
+      "retrieval_time": "2026-09-15T03:20:08Z"
+    },
+    "simulation_immutability_audit": {
+      "source_ingestion_level": {
+        "is_real": false,
+        "provenance": "simulation",
+        "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/source-execution-context.json"
+      },
+      "distillation_level": {
+        "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+        "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+        "execution_mode": "research_only",
+        "is_real": false,
+        "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/distillation-registry-readback.json"
+      },
+      "alpha_replication_level": {
+        "experiment_run_id": "erun-alpha-d20376aef23b4bd0",
+        "research_authority_run_id": "rrun-20260915-009",
+        "is_real": false,
+        "provenance": "simulation",
+        "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/alpha-research-reload.json"
+      },
+      "teaching_level": {
+        "teaching_session_id": "trn-20260917-7accca38530e",
+        "teaching_event_id": "tevt-20260917-b89287bc65-001",
+        "is_real": false,
+        "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/teaching-readbacks/session-readback.json"
+      },
+      "agora_workshop_level": {
+        "workshop_session_id": "ws-session-2afec261-fe60-43af-bacb-136c60a8f9ba",
+        "message_event_id": "6287a125-8d7d-4baa-8c5b-63638e40d199",
+        "reconstruction_id": "recon-16dd2fe75fe9443a",
+        "completeness_grade": "trading_room_ready",
+        "is_real": false,
+        "provenance": "simulation",
+        "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/reconstruct.json"
+      },
+      "relabeled_as_real": false,
+      "verdict": "PASSED"
+    },
+    "research_identity": {
+      "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+      "reconstruction_id": "recon-16dd2fe75fe9443a",
+      "workshop_branch_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "research_adapter_wiring": "AuthenticStageAdapter_wired",
+      "adapter_prs_deployed": ["PR #5829", "PR #5830"],
+      "deployed_bff_commit": "dc15751a9b20f8bc0931529d68af8898e691c898"
+    }
+  },
+  "five_field_receipt_check": {
+    "trigger_id": {
+      "value": "ws-session-2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "present": true,
+      "event_id": "6287a125-8d7d-4baa-8c5b-63638e40d199"
+    },
+    "terminal_output_id": {
+      "value": "recon-16dd2fe75fe9443a",
+      "present": true,
+      "details": {
+        "completeness_grade": "trading_room_ready",
+        "confirmed_blocks": 12,
+        "hard_blockers": 0
+      }
+    },
+    "next_consumer_receipt_id": {
+      "value": "himi-draft-prop-recon-16dd2fe75fe9443a",
+      "present": true,
+      "details": {
+        "consumer_type": "draft_proposal",
+        "downstream_loop": "human_imitation_shadow_evaluation"
+      }
+    },
+    "owner_worker_identity": {
+      "value": "operator-bff-workshop-service",
+      "present": true,
+      "container_id": "dc15751a9b20"
+    },
+    "durable_reload_readback": {
+      "present": true,
+      "readback_status": 200,
+      "evidence_files": [
+        "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/reconstruct.json",
+        "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/completeness.json",
+        "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/cards-reload.json",
+        "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/events.json",
+        "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/versions-reload.json"
+      ],
+      "verified": true
+    },
+    "status": "ACCEPTED",
+    "fields_present_count": 5,
+    "fields_required_count": 5
+  }
+}
