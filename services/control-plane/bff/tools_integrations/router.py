@@ -716,7 +716,7 @@ def create_integrations_router(
     ) -> JSONResponse:
         return deprecated_bff_path_response(
             route="/bff/tools/{tool_id}/actions/{action_id}",
-            replacement="/bff/actions/tool/{tool_id}/{action_id}",
+            replacement="/bff/v1/commands",
         )
 
     @router.get("/bff/mcp/servers")
@@ -1041,7 +1041,7 @@ def create_integrations_router(
     ) -> JSONResponse:
         return deprecated_bff_path_response(
             route="/bff/skills/{skill_id}/actions/{action_id}",
-            replacement="/bff/actions/skill/{skill_id}/{action_id}",
+            replacement="/bff/v1/commands",
         )
 
     @router.post("/bff/skills/{skill_id}/sandbox-eval", status_code=202)

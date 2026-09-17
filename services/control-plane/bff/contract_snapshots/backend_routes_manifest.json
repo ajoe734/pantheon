@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "snapshot_date": "2026-08-27",
+    "snapshot_date": "2026-09-15",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
     "total_routes": 701,
@@ -267,6 +267,12 @@
     {
       "method": "GET",
       "path": "/bff/agora/notes",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/operational-readiness",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -1508,6 +1514,18 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/research/analyses",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/analyses/{param}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/research/analysis",
       "family": "api-v1",
       "status": "implemented"
@@ -1515,6 +1533,24 @@
     {
       "method": "GET",
       "path": "/api/v1/research/analysis/{param}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/artifacts",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/artifacts/compare",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/artifacts/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -1877,8 +1913,7 @@
       "method": "PATCH",
       "path": "/bff/ranking-formulas/{param}",
       "family": "capital-ranking-rebalance",
-      "status": "alias",
-      "covered_by": "PATCH /bff/ranking/formulas/{param}"
+      "status": "implemented"
     },
     {
       "method": "PATCH",
@@ -2074,12 +2109,6 @@
       "status": "implemented"
     },
     {
-      "method": "PATCH",
-      "path": "/bff/research-experiments/{param}",
-      "family": "evolution-experiment-jobs-events",
-      "status": "implemented"
-    },
-    {
       "method": "POST",
       "path": "/bff/artifacts",
       "family": "evolution-experiment-jobs-events",
@@ -2112,12 +2141,6 @@
     {
       "method": "POST",
       "path": "/bff/jobs/{param}/actions/{param}",
-      "family": "evolution-experiment-jobs-events",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/research-experiments",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
@@ -2226,12 +2249,6 @@
     {
       "method": "GET",
       "path": "/bff/approvals",
-      "family": "final-contract",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/actions/{param}/{param}/{param}",
       "family": "final-contract",
       "status": "implemented"
     },
@@ -2966,12 +2983,6 @@
     },
     {
       "method": "POST",
-      "path": "/api/v1/operator/commands",
-      "family": "operator",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
       "path": "/api/v1/operator/openclaw/sessions",
       "family": "operator",
       "status": "implemented"
@@ -3122,19 +3133,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/approvals/stream",
-      "family": "sse-substrate",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
       "path": "/api/v1/incidents/stream",
-      "family": "sse-substrate",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/kill-switch/updates",
       "family": "sse-substrate",
       "status": "implemented"
     },

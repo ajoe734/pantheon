@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
@@ -40,6 +39,10 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from services.control_plane.bff.models import ErrorCode, ObjectType
+from services.control_plane.bff.ports.evolution_program_commands import (
+    EvolutionProgramCommandError,
+    EvolutionProgramCommandPort,
+)
 
 from .service import (
     EvolutionService,
@@ -163,6 +166,58 @@ def _default_bff_error(status_code: int, code: Any, message: str, reason: Option
     )
 
 
+def _identity_tenant(identity: Any) -> Optional[str]:
+    """Resolve the authenticated caller's tenant from identity claims.
+
+    Mirrors ``services/control-plane/bff/control_loops/router.py::_identity_tenant``.
+    Never trusts a client-supplied body field as the tenant of record; the BFF
+    forwards this resolved value to the Evolution service's write port, which
+    revalidates it against its own authenticated request scope.
+    """
+    claims = getattr(identity, "claims", {})
+    if not isinstance(claims, dict):
+        return None
+    for key in ("tenant_id", "tenantId", "tid", "org_id"):
+        value = claims.get(key)
+        if value:
+            return str(value).strip() or None
+    tenant = claims.get("tenant")
+    if isinstance(tenant, dict) and tenant.get("id"):
+        return str(tenant["id"]).strip() or None
+    return None
+
+
+_PROGRAM_PATCH_ALLOWED_FIELDS = {"name"}
+_APPROVER_PROGRAM_ACTIONS = {
+    "approve_program",
+    "retire_program",
+    "freeze_generation",
+    "promote_candidate_paper",
+    "promote_candidate_live",
+    "approve_mutation",
+    "reject_mutation",
+}
+
+
+def _program_command_error_code(status_code: int) -> ErrorCode:
+    return {
+        401: ErrorCode.AUTH_REQUIRED,
+        403: ErrorCode.FORBIDDEN,
+        404: ErrorCode.RESOURCE_NOT_FOUND,
+        409: ErrorCode.RESOURCE_CONFLICT,
+        422: ErrorCode.VALIDATION_FAILED,
+    }.get(status_code, ErrorCode.DEPENDENCY_UNAVAILABLE)
+
+
+def _raise_program_command_error(bff_error: Callable[..., Exception], exc: "EvolutionProgramCommandError") -> None:
+    raise bff_error(
+        exc.status_code,
+        _program_command_error_code(exc.status_code),
+        "Evolution program command failed",
+        str(exc),
+    ) from exc
+
+
 def _filter_by_status_csv(records: List[Dict[str, Any]], status_csv: Optional[str]) -> List[Dict[str, Any]]:
     if not status_csv:
         return records
@@ -184,6 +239,7 @@ def _register_evolution_programs_routes(
     snapshot_meta: SnapshotMeta,
     dataset_surface_status: SurfaceStatus,
     submit_program_action: Optional[SubmitAction] = None,
+    program_commands: Optional[EvolutionProgramCommandPort] = None,
 ) -> None:
     def _resolve_read_store() -> Any:
         if read_surface is not None:
@@ -191,6 +247,13 @@ def _register_evolution_programs_routes(
         if get_read_store is not None:
             return get_read_store()
         return None
+
+    def _resolve_program_commands() -> Optional[EvolutionProgramCommandPort]:
+        # Accept either a direct port instance or a zero-arg callable
+        # resolving it lazily (mirrors ``_resolve_read_store`` above), so a
+        # caller (e.g. main.py, or a test swapping a module-level variable)
+        # can rebind the live port without rebuilding the router.
+        return program_commands() if callable(program_commands) else program_commands
 
     def _require_program(read_store: Any, program_id: str) -> Dict[str, Any]:
         program = getattr(read_store, "get_evolution_program", lambda pid: None)(program_id)
@@ -233,8 +296,18 @@ def _register_evolution_programs_routes(
     async def create_evolution_program(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
-        """Create an evolution program. ``name`` is required (422 otherwise)."""
+        """Create an evolution program. ``name`` is required (422 otherwise).
+
+        Per the U8A owner contract, create always starts a program at
+        ``draft`` with a server-generated identity; a client-supplied
+        ``status``, ``program_id``/``id``, ``actor_id`` or ``tenant_id`` is
+        an override attempt and is rejected with 422, never silently
+        honored. Writes go through the typed ``program_commands`` port to
+        the Evolution service's owner API — never the read surface.
+        """
         identity = extract_identity(authorization)
         require_operator_role(identity)
         name = str(payload.get("name") or "").strip()
@@ -244,21 +317,38 @@ def _register_evolution_programs_routes(
                 "Evolution program name must be a non-empty string",
                 precondition_failed="name",
             )
-        read_store = _resolve_read_store()
-        snapshot_at = utc_now()
-        program_id = str(
-            payload.get("program_id")
-            or payload.get("id")
-            or f"evp-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+        rejected = sorted(
+            k for k in payload
+            if k not in ("name",) and payload.get(k) not in (None, "")
         )
+        if rejected:
+            raise bff_error(
+                422, ErrorCode.VALIDATION_FAILED,
+                "Evolution program create does not accept these fields",
+                f"Unsupported create fields: {', '.join(rejected)}",
+                precondition_failed="unsupported_fields",
+                details_extra={"fields": rejected},
+            )
+        resolved_commands = _resolve_program_commands()
+        if resolved_commands is None:
+            raise bff_error(
+                501,
+                ErrorCode.NOT_IMPLEMENTED,
+                "Evolution program commands are not wired",
+                "program_commands was not injected into create_evolution_programs_router",
+            )
         actor_id = getattr(identity, "operator_id", "operator-1")
-        return getattr(read_store, "create_evolution_program")(
-            program_id=program_id,
-            name=name,
-            actor_id=actor_id,
-            created_at=snapshot_at,
-            params=payload.get("params") or {},
-        )
+        tenant_id = _identity_tenant(identity)
+        key = (idempotency_key or x_idempotency_key or "").strip() or None
+        try:
+            return await resolved_commands.create_program(
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                name=name,
+                idempotency_key=key,
+            )
+        except EvolutionProgramCommandError as exc:
+            _raise_program_command_error(bff_error, exc)
 
     @router.get("/bff/evolution-programs/{program_id}")
     async def get_evolution_program(
@@ -277,21 +367,75 @@ def _register_evolution_programs_routes(
         program_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
-        """Patch ``name``/``status``/``params``; other fields are ignored."""
+        """Patch ``name`` only (U8A metadata allowlist).
+
+        Per docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md
+        §3, ``status``/``state``/``params`` and every other field is rejected
+        with 422 rather than silently dropped — this previously accepted
+        ``status``/``params`` here and wrote them straight onto the read
+        surface. ``revision`` is the required CAS precondition (the current
+        revision the caller read), not a patchable metadata field. Writes go
+        through the typed ``program_commands`` port to the Evolution
+        service's owner API.
+
+        Direct-PATCH ``status=paused`` is intentionally no longer a way to
+        pause a program (see the U8A/U8B test-migration note in
+        ``test_evolution_program_owner_contract.py``): pausing is a program
+        lifecycle *action*, submitted via
+        ``POST /bff/evolution-programs/{id}/actions/pause_program``, which is
+        honestly reported unavailable until U8B implements real effects.
+        """
         identity = extract_identity(authorization)
         require_operator_role(identity)
-        read_store = _resolve_read_store()
         clean_id = program_id.strip()
-        _require_program(read_store, clean_id)
-        snapshot_at = utc_now()
+        rejected = sorted(k for k in payload if k not in _PROGRAM_PATCH_ALLOWED_FIELDS and k != "revision")
+        if rejected:
+            raise bff_error(
+                422, ErrorCode.VALIDATION_FAILED,
+                "Evolution program PATCH only accepts name",
+                f"Unsupported PATCH fields: {', '.join(rejected)}",
+                precondition_failed="unsupported_fields",
+                details_extra={"fields": rejected},
+            )
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise bff_error(
+                422, ErrorCode.VALIDATION_FAILED, "name is required",
+                "Evolution program name must be a non-empty string",
+                precondition_failed="name",
+            )
+        if "revision" not in payload or not isinstance(payload.get("revision"), int) or isinstance(payload.get("revision"), bool):
+            raise bff_error(
+                422, ErrorCode.VALIDATION_FAILED, "revision is required",
+                "PATCH requires the expected current revision as a precondition",
+                precondition_failed="revision",
+            )
+        resolved_commands = _resolve_program_commands()
+        if resolved_commands is None:
+            raise bff_error(
+                501,
+                ErrorCode.NOT_IMPLEMENTED,
+                "Evolution program commands are not wired",
+                "program_commands was not injected into create_evolution_programs_router",
+            )
         actor_id = getattr(identity, "operator_id", "operator-1")
-        updated = getattr(read_store, "patch_evolution_program")(
-            clean_id,
-            patch={k: payload[k] for k in ("name", "status", "params") if k in payload},
-            actor_id=actor_id,
-            updated_at=snapshot_at,
-        )
+        tenant_id = _identity_tenant(identity)
+        key = (idempotency_key or x_idempotency_key or "").strip() or None
+        snapshot_at = utc_now()
+        try:
+            updated = await resolved_commands.patch_program_name(
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                program_id=clean_id,
+                name=name,
+                expected_revision=payload["revision"],
+                idempotency_key=key,
+            )
+        except EvolutionProgramCommandError as exc:
+            _raise_program_command_error(bff_error, exc)
         return {"data": updated, "meta": snapshot_meta(snapshot_at)}
 
     @router.get("/bff/evolution-programs/{program_id}/runs")
@@ -341,6 +485,15 @@ def _register_evolution_programs_routes(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_operator_role(identity)
+        roles = {str(r).strip().lower() for r in getattr(identity, "roles", [])}
+        if action_id in _APPROVER_PROGRAM_ACTIONS and not ({"approver", "admin"}.intersection(roles)):
+            raise bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                f"Action {action_id} requires approver role",
+                f"Operator role(s) {sorted(roles)} not authorized for {action_id}; approver or admin required",
+                precondition_failed="role_check",
+            )
         resolved_key = (idempotency_key or x_idempotency_key or "").strip()
         read_store = _resolve_read_store()
         clean_id = program_id.strip()
@@ -352,10 +505,10 @@ def _register_evolution_programs_routes(
                 "Evolution program actions are not wired",
                 "submit_program_action was not injected into create_evolution_programs_router",
             )
-        try:
-            res = submit_program_action(ObjectType.EVOLUTION_PROGRAM.value, clean_id, action_id, resolved_key, identity, payload)
-        except TypeError:
-            res = submit_program_action(ObjectType.EVOLUTION_PROGRAM.value, clean_id, action_id, identity, payload)
+        # One canonical signature — no TypeError-guessing retry with a
+        # shorter argument list, which risked a double submission if the
+        # first (failed) call had already had a side effect.
+        res = submit_program_action(ObjectType.EVOLUTION_PROGRAM.value, clean_id, action_id, resolved_key, identity, payload)
         return res.model_dump(mode="json") if hasattr(res, "model_dump") else res
 
 
@@ -372,6 +525,7 @@ def create_evolution_programs_router(
     snapshot_meta: Optional[SnapshotMeta] = None,
     dataset_surface_status: Optional[SurfaceStatus] = None,
     submit_program_action: Optional[SubmitAction] = None,
+    program_commands: Optional[EvolutionProgramCommandPort] = None,
     **kwargs: Any,
 ) -> APIRouter:
     """Build the Evolution Programs router (ACG-01-006 / ACG-01-007).
@@ -393,6 +547,7 @@ def create_evolution_programs_router(
         snapshot_meta=snapshot_meta or _default_snapshot_meta,
         dataset_surface_status=dataset_surface_status or _default_dataset_surface_status,
         submit_program_action=submit_program_action,
+        program_commands=program_commands,
     )
     return router
 
@@ -413,8 +568,8 @@ def create_evolution_router(
     raise_if_read_surface_unavailable: Optional[Callable[..., None]] = None,
     meta_staleness: Optional[Callable[[], Any]] = None,
     submit_program_action: Optional[SubmitAction] = None,
-    mutation_review_inputs: Optional[Callable[[str], Tuple[Any, Any, Any, Any]]] = None,
-    mutation_review_projection: Optional[Callable[..., Dict[str, Any]]] = None,
+    program_commands: Optional[EvolutionProgramCommandPort] = None,
+    mutation_review_projection: Optional[Callable[..., Optional[Dict[str, Any]]]] = None,
     evolution_service: Optional[EvolutionService] = None,
 ) -> APIRouter:
     """Build the canonical Evolution domain router (OPGAP-BE-EVOLUTION-ROUTER-20260830).
@@ -460,6 +615,7 @@ def create_evolution_router(
         snapshot_meta=_snap_meta,
         dataset_surface_status=_surface_status_fn,
         submit_program_action=submit_program_action,
+        program_commands=program_commands,
     )
 
     # --------------------------------------------------------------------------- #
@@ -856,17 +1012,12 @@ def create_evolution_router(
                     "threshold_snapshots",
                 )
             ):
-                if mutation_review_inputs is not None and mutation_review_projection is not None:
-                    _, app_dec, l_inc, l_pm = mutation_review_inputs(dec_id)
-                    proj = mutation_review_projection(
-                        dec,
-                        approval_decision=app_dec,
-                        linked_incident=l_inc,
-                        linked_postmortem=l_pm,
-                        identity=identity,
-                        snapshot_at=snapshot_at,
-                    )
-                else:
+                proj = (
+                    mutation_review_projection(dec_id, identity=identity, snapshot_at=snapshot_at)
+                    if mutation_review_projection is not None
+                    else None
+                )
+                if proj is None:
                     app_dec = getattr(read_store, "get_approval_decision_by_id", lambda aid: None)(dec.get("approval_decision_id"))
                     proj = {
                         "decision_id": dec_id,
@@ -903,9 +1054,8 @@ def create_evolution_router(
                     route=f"/management/evolution-journal?mutation_review={dec_id}",
                     bff_detail_path=f"/api/v1/operator/mutation-review/{dec_id}",
                 )
-                mr_item["mutationReview"] = json.loads(json.dumps(proj))
-                mr_item["mutation_review"] = mr_item["mutationReview"]
-                mr_item["record"] = mr_item["mutationReview"]
+                mr_item["mutation_review"] = json.loads(json.dumps(proj))
+                mr_item["record"] = mr_item["mutation_review"]
                 items.append(mr_item)
 
         for pm in postmortems:

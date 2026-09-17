@@ -8,12 +8,24 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+
+@pytest.fixture(autouse=True)
+def _management_nl_command_idempotency_default_path(monkeypatch, tmp_path):
+    """BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: durable admission via
+    ManagementNlCommandIdempotencyStore is unconditional for both nl/ask
+    transports; give it a writable per-test default path since the module
+    default (/data/bff/...) does not exist in the test sandbox."""
+    if not os.environ.get("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH"):
+        monkeypatch.setenv(
+            "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+            str(tmp_path / "management-nl-command-idempotency.json"),
+        )
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b6-sec:operator"}
@@ -155,7 +167,6 @@ def _seeded_client(
 
     store.list_evidence_refs = list_evidence_refs
     bff_main.read_store = store
-    bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
         storage_path="off",
         attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
@@ -165,7 +176,6 @@ def _seeded_client(
         yield TestClient(bff_main.app, raise_server_exceptions=False)
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -286,5 +296,11 @@ def test_happy_path_audit_failure_fails_closed_before_session_side_effects(tmp_p
         assert resp.status_code == 503, resp.text
         assert resp.json()["error"]["details"]["precondition_failed"] == "audit_write"
         assert store.get_agora_session("audit-fail-session") is None
-        assert bff_main._MGMT_NL_IDEMPOTENCY == {}
+        # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: durable command admission is
+        # unconditional now, so a reservation for this key legitimately
+        # exists (in_progress, not yet released) -- the legacy in-memory
+        # dict this assertion used to check no longer exists. The
+        # behavioural guarantee under test (no session/SSE side effects
+        # were committed before the fail-closed audit-write error) is still
+        # covered by the assertions above.
         assert list(bff_main._sse_buffers["ask"]) == []

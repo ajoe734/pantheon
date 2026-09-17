@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator, Optional
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from command_queue import CommandStore
+from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.models import OperatorIdentity
 
 
 HEADERS = {
@@ -22,8 +23,35 @@ HEADERS = {
 }
 
 
-async def _noop_process_command(_command_id: str) -> None:
-    return None
+def _test_extract_identity(
+    authorization: Optional[str], mfa_token: Optional[str] = None
+) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        return OperatorIdentity(operator_id="anonymous", roles=["viewer"], auth_mode="anonymous", has_mfa=False)
+    token = authorization[len("Bearer ") :].strip()
+    parts = token.split(":")
+    actor = parts[0] if parts else "system"
+    roles = [r.strip() for r in parts[1].split(",")] if len(parts) > 1 else ["operator"]
+    return OperatorIdentity(
+        operator_id=actor,
+        roles=roles,
+        auth_mode="bearer",
+        has_mfa=len(parts) > 2 and parts[2] == "mfa",
+        mfa_verified=len(parts) > 2 and parts[2] == "mfa",
+    )
+
+
+_current_command_store: Optional[CommandStore] = None
+
+
+class _StoreProxy:
+    def _get_all_commands(self) -> list[dict[str, Any]]:
+        if _current_command_store is None:
+            return []
+        return _current_command_store._get_all_commands()
+
+
+command_store = _StoreProxy()
 
 
 def _error_detail(response) -> dict:
@@ -33,22 +61,26 @@ def _error_detail(response) -> dict:
 
 @contextmanager
 def _isolated_command_client() -> Iterator[TestClient]:
+    global _current_command_store
     with tempfile.TemporaryDirectory() as td:
-        original_command_store = bff_main.command_store
-        original_worker = bff_main._process_command_stub
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._process_command_stub = _noop_process_command
-        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-        bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        _current_command_store = store
+        svc = CommandAdapterService(
+            command_store=store,
+            read_surface=None,
+            extract_identity=_test_extract_identity,
+        )
+        app = FastAPI()
+        register_error_handlers(app)
+        router = create_command_adapters_router(
+            service=svc,
+            submit_command_admission=svc.submit_command_admission,
+        )
+        app.include_router(router)
         try:
-            yield TestClient(bff_main.app)
+            yield TestClient(app)
         finally:
-            bff_main.command_store = original_command_store
-            bff_main._process_command_stub = original_worker
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
+            _current_command_store = None
 
 
 def _receipt_id(payload: dict) -> str:
@@ -67,33 +99,54 @@ def _pause_execution_payload(reason: str = "BFF-CONSOL-021 replay proof") -> dic
     }
 
 
-def test_legacy_action_dual_writes_action_and_command_receipts() -> None:
+def _strategy_action_payload(
+    reason: str,
+    *,
+    strategy_id: str = "stg-bff-021",
+    action_id: str = "submit_review",
+) -> dict:
+    """Build the same StrategyAction command envelope the retired
+    `/bff/actions/{type}/{id}/{action}` adapter route used to construct
+    before forwarding into the shared `/bff/v1/commands` admission path.
+    """
+    audit_event = f"strategy.{action_id}"
+    return {
+        "command": "StrategyAction",
+        "target": {"type": "Strategy", "id": strategy_id},
+        "action": action_id,
+        "params": {
+            "reason": reason,
+            "action_id": action_id,
+            "actionId": action_id,
+            "entity_type": "strategy",
+            "entityType": "strategy",
+            "entity_id": strategy_id,
+            "entityId": strategy_id,
+            "audit_event": audit_event,
+        },
+        "audit_context": {"reason": reason},
+    }
+
+
+def test_strategy_action_command_writes_command_receipt() -> None:
     with _isolated_command_client() as client:
         response = client.post(
-            "/bff/actions/strategy/stg-bff-021/submit_review",
+            "/bff/v1/commands",
             headers={**HEADERS, "Idempotency-Key": "bff-consol-021-action-dual"},
-            json={"reason": "submit strategy review through dual-write proof"},
+            json=_strategy_action_payload("submit strategy review through dual-write proof"),
         )
 
         assert response.status_code == 202, response.text
-        assert response.headers["Deprecation"] == "true"
-        assert response.headers["Sunset"] == "Mon, 15 Jun 2026 00:00:00 GMT"
-        assert response.headers["X-Pantheon-Deprecated-Route"] == "/bff/actions/*"
-        assert "/bff/v1/commands" in response.headers["Link"]
+        assert "Deprecation" not in response.headers
         body = response.json()
         action_receipt_id = _receipt_id(body)
         assert body["data"]["command"] == "StrategyAction"
-        assert body["data"]["deprecated"] is True
-        assert body["data"]["deprecation"]["deprecated_since"] == "2026-05-14"
-        assert body["data"]["deprecation"]["replacement"] == "/bff/v1/commands"
-        assert body["data"]["receipt"]["deprecated"] is True
-        assert body["meta"]["deprecated"] is True
-        assert body["meta"]["deprecation"]["sunset"] == "2026-06-15"
+        assert "deprecated" not in body["data"]
         assert body["meta"]["durable"] is True
         assert body["meta"]["idempotency"]["idempotencyKey"] == "bff-consol-021-action-dual"
         assert body["meta"]["idempotency"]["replayed"] is False
 
-        records = bff_main.command_store._get_all_commands()
+        records = command_store._get_all_commands()
         assert len(records) == 1
         command_receipt = records[0]
         assert action_receipt_id == command_receipt["command_id"]
@@ -103,48 +156,42 @@ def test_legacy_action_dual_writes_action_and_command_receipts() -> None:
 
         foundation = command_receipt["foundation"]
         assert foundation["admission_route"] == "POST /bff/v1/commands"
-        assert foundation["source_route"] == "POST /bff/actions/{entityType}/{entityId}/{actionId}"
         assert foundation["idempotency_record"]["idempotency_key"] == "bff-consol-021-action-dual"
-        assert foundation["command_envelope"]["payload"]["source_route"] == (
-            "POST /bff/actions/{entityType}/{entityId}/{actionId}"
-        )
         assert command_receipt["audit"]["foundation"]["audit_action"]["metadata"]["route"] == (
             "POST /bff/v1/commands"
         )
 
 
-def test_legacy_action_idempotency_replay_returns_same_receipt() -> None:
+def test_strategy_action_idempotency_replay_returns_same_receipt() -> None:
     with _isolated_command_client() as client:
         headers = {**HEADERS, "Idempotency-Key": "bff-consol-021-action-replay"}
-        payload = {"reason": "same legacy action body replays"}
+        payload = _strategy_action_payload("same strategy action body replays")
 
-        first = client.post("/bff/actions/strategy/stg-bff-021/submit_review", headers=headers, json=payload)
-        second = client.post("/bff/actions/strategy/stg-bff-021/submit_review", headers=headers, json=payload)
+        first = client.post("/bff/v1/commands", headers=headers, json=payload)
+        second = client.post("/bff/v1/commands", headers=headers, json=payload)
 
         assert first.status_code == 202, first.text
         assert second.status_code == 202, second.text
-        assert second.headers["Deprecation"] == "true"
+        assert "Deprecation" not in second.headers
         assert _receipt_id(second.json()) == _receipt_id(first.json())
-        assert second.json()["data"]["deprecated"] is True
-        assert second.json()["data"]["receipt"]["deprecated"] is True
-        assert second.json()["meta"]["deprecation"]["replacement"] == "/bff/v1/commands"
+        assert "deprecated" not in second.json()["data"]
         assert second.json()["meta"]["idempotency"]["replayed"] is True
-        assert len(bff_main.command_store._get_all_commands()) == 1
+        assert len(command_store._get_all_commands()) == 1
 
 
-def test_legacy_action_idempotency_conflict_returns_409() -> None:
+def test_strategy_action_idempotency_conflict_returns_409() -> None:
     with _isolated_command_client() as client:
         headers = {**HEADERS, "Idempotency-Key": "bff-consol-021-action-conflict"}
 
         first = client.post(
-            "/bff/actions/strategy/stg-bff-021/submit_review",
+            "/bff/v1/commands",
             headers=headers,
-            json={"reason": "initial action body"},
+            json=_strategy_action_payload("initial action body"),
         )
         conflict = client.post(
-            "/bff/actions/strategy/stg-bff-021/submit_review",
+            "/bff/v1/commands",
             headers=headers,
-            json={"reason": "changed action body"},
+            json=_strategy_action_payload("changed action body"),
         )
 
         assert first.status_code == 202, first.text
@@ -153,7 +200,7 @@ def test_legacy_action_idempotency_conflict_returns_409() -> None:
         assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["foundation_error"]["error_code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["audit_action"]["action_type"] == "bff.command.idempotency_conflict"
-        assert len(bff_main.command_store._get_all_commands()) == 1
+        assert len(command_store._get_all_commands()) == 1
 
 
 def test_final_command_idempotency_replay_returns_same_receipt() -> None:
@@ -170,7 +217,7 @@ def test_final_command_idempotency_replay_returns_same_receipt() -> None:
         assert "Deprecation" not in second.headers
         assert _receipt_id(second.json()) == _receipt_id(first.json())
         assert "deprecated" not in first.json()["data"]
-        records = bff_main.command_store._get_all_commands()
+        records = command_store._get_all_commands()
         assert len(records) == 1
         assert records[0]["type"] == "PauseExecution"
         assert records[0]["foundation"]["admission_route"] == "POST /bff/v1/commands"
@@ -193,7 +240,7 @@ def test_final_command_idempotency_conflict_returns_409() -> None:
         assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["foundation_error"]["error_code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["audit_action"]["action_type"] == "bff.command.idempotency_conflict"
-        assert len(bff_main.command_store._get_all_commands()) == 1
+        assert len(command_store._get_all_commands()) == 1
 
 
 def test_final_command_missing_confirm_token_returns_typed_error() -> None:
@@ -218,7 +265,7 @@ def test_final_command_missing_confirm_token_returns_typed_error() -> None:
         assert detail["error"]["details"]["kind"] == "confirm_token"
         assert detail["foundation_error"]["error_code"] == "CONFIRMATION_REQUIRED"
         assert detail["audit_action"]["action_type"] == "bff.command.rejected"
-        assert bff_main.command_store._get_all_commands() == []
+        assert command_store._get_all_commands() == []
 
 
 def test_final_command_missing_approval_evidence_returns_typed_error() -> None:
@@ -240,4 +287,4 @@ def test_final_command_missing_approval_evidence_returns_typed_error() -> None:
         assert detail["error"]["details"]["kind"] == "approval"
         assert detail["foundation_error"]["error_code"] == "HUMAN_GATE_PENDING"
         assert detail["audit_action"]["action_type"] == "bff.command.rejected"
-        assert bff_main.command_store._get_all_commands() == []
+        assert command_store._get_all_commands() == []

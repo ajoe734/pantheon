@@ -187,10 +187,21 @@ def _url(value, kind):
     return value.rstrip("/")
 
 
+def _drift_recovery_source(args) -> str | None:
+    source = getattr(args, "baseline_source", None) or os.environ.get("PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE", "")
+    if not source or not str(source).endswith("+live_bff_drift_recovery"):
+        return None
+    observed = getattr(args, "observed_live_bff_sha", None) or os.environ.get("PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA", "")
+    if not observed or not isinstance(observed, str) or not re.fullmatch(r"[0-9a-f]{40}", observed):
+        raise a.ArtifactError("invalid observed live BFF drift identity")
+    return observed
+
+
 def _identity(args):
     for name in ("controller_sha", "candidate_backend_sha", "candidate_frontend_sha", "previous_backend_sha", "previous_frontend_sha"):
         a._match(getattr(args, name), a.SHA, name)
     a._match(args.candidate_id, a.DIGEST, "candidate ID")
+    _drift_recovery_source(args)
     if not re.fullmatch(r"[0-9]{1,20}", args.run_id) or not re.fullmatch(r"[0-9]{1,10}", args.attempt):
         raise a.ArtifactError("invalid run/attempt")
     # GCE reports either the short VM name or its project-qualified hostname.
@@ -341,7 +352,14 @@ def _public(args, expected_fe, http, barrier):
     if status != 200: raise a.ArtifactError("BFF health readback failed")
     status, raw = request("GET", "/bff/version")
     version = a._json(raw) if status == 200 else None
-    if not isinstance(version, dict) or version.get("source_commit_sha") != args.previous_backend_sha:
+    if not isinstance(version, dict):
+        raise a.ArtifactError("public BFF source readback mismatch")
+    drift_sha = _drift_recovery_source(args)
+    source_sha = version.get("source_commit_sha")
+    allowed_sources = {args.previous_backend_sha}
+    if drift_sha is not None:
+        allowed_sources.add(drift_sha)
+    if source_sha not in allowed_sources:
         raise a.ArtifactError("public BFF source readback mismatch")
     posture = version.get("config_posture", version)
     if not isinstance(posture, dict) or posture.get("auth_stub") is not False or posture.get("auth_mode") != "strict":
@@ -376,7 +394,7 @@ def _public(args, expected_fe, http, barrier):
         environment.get("name") != "dev" or environment.get("auth_mode") != "strict" or environment.get("strict_auth") is not True or
         session.get("authenticated") is not True or session.get("session_kind") != "bearer" or session.get("fresh") is not True):
         raise a.ArtifactError("server-bound viewer identity/tenant/auth readback mismatch")
-    return {"source_sha": args.previous_backend_sha, "fe_manifest_bytes_verified": True,
+    return {"source_sha": source_sha, "fe_manifest_bytes_verified": True,
             "strict_auth_denials_verified": True, "authenticated_viewer_readback_verified": True}
 
 
@@ -558,6 +576,9 @@ class RestoreCAS:
         allowed_sources = set()
         if image == self.baseline["image_bundle"]["services"]["operator-bff"]["image_id"]:
             allowed_sources.add(self.args.previous_backend_sha)
+            drift_sha = _drift_recovery_source(self.args)
+            if drift_sha is not None:
+                allowed_sources.add(drift_sha)
         if image == self.candidate["services"]["operator-bff"]["image_id"]:
             allowed_sources.add(self.args.candidate_backend_sha)
         if source not in allowed_sources:
@@ -579,8 +600,11 @@ def _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, ht
     if a._file_digest(folder / "baseline-compose.yml")[0] != outer["compose_sha256"]:
         raise a.ArtifactError("retained baseline Compose has drifted")
     _check_compose_config(folder / "baseline-compose.yml", outer["baseline_nonsecret_config"], docker)
+    drift_sha = _drift_recovery_source(args)
+    allowed_revisions = (drift_sha,) if drift_sha else ()
     a.validate_images(a.manifest_bytes(outer["image_bundle"]), expected_sha256=outer["image_bundle_sha256"],
-                      expected_source_sha=args.previous_backend_sha, archive_root=ROOT / "images")
+                      expected_source_sha=args.previous_backend_sha, archive_root=ROOT / "images",
+                      allowed_revisions=allowed_revisions)
     a.verify_frontend(outer["frontend"], release_store=args.fe_release_store, live_link=args.fe_live_link)
     _public(args, outer["frontend"], http, barrier)
     before = _service_snapshot(docker)
@@ -657,7 +681,10 @@ def run(args, *, docker, http, barrier):
             a._directory(directory, private=True)
         if manifest_path.exists():
             raise a.ArtifactError("capture already sealed; use verify with its trusted digest")
-        bundle = a.capture_images(docker=docker, archive_root=images, source_sha=args.previous_backend_sha, check_lease=barrier.check)
+        drift_sha = _drift_recovery_source(args)
+        allowed_revisions = (drift_sha,) if drift_sha else ()
+        bundle = a.capture_images(docker=docker, archive_root=images, source_sha=args.previous_backend_sha,
+                                  check_lease=barrier.check, allowed_revisions=allowed_revisions)
         a.verify_frontend(frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)
         if _owners(docker) != owners_before: raise a.ArtifactError("protected owners changed during capture")
         if _config(docker) != config_before: raise a.ArtifactError("baseline configuration changed during capture")
@@ -680,8 +707,11 @@ def run(args, *, docker, http, barrier):
         return _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, http, barrier)
     if compose_digest != outer["compose_sha256"] or a._file_digest(folder / "baseline-compose.yml")[0] != compose_digest:
         raise a.ArtifactError("baseline Compose bytes mismatch")
+    drift_sha = _drift_recovery_source(args)
+    allowed_revisions = (drift_sha,) if drift_sha else ()
     bundle_raw = a.manifest_bytes(outer["image_bundle"])
-    a.validate_images(bundle_raw, expected_sha256=outer["image_bundle_sha256"], expected_source_sha=args.previous_backend_sha, archive_root=images)
+    a.validate_images(bundle_raw, expected_sha256=outer["image_bundle_sha256"], expected_source_sha=args.previous_backend_sha,
+                      archive_root=images, allowed_revisions=allowed_revisions)
     # FE compensation remains FE-owned. Do not mutate even BFF if FE did not
     # restore its exact prior target and bytes first.
     a.verify_frontend(outer["frontend"], release_store=args.fe_release_store, live_link=args.fe_live_link)
@@ -700,7 +730,7 @@ def run(args, *, docker, http, barrier):
         os.environ.update({key: value or "" for key, value in outer["baseline_nonsecret_config"].items()})
         a.restore_images(bundle_raw, expected_sha256=outer["image_bundle_sha256"], expected_source_sha=args.previous_backend_sha,
                          archive_root=images, compose_files=((args.compose_file, compose_digest),), docker=cas,
-                         check_lease=cas.check, environment="dev")
+                         check_lease=cas.check, environment="dev", allowed_revisions=allowed_revisions)
     observed = {service: a._current(docker, service)["image_id"] for service in a.SERVICES}
     if any(observed[service] != outer["image_bundle"]["services"][service]["image_id"] for service in a.SERVICES):
         raise a.ArtifactError("image readback differs despite any equal source SHA")
@@ -733,6 +763,10 @@ def parse_args(argv=None):
     parser.add_argument("--manifest-sha256")
     parser.add_argument("--candidate-image-manifest", type=Path)
     parser.add_argument("--candidate-image-manifest-sha256")
+    parser.add_argument("--baseline-source",
+                        default=os.environ.get("PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE", ""))
+    parser.add_argument("--observed-live-bff-sha",
+                        default=os.environ.get("PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA", ""))
     parser.add_argument("--guard-channel-fd", type=int, required=True)
     parser.add_argument("--guard-max-silence-seconds", type=float, default=10)
     return parser.parse_args(argv)

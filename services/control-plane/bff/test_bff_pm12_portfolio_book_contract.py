@@ -7,35 +7,92 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main  # noqa: E402
-from ports import ReadSurfacePorts  # noqa: E402
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.capital.router import create_capital_router
+from services.control_plane.bff.core.app_factory import build_bff_app
+from services.control_plane.bff.management_read_models.ranking_router import (
+    create_performance_attribution_router,
+)
+from services.control_plane.bff.management_read_models.router import create_management_router
+from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
 
 HEADERS = {"Authorization": "Bearer op-pm12:operator"}
 FOCUS_PERSONA_ID = "persona-20260528-04688755"
 
 
+# RETAINED_COMPOSITION (seam gap): `_pm12_performance_attribution_response` is
+# a composition-root-only function defined in services/control-plane/bff/main.py
+# (currently around line 17264) that composes the PM-12 performance-attribution
+# rows straight from module-level helpers (`_pm12_performance_attribution_sources`,
+# `_pm12_performance_attribution_facts`, `_pm12_performance_attribution_page_entries`,
+# `_filter_by_common_identifiers`) which likewise only exist in main.py. No
+# extracted equivalent exists anywhere else in the BFF tree (checked
+# management_read_models/ranking_router.py, which defines the route itself
+# but takes this exact function as an injected dependency the same way
+# main.py wires it — see main.py's `create_performance_attribution_router(
+# ..., pm12_performance_attribution_response=_pm12_performance_attribution_response)`
+# call). Extracting that composition logic out of main.py is out of scope for
+# this task (main.py may not be edited), so this one dependency is sourced
+# from main.py via a lazily-imported module reference, exactly the same
+# function object production wiring already uses. Every other router used
+# below (capital, management, performance-attribution route registration
+# itself) is the real, already-extracted, production factory — no bespoke
+# shim or second router is introduced.
+def _bff_main_module():
+    bff_dir = os.path.dirname(__file__)
+    if bff_dir not in sys.path:
+        sys.path.insert(0, bff_dir)
+    import main as bff_main  # noqa: E402
+
+    return bff_main
+
+
+def _build_pm12_app(store: "ReadSurfacePorts") -> Any:
+    """Compose the same routers main.py mounts for the PM-12 portfolio-book,
+    performance-attribution and risk-radar surfaces, using the real
+    production factories directly instead of importing the whole
+    composition root."""
+    app = build_bff_app()
+    read_surface = lambda: store  # noqa: E731
+
+    app.include_router(
+        create_capital_router(
+            read_surface=read_surface,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+        )
+    )
+    app.include_router(
+        create_management_router(
+            read_surface=store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            tenant_payload_fn=auth_policy.bff_me_tenant_payload,
+        )
+    )
+    app.include_router(
+        create_performance_attribution_router(
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            bff_me_tenant_payload=auth_policy.bff_me_tenant_payload,
+            pm12_performance_attribution_response=_bff_main_module()._pm12_performance_attribution_response,
+        )
+    )
+    return app
+
+
 class PortfolioBookTestReadPorts(ReadSurfacePorts):
     def __init__(self) -> None:
         super().__init__()
-        self._ranking_snapshots: dict[str, Any] = {}
 
     def get_capability_snapshot_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
         return {}
 
     def get_persona_capabilities(self, persona_id: str | None) -> dict[str, Any] | None:
         return {}
-
-    def put_ranking_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
-        snapshot_id = payload.get("id") or payload.get("ranking_snapshot_id") or "snap-1"
-        self._ranking_snapshots[snapshot_id] = payload
-        return payload
-
-    def get_ranking_snapshot(self, snapshot_id: str | None) -> dict[str, Any] | None:
-        return self._ranking_snapshots.get(str(snapshot_id or ""))
-
 
 def _portfolio_store(
     monkeypatch,
@@ -214,8 +271,7 @@ def _portfolio_store(
         }.get(dataset, "missing")
 
     store.dataset_source = dataset_source
-    monkeypatch.setattr(bff_main, "read_store", store)
-    return TestClient(bff_main.app)
+    return TestClient(_build_pm12_app(store))
 
 
 def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch) -> None:
@@ -278,6 +334,7 @@ def test_portfolio_book_requires_read_auth(monkeypatch) -> None:
 
 def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
+    bff_main = _bff_main_module()
     projected_pool_ids: list[str] = []
     original_projector = bff_main._management_portfolio_book_exposure_item
 
@@ -386,6 +443,7 @@ def test_portfolio_book_exposure_cors_preflight(monkeypatch) -> None:
 
 def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
+    bff_main = _bff_main_module()
     projected_runtime_ids: list[str] = []
     original_projector = bff_main._management_portfolio_holding_entry
 
@@ -1510,6 +1568,10 @@ def test_portfolio_book_positions_reports_degraded_telemetry(monkeypatch) -> Non
 
 
 def test_portfolio_book_is_registered_in_openapi() -> None:
+    # This checks the real, fully-assembled composition-root app (not a
+    # locally built test harness) since the point of the assertion is that
+    # these routes are registered in the actual app main.py builds.
+    bff_main = _bff_main_module()
     bff_main.app.openapi_schema = None
     schema = bff_main.app.openapi()
 

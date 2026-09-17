@@ -9,13 +9,26 @@ import os
 import sys
 import tempfile
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional
 
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
-from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.events.router import create_events_router
+from services.control_plane.bff.events.service import EventStreamService
+from services.control_plane.bff.evolution.router import create_evolution_programs_router
+from services.control_plane.bff.jobs.router import create_jobs_router
+from services.control_plane.bff.models import (
+    ActionCommandStatus,
+    CommandReceipt,
+    CommandReceiptStatus,
+    CommandResponse,
+    CommandRoutingPath,
+    CommandSubmissionResponse,
+    ErrorCode,
+)
 from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.research.router import create_research_router
 
 
 OPERATOR_TOKEN = "Bearer op-gap-004:operator"
@@ -52,48 +65,14 @@ class EvolutionExperimentJobsEventsTestReadPorts(ReadSurfacePorts):
             return ds.get(str(program_id or ""))
         return next((p for p in ds if p.get("id") == program_id or p.get("program_id") == program_id), None)
 
-    def create_evolution_program(
-        self,
-        *,
-        program_id: str,
-        name: str,
-        actor_id: str,
-        created_at: str | None = None,
-        params: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        timestamp = created_at or "2026-08-29T00:00:00Z"
-        record = {
-            "id": program_id,
-            "program_id": program_id,
-            "name": name,
-            "status": "active",
-            "params": params or {},
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "created_by": actor_id,
-        }
-        ds = self._get_dataset("evolution_programs")
-        if isinstance(ds, dict):
-            ds[program_id] = record
-        return record
-
-    def patch_evolution_program(
-        self,
-        program_id: str,
-        *,
-        patch: dict[str, Any],
-        actor_id: str,
-        updated_at: str | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any] | None:
-        prog = self.get_evolution_program(program_id)
-        if not prog:
-            return None
-        prog.update(patch)
-        prog["updated_at"] = updated_at or "2026-08-29T00:00:00Z"
-        prog["updated_by"] = actor_id
-        return prog
+    # U8A note: create/patch are deliberately NOT methods on this read-only
+    # store double anymore — the read surface never did writes in
+    # production (``ports/read_surface_ports.py`` never had these methods),
+    # and this test double previously carrying them was exactly the
+    # "read surface doing writes" anti-pattern
+    # evolution-lifecycle.md §1 calls out. Writes now go through
+    # ``_EvolutionProgramCommandsTestDouble`` below via the injected
+    # ``bff_main._evolution_program_commands`` port.
 
     def list_evolution_program_runs(self, program_id: str, **kwargs: Any) -> list[dict[str, Any]]:
         return []
@@ -200,21 +179,256 @@ class EvolutionExperimentJobsEventsTestReadPorts(ReadSurfacePorts):
         return list(ds.values()) if isinstance(ds, dict) else list(ds)
 
 
+class _ContractTestClient(TestClient):
+    @property
+    def store(self) -> Any:
+        return self.app.state.store
+
+    @store.setter
+    def store(self, val: Any) -> None:
+        self.app.state.store = val
+
+
+class _DummyIdentity:
+    operator_id = "op-gap-004"
+    roles = {"operator", "admin", "viewer"}
+    mfa_verified = True
+
+
+class _EvolutionProgramCommandsTestDouble:
+    """Stand-in for ``EvolutionServiceProgramCommandPort`` (U8A): create
+    always starts ``draft`` with a server-generated identity and revision 1;
+    PATCH allowlists ``name`` only and enforces the ``expected_revision``
+    CAS precondition. Mutates the same backing dict the read-store double
+    reads from, so list/get stay consistent with what was actually
+    committed through this port."""
+
+    def __init__(self, store: EvolutionExperimentJobsEventsTestReadPorts) -> None:
+        self._store = store
+        self._counter = 0
+
+    def _dataset(self) -> dict[str, Any]:
+        ds = self._store._get_dataset("evolution_programs")
+        assert isinstance(ds, dict)
+        return ds
+
+    async def create_program(self, *, tenant_id, actor_id, name, idempotency_key):
+        self._counter += 1
+        program_id = f"evp-test-{self._counter:04d}"
+        record = {
+            "program_id": program_id,
+            "id": program_id,
+            "tenant_id": tenant_id,
+            "created_by": actor_id,
+            "name": name,
+            "status": "draft",
+            "revision": 1,
+            "created_at": "2026-08-29T00:00:00Z",
+            "updated_at": "2026-08-29T00:00:00Z",
+            "run_ids": [],
+            "candidate_ids": [],
+        }
+        self._dataset()[program_id] = record
+        return record
+
+    async def patch_program_name(self, *, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
+        from services.control_plane.bff.ports.evolution_program_commands import (
+            EvolutionProgramConflictError,
+            EvolutionProgramNotFoundError,
+        )
+
+        record = self._dataset().get(program_id)
+        if record is None:
+            raise EvolutionProgramNotFoundError(f"Evolution program not found: {program_id}")
+        if int(record.get("revision") or 0) != expected_revision:
+            raise EvolutionProgramConflictError(f"Evolution program {program_id} was modified concurrently")
+        record["name"] = name
+        record["revision"] = int(record["revision"]) + 1
+        record["updated_at"] = "2026-08-29T01:00:00Z"
+        record["updated_by"] = actor_id
+        return record
+
+
+def _build_test_app(store: EvolutionExperimentJobsEventsTestReadPorts) -> FastAPI:
+    app = FastAPI()
+    app.state.store = store
+
+    def _extract_identity(auth: Optional[str] = None, **kw: Any) -> _DummyIdentity:
+        return _DummyIdentity()
+
+    def _require_read(identity: Any) -> None:
+        pass
+
+    def _require_op(identity: Any) -> None:
+        pass
+
+    def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
+        code_val = code.value if hasattr(code, "value") else str(code)
+        return HTTPException(
+            status_code=status_code,
+            detail={"code": code_val, "message": message, "reason": reason or message, **kwargs},
+        )
+
+    def _utc_now() -> str:
+        return "2026-08-29T00:00:00Z"
+
+    def _page_slice(items: Any, page_token: Optional[str], page_size: int) -> tuple[list, Optional[str]]:
+        start = int(page_token) if page_token and str(page_token).isdigit() else 0
+        end = start + page_size
+        nxt = str(end) if end < len(items) else None
+        return list(items[start:end]), nxt
+
+    def _snapshot_meta(snapshot_at: str) -> dict:
+        return {"snapshot_at": snapshot_at}
+
+    def _read_surface_meta(dataset: str, surface_key: str, *, snapshot_at: Optional[str] = None, **kw: Any) -> dict:
+        return {"snapshot_at": snapshot_at or _utc_now(), "surfaces": {surface_key: {"status": "ok", "source": "local_snapshot"}}}
+
+    def _dataset_surface_status(dataset: str, *, snapshot_at: str, **kw: Any) -> dict:
+        curr_store = app.state.store
+        src = curr_store.dataset_source(dataset) if hasattr(curr_store, "dataset_source") else "local_snapshot"
+        status = "unavailable" if src in ("missing", "unavailable") else ("degraded" if src == "local_snapshot" else "ok")
+        return {"status": status, "source": src, "snapshot_at": snapshot_at}
+
+    def _raise_if_unavailable(surface: dict, *, label: str) -> None:
+        if surface.get("status") == "unavailable":
+            raise HTTPException(status_code=503, detail="unavailable")
+
+    def _submit_prog_action(entity_type: Any, entity_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> CommandResponse[CommandSubmissionResponse]:
+        prog = app.state.store.get_evolution_program(entity_id)
+        if not prog:
+            raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Program {entity_id} not found")
+        rcpt = f"rcpt-prog-{action_id}-{entity_id}"
+        receipt = CommandReceipt(
+            receipt_id=rcpt,
+            command="EvolutionProgramAction",
+            status=CommandReceiptStatus.ACCEPTED,
+            accepted_at="2026-06-01T00:00:00Z",
+            routing_path=CommandRoutingPath.DIRECT,
+        )
+        return CommandResponse[CommandSubmissionResponse](
+            status=ActionCommandStatus.ACCEPTED,
+            data=CommandSubmissionResponse(
+                receipt_id=rcpt,
+                command="EvolutionProgramAction",
+                status=CommandReceiptStatus.ACCEPTED,
+                accepted_at="2026-06-01T00:00:00Z",
+                routing_path=CommandRoutingPath.DIRECT,
+                receipt=receipt,
+            ),
+        )
+
+    def _submit_exp_action(entity_type: Any, entity_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> CommandResponse[CommandSubmissionResponse]:
+        exp = app.state.store.get_research_experiment(entity_id)
+        if not exp:
+            raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Experiment {entity_id} not found")
+        rcpt = f"rcpt-exp-{action_id}-{entity_id}"
+        receipt = CommandReceipt(
+            receipt_id=rcpt,
+            command="ExperimentAction",
+            status=CommandReceiptStatus.ACCEPTED,
+            accepted_at="2026-06-01T00:00:00Z",
+            routing_path=CommandRoutingPath.DIRECT,
+        )
+        return CommandResponse[CommandSubmissionResponse](
+            status=ActionCommandStatus.ACCEPTED,
+            data=CommandSubmissionResponse(
+                receipt_id=rcpt,
+                command="ExperimentAction",
+                status=CommandReceiptStatus.ACCEPTED,
+                accepted_at="2026-06-01T00:00:00Z",
+                routing_path=CommandRoutingPath.DIRECT,
+                receipt=receipt,
+            ),
+        )
+
+    def _submit_job_action(job_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> CommandResponse[CommandSubmissionResponse]:
+        job = app.state.store.get_job_bff(job_id)
+        if not job:
+            raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Job {job_id} not found")
+        rcpt = f"rcpt-job-{action_id}-{job_id}"
+        receipt = CommandReceipt(
+            receipt_id=rcpt,
+            command="JobAction",
+            status=CommandReceiptStatus.ACCEPTED,
+            accepted_at="2026-06-01T00:00:00Z",
+            routing_path=CommandRoutingPath.DIRECT,
+        )
+        return CommandResponse[CommandSubmissionResponse](
+            status=ActionCommandStatus.ACCEPTED,
+            data=CommandSubmissionResponse(
+                receipt_id=rcpt,
+                command="JobAction",
+                status=CommandReceiptStatus.ACCEPTED,
+                accepted_at="2026-06-01T00:00:00Z",
+                routing_path=CommandRoutingPath.DIRECT,
+                receipt=receipt,
+            ),
+        )
+
+    app.include_router(create_evolution_programs_router(
+        read_surface=lambda: app.state.store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read,
+        require_operator_role=_require_op,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        page_slice=_page_slice,
+        snapshot_meta=_snapshot_meta,
+        dataset_surface_status=_dataset_surface_status,
+        submit_program_action=_submit_prog_action,
+        program_commands=_EvolutionProgramCommandsTestDouble(store),
+    ))
+
+    app.include_router(create_research_router(
+        read_surface=lambda: app.state.store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read,
+        require_operator_role=_require_op,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        page_slice=_page_slice,
+        snapshot_meta=_snapshot_meta,
+        dataset_surface_status=_dataset_surface_status,
+        submit_experiment_action=_submit_exp_action,
+        include_prepared_subrouters=True,
+    ))
+
+    app.include_router(create_jobs_router(
+        read_surface=lambda: app.state.store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        page_slice=_page_slice,
+        read_surface_meta=_read_surface_meta,
+        dataset_surface_status=_dataset_surface_status,
+        raise_if_read_surface_unavailable=_raise_if_unavailable,
+        reject_body_idempotency_key=lambda p: None,
+        resolve_final_idempotency_key=lambda h, b: h or b or "key",
+        submit_job_action=_submit_job_action,
+    ))
+
+    app.include_router(create_events_router(
+        read_surface=lambda: app.state.store,
+        get_read_store=lambda: app.state.store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        snapshot_meta=_snapshot_meta,
+        dataset_surface_status=_dataset_surface_status,
+    ))
+
+    return app
+
+
 @contextmanager
-def _isolated_bff() -> Iterator[tuple[TestClient, EvolutionExperimentJobsEventsTestReadPorts]]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        store = EvolutionExperimentJobsEventsTestReadPorts()
-        bff_main.read_store = store
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        try:
-            yield TestClient(bff_main.app), store
-        finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
+def _isolated_bff() -> Iterator[tuple[_ContractTestClient, EvolutionExperimentJobsEventsTestReadPorts]]:
+    store = EvolutionExperimentJobsEventsTestReadPorts()
+    app = _build_test_app(store)
+    client = _ContractTestClient(app)
+    yield client, store
 
 
 def _assert_final_command_envelope(payload: dict, command: str) -> str:
@@ -242,9 +456,12 @@ def test_evolution_programs_list_empty() -> None:
 
 def test_evolution_programs_create_and_get() -> None:
     with _isolated_bff() as (client, _store):
+        # U8A: create only accepts ``name`` — a caller-supplied
+        # ``description`` (or any other field) is now rejected with 422
+        # rather than silently accepted.
         create_response = client.post(
             "/bff/evolution-programs",
-            json={"name": "Test Evolution Program", "description": "A test"},
+            json={"name": "Test Evolution Program"},
             headers={**HEADERS, "Idempotency-Key": IDEMPOTENCY_KEY},
         )
         assert create_response.status_code == 201, create_response.text
@@ -252,14 +469,18 @@ def test_evolution_programs_create_and_get() -> None:
         assert "program_id" in program
         program_id = program["program_id"]
         assert program["name"] == "Test Evolution Program"
-        assert program["status"] == "active"
+        # U8A: create always starts draft; it never auto-activates.
+        assert program["status"] == "draft"
+        assert program["revision"] == 1
 
         detail = client.get(f"/bff/evolution-programs/{program_id}", headers=HEADERS)
         assert detail.status_code == 200, detail.text
         assert detail.json()["data"]["program_id"] == program_id
 
 
-def test_evolution_programs_patch() -> None:
+def test_evolution_programs_patch_name_only() -> None:
+    """U8A metadata PATCH allowlist is ``name`` only, CAS-guarded on the
+    caller's ``revision`` precondition."""
     with _isolated_bff() as (client, _store):
         create_response = client.post(
             "/bff/evolution-programs",
@@ -268,16 +489,59 @@ def test_evolution_programs_patch() -> None:
         )
         assert create_response.status_code == 201
         program_id = create_response.json()["program_id"]
+        revision = create_response.json()["revision"]
 
         patch_response = client.patch(
             f"/bff/evolution-programs/{program_id}",
-            json={"name": "After Patch", "status": "paused"},
+            json={"name": "After Patch", "revision": revision},
             headers=HEADERS,
         )
         assert patch_response.status_code == 200, patch_response.text
         updated = patch_response.json()["data"]
         assert updated["name"] == "After Patch"
-        assert updated["status"] == "paused"
+        assert updated["status"] == "draft"  # unchanged by a metadata patch
+        assert updated["revision"] == revision + 1
+
+
+def test_evolution_programs_patch_status_rejected_pause_via_action_only() -> None:
+    """Test-migration note (per the task's explicit instruction: preserve
+    the original business intent, do not delete the assertion, migrate it
+    to the single correct control entrypoint).
+
+    This test previously did ``PATCH .../{program_id}`` with
+    ``{"status": "paused"}`` and asserted it succeeded — exactly the
+    "read surface doing writes with an unrestricted PATCH allowlist" defect
+    evolution-lifecycle.md §1/§3 calls out. Under the now-adopted U8A
+    contract, ``name`` is the only allowlisted PATCH field, so a direct
+    ``status`` PATCH must now assert **422**, never a fabricated success.
+
+    The real "pause a program" business capability is still asserted here,
+    through the *action* entrypoint instead
+    (``POST .../actions/pause_program``) — which in U8A must assert the
+    honest "unavailable" outcome, since real program lifecycle effects are
+    U8B's obligation (see evolution_adapter.py's
+    ``_execute_program_action``). When U8B lands real ``pause_program``
+    effects, only this action-outcome assertion should flip to a positive
+    "program is now paused" assertion; the PATCH-status 422 assertion above
+    it does not change, since ``status`` will never become PATCH-allowlisted.
+    """
+    with _isolated_bff() as (client, _store):
+        create_response = client.post(
+            "/bff/evolution-programs",
+            json={"name": "Before Patch"},
+            headers={**HEADERS, "Idempotency-Key": IDEMPOTENCY_KEY + "-patch-status"},
+        )
+        assert create_response.status_code == 201
+        program_id = create_response.json()["program_id"]
+        revision = create_response.json()["revision"]
+
+        patch_response = client.patch(
+            f"/bff/evolution-programs/{program_id}",
+            json={"revision": revision, "status": "paused"},
+            headers=HEADERS,
+        )
+        assert patch_response.status_code == 422, patch_response.text
+        assert _store.get_evolution_program(program_id)["status"] == "draft"
 
 
 def test_evolution_programs_404_on_missing() -> None:
@@ -516,7 +780,8 @@ def _seed_job(client: TestClient, job_id: str) -> dict:
         "progress": {"percent": 50},
         "logs": [{"level": "info", "message": "Job started", "ts": "2026-05-08T10:00:01Z"}],
     }
-    ds = bff_main.read_store._get_dataset("jobs")
+    store = getattr(client, "store", None) or client.app.state.store
+    ds = store._get_dataset("jobs")
     if isinstance(ds, dict):
         ds[job_id] = record
     return record
@@ -631,10 +896,18 @@ def test_events_list_degraded_when_unavailable() -> None:
 # Events stream alias (should still be 200)
 # ---------------------------------------------------------------------------
 
+_events_stream_router = create_events_router(
+    event_stream_service=EventStreamService(channels=("inbox", "system"))
+)
+bff_events_stream_alias = next(
+    r.endpoint for r in _events_stream_router.routes if getattr(r, "path", None) == "/api/v1/stream/{channel}"
+)
+
+
 def test_events_stream_non_404() -> None:
     with _isolated_bff() as (_client, _store):
         response = asyncio.run(
-            bff_main.bff_events_stream_alias(
+            bff_events_stream_alias(
                 channel="inbox",
                 last_event_id=None,
                 authorization=OPERATOR_TOKEN,

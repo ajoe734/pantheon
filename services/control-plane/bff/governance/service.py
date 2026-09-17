@@ -12,11 +12,57 @@ import inspect
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+    Union,
+)
+
+
+class ApprovalQueueReaderPort(Protocol):
+    """Typed read port protocol for approval queue items."""
+
+    def list_approval_queue_items(
+        self,
+        *,
+        decision_types: Optional[List[str]] = None,
+        risk_levels: Optional[List[str]] = None,
+        decision_states: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]: ...
 
 
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
-SubmitAction = Callable[..., Any]
+
+
+class SubmitAction(Protocol):
+    """Named-parameter contract for governance command-admission submission.
+
+    ``GovernanceService.submit_governance_action`` is the only caller and
+    always invokes this with these exact keyword arguments (see below); a
+    bare ``Callable[..., Any]`` let a mismatched positional-argument seam
+    (e.g. the composition-root lambda that used to bind this) pass static
+    checks while raising ``TypeError`` at request time.
+    """
+
+    def __call__(
+        self,
+        *,
+        action_kind: str,
+        target_id: str,
+        action_id: str,
+        payload: Mapping[str, Any],
+        identity: Any,
+        idempotency_key: str,
+    ) -> Union[Any, Awaitable[Any]]: ...
 
 
 def utc_now_rfc3339() -> str:
@@ -127,6 +173,28 @@ class GovernanceService:
         "freeze",
     }
 
+    # Mutation-review role policy. This is the single owner of the actor/
+    # state/evidence policy used by both the direct POST action validators
+    # (main.py ApproveMutation/RejectMutation/ReviewMutation/ExecuteMutation)
+    # and the nested GET projection (/api/v1/operator/mutation-review/{id}
+    # and the management evolution journal); do not fork a second copy.
+    _MUTATION_APPROVAL_ROLES = {
+        "low": {"reviewer", "approver", "admin"},
+        "medium": {"operator", "approver", "admin"},
+        "high": {"approver", "admin"},
+    }
+    _MUTATION_REJECTION_ROLES = {
+        "low": {"reviewer", "approver", "admin"},
+        "medium": {"reviewer", "operator", "approver", "admin"},
+        "high": {"approver", "admin"},
+    }
+    _MUTATION_REVIEW_ROLES = {
+        "low": {"reviewer", "approver", "admin"},
+        "medium": {"reviewer", "approver", "admin"},
+        "high": {"approver", "admin"},
+    }
+    _MUTATION_EXECUTION_ROLES = {"operator", "admin"}
+
     def __init__(
         self,
         read_store: Any,
@@ -139,6 +207,7 @@ class GovernanceService:
         dataset_surface_status: Optional[Callable[..., Dict[str, Any]]] = None,
         redact_evidence_refs: Optional[Callable[..., Tuple[List[Dict[str, Any]], int]]] = None,
         capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
+        read_surface_state: Optional[Callable[[], str]] = None,
     ) -> None:
         self.read_store = read_store
         self.utc_now = utc_now
@@ -149,6 +218,7 @@ class GovernanceService:
         self.dataset_surface_status = dataset_surface_status or self._default_dataset_surface_status
         self.redact_evidence_refs = redact_evidence_refs or self._fail_closed_redact_evidence_refs
         self.capabilities_for_identity = capabilities_for_identity or (lambda identity: None)
+        self.read_surface_state = read_surface_state or (lambda: "fresh")
         self._created_approvals: Dict[str, Dict[str, Any]] = {}
         self._idempotency: Dict[str, Dict[str, Any]] = {}
 
@@ -817,8 +887,29 @@ class GovernanceService:
             or []
         )
 
-    def list_approval_queue(self, **filters: Any) -> List[Dict[str, Any]]:
-        records = self._call("list_approval_queue_items", default=[], **filters)
+    def list_approval_queue(
+        self,
+        *,
+        decision_types: Optional[List[str]] = None,
+        risk_levels: Optional[List[str]] = None,
+        decision_states: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        store = self.read_store
+        if store is not None and hasattr(store, "list_approval_queue_items"):
+            reader: ApprovalQueueReaderPort = store  # type: ignore[assignment]
+            records = reader.list_approval_queue_items(
+                decision_types=decision_types,
+                risk_levels=risk_levels,
+                decision_states=decision_states,
+            )
+            return list(records or [])
+        records = self._call(
+            "list_approval_queue_items",
+            default=[],
+            decision_types=decision_types,
+            risk_levels=risk_levels,
+            decision_states=decision_states,
+        )
         return list(records or [])
 
     def list_audit_events(
@@ -842,38 +933,297 @@ class GovernanceService:
         )
         return list(records or [])
 
-    def mutation_review(self, decision_id: str) -> Optional[Dict[str, Any]]:
+    def mutation_review_inputs(
+        self, decision_id: str
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         decision = self._call("get_evolution_decision_by_id", decision_id, default=None)
         if decision is None:
-            decision = self._call("get_evolution_decision", decision_id, default=None)
+            return None, None, None, None
+        approval_decision_id = str(decision.get("approval_decision_id") or "").strip()
+        approval_decision = (
+            self._call("get_approval_decision", approval_decision_id, default=None)
+            if approval_decision_id
+            else None
+        )
+        linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
+        linked_incident = self._call("get_incident", linked_incident_id, default=None) if linked_incident_id else None
+        linked_postmortem_id = str(decision.get("linked_postmortem_id") or "").strip()
+        linked_postmortem = (
+            self._call("get_postmortem", linked_postmortem_id, default=None) if linked_postmortem_id else None
+        )
+        return decision, approval_decision, linked_incident, linked_postmortem
+
+    def _mutation_review_roles_for(self, risk_level: str, *, action: str) -> set:
+        normalized_risk = str(risk_level or "").lower()
+        if action == "approve":
+            return self._MUTATION_APPROVAL_ROLES.get(normalized_risk, {"admin"})
+        if action == "review":
+            return self._MUTATION_REVIEW_ROLES.get(normalized_risk, {"admin"})
+        return self._MUTATION_REJECTION_ROLES.get(normalized_risk, {"admin"})
+
+    def _mutation_review_surface_state(
+        self,
+        decision: Dict[str, Any],
+        approval_decision: Optional[Dict[str, Any]],
+        linked_incident: Optional[Dict[str, Any]],
+        linked_postmortem: Optional[Dict[str, Any]],
+    ) -> str:
+        required_sources_available = True
+        decision_state = str(decision.get("decision_state") or decision.get("status") or "").lower()
+        approval_decision_id = str(decision.get("approval_decision_id") or "").strip()
+        linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
+        linked_postmortem_id = str(decision.get("linked_postmortem_id") or "").strip()
+
+        if self.dataset_source("evolution_decisions") == "missing":
+            required_sources_available = False
+        if decision_state in {"reviewed", "approved", "executed", "rejected", "superseded"}:
+            if not approval_decision_id or approval_decision is None:
+                required_sources_available = False
+        if linked_incident_id and linked_incident is None:
+            required_sources_available = False
+        if linked_postmortem_id and linked_postmortem is None:
+            required_sources_available = False
+
+        read_surface_state = self.read_surface_state()
+        if read_surface_state == "unavailable" or not required_sources_available:
+            return "unavailable"
+        if read_surface_state in {"degraded", "stale"}:
+            return "stale"
+
+        dataset_names = ["evolution_decisions"]
+        if approval_decision_id:
+            dataset_names.append("approval_decisions")
+        if linked_incident_id:
+            dataset_names.append("incidents")
+        if linked_postmortem_id:
+            dataset_names.append("postmortems")
+        if any(self.dataset_source(dataset) == "local_snapshot" for dataset in dataset_names):
+            return "stale"
+        return "fresh"
+
+    def _mutation_review_allowed_actions(
+        self, decision: Dict[str, Any], identity: Any, surface_state: str
+    ) -> Dict[str, bool]:
+        if surface_state == "unavailable":
+            return {
+                "canReviewMutation": False,
+                "canApproveMutation": False,
+                "canRejectMutation": False,
+                "canExecuteMutation": False,
+            }
+
+        decision_state = str(decision.get("decision_state") or decision.get("status") or "").lower()
+        risk_level = str(decision.get("risk_level") or "").lower()
+        identity_roles = set(getattr(identity, "roles", set()) or set())
+
+        can_review = (
+            decision_state == "proposed"
+            and bool(identity_roles.intersection(self._mutation_review_roles_for(risk_level, action="review")))
+        )
+        can_approve = (
+            decision_state == "reviewed"
+            and bool(identity_roles.intersection(self._mutation_review_roles_for(risk_level, action="approve")))
+        )
+        can_reject = (
+            decision_state in {"proposed", "reviewed"}
+            and bool(identity_roles.intersection(self._mutation_review_roles_for(risk_level, action="reject")))
+        )
+        can_execute = (
+            decision_state == "approved"
+            and bool(identity_roles.intersection(self._MUTATION_EXECUTION_ROLES))
+        )
+        return {
+            "canReviewMutation": can_review,
+            "canApproveMutation": can_approve,
+            "canRejectMutation": can_reject,
+            "canExecuteMutation": can_execute,
+        }
+
+    @staticmethod
+    def _mutation_threshold_triggers(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
+        risk_assessment = decision.get("risk_assessment") or {}
+        explicit = risk_assessment.get("threshold_triggers")
+        if isinstance(explicit, list):
+            return explicit
+
+        triggers: List[Dict[str, Any]] = []
+        for snapshot in decision.get("threshold_snapshots") or []:
+            if not isinstance(snapshot, dict):
+                continue
+            triggers.append(
+                {
+                    "trigger_type": snapshot.get("signal_type"),
+                    "metric": snapshot.get("metric_name"),
+                    "observed_value": str(snapshot.get("observed_value")),
+                    "threshold_value": str(snapshot.get("threshold_value")),
+                    "threshold_source": snapshot.get("policy_source"),
+                }
+            )
+        return triggers
+
+    @staticmethod
+    def _mutation_required_approvals(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
+        explicit = decision.get("required_approvals")
+        if isinstance(explicit, list):
+            return explicit
+
+        risk_level = str(decision.get("risk_level") or "").lower()
+        if risk_level == "low":
+            required_roles = ["reviewer_on_duty"]
+        elif risk_level == "medium":
+            required_roles = ["reviewer", "risk_owner"]
+        elif risk_level == "high":
+            required_roles = ["governance_committee"]
+        else:
+            required_roles = []
+
+        approvals: List[Dict[str, Any]] = []
+        review_chain = decision.get("review_chain") or []
+        for role in required_roles:
+            matched_step = next(
+                (
+                    step for step in review_chain
+                    if isinstance(step, dict)
+                    and str(step.get("actor_role") or "").lower() == role
+                    and str(step.get("step_type") or step.get("action") or "").lower() in {"reviewed", "approved"}
+                ),
+                None,
+            )
+            approvals.append(
+                {
+                    "role": role,
+                    "approved_by": matched_step.get("actor_id") if matched_step else None,
+                    "approved_at": matched_step.get("timestamp") if matched_step else None,
+                    "status": "approved" if matched_step else "pending",
+                }
+            )
+        return approvals
+
+    def mutation_review_projection(
+        self, decision_id: str, *, identity: Any, snapshot_at: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        decision, approval_decision, linked_incident, linked_postmortem = self.mutation_review_inputs(decision_id)
         if decision is None:
             return None
-        approval = self.get_approval_detail(str(decision.get("approval_decision_id") or ""))
-        linked_incident_id = str(decision.get("linked_incident_id") or decision.get("incident_ref") or "")
-        linked_postmortem_id = str(decision.get("linked_postmortem_id") or "")
-        incident = self._call("get_incident", linked_incident_id, default=None) if linked_incident_id else None
-        postmortem = self._call("get_postmortem", linked_postmortem_id, default=None) if linked_postmortem_id else None
-        payload = copy.deepcopy(decision)
-        payload.update(
-            {
-                "decision_id": record_id(decision, "decision_id", "id"),
-                "target_type": decision.get("target_type") or "artifact",
-                "target_id": decision.get("target_id") or decision.get("artifact_id"),
-                "target_version": decision.get("target_version") or decision.get("artifact_version") or "unknown",
-                "action_type": decision.get("action_type") or "mutation",
-                "decision_state": decision.get("decision_state") or decision.get("status") or "pending",
-                "risk_level": decision.get("risk_level") or "unknown",
-                "created_at": decision.get("created_at") or self.utc_now(),
-                "approval_decision": approval,
-                "linked_incident": incident,
-                "linked_postmortem": postmortem,
-                "meta": {
-                    "snapshot_at": self.utc_now(),
-                    "surfaces": {"mutation_review": "fresh"},
-                },
-            }
+        snap = snapshot_at or self.utc_now()
+
+        surface_state = self._mutation_review_surface_state(
+            decision, approval_decision, linked_incident, linked_postmortem
         )
-        return payload
+        allowed_actions = self._mutation_review_allowed_actions(decision, identity, surface_state)
+        proposed_changes = dict(decision.get("proposed_changes") or {})
+        risk_assessment = dict(decision.get("risk_assessment") or {})
+        evidence_refs = list(decision.get("evidence_refs") or [])
+
+        if linked_incident and not any(
+            isinstance(ref, dict) and ref.get("ref_id") == linked_incident.get("incident_id")
+            for ref in evidence_refs
+        ):
+            evidence_refs.append(
+                {
+                    "ref_type": "incident",
+                    "ref_id": linked_incident.get("incident_id"),
+                    "summary": linked_incident.get("evidence_summary") or linked_incident.get("title"),
+                }
+            )
+        postmortem_id = (
+            (
+                linked_postmortem.get("postmortem_id")
+                or linked_postmortem.get("report_id")
+                or linked_postmortem.get("id")
+            )
+            if linked_postmortem
+            else None
+        )
+        if linked_postmortem and not any(
+            isinstance(ref, dict) and ref.get("ref_id") == postmortem_id for ref in evidence_refs
+        ):
+            evidence_refs.append(
+                {
+                    "ref_type": "postmortem",
+                    "ref_id": postmortem_id,
+                    "summary": linked_postmortem.get("summary") or linked_postmortem.get("title"),
+                }
+            )
+
+        if "summary" not in proposed_changes:
+            proposed_changes["summary"] = decision.get("rationale") or decision.get("notes") or ""
+        proposed_changes.setdefault("target_stage", decision.get("target_stage"))
+        proposed_changes.setdefault("downstream_plane", (decision.get("execution_result") or {}).get("plane"))
+        proposed_changes.setdefault("change_details", [])
+
+        try:
+            capabilities = self.capabilities_for_identity(identity)
+        except Exception:
+            capabilities = None
+        if capabilities is None:
+            capabilities = []
+        try:
+            evidence_refs, redacted_count = self.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
+        except Exception:
+            evidence_refs, redacted_count = self._fail_closed_redact_evidence_refs(identity, evidence_refs, capabilities=[])
+
+        risk_assessment.setdefault(
+            "risk_summary",
+            decision.get("notes") or decision.get("rationale") or "",
+        )
+        risk_assessment.setdefault("severity", None)
+        risk_assessment["threshold_triggers"] = self._mutation_threshold_triggers(decision)
+
+        review_chain = [
+            {
+                "action": step.get("action") or step.get("step_type"),
+                "actor_role": step.get("actor_role"),
+                "actor_id": step.get("actor_id"),
+                "acted_at": step.get("acted_at") or step.get("timestamp"),
+                "note": step.get("note"),
+            }
+            for step in (decision.get("review_chain") or [])
+            if isinstance(step, dict)
+        ]
+
+        rollback_followthrough = decision.get("rollback_followthrough")
+        if rollback_followthrough is None:
+            linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
+            rollbacks = (
+                self._call("get_rollbacks_by_incident", linked_incident_id, default=[]) if linked_incident_id else []
+            )
+            if rollbacks:
+                first_rollback = rollbacks[0]
+                rollback_followthrough = {
+                    "rollback_request_ref": first_rollback.get("rollback_id") or first_rollback.get("id"),
+                    "rollback_action_type": first_rollback.get("action_type"),
+                    "followthrough_note": first_rollback.get("reason"),
+                }
+
+        meta: Dict[str, Any] = {
+            "snapshot_at": snap,
+            "surfaces": {"mutation_review": surface_state},
+            "supporting_counts": {"redacted_evidence_count": redacted_count},
+        }
+
+        return {
+            "decision_id": decision.get("decision_id") or decision.get("id"),
+            "target_type": decision.get("target_type"),
+            "target_id": decision.get("target_id") or decision.get("artifact_id"),
+            "target_version": decision.get("target_version"),
+            "action_type": decision.get("action_type"),
+            "decision_state": decision.get("decision_state") or decision.get("status"),
+            "risk_level": decision.get("risk_level"),
+            "created_at": decision.get("created_at"),
+            "approval_decision_id": decision.get("approval_decision_id"),
+            "approval_decision": approval_decision,
+            "proposed_changes": proposed_changes,
+            "risk_assessment": risk_assessment,
+            "required_approvals": self._mutation_required_approvals(decision),
+            "review_chain": review_chain,
+            "linked_incident_id": decision.get("linked_incident_id"),
+            "linked_postmortem_id": decision.get("linked_postmortem_id"),
+            "evidence_refs": evidence_refs,
+            "rollback_followthrough": rollback_followthrough,
+            "allowedActions": allowed_actions,
+            "meta": meta,
+        }
 
     # Consultation read surfaces --------------------------------------
 

@@ -22,17 +22,15 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import partial, wraps
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
-from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
+from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple
+from urllib.parse import quote, urlencode
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
-from jsonschema import Draft7Validator
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.params import Param as FastAPIParam
 from pydantic import ValidationError
@@ -164,6 +162,8 @@ from .management_nl_command_idempotency import (
     ManagementNlCommandScope,
     ManagementNlCommandStorageError,
 )
+from .assistant.management_contracts import ManagementNlUseCaseDeps
+from .assistant.management_service import ManagementNlUseCase
 from .openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from .source_search_ops_client import (
     SearchIndexCommandClient,
@@ -203,6 +203,7 @@ from .ports import (
     create_persona_registry_write_owner,
     create_read_surface_ports,
 )
+from .ports.job_read import JobSourceUnavailableError
 from .settings_store import SettingsStore
 from .persona_provisioning import (
     ProvisioningConflict,
@@ -217,6 +218,32 @@ from .persona_provisioning_coordinator import (
 from .personas.reconciliation import (
     PersonaProvisioningReconciliationMutationPort,
     PersonaReconciliationMutationError,
+)
+from .personas.service import (
+    PersonaDirectorySnapshot,
+    _append_persona_reconcile_diagnostic,
+    _checkpoint_persona_provisioning_readback,
+    _evaluate_persona_provisioning_status,
+    _get_persona_directory_snapshot,
+    _list_persona_records,
+    _normalize_lifecycle_state,
+    _normalize_risk_level,
+    _openclaw_agent_reconcile_request,
+    _persona_create_required_data_sources,
+    _persona_first_evaluation_readback_poll_seconds,
+    _persona_first_evaluation_readback_timeout_seconds,
+    _persona_fleet_context_defaults_by_market,
+    _persona_fleet_context_missing,
+    _persona_fleet_context_overlay,
+    _persona_fleet_market_key,
+    _persona_id,
+    _persona_provisioning_metadata,
+    _persona_provisioning_store,
+    _persona_record_for_provisioning,
+    _persona_record_tenant_id,
+    _reconcile_persona_provisioning_compensation,
+    _register_persona_cron_required,
+    _remove_persona_cron_required,
 )
 try:
     from services.persona.runtime_profile import (
@@ -233,8 +260,6 @@ except ImportError:
         build_persona_runtime_profile = None  # type: ignore[assignment]
         PersonaRuntimeProfile = None  # type: ignore[assignment,misc]
 log = logging.getLogger(__name__)
-def _bool_from_env(name: str, *, default: bool = False) -> bool:
-    return auth_policy.bool_from_env(name, default=default)
 _BFF_AUTH_STUB_ENV = auth_policy._BFF_AUTH_STUB_ENV
 _BFF_STUB_LEGACY_BARE_TOKENS_ENV = auth_policy._BFF_STUB_LEGACY_BARE_TOKENS_ENV
 _BFF_STUB_CAPABILITY_ROLES = auth_policy._BFF_STUB_CAPABILITY_ROLES
@@ -297,42 +322,7 @@ app = build_bff_app(
     origin_allowed=_cors_origin_allowed,
     validate_session=lambda token: _raise_if_session_logged_out(_extract_identity(f"Bearer {token}")),
 )
-_OPENAPI_HTTP_CONTEXT: ContextVar[bool] = ContextVar("openapi_http_context", default=False)
 _REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)
-def _schema_with_legacy_action_path_for_http(schema: Dict[str, Any]) -> Dict[str, Any]:
-    http_schema = json.loads(json.dumps(schema))
-    paths = http_schema.setdefault("paths", {})
-    canonical = paths.get("/bff/actions/{type}/{id}/{action}")
-    if not isinstance(canonical, dict):
-        return http_schema
-    legacy_path = "/bff/actions/{entityType}/{entityId}/{actionId}"
-    if legacy_path in paths:
-        return http_schema
-    legacy = json.loads(json.dumps(canonical))
-    rename = {"type": "entityType", "id": "entityId", "action": "actionId"}
-    for operation in legacy.values():
-        if not isinstance(operation, dict):
-            continue
-        if operation.get("operationId"):
-            operation["operationId"] = f"{operation['operationId']}_legacy_named"
-        for parameter in operation.get("parameters") or []:
-            if isinstance(parameter, dict) and parameter.get("in") == "path":
-                name = str(parameter.get("name") or "")
-                if name in rename:
-                    parameter["name"] = rename[name]
-    paths[legacy_path] = legacy
-    return http_schema
-def _custom_openapi() -> Dict[str, Any]:
-    if app.openapi_schema is None:
-        app.openapi_schema = get_openapi(
-            title=app.title,
-            version=app.version,
-            routes=app.routes,
-        )
-    if _OPENAPI_HTTP_CONTEXT.get():
-        return _schema_with_legacy_action_path_for_http(app.openapi_schema)
-    return app.openapi_schema
-app.openapi = _custom_openapi  # type: ignore[method-assign]
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 def _lifecycle_projector_dependency() -> Dict[str, Any]:
     reader_backend = os.getenv(
@@ -577,7 +567,6 @@ _stub_identity_capabilities = auth_policy.stub_identity_capabilities
 _with_structured_identity_capabilities = auth_policy.with_structured_identity_capabilities
 _extract_identity_jwt = auth_policy.extract_identity_jwt
 _bff_error = auth_policy.bff_error
-_FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 _PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
 _PATH_DEDUPE_SUNSET_HTTP_DATE = "Mon, 25 May 2026 00:00:00 GMT"
@@ -629,7 +618,7 @@ def _foundation_request_payload(
     cmd: OperatorCommand,
     raw_payload: Dict[str, Any],
     *,
-    route: str = _FOUNDATION_COMMAND_ROUTE,
+    route: str = _FINAL_COMMAND_ROUTE,
     source_route: Optional[str] = None,
 ) -> Dict[str, Any]:
     payload = {
@@ -698,7 +687,7 @@ def _build_foundation_command_context(
     correlation_id: Optional[str],
     request_id: Optional[str],
     idempotency_key: Optional[str],
-    route: str = _FOUNDATION_COMMAND_ROUTE,
+    route: str = _FINAL_COMMAND_ROUTE,
     source_route: Optional[str] = None,
 ) -> Dict[str, Any]:
     environment = _foundation_environment_scope()
@@ -818,7 +807,7 @@ def _foundation_bff_error(
 ) -> HTTPException:
     fields = _extract_error_fields(exc)
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
-    admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
+    admission_route = str(foundation_context.get("admission_route") or _FINAL_COMMAND_ROUTE)
     source_route = str(foundation_context.get("source_route") or "").strip() or None
     route_metadata = _foundation_route_metadata(admission_route, source_route)
     if fields["status_code"] == 403:
@@ -922,7 +911,7 @@ def _foundation_idempotency_conflict_error(
 ) -> HTTPException:
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
     idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
-    admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
+    admission_route = str(foundation_context.get("admission_route") or _FINAL_COMMAND_ROUTE)
     source_route = str(foundation_context.get("source_route") or "").strip() or None
     message = "Idempotency key was already used with a different command payload"
     reason = (
@@ -1243,22 +1232,6 @@ _OPERATOR_RUNTIME_STATE_ROUTE = "/operator/runtime-state"
 _MANAGEMENT_READINESS_BASE_ROUTE = "/management/readiness"
 _GOVERNANCE_REVIEW_QUEUE_ROUTE = "/governance-review-queue"
 _GOVERNANCE_APPROVAL_QUEUE_ROUTE = "/governance-approval-queue"
-_MUTATION_APPROVAL_ROLES = {
-    "low": {"reviewer", "approver", "admin"},
-    "medium": {"operator", "approver", "admin"},
-    "high": {"approver", "admin"},
-}
-_MUTATION_REJECTION_ROLES = {
-    "low": {"reviewer", "approver", "admin"},
-    "medium": {"reviewer", "operator", "approver", "admin"},
-    "high": {"approver", "admin"},
-}
-_MUTATION_REVIEW_ROLES = {
-    "low": {"reviewer", "approver", "admin"},
-    "medium": {"reviewer", "approver", "admin"},
-    "high": {"approver", "admin"},
-}
-_MUTATION_EXECUTION_ROLES = {"operator", "admin"}
 def _env_token(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
 def _value_contains_live_broker_signal(value: Any) -> bool:
@@ -1293,7 +1266,7 @@ def _command_targets_live_runtime(cmd: OperatorCommand) -> bool:
     target_id = _env_token(cmd.target.id)
     return bool(re.search(r"(^|-)live($|-)", target_id))
 def _ensure_live_broker_scope_allowed(cmd: OperatorCommand, payload: Dict[str, Any]) -> None:
-    if _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False):
+    if auth_policy.bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False):
         return
     if not (_command_targets_live_runtime(cmd) or _payload_has_live_broker_signal(payload)):
         return
@@ -3308,286 +3281,30 @@ def _validate_execute_evolution_action(params: Dict[str, Any], identity: Operato
             precondition_failed="role_check",
             suggestion="Escalate to a user with admin or approver role",
         )
-def _mutation_review_surface_state(
-    decision: Dict[str, Any],
-    approval_decision: Optional[Dict[str, Any]],
-    linked_incident: Optional[Dict[str, Any]],
-    linked_postmortem: Optional[Dict[str, Any]],
-) -> str:
-    required_sources_available = True
-    decision_state = str(decision.get("decision_state") or decision.get("status") or "").lower()
-    approval_decision_id = str(decision.get("approval_decision_id") or "").strip()
-    linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
-    linked_postmortem_id = str(decision.get("linked_postmortem_id") or "").strip()
+def _mutation_review_governance_service() -> "GovernanceService":
+    # Single owner of the mutation-review actor/state/evidence policy: both
+    # the direct POST action validators below and the nested GET projection
+    # (governance router + management evolution journal) call through this
+    # same GovernanceService method so they cannot drift out of sync.
+    from .governance.service import GovernanceService
 
-    if read_store.dataset_source("evolution_decisions") == "missing":
-        required_sources_available = False
-    if decision_state in {"reviewed", "approved", "executed", "rejected", "superseded"}:
-        if not approval_decision_id or approval_decision is None:
-            required_sources_available = False
-    if linked_incident_id and linked_incident is None:
-        required_sources_available = False
-    if linked_postmortem_id and linked_postmortem is None:
-        required_sources_available = False
-
-    read_surface_state = _read_surface_state()
-    if read_surface_state == "unavailable" or not required_sources_available:
-        return "unavailable"
-    if read_surface_state in {"degraded", "stale"}:
-        return "stale"
-
-    dataset_names = ["evolution_decisions"]
-    if approval_decision_id:
-        dataset_names.append("approval_decisions")
-    if linked_incident_id:
-        dataset_names.append("incidents")
-    if linked_postmortem_id:
-        dataset_names.append("postmortems")
-    if any(read_store.dataset_source(dataset) == "local_snapshot" for dataset in dataset_names):
-        return "stale"
-    return "fresh"
-def _mutation_review_roles_for(
-    risk_level: str,
-    *,
-    action: str,
-) -> set[str]:
-    normalized_risk = str(risk_level or "").lower()
-    if action == "approve":
-        return _MUTATION_APPROVAL_ROLES.get(normalized_risk, {"admin"})
-    if action == "review":
-        return _MUTATION_REVIEW_ROLES.get(normalized_risk, {"admin"})
-    return _MUTATION_REJECTION_ROLES.get(normalized_risk, {"admin"})
-def _mutation_review_allowed_actions(
-    decision: Dict[str, Any],
-    identity: OperatorIdentity,
-    surface_state: str,
-) -> Dict[str, bool]:
-    if surface_state == "unavailable":
-        return {
-            "canReviewMutation": False,
-            "canApproveMutation": False,
-            "canRejectMutation": False,
-            "canExecuteMutation": False,
-        }
-
-    decision_state = str(decision.get("decision_state") or decision.get("status") or "").lower()
-    risk_level = str(decision.get("risk_level") or "").lower()
-    identity_roles = set(identity.roles)
-
-    can_review = (
-        decision_state == "proposed"
-        and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="review")))
+    return GovernanceService(
+        read_store,
+        utc_now=utc_now,
+        dataset_surface_status=_dataset_surface_status,
+        redact_evidence_refs=redact_evidence_refs,
+        capabilities_for_identity=_capabilities_for_identity,
+        read_surface_state=_read_surface_state,
     )
-    can_approve = (
-        decision_state == "reviewed"
-        and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="approve")))
-    )
-    can_reject = (
-        decision_state in {"proposed", "reviewed"}
-        and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="reject")))
-    )
-    can_execute = (
-        decision_state == "approved"
-        and bool(identity_roles.intersection(_MUTATION_EXECUTION_ROLES))
-    )
-    return {
-        "canReviewMutation": can_review,
-        "canApproveMutation": can_approve,
-        "canRejectMutation": can_reject,
-        "canExecuteMutation": can_execute,
-    }
-def _mutation_threshold_triggers(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
-    risk_assessment = decision.get("risk_assessment") or {}
-    explicit = risk_assessment.get("threshold_triggers")
-    if isinstance(explicit, list):
-        return explicit
-
-    triggers: List[Dict[str, Any]] = []
-    for snapshot in decision.get("threshold_snapshots") or []:
-        if not isinstance(snapshot, dict):
-            continue
-        triggers.append(
-            {
-                "trigger_type": snapshot.get("signal_type"),
-                "metric": snapshot.get("metric_name"),
-                "observed_value": str(snapshot.get("observed_value")),
-                "threshold_value": str(snapshot.get("threshold_value")),
-                "threshold_source": snapshot.get("policy_source"),
-            }
-        )
-    return triggers
-def _mutation_required_approvals(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
-    explicit = decision.get("required_approvals")
-    if isinstance(explicit, list):
-        return explicit
-
-    risk_level = str(decision.get("risk_level") or "").lower()
-    if risk_level == "low":
-        required_roles = ["reviewer_on_duty"]
-    elif risk_level == "medium":
-        required_roles = ["reviewer", "risk_owner"]
-    elif risk_level == "high":
-        required_roles = ["governance_committee"]
-    else:
-        required_roles = []
-
-    approvals: List[Dict[str, Any]] = []
-    review_chain = decision.get("review_chain") or []
-    for role in required_roles:
-        matched_step = next(
-            (
-                step for step in review_chain
-                if isinstance(step, dict)
-                and str(step.get("actor_role") or "").lower() == role
-                and str(step.get("step_type") or step.get("action") or "").lower() in {"reviewed", "approved"}
-            ),
-            None,
-        )
-        approvals.append(
-            {
-                "role": role,
-                "approved_by": matched_step.get("actor_id") if matched_step else None,
-                "approved_at": matched_step.get("timestamp") if matched_step else None,
-                "status": "approved" if matched_step else "pending",
-            }
-        )
-    return approvals
 def _mutation_review_projection(
-    decision: Dict[str, Any],
+    decision_id: str,
     *,
-    approval_decision: Optional[Dict[str, Any]],
-    linked_incident: Optional[Dict[str, Any]],
-    linked_postmortem: Optional[Dict[str, Any]],
     identity: OperatorIdentity,
     snapshot_at: str,
-) -> Dict[str, Any]:
-    surface_state = _mutation_review_surface_state(
-        decision,
-        approval_decision,
-        linked_incident,
-        linked_postmortem,
+) -> Optional[Dict[str, Any]]:
+    return _mutation_review_governance_service().mutation_review_projection(
+        decision_id, identity=identity, snapshot_at=snapshot_at
     )
-    allowed_actions = _mutation_review_allowed_actions(decision, identity, surface_state)
-    proposed_changes = dict(decision.get("proposed_changes") or {})
-    risk_assessment = dict(decision.get("risk_assessment") or {})
-    evidence_refs = list(decision.get("evidence_refs") or [])
-
-    if linked_incident and not any(ref.get("ref_id") == linked_incident.get("incident_id") for ref in evidence_refs if isinstance(ref, dict)):
-        evidence_refs.append(
-            {
-                "ref_type": "incident",
-                "ref_id": linked_incident.get("incident_id"),
-                "summary": linked_incident.get("evidence_summary") or linked_incident.get("title"),
-            }
-        )
-    postmortem_id = (
-        linked_postmortem.get("postmortem_id")
-        or linked_postmortem.get("report_id")
-        or linked_postmortem.get("id")
-        if linked_postmortem
-        else None
-    )
-    if linked_postmortem and not any(ref.get("ref_id") == postmortem_id for ref in evidence_refs if isinstance(ref, dict)):
-        evidence_refs.append(
-            {
-                "ref_type": "postmortem",
-                "ref_id": postmortem_id,
-                "summary": linked_postmortem.get("summary") or linked_postmortem.get("title"),
-            }
-        )
-
-    if "summary" not in proposed_changes:
-        proposed_changes["summary"] = decision.get("rationale") or decision.get("notes") or ""
-    proposed_changes.setdefault("target_stage", decision.get("target_stage"))
-    proposed_changes.setdefault("downstream_plane", (decision.get("execution_result") or {}).get("plane"))
-    proposed_changes.setdefault("change_details", [])
-
-    # Apply evidence redaction based on derived capabilities for this identity.
-    try:
-        capabilities = _capabilities_for_identity(identity)
-    except Exception:
-        capabilities = None
-    evidence_refs, redacted_count = redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
-
-    risk_assessment.setdefault(
-        "risk_summary",
-        decision.get("notes") or decision.get("rationale") or "",
-    )
-    risk_assessment.setdefault("severity", None)
-    risk_assessment["threshold_triggers"] = _mutation_threshold_triggers(decision)
-
-    review_chain = [
-        {
-            "action": step.get("action") or step.get("step_type"),
-            "actor_role": step.get("actor_role"),
-            "actor_id": step.get("actor_id"),
-            "acted_at": step.get("acted_at") or step.get("timestamp"),
-            "note": step.get("note"),
-        }
-        for step in (decision.get("review_chain") or [])
-        if isinstance(step, dict)
-    ]
-
-    rollback_followthrough = decision.get("rollback_followthrough")
-    if rollback_followthrough is None:
-        linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
-        rollbacks = read_store.get_rollbacks_by_incident(linked_incident_id) if linked_incident_id else []
-        if rollbacks:
-            first_rollback = rollbacks[0]
-            rollback_followthrough = {
-                "rollback_request_ref": first_rollback.get("rollback_id") or first_rollback.get("id"),
-                "rollback_action_type": first_rollback.get("action_type"),
-                "followthrough_note": first_rollback.get("reason"),
-            }
-
-    meta = {**_snapshot_meta(snapshot_at), "surfaces": {"mutation_review": surface_state}}
-    # Attach supporting_counts including redaction telemetry
-    meta.setdefault("supporting_counts", {})
-    meta["supporting_counts"]["redacted_evidence_count"] = redacted_count
-
-    return {
-        "decision_id": decision.get("decision_id") or decision.get("id"),
-        "target_type": decision.get("target_type"),
-        "target_id": decision.get("target_id") or decision.get("artifact_id"),
-        "target_version": decision.get("target_version"),
-        "action_type": decision.get("action_type"),
-        "decision_state": decision.get("decision_state") or decision.get("status"),
-        "risk_level": decision.get("risk_level"),
-        "created_at": decision.get("created_at"),
-        "approval_decision_id": decision.get("approval_decision_id"),
-        "proposed_changes": proposed_changes,
-        "risk_assessment": risk_assessment,
-        "required_approvals": _mutation_required_approvals(decision),
-        "review_chain": review_chain,
-        "linked_incident_id": decision.get("linked_incident_id"),
-        "linked_postmortem_id": decision.get("linked_postmortem_id"),
-        "evidence_refs": evidence_refs,
-        "rollback_followthrough": rollback_followthrough,
-        "allowedActions": allowed_actions,
-        "meta": meta,
-    }
-def _mutation_review_inputs(
-    decision_id: str,
-) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    decision = read_store.get_evolution_decision_by_id(decision_id)
-    if decision is None:
-        return None, None, None, None
-
-    approval_decision_id = str(decision.get("approval_decision_id") or "").strip()
-    approval_decision = (
-        read_store.get_approval_decision(approval_decision_id)
-        if approval_decision_id
-        else None
-    )
-    linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
-    linked_incident = read_store.get_incident(linked_incident_id) if linked_incident_id else None
-    linked_postmortem_id = str(decision.get("linked_postmortem_id") or "").strip()
-    linked_postmortem = (
-        read_store.get_postmortem(linked_postmortem_id)
-        if linked_postmortem_id
-        else None
-    )
-    return decision, approval_decision, linked_incident, linked_postmortem
 def _validate_record_sponsor_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
     from .governance.service import GovernanceService
 
@@ -3659,22 +3376,14 @@ def _validate_approve_mutation(params: Dict[str, Any], identity: OperatorIdentit
             f"Missing fields: {sorted(missing)}",
         )
     decision_id = str(params.get("decision_id") or "").strip()
-    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
-    if decision is None:
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
+    if projection is None:
         raise _bff_error(
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
             "Mutation review decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
-    projection = _mutation_review_projection(
-        decision,
-        approval_decision=approval_decision,
-        linked_incident=linked_incident,
-        linked_postmortem=linked_postmortem,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
     if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
         raise _bff_error(
             409,
@@ -3701,22 +3410,14 @@ def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity
             f"Missing fields: {sorted(missing)}",
         )
     decision_id = str(params.get("decision_id") or "").strip()
-    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
-    if decision is None:
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
+    if projection is None:
         raise _bff_error(
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
             "Mutation review decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
-    projection = _mutation_review_projection(
-        decision,
-        approval_decision=approval_decision,
-        linked_incident=linked_incident,
-        linked_postmortem=linked_postmortem,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
     if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
         raise _bff_error(
             409,
@@ -3743,22 +3444,14 @@ def _validate_review_mutation(params: Dict[str, Any], identity: OperatorIdentity
             f"Missing fields: {sorted(missing)}",
         )
     decision_id = str(params.get("decision_id") or "").strip()
-    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
-    if decision is None:
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
+    if projection is None:
         raise _bff_error(
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
             "Mutation review decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
-    projection = _mutation_review_projection(
-        decision,
-        approval_decision=approval_decision,
-        linked_incident=linked_incident,
-        linked_postmortem=linked_postmortem,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
     if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
         raise _bff_error(
             409,
@@ -3785,22 +3478,14 @@ def _validate_execute_mutation(params: Dict[str, Any], identity: OperatorIdentit
             f"Missing fields: {sorted(missing)}",
         )
     decision_id = str(params.get("decision_id") or "").strip()
-    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
-    if decision is None:
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
+    if projection is None:
         raise _bff_error(
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
             "Mutation review decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
-    projection = _mutation_review_projection(
-        decision,
-        approval_decision=approval_decision,
-        linked_incident=linked_incident,
-        linked_postmortem=linked_postmortem,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
     if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
         raise _bff_error(
             409,
@@ -6310,7 +5995,7 @@ def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
         if isinstance(broker_surface.get("service_status"), dict)
         else _composed_surface_status(snapshot_at=snapshot_at)
     )
-    live_gate_enabled = _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
+    live_gate_enabled = auth_policy.bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
     live_execution_enabled = bool(broker_surface.get("live_execution_enabled"))
     live_adapter_state = str(broker_surface.get("live_adapter_state") or "unknown").lower()
     broker_live_ready = (
@@ -6403,8 +6088,8 @@ def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]
         in {"canary", "live", "production", "staging-live"}
     ]
     gate_enabled = (
-        _bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False)
-        or _bool_from_env("PANTHEON_CAPITAL_BINDING_LIVE_ENABLED", default=False)
+        auth_policy.bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False)
+        or auth_policy.bool_from_env("PANTHEON_CAPITAL_BINDING_LIVE_ENABLED", default=False)
     )
     evidence_refs = [
         _readiness_evidence_ref(_READINESS_NO_REAL_CAPITAL_EVIDENCE, "No real capital evidence"),
@@ -6427,8 +6112,8 @@ def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]
             message="Live capital binding remains fail-closed until explicit capital-binding live gates are enabled.",
             evidence_refs=[_READINESS_NO_REAL_CAPITAL_EVIDENCE],
             details={
-                "OPENCLAW_CAPITAL_BINDING_ENABLED": _bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False),
-                "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED": _bool_from_env(
+                "OPENCLAW_CAPITAL_BINDING_ENABLED": auth_policy.bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False),
+                "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED": auth_policy.bool_from_env(
                     "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED",
                     default=False,
                 ),
@@ -7068,66 +6753,6 @@ def _require_agora_signal_write_role(identity: OperatorIdentity) -> None:
             precondition_failed="role_check",
             suggestion="Escalate to a user with analyst-level Agora write access",
         )
-def _agora_private_record_owner(record: Dict[str, Any]) -> str:
-    for key in ("createdBy", "created_by", "user_id", "userId", "owner_id", "ownerId", "operator_id", "operatorId", "author"):
-        clean = str(record.get(key) or "").strip()
-        if clean:
-            return clean
-    owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
-    return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
-def _agora_private_record_visible(
-    record: Dict[str, Any],
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> bool:
-    from .agora.identity.scope import resolve_canonical_agora_scope
-
-    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
-        identity,
-        tenant_id=tenant_id,
-        user_id=user_id,
-    )
-    identity_tenant = str(resolved_tenant or "").strip()
-    record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
-    if identity_tenant:
-        if not record_tenant or record_tenant != identity_tenant:
-            return False
-    elif record_tenant:
-        return False
-    visibility = str(record.get("visibility") or "private").strip().lower()
-    owner = _agora_private_record_owner(record)
-    if visibility != "private" or not owner:
-        return True
-    operator_id = str(getattr(identity, "operator_id", "") or "").strip() if identity else ""
-    allowed_users = {u for u in (resolved_user, operator_id) if u}
-    return owner in allowed_users
-def _agora_filter_private_records(
-    records: List[Dict[str, Any]],
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    from .agora.identity.scope import resolve_canonical_agora_scope
-
-    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
-        identity,
-        tenant_id=tenant_id,
-        user_id=user_id,
-    )
-    return [
-        record
-        for record in records
-        if isinstance(record, dict)
-        and _agora_private_record_visible(
-            record,
-            identity,
-            tenant_id=resolved_tenant,
-            user_id=resolved_user,
-        )
-    ]
 def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
     for field in fields:
         clean = str(payload.get(field) or "").strip()
@@ -7539,9 +7164,9 @@ def _ppl_alloc_009_paper_environment_guard() -> None:
     if (
         env_name != "dev"
         or _bff_auth_mode() != "strict"
-        or _bool_from_env(_BFF_AUTH_STUB_ENV, default=False)
-        or _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
-        or _bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
+        or auth_policy.bool_from_env(_BFF_AUTH_STUB_ENV, default=False)
+        or auth_policy.bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
+        or auth_policy.bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
     ):
         raise _bff_error(
             403,
@@ -7740,15 +7365,6 @@ def __getattr__(name: str) -> Any:
 _PERSONA_PROVISIONING_STORE = None
 _PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
 _PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
-def _persona_provisioning_store():
-    """Lazily bootstrap the durable cross-replica coordination ledger."""
-    global _PERSONA_PROVISIONING_STORE
-    if _PERSONA_PROVISIONING_STORE is not None:
-        return _PERSONA_PROVISIONING_STORE
-    with _PERSONA_PROVISIONING_STORE_LOCK:
-        if _PERSONA_PROVISIONING_STORE is None:
-            _PERSONA_PROVISIONING_STORE = make_persona_provisioning_store()
-    return _PERSONA_PROVISIONING_STORE
 class _PersonaOwnerHttpTransport:
     """Strict synchronous transport to canonical provisioning owner APIs."""
 
@@ -7997,187 +7613,11 @@ def _strategy_persona_action_command(
         "result": payload_dump,
     }
     return payload_dump
-def _normalize_lifecycle_state(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    return _STRATEGY_BFF_LIFECYCLE_MAP.get(text, "draft")
-def _normalize_risk_level(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    return _STRATEGY_BFF_RISK_MAP.get(text, "medium")
 def _deployment_url(path: str) -> str:
     base = os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip().rstrip("/")
     if not base:
         base = "http://deployment:8095"
     return f"{base}{path}"
-def _checkpoint_persona_provisioning_readback(
-    *,
-    persona_id: str,
-    metadata: Dict[str, Any],
-    state: str,
-    runtime_binding_id: str,
-    runtime_id: str,
-    authoritative_readback: Optional[Mapping[str, Any]] = None,
-    failure_reason: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Persist one terminal decision and return its durable replay outcome."""
-    tenant_id = str(metadata.get("tenant_id") or "").strip()
-    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
-    if not tenant_id or not idempotency_key:
-        return {"committed": False, "ledger_state": None}
-    lease_owner = f"persona-readback:{uuid.uuid4().hex}"
-    store = None
-    record = None
-    try:
-        store = _persona_provisioning_store()
-        record = store.acquire(
-            tenant_id,
-            idempotency_key,
-            lease_owner=lease_owner,
-            lease_seconds=max(
-                60,
-                int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
-            ),
-        )
-        if record is None:
-            return {"committed": False, "ledger_state": None}
-        desired_terminal_state = {
-            "paper_running": "succeeded",
-            "provisioning_failed": "failed",
-        }.get(state)
-        if desired_terminal_state is None:
-            store.release(record, lease_owner=lease_owner)
-            return {"committed": False, "ledger_state": None}
-        if record.state in {"succeeded", "failed", "compensated"}:
-            compatible = record.state == desired_terminal_state or (
-                desired_terminal_state == "failed" and record.state == "compensated"
-            )
-            schedule_cleanup = None
-            cleanup_error = None
-            if record.state in {"failed", "compensated"}:
-                try:
-                    schedule_cleanup = _remove_persona_cron_required(persona_id)
-                    record.references["first_evaluation_schedule_cleanup"] = deepcopy(
-                        schedule_cleanup
-                    )
-                except Exception as exc:
-                    cleanup_error = str(exc) or exc.__class__.__name__
-                    record.references["first_evaluation_schedule_cleanup"] = {
-                        "status": "pending",
-                        "registered": None,
-                        "terminal_reason": cleanup_error,
-                    }
-            # A terminal ledger release is atomic, so its references and
-            # compensation already belong to that decision.  Preserve them
-            # verbatim on replay; in particular, never turn a compensated
-            # record back into failed or reverse an earlier outcome.
-            store.release(record, lease_owner=lease_owner)
-            return {
-                "committed": compatible,
-                "ledger_state": record.state,
-                "terminal_replay": True,
-                "failure_reason": str(
-                    (record.error or {}).get("terminal_reason")
-                    or (record.error or {}).get("reason")
-                    or ""
-                ),
-                "schedule_cleanup": deepcopy(schedule_cleanup),
-                "schedule_cleanup_error": cleanup_error,
-                "references": deepcopy(record.references),
-                "result": deepcopy(record.result),
-            }
-        if runtime_binding_id:
-            record.references["runtime_binding_id"] = runtime_binding_id
-        if runtime_id:
-            record.references["runtime_id"] = runtime_id
-        if state == "paper_running":
-            if not isinstance(authoritative_readback, Mapping):
-                store.release(record, lease_owner=lease_owner)
-                return {"committed": False, "ledger_state": record.state}
-            record.references["authoritative_readback"] = deepcopy(
-                dict(authoritative_readback)
-            )
-        schedule_cleanup = None
-        cleanup_error = None
-        if state == "provisioning_failed":
-            # Destructive cleanup happens while the terminal ledger lease is
-            # held.  A concurrent success decision therefore cannot race with
-            # removal of the schedule it just proved authoritative.  Cleanup
-            # unavailability must not erase the durable terminal decision:
-            # persist a retryable cleanup receipt and let later controller
-            # passes finish the fail-closed removal.
-            try:
-                schedule_cleanup = _remove_persona_cron_required(persona_id)
-                record.references["first_evaluation_schedule_cleanup"] = deepcopy(
-                    schedule_cleanup
-                )
-            except Exception as exc:
-                cleanup_error = str(exc) or exc.__class__.__name__
-                record.references["first_evaluation_schedule_cleanup"] = {
-                    "status": "pending",
-                    "registered": None,
-                    "terminal_reason": cleanup_error,
-                }
-        if state == "paper_running":
-            record.state = "succeeded"
-            record.current_step = "authoritative_readback_complete"
-            record.error = None
-            record.result = {
-                "status": "paper_running",
-                "paper_running": True,
-                "authoritative_readback": deepcopy(dict(authoritative_readback or {})),
-                "recorded_at": utc_now(),
-            }
-        elif state == "provisioning_failed":
-            record.state = "failed"
-            record.current_step = "authoritative_readback_failed"
-            record.error = {
-                "code": "PERSONA_PROVISIONING_READBACK_FAILED",
-                "reason": failure_reason or "authoritative_readback_failed",
-                "failed_step": "authoritative_readback",
-                "terminal_reason": failure_reason or "authoritative_readback_failed",
-                "terminal": True,
-                "failed_at": utc_now(),
-                "recorded_at": utc_now(),
-            }
-            record.result = {
-                "status": "provisioning_failed",
-                "paper_running": False,
-                "failure_reason": failure_reason or "authoritative_readback_failed",
-                "recorded_at": utc_now(),
-            }
-        released = store.release(record, lease_owner=lease_owner)
-        committed = bool(
-            released.state == record.state and released.current_step == record.current_step
-        )
-        return {
-            "committed": committed,
-            "ledger_state": released.state,
-            "terminal_replay": False,
-            "schedule_cleanup": deepcopy(schedule_cleanup),
-            "schedule_cleanup_error": cleanup_error,
-            "references": deepcopy(released.references),
-            "result": deepcopy(released.result),
-        }
-    except Exception as exc:
-        # Owner lifecycle remains fail-closed; inability to persist the mirror
-        # is logged and never turns missing readback into success.
-        log.warning("Failed to checkpoint Persona provisioning readback: %s", exc)
-        if store is not None and record is not None:
-            try:
-                store.release(record, lease_owner=lease_owner)
-            except Exception:
-                pass
-        return {
-            "committed": False,
-            "ledger_state": None,
-            "terminal_replay": False,
-            "error": str(exc) or exc.__class__.__name__,
-        }
-def _append_persona_reconcile_diagnostic(
-    diagnostics: Optional[List[str]],
-    dependency: str,
-) -> None:
-    if diagnostics is not None and dependency not in diagnostics:
-        diagnostics.append(dependency)
 def _persist_persona_provisioning_terminal_transition(
     persona_id: str,
     *,
@@ -8319,615 +7759,6 @@ def _materialize_terminal_persona_provisioning_ledger(
     raw["status"] = new_state
     raw.setdefault("metadata", {}).update(metadata_updates)
     raw["metadata"]["lifecycle_state"] = new_state
-    return new_state
-def _reconcile_persona_provisioning_compensation(
-    metadata: Mapping[str, Any],
-) -> Optional[Dict[str, Any]]:
-    """Resume fail-closed Deployment/Capital compensation from durable state."""
-
-    tenant_id = str(metadata.get("tenant_id") or "").strip()
-    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
-    if not tenant_id or not idempotency_key:
-        return None
-    store = _persona_provisioning_store()
-    record = store.get(tenant_id, idempotency_key)
-    if record is None:
-        return None
-    coordinator = PersonaProvisioningCoordinator(
-        store=store,
-        transport=_PersonaOwnerHttpTransport(
-            tenant_id=str(metadata.get("tenant_id") or "")
-        ),
-        schedule_registrar=_register_persona_cron_required,
-        lease_owner=f"persona-compensation:{uuid.uuid4().hex}",
-        lease_seconds=max(
-            30,
-            int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
-        ),
-    )
-    try:
-        reconciled = coordinator.reconcile_failure_compensation(record)
-    except Exception as exc:
-        log.warning("Failed to reconcile Persona provisioning compensation: %s", exc)
-        return {
-            "status": "pending",
-            "terminal_reason": str(exc) or exc.__class__.__name__,
-        }
-    return {
-        "ledger_state": reconciled.state,
-        "current_step": reconciled.current_step,
-        **deepcopy(reconciled.compensation or {"status": "not_required"}),
-    }
-def _evaluate_persona_provisioning_status(
-    persona_id: str,
-    raw: Dict[str, Any],
-    *,
-    all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
-    all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
-    all_monitoring_sessions: Optional[List[Dict[str, Any]]] = None,
-    diagnostics: Optional[List[str]] = None,
-) -> str:
-    metadata = raw.get("metadata") or {}
-    current_state = raw.get("lifecycle_state") or raw.get("state")
-    if current_state == "provisioning_failed":
-        terminal_updates: Dict[str, Any] = {}
-        try:
-            schedule_cleanup = _remove_persona_cron_required(persona_id)
-            terminal_updates["first_evaluation_schedule_cleanup"] = schedule_cleanup
-        except Exception as exc:
-            log.warning(
-                "Failed to reconcile terminal first-evaluation cleanup for %s: %s",
-                persona_id,
-                exc,
-            )
-            terminal_updates["first_evaluation_schedule_cleanup"] = {
-                "status": "pending",
-                "registered": None,
-                "terminal_reason": str(exc) or exc.__class__.__name__,
-            }
-            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
-        compensation = _reconcile_persona_provisioning_compensation(metadata)
-        if compensation is not None:
-            terminal_updates["provisioning_compensation"] = compensation
-        changed_updates = {
-            key: value
-            for key, value in terminal_updates.items()
-            if metadata.get(key) != value
-        }
-        if changed_updates:
-            _persist_persona_provisioning_terminal_transition(
-                persona_id,
-                lifecycle_state="provisioning_failed",
-                metadata=changed_updates,
-            )
-            raw.setdefault("metadata", {}).update(changed_updates)
-        return "provisioning_failed"
-    if current_state not in ("provisioning", "draft", "paper_running"):
-        return str(current_state or "")
-    if current_state == "paper_running":
-        return "paper_running"
-    if current_state != "provisioning":
-        return str(current_state or "")
-
-    terminal_replay = _materialize_terminal_persona_provisioning_ledger(
-        persona_id,
-        raw,
-        diagnostics=diagnostics,
-    )
-    if terminal_replay is not None:
-        return terminal_replay
-
-    # Deployment owns admission and the runtime identity.  Never infer a
-    # RuntimeBinding id from the distinct PersonaCapitalBinding id.
-    persona_capital_binding_id = str(
-        metadata.get("persona_capital_binding_id") or metadata.get("binding_id") or ""
-    ).strip()
-    tenant_id = str(metadata.get("tenant_id") or "").strip()
-    capital_pool_id = str(
-        metadata.get("internal_paper_capital_pool_id")
-        or metadata.get("legacy_paper_capital_pool_id")
-        or ""
-    ).strip()
-    plan_id = str(metadata.get("deployment_plan_id") or "").strip()
-    expected_saga_id = str(metadata.get("deployment_saga_id") or "").strip()
-    binding_id = str(metadata.get("runtime_binding_id") or "").strip()
-    runtime_id = str(metadata.get("runtime_id") or "").strip()
-    projection: Dict[str, Any] = {}
-    projection_failed = False
-    if plan_id:
-        try:
-            candidate = _get_json(
-                _deployment_url(f"/api/deployment/plans/{quote(plan_id, safe='')}/projection")
-            )
-            projection = candidate if isinstance(candidate, dict) else {}
-        except Exception as exc:
-            log.warning("Failed to query Deployment projection %s for %s: %s", plan_id, persona_id, exc)
-            _append_persona_reconcile_diagnostic(diagnostics, "deployment")
-
-    projection_saga = projection.get("deployment_saga")
-    projection_saga = projection_saga if isinstance(projection_saga, dict) else {}
-    projected_saga_id = str(
-        projection.get("deployment_saga_id") or projection_saga.get("saga_id") or ""
-    ).strip()
-    projected_plan_id = str(projection.get("plan_id") or "").strip()
-    projection_observed = bool(
-        projection
-        and projected_plan_id == plan_id
-        and projected_saga_id
-        and (not expected_saga_id or projected_saga_id == expected_saga_id)
-    )
-    projection_identity_failed = bool(projection) and bool(
-        (projected_plan_id and projected_plan_id != plan_id)
-        or (
-            projected_saga_id
-            and expected_saga_id
-            and projected_saga_id != expected_saga_id
-        )
-    )
-
-    saga_status = str(
-        projection.get("deployment_saga_status")
-        or projection_saga.get("status")
-        or ""
-    ).strip().lower()
-    saga_progress = projection.get("deployment_saga_progress")
-    saga_progress = saga_progress if isinstance(saga_progress, dict) else {}
-    progress_status = str(saga_progress.get("progress_status") or "").strip().lower()
-    projection_complete = (
-        saga_status == "completed" and progress_status == "completed"
-    )
-    projection_failed = saga_status in {
-        "failed",
-        "aborted",
-        "compensating",
-        "compensated",
-    } or progress_status in {
-        "failed",
-        "blocked",
-        "compensating",
-    }
-
-    # Deployment projection proves saga admission, but Runtime Manager is the
-    # sole RuntimeBinding authority. Embedded projection/file snapshots never
-    # satisfy lifecycle readback.
-    projected_binding = projection.get("runtime_binding")
-    projected_binding = projected_binding if isinstance(projected_binding, dict) else {}
-    projected_binding_id = str(
-        projection.get("runtime_binding_id")
-        or projected_binding.get("binding_id")
-        or ""
-    ).strip()
-    projected_runtime_id = str(
-        projection.get("runtime_id") or projected_binding.get("runtime_id") or ""
-    ).strip()
-
-    binding: Optional[Dict[str, Any]] = None
-    binding_ok = False
-    binding_failed = False
-    authoritative_bindings: List[Dict[str, Any]] = []
-    if plan_id:
-        try:
-            if all_bindings is not None:
-                authoritative_bindings = [
-                    value
-                    for value in all_bindings.values()
-                    if isinstance(value, dict)
-                    and str(value.get("plan_id") or "") == plan_id
-                ]
-            else:
-                client = _runtime_manager_client()
-                authoritative_bindings = [
-                    value
-                    for value in client.list_by_plan(plan_id)
-                    if isinstance(value, dict)
-                ]
-            active_bindings = [
-                value
-                for value in authoritative_bindings
-                if str(value.get("state") or value.get("status") or "").lower()
-                in {"active", "running", "ok"}
-            ]
-            if len(active_bindings) == 1:
-                binding = active_bindings[0]
-                authoritative_binding_id = str(
-                    binding.get("binding_id") or binding.get("id") or ""
-                ).strip()
-                authoritative_runtime_id = str(binding.get("runtime_id") or "").strip()
-                binding_metadata = binding.get("metadata")
-                binding_metadata = binding_metadata if isinstance(binding_metadata, dict) else {}
-                identity_matches = all((
-                    bool(authoritative_binding_id),
-                    authoritative_binding_id.startswith("rb-"),
-                    bool(authoritative_runtime_id),
-                    str(binding.get("plan_id") or "") == plan_id,
-                    str(binding.get("persona_capital_binding_id") or "")
-                    == persona_capital_binding_id,
-                    str(binding.get("capital_pool_id") or "") == capital_pool_id,
-                    str(
-                        binding.get("deployment_mode")
-                        or binding.get("deployment_stage")
-                        or ""
-                    ) == "paper",
-                    str(binding_metadata.get("persona_id") or "") == persona_id,
-                    str(binding_metadata.get("tenant_id") or "") == tenant_id,
-                    not binding_id or binding_id == authoritative_binding_id,
-                    not runtime_id or runtime_id == authoritative_runtime_id,
-                    not projected_binding_id
-                    or projected_binding_id == authoritative_binding_id,
-                    not projected_runtime_id
-                    or projected_runtime_id == authoritative_runtime_id,
-                ))
-                if identity_matches:
-                    binding_id = authoritative_binding_id
-                    runtime_id = authoritative_runtime_id
-                    binding_ok = True
-                else:
-                    binding_failed = True
-            elif len(active_bindings) > 1:
-                binding_failed = True
-            elif binding_id and any(
-                str(value.get("binding_id") or value.get("id") or "") == binding_id
-                for value in (all_bindings or {}).values()
-                if isinstance(value, dict)
-            ):
-                # The expected binding identity exists under another plan.
-                binding_failed = True
-            elif any(
-                str(value.get("state") or value.get("status") or "").lower()
-                in {"failed", "stopped", "error"}
-                for value in authoritative_bindings
-            ):
-                binding_failed = True
-        except Exception as exc:
-            log.warning(
-                "Failed to query RuntimeBindings for plan %s / %s: %s",
-                plan_id,
-                persona_id,
-                exc,
-            )
-            _append_persona_reconcile_diagnostic(diagnostics, "runtime_manager")
-
-    # Require exactly one fresh, active worker joined on the complete identity.
-    monitoring_sessions: List[Dict[str, Any]] = []
-    worker_identity_conflict = False
-    if binding_ok and runtime_id and binding_id:
-        try:
-            owner_sessions = (
-                all_monitoring_sessions
-                if all_monitoring_sessions is not None
-                else read_store.list_authoritative_paper_runtime_monitoring_sessions()
-            )
-        except Exception as exc:
-            log.warning(
-                "Failed to query paper worker sessions for %s: %s",
-                persona_id,
-                exc,
-            )
-            _append_persona_reconcile_diagnostic(diagnostics, "paper_runtime_manager")
-            owner_sessions = []
-        for s in owner_sessions:
-            # The paper-fleet reconciler owns worker sessions and joins them to
-            # RuntimeBinding by runtime_id + binding_id.  It does not duplicate
-            # Persona identity into the session.  Persona identity is instead
-            # proven above from the authoritative RuntimeBinding metadata.  If
-            # a future session does carry persona_id, treat a conflicting value
-            # as fail-closed rather than ignoring it.
-            s_pid = str(s.get("persona_id") or "").strip()
-            s_rtid = str(s.get("runtime_id") or "").strip()
-            s_bid = str(s.get("binding_id") or s.get("runtime_binding_id") or "").strip()
-            s_pool_id = str(s.get("capital_pool_id") or "").strip()
-            if s_rtid == runtime_id and s_bid == binding_id:
-                if (s_pid and s_pid != persona_id) or s_pool_id != capital_pool_id:
-                    worker_identity_conflict = True
-                else:
-                    monitoring_sessions.append(s)
-
-    max_heartbeat_age = max(
-        1,
-        int(os.getenv("PANTHEON_PERSONA_HEARTBEAT_MAX_AGE_SECONDS", "90")),
-    )
-    now_dt = datetime.now(timezone.utc)
-    live_sessions: List[Dict[str, Any]] = []
-    startup_sessions: List[Dict[str, Any]] = []
-    current_owner_sessions: List[Dict[str, Any]] = []
-    for session in monitoring_sessions:
-        status = str(session.get("status") or "").strip().lower()
-        staleness = session.get("staleness")
-        stale_marker = bool(
-            isinstance(staleness, Mapping)
-            and (
-                str(staleness.get("status") or "").strip().lower() == "stale"
-                or staleness.get("reason")
-            )
-        )
-        heartbeat_at = _parse_rfc3339(session.get("last_heartbeat_at"))
-        fresh = bool(
-            heartbeat_at is not None
-            and 0 <= (now_dt - heartbeat_at).total_seconds() <= max_heartbeat_age
-        )
-        session_id = str(session.get("session_id") or session.get("id") or "").strip()
-        current_owner = (
-            session_id
-            and session.get("active") is not False
-            and session.get("ended_at") in (None, "")
-            and status not in {"failed", "ended", "error", "stale"}
-            and not stale_marker
-        )
-        if current_owner:
-            current_owner_sessions.append(session)
-        startup_status = status in {
-            "accepted",
-            "initializing",
-            "pending",
-            "queued",
-            "starting",
-        }
-        if (
-            current_owner
-            and (status == "running" or startup_status)
-            and session.get("last_heartbeat_at") in (None, "")
-        ):
-            startup_sessions.append(session)
-        if (
-            session_id
-            and status == "running"
-            and session.get("active") is not False
-            and session.get("ended_at") in (None, "")
-            and fresh
-            and not stale_marker
-        ):
-            live_sessions.append(session)
-    heartbeat_ok = len(live_sessions) == 1
-    # Historical ended/stale sessions are expected after worker replacement.
-    # They cannot poison one unique fresh owner session.  No fresh successor
-    # or multiple current workers is fail-closed once an owner record exists.
-    # One exact running owner may briefly precede its first heartbeat; keep
-    # that startup race pending and let the provisioning timeout decide if the
-    # worker never becomes authoritative.
-    startup_pending = (
-        len(startup_sessions) == 1 and len(current_owner_sessions) == 1
-    )
-    heartbeat_failed = worker_identity_conflict or (
-        bool(monitoring_sessions) and not heartbeat_ok and not startup_pending
-    )
-
-    # The schedule authority must contain the exact first-evaluation workflow.
-    cron_ok = False
-    authoritative_schedule_readback: Optional[Dict[str, Any]] = None
-    try:
-        schedule_discovered = all_cron_registrations is None or (
-                persona_id,
-                _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
-            ) in all_cron_registrations
-        if schedule_discovered:
-            if (
-                projection_observed
-                and projection_complete
-                and binding_ok
-                and runtime_id
-                and binding_id
-                and capital_pool_id
-                and persona_capital_binding_id
-            ):
-                schedule_receipt = _register_persona_cron_required(
-                    persona_id,
-                    capital_pool_id,
-                    persona_capital_binding_id,
-                    runtime_id=runtime_id,
-                    runtime_binding_id=binding_id,
-                )
-                authoritative = schedule_receipt.get("authoritative_readback")
-                cron_ok = bool(
-                    isinstance(authoritative, dict)
-                    and authoritative.get("registered") is True
-                    and authoritative.get("persona_id") == persona_id
-                    and authoritative.get("workflow_id")
-                    == _PERSONA_FIRST_EVALUATION_WORKFLOW_ID
-                    and authoritative.get("runtime_id") == runtime_id
-                    and authoritative.get("runtime_binding_id") == binding_id
-                    and authoritative.get("capital_pool_id") == capital_pool_id
-                    and authoritative.get("persona_capital_binding_id")
-                    == persona_capital_binding_id
-                    and isinstance(authoritative.get("job_id"), str)
-                    and bool(authoritative["job_id"].strip())
-                    and authoritative.get("request_id")
-                    == (
-                        f"persona-provisioning:{persona_id}:"
-                        f"{_PERSONA_FIRST_EVALUATION_WORKFLOW_ID}"
-                    )
-                )
-                if cron_ok:
-                    authoritative_schedule_readback = deepcopy(authoritative)
-    except Exception as exc:
-        log.warning("Failed to query first-evaluation schedule for %s: %s", persona_id, exc)
-        _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
-
-    # A timed-out attempt is terminal even if stale evidence happens to appear
-    # later; recovery must be an explicit retry that acquires the durable lease.
-    is_timeout = False
-    readback_started_at = metadata.get("provisioning_readback_started_at")
-    if readback_started_at:
-        try:
-            started_at_dt = _parse_rfc3339(readback_started_at)
-            timeout_seconds = max(
-                1,
-                int(os.getenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")),
-            )
-            is_timeout = bool(
-                started_at_dt is not None
-                and (now_dt - started_at_dt).total_seconds() > timeout_seconds
-            )
-        except (TypeError, ValueError):
-            is_timeout = False
-
-    if (
-        projection_failed
-        or projection_identity_failed
-        or binding_failed
-        or heartbeat_failed
-        or is_timeout
-    ):
-        new_state = "provisioning_failed"
-    elif (
-        projection_observed
-        and projection_complete
-        and binding_ok
-        and heartbeat_ok
-        and cron_ok
-    ):
-        new_state = "paper_running"
-    else:
-        new_state = "provisioning"
-
-    metadata_updates: Dict[str, Any] = {}
-    if binding_ok and binding_id:
-        metadata_updates["runtime_binding_id"] = binding_id
-    if binding_ok and runtime_id:
-        metadata_updates["runtime_id"] = runtime_id
-    if new_state == "provisioning_failed":
-        failure_reasons = []
-        if projection_failed:
-            failure_reasons.append("deployment_saga_failed")
-        if projection_identity_failed:
-            failure_reasons.append("deployment_projection_identity_mismatched")
-        if binding_failed:
-            failure_reasons.append("runtime_binding_failed_or_mismatched")
-        if heartbeat_failed:
-            failure_reasons.append("paper_worker_failed_stale_or_duplicated")
-        if is_timeout:
-            failure_reasons.append("provisioning_timeout")
-        metadata_updates["provisioning_failure_reason"] = ",".join(failure_reasons)
-    elif new_state == "paper_running":
-        metadata_updates["paper_runtime_state"] = "running"
-        metadata_updates.pop("provisioning_failure_reason", None)
-
-    # The durable ledger is the release barrier for terminal Persona state.
-    # If its lease is busy or storage is unavailable, leave the Persona in
-    # provisioning so a later controller pass can recover with RPO=0.
-    if new_state in {"paper_running", "provisioning_failed"}:
-        authoritative_readback: Optional[Dict[str, Any]] = None
-        if new_state == "paper_running":
-            if (
-                not isinstance(binding, Mapping)
-                or len(live_sessions) != 1
-                or authoritative_schedule_readback is None
-            ):
-                return "provisioning"
-            authoritative_readback = {
-                "observed_at": utc_now(),
-                "deployment": {
-                    "plan_id": plan_id,
-                    "saga_id": projected_saga_id,
-                    "saga_status": saga_status,
-                    "progress_status": progress_status,
-                },
-                "runtime_binding": deepcopy(dict(binding)),
-                "paper_worker": deepcopy(live_sessions[0]),
-                "first_evaluation_schedule": deepcopy(
-                    authoritative_schedule_readback
-                ),
-            }
-        terminal_checkpoint = _checkpoint_persona_provisioning_readback(
-            persona_id=persona_id,
-            metadata={**metadata, **metadata_updates},
-            state=new_state,
-            runtime_binding_id=binding_id,
-            runtime_id=runtime_id,
-            authoritative_readback=authoritative_readback,
-            failure_reason=metadata_updates.get("provisioning_failure_reason"),
-        )
-        ledger_state = terminal_checkpoint.get("ledger_state")
-        if terminal_checkpoint.get("terminal_replay"):
-            # The ledger release is the durable lifecycle decision.  A crash
-            # between that release and Persona projection must recover the
-            # earlier terminal state, never remain stuck in provisioning or
-            # reverse the decision from newer observations.
-            if ledger_state == "succeeded":
-                durable_references = terminal_checkpoint.get("references")
-                durable_references = (
-                    durable_references
-                    if isinstance(durable_references, Mapping)
-                    else {}
-                )
-                durable_readback = durable_references.get("authoritative_readback")
-                durable_result = terminal_checkpoint.get("result")
-                if (
-                    not isinstance(durable_readback, Mapping)
-                    or not isinstance(durable_result, Mapping)
-                    or durable_result.get("paper_running") is not True
-                    or durable_result.get("status") != "paper_running"
-                ):
-                    return "provisioning"
-                binding_id = str(
-                    durable_references.get("runtime_binding_id") or ""
-                ).strip()
-                runtime_id = str(
-                    durable_references.get("runtime_id") or ""
-                ).strip()
-                if not binding_id or not runtime_id:
-                    return "provisioning"
-                new_state = "paper_running"
-                metadata_updates["paper_runtime_state"] = "running"
-                metadata_updates["runtime_binding_id"] = binding_id
-                metadata_updates["runtime_id"] = runtime_id
-                metadata_updates["provisioning_authoritative_readback"] = deepcopy(
-                    dict(durable_readback)
-                )
-                metadata_updates.pop("provisioning_failure_reason", None)
-            elif ledger_state in {"failed", "compensated"}:
-                new_state = "provisioning_failed"
-                metadata_updates["provisioning_failure_reason"] = (
-                    terminal_checkpoint.get("failure_reason")
-                    or "durable_ledger_terminal_failure"
-                )
-        elif not terminal_checkpoint.get("committed"):
-            return "provisioning"
-        if new_state == "paper_running":
-            durable_references = terminal_checkpoint.get("references")
-            durable_readback = (
-                durable_references.get("authoritative_readback")
-                if isinstance(durable_references, Mapping)
-                else None
-            )
-            if not isinstance(durable_readback, Mapping):
-                return "provisioning"
-            metadata_updates["provisioning_authoritative_readback"] = deepcopy(
-                dict(durable_readback)
-            )
-        schedule_cleanup = terminal_checkpoint.get("schedule_cleanup")
-        if isinstance(schedule_cleanup, Mapping):
-            metadata_updates["first_evaluation_schedule_cleanup"] = deepcopy(
-                dict(schedule_cleanup)
-            )
-        elif terminal_checkpoint.get("schedule_cleanup_error"):
-            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
-            metadata_updates["first_evaluation_schedule_cleanup"] = {
-                "status": "pending",
-                "registered": None,
-                "terminal_reason": terminal_checkpoint["schedule_cleanup_error"],
-            }
-        if new_state == "provisioning_failed":
-            compensation = _reconcile_persona_provisioning_compensation(
-                {**metadata, **metadata_updates}
-            )
-            if compensation is not None:
-                metadata_updates["provisioning_compensation"] = compensation
-                if compensation.get("status") in {"failed", "pending"}:
-                    _append_persona_reconcile_diagnostic(
-                        diagnostics, "provisioning_compensation"
-                    )
-
-    if new_state != current_state or metadata_updates:
-        _persist_persona_provisioning_terminal_transition(
-            persona_id,
-            lifecycle_state=new_state,
-            metadata=metadata_updates,
-        )
-        raw["lifecycle_state"] = new_state
-        raw["status"] = new_state
-        raw.setdefault("metadata", {}).update(metadata_updates)
-        raw["metadata"]["lifecycle_state"] = new_state
-
     return new_state
 def _project_persona_dto(
     raw: Dict[str, Any],
@@ -9081,119 +7912,6 @@ def _list_strategy_summaries() -> List[Dict[str, Any]]:
     """Return canonical strategy specs from read_store."""
     return list(read_store.list_strategy_specs() or [])
 
-def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Combine canonical personas with durable store and overlay records created via /bff."""
-    items = list(read_store.list_personas() or [])
-    records_by_id: Dict[str, Dict[str, Any]] = {}
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        pid = str(item.get("id") or item.get("persona_id") or "").strip()
-        if pid:
-            records_by_id[pid] = dict(item)
-    clean_tenant = str(tenant_id or "").strip()
-    store = _persona_provisioning_store()
-    try:
-        if clean_tenant:
-            prov_records = store.list_by_tenant(clean_tenant)
-        else:
-            prov_records = store.list_all()
-    except Exception as exc:
-        log.warning("Persona provisioning store list failed for dependency %s", "persona_provisioning_store")
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Persona durable readback is unavailable",
-            "Authoritative provisioning store is unreachable or degraded",
-            precondition_failed="persona_provisioning_store",
-            suggestion="Inspect persona provisioning persistence health before retrying",
-        ) from exc
-
-    for record in prov_records:
-        persona_proj, meta_proj = _persona_record_for_provisioning(
-            record,
-            payload=record.request_payload,
-            owner=str(record.request_payload.get("requested_by") or "pantheon-bff"),
-        )
-        pid = record.persona_id
-        if pid not in records_by_id:
-            records_by_id[pid] = persona_proj
-        else:
-            existing = records_by_id[pid]
-            existing_meta = dict(existing.get("metadata") or {}) if isinstance(existing.get("metadata"), dict) else {}
-            for k, v in meta_proj.items():
-                if v is not None and (k not in existing_meta or not existing_meta[k]):
-                    existing_meta[k] = v
-            existing["metadata"] = existing_meta
-            if record.state == "succeeded" and existing.get("lifecycle_state") in {None, "draft", "provisioning"}:
-                existing["lifecycle_state"] = "paper_running"
-
-    result = list(records_by_id.values())
-    if clean_tenant:
-        # Registry provenance is not tenant ownership.  A tenant-scoped
-        # read admits only an explicit matching owner tenant; tenantless
-        # registry rows are catalog or malformed data and fail closed.
-        result = [
-            raw
-            for raw in result
-            if _persona_record_tenant_id(raw) == clean_tenant
-        ]
-    result.sort(
-        key=lambda raw: (
-            str(raw.get("created_at") or raw.get("updated_at") or ""),
-            str(raw.get("persona_id") or raw.get("id") or ""),
-        )
-    )
-    return result
-@dataclass(frozen=True)
-class PersonaDirectorySnapshot:
-    tenant_id: str
-    snapshot_at: str
-    records_by_id: Dict[str, Dict[str, Any]]
-    catalog_defaults_by_id: Dict[str, Dict[str, Any]]
-def _get_persona_directory_snapshot(
-    tenant_id: Optional[str] = None,
-    *,
-    snapshot_at: Optional[str] = None,
-) -> PersonaDirectorySnapshot:
-    snapshot_timestamp = snapshot_at or utc_now()
-    clean_tenant = str(tenant_id or "").strip()
-    records_by_id: Dict[str, Dict[str, Any]] = {}
-    catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
-
-    for raw in _list_persona_records(clean_tenant):
-        if not isinstance(raw, dict):
-            continue
-        rec_tenant = _persona_record_tenant_id(raw)
-        if clean_tenant and rec_tenant != clean_tenant:
-            continue
-        pid = str(raw.get("persona_id") or raw.get("id") or "").strip()
-        if pid:
-            records_by_id[pid] = raw
-
-    try:
-        defaults = read_store.list_personas(include_market_persona_defaults=True) or []
-    except Exception:
-        defaults = []
-
-    for default_record in defaults:
-        if not isinstance(default_record, dict):
-            continue
-        did = str(default_record.get("persona_id") or default_record.get("id") or "").strip()
-        if did and did not in records_by_id:
-            catalog_defaults_by_id[did] = {
-                **default_record,
-                "record_kind": "catalog_default",
-                "detail_available": False,
-                "admission_state": "not_admitted",
-            }
-
-    return PersonaDirectorySnapshot(
-        tenant_id=clean_tenant,
-        snapshot_at=snapshot_timestamp,
-        records_by_id=records_by_id,
-        catalog_defaults_by_id=catalog_defaults_by_id,
-    )
 def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
     for key in keys:
         value = record.get(key)
@@ -11649,7 +10367,6 @@ def _human_inbox_payload(
         page_token=page_token,
         page_size=page_size,
     )
-_MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
 _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG: Optional[Tuple[str, float]] = None
 _MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
@@ -13243,8 +11960,6 @@ def _mgmt_nl_handle_control_command(
     focus: str,
     ui_snapshot: Dict[str, Any],
     resolved_key: str,
-    idempotency_storage_key: str,
-    request_hash: str,
     session_id: str,
     message_id: str,
     trace_id: str,
@@ -13510,7 +12225,6 @@ def _mgmt_nl_handle_control_command(
         conversation_href=conversation_href,
         control_command=command_kind,
     )
-    _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
 def _mgmt_nl_normalize_question_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip().lower())
@@ -13592,41 +12306,6 @@ def _mgmt_nl_idempotency_storage_key(
         ]
     )
     return f"management-nl-v2:{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
-def _mgmt_nl_idempotency_check(
-    storage_key: str,
-    request_hash: str,
-    *,
-    display_key: str,
-) -> Optional[Dict[str, Any]]:
-    existing = _management_ai_conversation_store().get_idempotency(storage_key)
-    if existing is None:
-        existing = _MGMT_NL_IDEMPOTENCY.get(storage_key)
-    if existing is None:
-        return None
-    if existing.get("request_hash") != request_hash:
-        raise _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Idempotency key was already used with a different payload",
-            f"Key {display_key!r} is bound to a different management NL request hash",
-            precondition_failed="idempotency_conflict",
-            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-        )
-    return existing.get("result")
-def _mgmt_nl_idempotency_put(
-    storage_key: str,
-    *,
-    request_hash: str,
-    result: Dict[str, Any],
-) -> None:
-    _management_ai_conversation_store().put_idempotency(
-        storage_key,
-        request_hash=request_hash,
-        result=result,
-    )
-    _MGMT_NL_IDEMPOTENCY[storage_key] = {"request_hash": request_hash, "result": result}
-def _mgmt_nl_command_idempotency_required() -> bool:
-    return _bool_from_env("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED")
 def _mgmt_nl_command_recovery_seconds() -> float:
     raw = os.getenv(
         "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS",
@@ -13651,17 +12330,23 @@ def _mgmt_nl_command_idempotency_store() -> ManagementNlCommandIdempotencyStore:
         )
         _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = config
     return _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
+# BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: ask and ask/stream are one durable
+# use case with two transports. They share this single canonical scope
+# route name (not the literal per-transport HTTP path) so a client can
+# switch between the JSON and SSE transports with the same Idempotency-Key
+# and still get exactly-once command admission/replay.
+_MGMT_NL_COMMAND_ROUTE = "POST /bff/management/nl/ask"
 def _mgmt_nl_command_scope(
     *,
     actor_id: str,
     tenant_id: str,
     resolved_key: str,
 ) -> ManagementNlCommandScope:
-    return ManagementNlCommandScope(
+    return ManagementNlUseCase.scope(
         actor_id=actor_id,
         tenant_id=tenant_id,
-        route="POST /bff/management/nl/ask",
-        idempotency_key=resolved_key,
+        route=_MGMT_NL_COMMAND_ROUTE,
+        resolved_key=resolved_key,
     )
 def _mgmt_nl_result_is_terminal(result: Optional[Mapping[str, Any]]) -> bool:
     if not isinstance(result, Mapping):
@@ -13730,112 +12415,59 @@ def _mgmt_nl_command_poll_seconds() -> float:
         return min(max(float(raw), 0.005), 1.0)
     except (TypeError, ValueError):
         return 0.05
+def _mgmt_nl_raise_command_wait_timeout() -> NoReturn:
+    raise _bff_error(
+        409,
+        ErrorCode.IDEMPOTENCY_CONFLICT,
+        "Management NL command is still in progress",
+        "An exact concurrent request owns this idempotency key and has not reached a terminal result.",
+        precondition_failed="idempotency_in_progress",
+        suggestion="Retry the same payload and key after the current provider turn completes",
+    )
+def _mgmt_nl_use_case_admission_error(exc: Exception, display_key: str) -> NoReturn:
+    _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+    raise AssertionError("unreachable")  # pragma: no cover - _raise always raises
+# BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: the sole owner of Management NL
+# durable command admission/replay/completion decision logic. Both
+# bff_management_nl_ask and bff_management_nl_ask_stream call this single
+# instance -- see services/control-plane/bff/assistant/management_service.py.
+_MANAGEMENT_NL_USE_CASE = ManagementNlUseCase(
+    ManagementNlUseCaseDeps(
+        command_store=_mgmt_nl_command_idempotency_store,
+        wait_seconds=_mgmt_nl_command_wait_seconds,
+        poll_seconds=_mgmt_nl_command_poll_seconds,
+        raise_admission_error=_mgmt_nl_use_case_admission_error,
+        raise_wait_timeout=_mgmt_nl_raise_command_wait_timeout,
+    )
+)
 async def _mgmt_nl_command_admit(
     *,
     scope: ManagementNlCommandScope,
     request_hash: str,
-    legacy_result: Optional[Dict[str, Any]],
     display_key: str,
 ) -> tuple[Optional[ManagementNlCommandReservation], Optional[Dict[str, Any]]]:
-    if not _mgmt_nl_command_idempotency_required():
-        return None, legacy_result
-
-    store = _mgmt_nl_command_idempotency_store()
-    try:
-        admission = await asyncio.to_thread(
-            store.admit,
-            scope,
-            request_hash=request_hash,
-            legacy_result=legacy_result,
-            legacy_terminal=_mgmt_nl_result_is_terminal(legacy_result),
-        )
-    except (
-        ManagementNlCommandPayloadConflict,
-        ManagementNlCommandRecoveryRequired,
-        ManagementNlCommandStorageError,
-    ) as exc:
-        _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
-
-    if admission.state == "owner":
-        return admission.reservation, None
-    if admission.state == "complete":
-        return None, admission.result
-    if admission.state != "wait":
-        _mgmt_nl_raise_command_idempotency_error(
-            ManagementNlCommandStorageError(
-                f"Unsupported Management NL command admission state: {admission.state}"
-            ),
-            display_key=display_key,
-        )
-
-    deadline = asyncio.get_running_loop().time() + _mgmt_nl_command_wait_seconds()
-    while True:
-        if asyncio.get_running_loop().time() >= deadline:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Management NL command is still in progress",
-                "An exact concurrent request owns this idempotency key and has not reached a terminal result.",
-                precondition_failed="idempotency_in_progress",
-                suggestion="Retry the same payload and key after the current provider turn completes",
-            )
-        await asyncio.sleep(_mgmt_nl_command_poll_seconds())
-        try:
-            admission = await asyncio.to_thread(
-                store.observe,
-                scope,
-                request_hash=request_hash,
-            )
-        except (
-            ManagementNlCommandPayloadConflict,
-            ManagementNlCommandRecoveryRequired,
-            ManagementNlCommandStorageError,
-        ) as exc:
-            _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
-        if admission.state == "complete":
-            return None, admission.result
-        if admission.state != "wait":
-            _mgmt_nl_raise_command_idempotency_error(
-                ManagementNlCommandStorageError(
-                    f"Unsupported Management NL command observation state: {admission.state}"
-                ),
-                display_key=display_key,
-            )
+    return await _MANAGEMENT_NL_USE_CASE.admit(
+        scope=scope,
+        request_hash=request_hash,
+        display_key=display_key,
+    )
 async def _mgmt_nl_command_complete(
     reservation: Optional[ManagementNlCommandReservation],
     result: Dict[str, Any],
     *,
     display_key: str,
 ) -> None:
-    if reservation is None:
-        return
-    try:
-        await asyncio.to_thread(
-            _mgmt_nl_command_idempotency_store().complete,
-            reservation,
-            result,
-        )
-    except (
-        ManagementNlCommandPayloadConflict,
-        ManagementNlCommandRecoveryRequired,
-        ManagementNlCommandStorageError,
-    ) as exc:
-        _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+    await _MANAGEMENT_NL_USE_CASE.complete(reservation, result, display_key=display_key)
 async def _mgmt_nl_command_mark_uncertain(
     reservation: Optional[ManagementNlCommandReservation],
     *,
     reason: str,
 ) -> None:
-    if reservation is None:
-        return
-    try:
-        await asyncio.to_thread(
-            _mgmt_nl_command_idempotency_store().mark_uncertain,
-            reservation,
-            reason=reason,
-        )
-    except Exception:
-        log.exception("Failed to mark Management NL command reservation uncertain")
+    await _MANAGEMENT_NL_USE_CASE.mark_uncertain(
+        reservation,
+        reason=reason,
+        on_failure=lambda: log.exception("Failed to mark Management NL command reservation uncertain"),
+    )
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
     statuses = [v.get("status", "unavailable") for v in surfaces.values() if isinstance(v, dict)]
     if not statuses:
@@ -14421,8 +13053,8 @@ def _mgmt_nl_provider_feature_enabled() -> bool:
         "PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED",
     ):
         if os.getenv(env_name) is not None:
-            return _bool_from_env(env_name)
-    return _bool_from_env("PANTHEON_ASSISTANT_ENABLED")
+            return auth_policy.bool_from_env(env_name)
+    return auth_policy.bool_from_env("PANTHEON_ASSISTANT_ENABLED")
 def _mgmt_nl_provider_name() -> str:
     return (os.getenv("PANTHEON_ASSISTANT_PROVIDER", "openclaw").strip().lower() or "openclaw")
 _MGMT_NL_PROVIDER_REASON_MESSAGES = {
@@ -15428,6 +14060,55 @@ def _mgmt_nl_json_response_payload(response: JSONResponse) -> Dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+def _mgmt_nl_cached_result_sse_frames(
+    cached: Optional[Dict[str, Any]],
+    *,
+    session_id: str,
+    trace_id: str,
+    message_id: str,
+) -> Iterator[str]:
+    """Render a durably-stored terminal Management NL result as the same
+    meta/delta/done/[DONE] SSE frame shape a fresh provider turn would
+    produce, for both control-command and provider-answer replays.
+
+    BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: the SSE transport must not call
+    the provider a second time for an exact-duplicate idempotency key -- a
+    durable terminal result (found via ``_mgmt_nl_command_admit``) is
+    replayed from here instead.
+    """
+    cached_data = cached.get("data") if isinstance(cached, dict) else {}
+    cached_data = cached_data if isinstance(cached_data, dict) else {}
+    answer = str(cached_data.get("answer") or "")
+    provider_status = cached_data.get("provider_status") or cached_data.get("providerStatus") or {}
+    ui_actions = cached_data.get("ui_actions") or cached_data.get("uiActions") or []
+    command_kind = cached_data.get("control_command") or cached_data.get("controlCommand")
+    audit_log = cached_data.get("audit_log") or cached_data.get("auditLog")
+    conversation = cached_data.get("conversation")
+    yield _mgmt_nl_sse_frame(
+        {
+            "type": "meta",
+            "session_id": cached_data.get("session_id") or session_id,
+            "trace_id": cached_data.get("trace_id") or trace_id,
+            "message_id": cached_data.get("message_id") or message_id,
+            "control_command": command_kind,
+            "replayed": True,
+        }
+    )
+    if answer:
+        yield _mgmt_nl_sse_frame({"type": "delta", "text": answer})
+    done_frame: Dict[str, Any] = {
+        "type": "done",
+        "text": answer,
+        "provider_status": provider_status,
+        "ui_actions": ui_actions,
+        "control_command": command_kind,
+        "replayed": True,
+    }
+    if command_kind:
+        done_frame["audit_log"] = audit_log
+        done_frame["conversation"] = conversation
+    yield _mgmt_nl_sse_frame(done_frame)
+    yield _mgmt_nl_sse_frame("[DONE]")
 def _mgmt_nl_finalize_result(
     base_result: Dict[str, Any],
     *,
@@ -15463,8 +14144,6 @@ async def _mgmt_nl_finalize_provider_turn(
     trace_id: str,
     focus: str,
     resolved_key: str,
-    idempotency_storage_key: Optional[str] = None,
-    request_hash: str,
     audit_log_href: str,
     conversation_href: str,
     base_result: Dict[str, Any],
@@ -15531,11 +14210,6 @@ async def _mgmt_nl_finalize_provider_turn(
             provider_status=provider_status,
             actions=actions,
         )
-        _mgmt_nl_idempotency_put(
-            idempotency_storage_key or resolved_key,
-            request_hash=request_hash,
-            result=final_result,
-        )
         await _mgmt_nl_command_complete(
             command_reservation,
             final_result,
@@ -15558,6 +14232,39 @@ async def bff_management_nl_ask(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+):
+    """Thin fail-closed wrapper: mark a held reservation uncertain exactly
+    once if anything raises after admission granted ownership but before a
+    terminal result was committed, so the key becomes retryable again only
+    after the durable store's recovery window elapses instead of being
+    silently dropped in a dangling ``in_progress`` state forever."""
+    try:
+        return await _bff_management_nl_ask_impl(
+            payload=payload,
+            authorization=authorization,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            x_dry_run=x_dry_run,
+        )
+    except Exception:
+        reservation = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.get()
+        if reservation is not None:
+            await _mgmt_nl_command_mark_uncertain(
+                reservation,
+                reason="request_failed_before_terminal_commit",
+            )
+        raise
+async def _bff_management_nl_ask_impl(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
 ):
     """BFF-B6-001/BFF-B6-003: POST /bff/management/nl/ask — Management NL query endpoint."""
     identity = _extract_identity(authorization)
@@ -15612,18 +14319,8 @@ async def bff_management_nl_ask(
     allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
 
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    idempotency_storage_key = _mgmt_nl_idempotency_storage_key(
-        resolved_key,
-        actor_id=identity.operator_id,
-        tenant_id=caller_tenant_id,
-    )
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
-    legacy_cached = _mgmt_nl_idempotency_check(
-        idempotency_storage_key,
-        request_hash,
-        display_key=resolved_key,
-    )
-    if legacy_cached is None and _request_dry_run_requested():
+    if _request_dry_run_requested(x_dry_run):
         return _dry_run_success_response(
             {
                 "status": "accepted",
@@ -15654,7 +14351,6 @@ async def bff_management_nl_ask(
     command_reservation, cached = await _mgmt_nl_command_admit(
         scope=command_scope,
         request_hash=request_hash,
-        legacy_result=legacy_cached,
         display_key=resolved_key,
     )
     _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(command_reservation)
@@ -15687,8 +14383,6 @@ async def bff_management_nl_ask(
             focus=focus,
             ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
-            idempotency_storage_key=idempotency_storage_key,
-            request_hash=request_hash,
             session_id=session_id,
             message_id=message_id,
             trace_id=trace_id,
@@ -16023,7 +14717,6 @@ async def bff_management_nl_ask(
         audit_log_href=audit_log_href,
         conversation_href=conversation_href,
     )
-    _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
     if not provider_pending:
         await _mgmt_nl_command_complete(
             command_reservation,
@@ -16045,15 +14738,13 @@ async def bff_management_nl_ask(
             trace_id=trace_id,
             focus=focus,
             resolved_key=resolved_key,
-            idempotency_storage_key=idempotency_storage_key,
-            request_hash=request_hash,
             audit_log_href=audit_log_href,
             conversation_href=conversation_href,
             base_result=result,
             command_reservation=command_reservation,
         )
     return JSONResponse(status_code=202, content=result)
-def bff_management_nl_ask_stream(
+async def bff_management_nl_ask_stream(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -16061,7 +14752,50 @@ def bff_management_nl_ask_stream(
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
 ):
-    """SSE-streaming variant of /bff/management/nl/ask."""
+    """Thin fail-closed wrapper mirroring ``bff_management_nl_ask``: mark a
+    held reservation uncertain exactly once if anything raises, while
+    building the response, after admission granted ownership but before a
+    terminal result was committed. (Failures once the SSE body itself is
+    streaming are handled inline inside the generator.)"""
+    try:
+        return await _bff_management_nl_ask_stream_impl(
+            payload=payload,
+            authorization=authorization,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+        )
+    except Exception:
+        reservation = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.get()
+        if reservation is not None:
+            await _mgmt_nl_command_mark_uncertain(
+                reservation,
+                reason="request_failed_before_terminal_commit",
+            )
+        raise
+async def _bff_management_nl_ask_stream_impl(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """SSE-streaming variant of /bff/management/nl/ask.
+
+    BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: this transport now shares the
+    exact same durable command admission/replay decision logic as
+    ``bff_management_nl_ask`` (via ``_mgmt_nl_command_admit`` /
+    ``_MANAGEMENT_NL_USE_CASE``) -- same ordering (identity/role ->
+    question validation -> control-command parse -> high-risk refusal ->
+    tenant resolution -> admission -> session/context/provider), same
+    canonical command scope, same fail-closed 503 on storage loss, and the
+    same "exactly one provider effect per idempotency key" guarantee. A
+    concurrent/duplicate request against the same key does not invoke the
+    provider a second time -- it durably replays the terminal answer as SSE
+    frames instead.
+    """
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -16093,14 +14827,44 @@ def bff_management_nl_ask_stream(
     message_id = f"mnl-{uuid.uuid4().hex[:12]}"
     ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
 
-    if control_command is not None:
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        idempotency_storage_key = _mgmt_nl_idempotency_storage_key(
-            resolved_key,
-            actor_id=identity.operator_id,
-            tenant_id=caller_tenant_id,
+    # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: admission happens once, for both
+    # the control-command and provider-answer paths, before either does any
+    # work -- exactly mirroring bff_management_nl_ask's ordering.
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
+    command_scope = _mgmt_nl_command_scope(
+        actor_id=identity.operator_id,
+        tenant_id=caller_tenant_id,
+        resolved_key=resolved_key,
+    )
+    command_reservation, cached = await _mgmt_nl_command_admit(
+        scope=command_scope,
+        request_hash=request_hash,
+        display_key=resolved_key,
+    )
+    _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(command_reservation)
+    if cached is not None:
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.exchange.replayed",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "actor_id": identity.operator_id,
+                "focus": focus,
+                "route": "POST /bff/management/nl/ask/stream",
+                "idempotency_key": resolved_key,
+            }
         )
-        request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask/stream", "payload": payload})
+        return StreamingResponse(
+            _mgmt_nl_cached_result_sse_frames(
+                cached, session_id=session_id, trace_id=trace_id, message_id=message_id
+            ),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
+
+    if control_command is not None:
         control_response = _mgmt_nl_handle_control_command(
             control_command=control_command,
             payload=payload,
@@ -16109,49 +14873,22 @@ def bff_management_nl_ask_stream(
             focus=focus,
             ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
-            idempotency_storage_key=idempotency_storage_key,
-            request_hash=request_hash,
             session_id=session_id,
             message_id=message_id,
             trace_id=trace_id,
             now=now,
         )
-        control_payload = _mgmt_nl_json_response_payload(control_response)
-        control_data = control_payload.get("data") if isinstance(control_payload.get("data"), dict) else {}
-        answer = str((control_data or {}).get("answer") or "")
-        provider_status = (control_data or {}).get("providerStatus") or (control_data or {}).get("provider_status") or {}
-        audit_log = (control_data or {}).get("auditLog") or (control_data or {}).get("audit_log") or None
-        conversation = (control_data or {}).get("conversation") or None
-        ui_actions = (control_data or {}).get("uiActions") or (control_data or {}).get("ui_actions") or []
-        command_kind = (control_data or {}).get("controlCommand") or (control_data or {}).get("control_command")
-
-        def control_event_stream() -> Iterator[str]:
-            yield _mgmt_nl_sse_frame(
-                {
-                    "type": "meta",
-                    "session_id": (control_data or {}).get("session_id") or session_id,
-                    "trace_id": (control_data or {}).get("trace_id") or trace_id,
-                    "message_id": (control_data or {}).get("message_id") or message_id,
-                    "control_command": command_kind,
-                }
-            )
-            if answer:
-                yield _mgmt_nl_sse_frame({"type": "delta", "text": answer})
-            yield _mgmt_nl_sse_frame(
-                {
-                    "type": "done",
-                    "text": answer,
-                    "provider_status": provider_status,
-                    "audit_log": audit_log,
-                    "conversation": conversation,
-                    "ui_actions": ui_actions,
-                    "control_command": command_kind,
-                }
-            )
-            yield _mgmt_nl_sse_frame("[DONE]")
+        control_result = json.loads(control_response.body)
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            control_result,
+            display_key=resolved_key,
+        )
 
         return StreamingResponse(
-            control_event_stream(),
+            _mgmt_nl_cached_result_sse_frames(
+                control_result, session_id=session_id, trace_id=trace_id, message_id=message_id
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
         )
@@ -16161,7 +14898,9 @@ def bff_management_nl_ask_stream(
         session_id=session_id,
         client_hint=_mgmt_nl_normalize_conversation_context(payload.get("conversation")),
     )
-    context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
+    context_bundle = await asyncio.to_thread(
+        _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
+    )
     snippets = context_bundle["snippets"]
     surfaces = context_bundle["surfaces"]
     confidence = _mgmt_nl_surface_confidence(surfaces)
@@ -16192,7 +14931,9 @@ def bff_management_nl_ask_stream(
         turn_id=message_id, session_id=session_id, role="user", text=question, created_at=now, trace_id=trace_id
     )
 
-    def event_stream() -> Iterator[str]:
+    _MGMT_NL_STREAM_EXHAUSTED = object()
+
+    async def event_stream() -> AsyncGenerator[str, None]:
         provider_run_id = trace_id
         provider_started = time.monotonic()
         _management_ai_record_event(
@@ -16222,7 +14963,15 @@ def bff_management_nl_ask_stream(
         had_error = False
         failure_event: Optional[Dict[str, Any]] = None
         try:
-            for evt in OpenClawOpsClient().stream_assistant_provider(
+            # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: this generator is now
+            # async (so it can await the shared command-completion calls
+            # exactly once below), but OpenClawOpsClient.stream_assistant_provider
+            # is a synchronous, blocking generator. Drive it one item at a
+            # time in a worker thread via asyncio.to_thread(next, ...) so the
+            # event loop stays free between deltas instead of being blocked
+            # for the whole provider turn, while preserving the exact
+            # per-event streaming behaviour below.
+            provider_iter = OpenClawOpsClient().stream_assistant_provider(
                 mode=provider_mode,
                 prompt=prompt,
                 context_pack=context_pack,
@@ -16230,7 +14979,11 @@ def bff_management_nl_ask_stream(
                 trace_id=trace_id,
                 session_user=session_id,
                 read_timeout_seconds=_mgmt_nl_stream_read_timeout_seconds(),
-            ):
+            )
+            while True:
+                evt = await asyncio.to_thread(next, provider_iter, _MGMT_NL_STREAM_EXHAUSTED)
+                if evt is _MGMT_NL_STREAM_EXHAUSTED:
+                    break
                 if evt.get("type") == "delta":
                     chunks.append(str(evt.get("text") or ""))
                 elif evt.get("type") == "done":
@@ -16355,8 +15108,48 @@ def bff_management_nl_ask_stream(
                 "type": "done", "text": answer,
                 "provider_status": provider_status, "ui_actions": actions,
             })
-        elif failure_event is not None:
-            _management_ai_record_event(failure_event)
+            # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: complete the durable
+            # reservation exactly once, from the one code path that actually
+            # observed the terminal provider outcome, so a reconnect/retry
+            # with the same Idempotency-Key durably replays this answer
+            # instead of invoking the provider again.
+            stream_result = {
+                "status": "accepted",
+                "data": {
+                    "status": "completed",
+                    "lifecycle_status": "completed",
+                    "answer": answer,
+                    "session_id": session_id,
+                    "message_id": message_id,
+                    "trace_id": trace_id,
+                    "provider_status": provider_status,
+                    "ui_actions": actions,
+                    "actions": actions,
+                },
+                "meta": {
+                    "status": "completed",
+                    "lifecycle_status": "completed",
+                    "provider_status": provider_status,
+                    "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+                },
+            }
+            await _mgmt_nl_command_complete(
+                command_reservation,
+                stream_result,
+                display_key=resolved_key,
+            )
+        else:
+            if failure_event is not None:
+                _management_ai_record_event(failure_event)
+            # A non-terminal/failed provider turn must not be cached as a
+            # false-positive "completed" result and must not be silently
+            # retried on the same key either -- mark the reservation
+            # uncertain so it becomes retryable again only after the store's
+            # recovery window elapses.
+            await _mgmt_nl_command_mark_uncertain(
+                command_reservation,
+                reason=(failure_event or {}).get("error_code") or "stream_provider_incomplete",
+            )
         yield _mgmt_nl_sse_frame("[DONE]")
 
     return StreamingResponse(
@@ -16676,427 +15469,6 @@ def _synthesis_conflict_log_routes_enabled() -> bool:
     if raw is None:
         return True
     return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
-def _persona_first_evaluation_readback_timeout_seconds() -> float:
-    raw = os.getenv(
-        "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_TIMEOUT_SECONDS",
-        "15",
-    ).strip()
-    try:
-        return max(0.0, float(raw))
-    except (TypeError, ValueError):
-        return 15.0
-def _persona_first_evaluation_readback_poll_seconds() -> float:
-    raw = os.getenv(
-        "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_POLL_SECONDS",
-        "1",
-    ).strip()
-    try:
-        return max(0.05, float(raw))
-    except (TypeError, ValueError):
-        return 1.0
-def _register_persona_cron_required(
-    persona_id: str,
-    capital_pool_id: str,
-    binding_id: str,
-    *,
-    runtime_id: Optional[str] = None,
-    runtime_binding_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Register and authoritatively read back the required evaluation schedule."""
-    from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
-
-    registrar = PersonaCronRegistrar()
-    result = registrar.register_for_persona(
-        persona_id,
-        capital_pool_id=capital_pool_id,
-        workflow_ids=[_PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
-        runtime_id=runtime_id,
-        runtime_binding_id=runtime_binding_id,
-        persona_capital_binding_id=binding_id,
-    )
-    body = result.to_dict()
-    if body.get("mode") != "gateway_rpc":
-        raise RuntimeError("first-evaluation schedule authority is unavailable (dry-run refused)")
-    if body.get("failed"):
-        raise RuntimeError(f"cron registration failed: {body['failed']}")
-    runtime = registrar._get_runtime()
-    authoritative_job = None
-    readback_attempts = 0
-    last_readback_error = ""
-    if runtime is not None:
-        timeout_seconds = _persona_first_evaluation_readback_timeout_seconds()
-        poll_seconds = _persona_first_evaluation_readback_poll_seconds()
-        deadline = time.monotonic() + timeout_seconds
-        while True:
-            readback_attempts += 1
-            try:
-                authoritative_job = registrar.get_first_evaluation_registration(
-                    persona_id,
-                    runtime=runtime,
-                    runtime_id=runtime_id,
-                    runtime_binding_id=runtime_binding_id,
-                    capital_pool_id=capital_pool_id,
-                    persona_capital_binding_id=binding_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                last_readback_error = str(exc) or exc.__class__.__name__
-                authoritative_job = None
-            if authoritative_job is not None:
-                break
-            remaining_seconds = deadline - time.monotonic()
-            if remaining_seconds <= 0:
-                break
-            time.sleep(min(poll_seconds, remaining_seconds))
-    else:
-        last_readback_error = "authoritative cron runtime unavailable"
-    if authoritative_job is None:
-        suffix = f" after {readback_attempts} attempts"
-        if last_readback_error:
-            suffix = f"{suffix}: {last_readback_error}"
-        raise RuntimeError(
-            f"first-evaluation schedule failed authoritative readback{suffix}"
-        )
-    authoritative_event = registrar._decode_job_event(authoritative_job) or {}
-    body["authoritative_readback"] = {
-        "persona_id": persona_id,
-        "workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
-        "runtime_id": runtime_id,
-        "runtime_binding_id": runtime_binding_id,
-        "capital_pool_id": capital_pool_id,
-        "persona_capital_binding_id": binding_id,
-        "registered": True,
-        "job_id": authoritative_job.get("id"),
-        "job_name": authoritative_job.get("name"),
-        "request_id": authoritative_event.get("request_id"),
-        "schedule": deepcopy(authoritative_job.get("schedule")),
-        "session_target": authoritative_job.get("sessionTarget"),
-        "readback_attempts": readback_attempts,
-        "observed_at": utc_now(),
-    }
-    return body
-def _remove_persona_cron_required(persona_id: str) -> Dict[str, Any]:
-    """Remove first-evaluation owner rows and require authoritative absence."""
-    from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
-
-    result = PersonaCronRegistrar().remove_first_evaluation_registration(persona_id)
-    if result.get("registered") is not False:
-        raise RuntimeError("first-evaluation schedule removal lacks zero-owner readback")
-    return result
-def _persona_record_tenant_id(raw: Mapping[str, Any]) -> str:
-    """Return the explicit owner tenant for a Persona record.
-
-    Tenantless records are catalog or malformed rows, never tenant-admitted
-    Personas.  Read paths therefore must not treat a missing value as a
-    wildcard.  The registry and provisioning projections have used both
-    top-level and metadata forms over time, so normalize the supported aliases
-    here before applying the exact-match boundary.
-    """
-    metadata = raw.get("metadata")
-    metadata = metadata if isinstance(metadata, Mapping) else {}
-    for value in (
-        raw.get("tenant_id"),
-        raw.get("tenantId"),
-        metadata.get("tenant_id"),
-        metadata.get("tenantId"),
-    ):
-        tenant_id = str(value or "").strip()
-        if tenant_id:
-            return tenant_id
-    return ""
-def _openclaw_agent_reconcile_request(
-    persona: Dict[str, Any],
-    *,
-    reason: str,
-    route_policy: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
-    request: Dict[str, Any] = {
-        "status": "pending",
-        "reason": reason,
-        "agent_id": persona_id,
-        "model_id": f"openclaw/{persona_id}" if persona_id else "",
-        "consumer": "scripts/openclaw-sync-persona-agents.py",
-    }
-    if callable(build_persona_runtime_profile):
-        try:
-            profile = build_persona_runtime_profile(persona, route_policy=route_policy).to_dict()
-        except ValueError as exc:
-            log.warning("Validation error in runtime profile generation for %s: %s", persona_id, exc)
-            request.update({
-                "status": "blocked",
-                "blocked_reason": "invalid_persona_runtime_profile_inputs",
-                "repair_action": "fix_persona_runtime_profile",
-            })
-            return request
-        except Exception as exc:
-            log.warning("Unexpected error generating runtime profile for %s: %s", persona_id, exc)
-            request.update({
-                "status": "blocked",
-                "blocked_reason": "runtime_profile_generation_failed",
-                "repair_action": "check_persona_runtime_profile_inputs",
-            })
-            return request
-    else:
-        profile = {}
-    routing = dict(profile.get("model_routing") or {})
-    if routing.get("status") != "ready":
-        request.update({
-            "status": "blocked",
-            "blocked_reason": routing.get("blocked_reason") or routing.get("reason") or "model_routing_degraded",
-            "repair_action": "fix_persona_route_policy_or_provider_pool",
-        })
-    request.update({
-        "workspace_ref": profile.get("workspace_ref"),
-        "sync_generation": profile.get("sync_generation"),
-        "model_routing": routing,
-    })
-    return request
-def _persona_provisioning_metadata(
-    record: ProvisioningRecord,
-    *,
-    ids: Any,
-    payload: Mapping[str, Any],
-    owner: str,
-    archetype: str,
-    risk: str,
-    mandate: Optional[str],
-    strategy_family: Optional[str],
-    traits: Optional[Dict[str, Any]],
-    lifecycle_state: str,
-) -> Dict[str, Any]:
-    paper_ledger_id = f"paper-ledger-{ids.token}"
-    runtime_binding_id = str(record.references.get("runtime_binding_id") or "").strip()
-    runtime_id = str(record.references.get("runtime_id") or "").strip()
-    metadata: Dict[str, Any] = {
-        "owner": owner,
-        "archetype": archetype,
-        "risk_level": risk,
-        "mandate": mandate,
-        "strategy_family": strategy_family,
-        "description": payload.get("description"),
-        "memo": payload.get("memo"),
-        "tenant_id": record.tenant_id,
-        "provisioning_idempotency_key": record.idempotency_key,
-        "provisioning_request_hash": record.request_hash,
-        "provisioning_state": record.state,
-        "provisioning_step": record.current_step,
-        "initial_mode": "paper",
-        "execution_mode": "paper",
-        "success_rate": float(payload.get("successRate") or 0.0),
-        "capital_mode": "paper",
-        "paper_ledger_id": paper_ledger_id,
-        "paper_ledger": {
-            "id": paper_ledger_id,
-            "mode": "paper",
-            "persona_id": record.persona_id,
-            "is_isolated": True,
-            "benchmark_budget": payload.get("budget"),
-        },
-        # Internal canonical paper pool.  Public DTO projection intentionally
-        # keeps capitalPoolId empty in paper mode.
-        "legacy_paper_capital_pool_id": ids.capital_pool_id,
-        "internal_paper_capital_pool_id": ids.capital_pool_id,
-        "persona_capital_binding_id": ids.persona_capital_binding_id,
-        "registry_id": ids.registry_id,
-        "approval_decision_id": ids.approval_decision_id,
-        "deployment_plan_id": ids.deployment_plan_id,
-        "deployment_saga_id": ids.deployment_saga_id,
-        "deployment_stage": "paper",
-        "paper_runtime_state": (
-            "running"
-            if lifecycle_state == "paper_running"
-            else "failed" if lifecycle_state == "provisioning_failed" else "provisioning"
-        ),
-        "live_capital_enabled": False,
-        "live_write_enabled": False,
-        "order_side_effects_allowed": False,
-        "capital_side_effects_allowed": False,
-        "governance_required": True,
-        "recommended_governance_action": "none",
-        "data_source_status": payload.get("dataSourceStatus")
-        or payload.get("data_source_status")
-        or {
-            "state": "paper_readback_pending",
-            "provider_count": len(payload.get("dataSources") or payload.get("data_sources") or []),
-            "provider_status_counts": {},
-            "live_ingestion_enabled": False,
-            "order_side_effects_allowed": False,
-        },
-        "data_sources": payload.get("dataSources") or payload.get("data_sources") or [],
-        "risk_profile": payload.get("riskProfile")
-        or payload.get("risk_profile")
-        or {
-            "risk_level": risk,
-            "max_drawdown": payload.get("maxDrawdown") or payload.get("max_drawdown"),
-            "daily_loss_limit": payload.get("dailyLossLimit") or payload.get("daily_loss_limit"),
-        },
-        "evidence_refs": [
-            f"evidence://persona-create/{record.persona_id}/request",
-            f"evidence://persona-create/{record.persona_id}/capital-binding",
-            f"evidence://persona-create/{record.persona_id}/deployment-saga",
-        ],
-    }
-    readback_started_at = record.references.get("provisioning_readback_started_at")
-    if isinstance(readback_started_at, str) and readback_started_at.strip():
-        metadata["provisioning_readback_started_at"] = readback_started_at.strip()
-    if runtime_binding_id:
-        metadata["runtime_binding_id"] = runtime_binding_id
-    if runtime_id:
-        metadata["runtime_id"] = runtime_id
-    if record.error:
-        metadata["provisioning_error"] = deepcopy(record.error)
-    if record.compensation:
-        metadata["provisioning_compensation"] = deepcopy(record.compensation)
-    if traits:
-        metadata["traits"] = deepcopy(traits)
-    metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
-        {
-            "id": record.persona_id,
-            "persona_id": record.persona_id,
-            "name": str(payload.get("name") or record.normalized_name),
-            "mandate": mandate or archetype,
-            "strategy_family": strategy_family or archetype,
-            "lifecycle_state": lifecycle_state,
-            "metadata": {
-                **metadata,
-                "owner": owner,
-                "archetype": archetype,
-                "risk_level": risk,
-            },
-        },
-        reason="persona_created",
-    )
-    return metadata
-def _persona_create_required_data_sources(payload: Mapping[str, Any]) -> List[Dict[str, Any]]:
-    required = payload.get("required_data_sources") or payload.get("requiredDataSources")
-    market = str(payload.get("market") or "").strip().upper()
-    if not required and market:
-        from .personas.service import _market_persona_required_data_sources
-
-        required = _market_persona_required_data_sources({"market": market})
-    return json.loads(json.dumps(required or []))
-def _persona_record_for_provisioning(
-    record: ProvisioningRecord,
-    *,
-    payload: Mapping[str, Any],
-    owner: str,
-    mutate_store: bool = False,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    canonical_owner = str(record.request_payload.get("requested_by") or owner).strip()
-    ids = deterministic_provisioning_ids(record)
-    archetype = str(payload.get("archetype") or "generalist")
-    risk = _normalize_risk_level(payload.get("risk") or "low")
-    mandate = str(payload.get("mandate") or "").strip() or None
-    strategy_family = str(
-        payload.get("strategy_family") or payload.get("strategyFamily") or ""
-    ).strip() or None
-    raw_traits = payload.get("traits")
-    traits = {
-        key: raw_traits[key]
-        for key in (
-            "instruments",
-            "risk_appetite",
-            "decision_style",
-            "time_horizon",
-            "hard_rules",
-            "persona_voice",
-        )
-        if isinstance(raw_traits, dict) and raw_traits.get(key) not in (None, "")
-    } or None
-    if record.state == "succeeded":
-        lifecycle_state = "paper_running"
-    elif record.state in {"failed", "compensated"}:
-        lifecycle_state = "provisioning_failed"
-    else:
-        lifecycle_state = "provisioning"
-    metadata = _persona_provisioning_metadata(
-        record,
-        ids=ids,
-        payload=payload,
-        owner=canonical_owner,
-        archetype=archetype,
-        risk=risk,
-        mandate=mandate,
-        strategy_family=strategy_family,
-        traits=traits,
-        lifecycle_state=lifecycle_state,
-    )
-    existing = read_store.get_persona(record.persona_id)
-    if existing is None:
-        if mutate_store:
-            persona = persona_write_owner.create_persona(
-                persona_id=record.persona_id,
-                name=str(payload.get("name") or record.normalized_name),
-                actor_id=canonical_owner,
-                created_at=record.created_at,
-                archetype=archetype,
-                lifecycle_state=lifecycle_state,
-                risk_level=risk,
-                mandate=mandate,
-                strategy_family=strategy_family,
-                traits=traits,
-                metadata=metadata,
-                required_data_sources=_persona_create_required_data_sources(payload),
-            )
-        else:
-            persona = {
-                "id": record.persona_id,
-                "persona_id": record.persona_id,
-                "name": str(payload.get("name") or record.normalized_name),
-                "actor_id": canonical_owner,
-                "created_by": canonical_owner,
-                "created_at": record.created_at,
-                "archetype": archetype,
-                "lifecycle_state": lifecycle_state,
-                "risk_level": risk,
-                "mandate": mandate,
-                "strategy_family": strategy_family,
-                "traits": traits,
-                "metadata": metadata,
-                "required_data_sources": _persona_create_required_data_sources(payload),
-            }
-    else:
-        existing_metadata = existing.get("metadata")
-        existing_metadata = existing_metadata if isinstance(existing_metadata, dict) else {}
-        if mutate_store and (
-            str(existing.get("name") or "").strip()
-            != str(payload.get("name") or record.normalized_name).strip()
-            or str(existing_metadata.get("tenant_id") or record.tenant_id) != record.tenant_id
-        ):
-            raise ProvisioningConflict(
-                "stable Persona identity is already occupied by different tenant/name semantics"
-            )
-        if (
-            record.state == "succeeded"
-            and str(existing.get("lifecycle_state") or "") == "paper_running"
-        ):
-            lifecycle_state = "paper_running"
-        elif existing.get("lifecycle_state") and record.state == "succeeded":
-            lifecycle_state = str(existing.get("lifecycle_state"))
-        if mutate_store:
-            persona = persona_write_owner.update_persona(
-                record.persona_id,
-                lifecycle_state=lifecycle_state,
-                metadata=metadata,
-            ) or existing
-        else:
-            persona = {
-                **existing,
-                "id": record.persona_id,
-                "persona_id": record.persona_id,
-                "name": str(existing.get("name") or payload.get("name") or record.normalized_name),
-                "actor_id": str(existing.get("actor_id") or canonical_owner),
-                "created_by": str(existing.get("created_by") or canonical_owner),
-                "archetype": existing.get("archetype") or archetype,
-                "lifecycle_state": lifecycle_state,
-                "risk_level": existing.get("risk_level") or risk,
-                "mandate": existing.get("mandate") or mandate,
-                "strategy_family": existing.get("strategy_family") or strategy_family,
-                "traits": existing.get("traits") or traits,
-                "metadata": {**existing_metadata, **metadata},
-                "required_data_sources": existing.get("required_data_sources") or _persona_create_required_data_sources(payload),
-            }
-    return persona, metadata
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
 _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (
@@ -18322,8 +16694,17 @@ async def _sse_stream(
     subscribers: list[asyncio.Queue],
     last_event_id: Optional[str] = None,
     channel: Optional[str] = None,
+    event_filter: Optional[Callable[[dict], bool]] = None,
 ) -> AsyncGenerator[str, None]:
-    """Async generator that yields SSE-formatted events."""
+    """Async generator that yields SSE-formatted events.
+
+    ``event_filter``, when provided, restricts both the replayed history and
+    the live stream to events for which it returns True — e.g. the per-job
+    ``GET /bff/sse/jobs/{jobId}/progress`` subscription filters server-side by
+    ``jobId`` so a client subscribed to job A never receives job B's events
+    (BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001; previously this was
+    documented as "client-side only").
+    """
     q: asyncio.Queue = asyncio.Queue(maxsize=1000)
     subscribers.append(q)
     try:
@@ -18334,12 +16715,16 @@ async def _sse_stream(
             else _replay_from(buffer, last_event_id)
         )
         for evt in replayed:
+            if event_filter is not None and isinstance(evt, dict) and not event_filter(evt):
+                continue
             yield _sse_format(evt)
 
         # Then stream new events as they arrive
         while True:
             try:
                 evt = await asyncio.wait_for(q.get(), timeout=30.0)
+                if event_filter is not None and isinstance(evt, dict) and not event_filter(evt):
+                    continue
                 yield _sse_format(evt)
             except asyncio.TimeoutError:
                 # Send a comment to keep the connection alive
@@ -18354,6 +16739,7 @@ def _handle_sse_stream(
     subscribers: list[asyncio.Queue],
     last_event_id: Optional[str],
     extra_headers: Optional[Dict[str, str]] = None,
+    event_filter: Optional[Callable[[dict], bool]] = None,
 ) -> StreamingResponse:
     """Helper to create a StreamingResponse with replay error handling."""
     try:
@@ -18388,7 +16774,7 @@ def _handle_sse_stream(
         headers.update(extra_headers)
 
     return StreamingResponse(
-        _sse_stream(buffer, subscribers, last_event_id, channel),
+        _sse_stream(buffer, subscribers, last_event_id, channel, event_filter=event_filter),
         media_type="text/event-stream",
         headers=headers,
     )
@@ -18774,7 +17160,19 @@ def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> O
             return "composed_market_persona_defaults"
     return None
 def _get_bff_job(job_id: str) -> Optional[Dict[str, Any]]:
-    return read_store.get_job_bff(job_id)
+    """Best-effort job lookup for the assistant context pack.
+
+    BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001: ``get_job_bff`` now raises
+    ``JobSourceUnavailableError`` when the specific job's owning source is
+    unreachable/unconfigured. The assistant context pack is a best-effort
+    aggregation across many sources (see ``assistant/source_collectors.py``)
+    and must degrade that one source rather than fail the whole snapshot, so
+    this treats "source unavailable" the same as "not found" here.
+    """
+    try:
+        return read_store.get_job_bff(job_id)
+    except JobSourceUnavailableError:
+        return None
 def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
     jobs = read_store.list_jobs_bff()
     if status:
@@ -18999,8 +17397,8 @@ async def sem_bff_version():
         "auth_stub": _bff_auth_stub_enabled(),
         "auth_mode": _bff_auth_mode(),
         "dev_login_enabled": _dev_login_enabled(),
-        "mfa_required": _bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
-        "assistant_kernel_enabled": _bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
+        "mfa_required": auth_policy.bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
+        "assistant_kernel_enabled": auth_policy.bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
         "trade_journey_reader_backend": os.getenv(
             "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres"
         ).strip().lower(),
@@ -19238,93 +17636,6 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
             "surface_key": "ooda_control_room_status",
         },
     }
-def _persona_fleet_context_missing(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str):
-        return not value.strip()
-    if isinstance(value, (list, tuple, set, dict)):
-        return len(value) == 0
-    return False
-def _persona_fleet_market_key(persona: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[str]:
-    for value in (
-        metadata.get("market"),
-        persona.get("market"),
-        persona.get("market_scope"),
-        metadata.get("market_scope"),
-    ):
-        candidates = value if isinstance(value, list) else [value]
-        for candidate in candidates:
-            normalized = str(candidate or "").strip().upper()
-            if normalized in {"US", "TW", "CRYPTO"}:
-                return normalized
-
-    asset_classes = {
-        str(value or "").strip().lower()
-        for value in (metadata.get("asset_classes") or persona.get("asset_classes") or [])
-    }
-    if "crypto" in asset_classes:
-        return "CRYPTO"
-
-    broker_adapter = str(metadata.get("broker_adapter") or persona.get("broker_adapter") or "").lower()
-    if "shioaji" in broker_adapter:
-        return "TW"
-    if "kraken" in broker_adapter or "crypto" in broker_adapter:
-        return "CRYPTO"
-    if "ibkr" in broker_adapter:
-        return "US"
-
-    name = str(persona.get("name") or persona.get("persona_name") or persona.get("id") or "").upper()
-    if name.startswith("CRYPTO") or "BTC" in name:
-        return "CRYPTO"
-    if name.startswith("TW") or "TAIWAN" in name:
-        return "TW"
-    if name.startswith("US") or "U.S." in name or "UNITED STATES" in name:
-        return "US"
-    return None
-def _persona_fleet_context_defaults_by_market(
-    candidates: Optional[Sequence[Dict[str, Any]]] = None,
-) -> Dict[str, Dict[str, Any]]:
-    defaults: Dict[str, Dict[str, Any]] = {}
-    persona_candidates = (
-        candidates
-        if candidates is not None
-        else read_store.list_personas(include_market_persona_defaults=True)
-    )
-    for candidate in persona_candidates:
-        if not isinstance(candidate, dict):
-            continue
-        metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
-        if not (
-            isinstance(metadata.get("data_source_status"), dict)
-            and metadata.get("data_source_status")
-            and isinstance(metadata.get("current_research_projects"), list)
-            and metadata.get("current_research_projects")
-        ):
-            continue
-        market = _persona_fleet_market_key(candidate, metadata)
-        if market and market not in defaults:
-            defaults[market] = {
-                "persona": json.loads(json.dumps(candidate)),
-                "metadata": json.loads(json.dumps(metadata)),
-            }
-    return defaults
-def _persona_fleet_context_overlay(
-    persona: Dict[str, Any],
-    metadata: Dict[str, Any],
-    defaults_by_market: Dict[str, Dict[str, Any]],
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    market = _persona_fleet_market_key(persona, metadata)
-    default_context = defaults_by_market.get(market or "")
-    if not default_context:
-        return metadata, {}
-
-    default_metadata = default_context.get("metadata") if isinstance(default_context.get("metadata"), dict) else {}
-    context_metadata = json.loads(json.dumps(metadata))
-    for key in _PERSONA_FLEET_CONTEXT_METADATA_KEYS:
-        if _persona_fleet_context_missing(context_metadata.get(key)) and not _persona_fleet_context_missing(default_metadata.get(key)):
-            context_metadata[key] = json.loads(json.dumps(default_metadata[key]))
-    return context_metadata, default_context.get("persona") if isinstance(default_context.get("persona"), dict) else {}
 def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
     if path == "/bff/audit":
         return _sem_final_list_response(
@@ -19493,510 +17804,43 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             "meta": {"snapshot_at": snapshot_at, "surfaces": {"strategy_health": strategy_surface}},
         }
     return None
-def _assistant_focus_entity(
-    request: Any,
-) -> tuple[Optional[str], Optional[str]]:
-    focus = getattr(request, "focus", None)
-    if focus is not None:
-        entity_type = str(getattr(focus, "entity_type", "") or "").strip()
-        entity_id = str(getattr(focus, "entity_id", "") or "").strip()
-        if entity_type and entity_id:
-            return entity_type, entity_id
-
-    selected = getattr(request, "selected_entity", None)
-    if selected is None:
-        frontend = getattr(request, "frontend", None)
-        selected = getattr(frontend, "selected_entity", None) if frontend is not None else None
-    if isinstance(selected, dict):
-        entity_type = str(
-            selected.get("entity_type")
-            or selected.get("entityType")
-            or selected.get("type")
-            or ""
-        ).strip()
-        entity_id = str(
-            selected.get("entity_id")
-            or selected.get("entityId")
-            or selected.get("id")
-            or ""
-        ).strip()
-        if entity_type and entity_id:
-            return entity_type, entity_id
-    return None, None
-def _assistant_source_access_meta(identity: Optional[OperatorIdentity]) -> Dict[str, Any]:
-    roles = list(getattr(identity, "roles", []) or [])
-    tenant: Dict[str, Any] = {
-        "id": None,
-        "allowed_ids": [],
-        "scope": "unknown",
-    }
-    if identity is not None:
-        try:
-            tenant = _bff_me_tenant_payload(identity, requested_tenant=None)
-        except HTTPException:
-            tenant = {
-                "id": None,
-                "allowed_ids": [],
-                "scope": "denied",
-            }
-    return {
-        "rbac": {
-            "enforced": True,
-            "required_roles": sorted(_READ_ROLES),
-            "actor_roles": roles,
-        },
-        "tenant": {
-            "enforced": True,
-            "tenant_id": tenant.get("id"),
-            "allowed_tenants": list(tenant.get("allowed_ids") or []),
-            "scope": tenant.get("scope") or "unknown",
-        },
-    }
-def _assistant_attach_access_meta(
-    payload: Any,
-    *,
-    source_id: str,
-    identity: Optional[OperatorIdentity],
-    snapshot_at: str,
-) -> Dict[str, Any]:
-    result = dict(payload) if isinstance(payload, dict) else {"data": payload}
-    meta = dict(result.get("meta") if isinstance(result.get("meta"), dict) else {})
-    meta.setdefault("snapshot_at", snapshot_at)
-    meta.setdefault("surfaces", {source_id: {"status": "ok", "source": "bff_read"}})
-    meta["access"] = _assistant_source_access_meta(identity)
-    result["meta"] = meta
-    return result
-def _assistant_tenant_scope(identity: Optional[OperatorIdentity]) -> Dict[str, Any]:
-    return _assistant_source_access_meta(identity).get("tenant", {})
-def _assistant_filter_tenant_records(
-    records: List[Dict[str, Any]],
-    identity: Optional[OperatorIdentity],
-) -> List[Dict[str, Any]]:
-    tenant = _assistant_tenant_scope(identity)
-    if tenant.get("scope") == "global":
-        return [record for record in records if isinstance(record, dict)]
-    return _mgmt_nl_filter_tenant_records(
-        [record for record in records if isinstance(record, dict)],
-        str(tenant.get("tenant_id") or ""),
-    )
-def _assistant_filter_payload_tenant(payload: Any, identity: Optional[OperatorIdentity]) -> Any:
-    if not isinstance(payload, dict):
-        return payload
-    result = dict(payload)
-    for key in ("items", "alerts", "events", "data"):
-        value = result.get(key)
-        if isinstance(value, list):
-            result[key] = _assistant_filter_tenant_records(value, identity)
-    return result
-def _assistant_unavailable_source(
-    source_id: str,
-    *,
-    href: str,
-    snapshot_at: str,
-    dataset: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at, source="missing")
-    return AssistantCollectedSource(
-        source_id=source_id,
-        href=href,
-        payload=_assistant_attach_access_meta(
-            {
-                "data": None,
-                "meta": {
-                    "snapshot_at": snapshot_at,
-                    "surfaces": {source_id: surface},
-                },
-            },
-            source_id=source_id,
-            identity=identity,
-            snapshot_at=snapshot_at,
-        ),
-        status=str(surface.get("status") or "unavailable"),
-    )
-def _assistant_collect_jobs_source(
-    request: Any,
-    snapshot_at: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    entity_type, entity_id = _assistant_focus_entity(request)
-    selected_job = None
-    href = "/bff/jobs"
-    if entity_type and entity_type.lower() in {"job", "jobs"} and entity_id:
-        raw_job = _get_bff_job(entity_id)
-        if isinstance(raw_job, dict):
-            selected_job = next(iter(_assistant_filter_tenant_records([raw_job], identity)), None)
-        href = f"/bff/jobs/{entity_id}"
-
-    jobs = _assistant_filter_tenant_records(_list_bff_jobs(), identity)
-    surface = _dataset_surface_status(
-        "jobs",
-        snapshot_at=snapshot_at,
-        has_data=bool(jobs) or bool(selected_job) or None,
-    )
-    payload: Dict[str, Any] = {
-        "items": jobs[:20],
-        "selected": selected_job,
-        "page_info": {"next_page_token": None, "total": len(jobs)},
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": {"jobs": surface},
-        },
-    }
-    if entity_id and selected_job is None:
-        payload["selected_missing"] = {
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "reason": "job_not_found_or_not_visible",
-        }
-    return AssistantCollectedSource(
-        source_id="jobs",
-        href=href,
-        payload=_assistant_attach_access_meta(
-            payload,
-            source_id="jobs",
-            identity=identity,
-            snapshot_at=snapshot_at,
-        ),
-        status=str(surface.get("status") or "ok"),
-    )
-def _assistant_collect_job_logs_source(
-    request: Any,
-    snapshot_at: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    entity_type, entity_id = _assistant_focus_entity(request)
-    if not entity_id or (entity_type and entity_type.lower() not in {"job", "jobs"}):
-        return None
-    job = _get_bff_job(entity_id)
-    if isinstance(job, dict):
-        job = next(iter(_assistant_filter_tenant_records([job], identity)), None)
-    if job is None:
-        return _assistant_unavailable_source(
-            "job_logs",
-            href=f"/bff/jobs/{entity_id}/logs",
-            snapshot_at=snapshot_at,
-            dataset="jobs",
-            identity=identity,
-        )
-    logs = list(job.get("logs") or [])
-    surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at, has_data=True)
-    return AssistantCollectedSource(
-        source_id="job_logs",
-        href=f"/bff/jobs/{entity_id}/logs",
-        payload=_assistant_attach_access_meta(
-            {
-                "job_id": entity_id,
-                "logs": logs[:50],
-                "meta": {
-                    "snapshot_at": snapshot_at,
-                    "surfaces": {"job_logs": surface},
-                },
-            },
-            source_id="job_logs",
-            identity=identity,
-            snapshot_at=snapshot_at,
-        ),
-        status=str(surface.get("status") or "ok"),
-    )
-def _assistant_collect_audit_source(
-    request: Any,
-    snapshot_at: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    entity_type, entity_id = _assistant_focus_entity(request)
-    href = "/bff/audit"
-    if entity_type and entity_id:
-        events = [
-            event
-            for event in _list_governance_audit_events(target_type=entity_type)
-            if str(event.get("target_id") or event.get("entity_id") or "") == entity_id
-        ]
-        href = f"/bff/audit/entities/{entity_type}/{entity_id}"
-    else:
-        events = _list_governance_audit_events()
-    events = _assistant_filter_tenant_records(events, identity)
-    surface = _dataset_surface_status(
-        "governance_audit_events",
-        snapshot_at=snapshot_at,
-        has_data=bool(events) or None,
-    )
-    return AssistantCollectedSource(
-        source_id="audit",
-        href=href,
-        payload=_assistant_attach_access_meta(
-            {
-                "items": events[:50],
-                "page_info": {"next_page_token": None, "total": len(events)},
-                "meta": {
-                    "snapshot_at": snapshot_at,
-                    "surfaces": {"audit": surface},
-                },
-            },
-            source_id="audit",
-            identity=identity,
-            snapshot_at=snapshot_at,
-        ),
-        status=str(surface.get("status") or "ok"),
-    )
-def _assistant_collect_recent_sse_source(
-    _request: Any,
-    snapshot_at: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    events = _assistant_filter_tenant_records(read_store.list_events_bff(page_size=25), identity)
-    surface = _dataset_surface_status(
-        "governance_audit_events",
-        snapshot_at=snapshot_at,
-        has_data=bool(events) or None,
-    )
-    return AssistantCollectedSource(
-        source_id="recent_sse",
-        href="/bff/events",
-        payload=_assistant_attach_access_meta(
-            {
-                "items": events[:25],
-                "page_info": {"next_page_token": None},
-                "meta": {
-                    "snapshot_at": snapshot_at,
-                    "surfaces": {"recent_sse": surface},
-                },
-            },
-            source_id="recent_sse",
-            identity=identity,
-            snapshot_at=snapshot_at,
-        ),
-        status=str(surface.get("status") or "ok"),
-    )
-_ASSISTANT_DOCS_RAG_ALLOWLIST = (
-    (
-        "existing_architecture_plan",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md",
-        "Pantheon Management Assistant existing architecture integration plan",
-    ),
-    (
-        "existing_architecture_tasks",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md",
-        "Existing architecture assistant integration execution tasks",
-    ),
-    (
-        "ai_collaboration_guide",
-        "AI_COLLABORATION_GUIDE.md",
-        "Pantheon AI collaboration and repository workflow guide",
-    ),
+from .assistant.source_collectors import (
+    AssistantSourceCollectorDeps,
+    collect_assistant_context_source,
 )
-def _assistant_repo_root() -> Path:
-    return Path(_REPO_ROOT)
-def _assistant_doc_query_terms(request: Any) -> List[str]:
-    values: List[str] = []
-    for value in (
-        getattr(request, "question", None),
-        getattr(request, "route", None),
-    ):
-        if value:
-            values.extend(str(value).lower().split())
-    frontend = getattr(request, "frontend", None)
-    if frontend is not None and getattr(frontend, "route", None):
-        values.extend(str(frontend.route).lower().split("/"))
-    return [value.strip(".,:;()[]{}").lower() for value in values if len(value.strip(".,:;()[]{}")) > 3]
-def _assistant_doc_snippet(text: str, terms: List[str], *, limit: int = 900) -> str:
-    compact = " ".join(line.strip() for line in text.splitlines() if line.strip())
-    lower = compact.lower()
-    start = 0
-    for term in terms:
-        found = lower.find(term)
-        if found >= 0:
-            start = max(0, found - 160)
-            break
-    return compact[start:start + limit]
-def _assistant_collect_docs_rag_source(
-    request: Any,
-    snapshot_at: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    root = _assistant_repo_root()
-    terms = _assistant_doc_query_terms(request)
-    items: List[Dict[str, Any]] = []
-    citations: List[Dict[str, Any]] = []
-    source_refs: List[Dict[str, Any]] = []
-
-    for slug, relative_path, title in _ASSISTANT_DOCS_RAG_ALLOWLIST:
-        path = root / relative_path
-        if not path.exists() or not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        ref_id = f"doc:{slug}"
-        snippet = _assistant_doc_snippet(text, terms)
-        citation = {
-            "ref_id": ref_id,
-            "title": title,
-            "path": relative_path,
-        }
-        items.append({
-            "ref_id": ref_id,
-            "title": title,
-            "path": relative_path,
-            "snippet": snippet,
-        })
-        citations.append(citation)
-        source_refs.append({
-            "source_id": ref_id,
-            "href": relative_path,
-            "snapshot_at": snapshot_at,
-            "status": "ok",
-            "staleness": {
-                "status": "fresh",
-                "served_from": "repo_doc_allowlist",
-                "last_known_at": snapshot_at,
-            },
-            "source_kind": "docs",
-        })
-
-    status = "ok" if items else "unavailable"
-    surface = {
-        "status": status,
-        "source": "repo_doc_allowlist",
-    }
-    source_refs.insert(0, {
-        "source_id": "docs_rag",
-        "href": "docs://assistant/context",
-        "snapshot_at": snapshot_at,
-        "status": status,
-        "staleness": {
-            "status": "fresh" if items else "unavailable",
-            "served_from": "repo_doc_allowlist",
-            "last_known_at": snapshot_at,
-        },
-        "source_kind": "docs",
-    })
-    return AssistantCollectedSource(
-        source_id="docs_rag",
-        href="docs://assistant/context",
-        payload={
-            "items": items,
-            "citations": citations,
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {"docs_rag": surface},
-                "access": {
-                    **_assistant_source_access_meta(identity),
-                    "corpus": "repo_doc_allowlist",
-                },
-            },
-        },
-        status=status,
-        source_kind="docs",
-        source_refs=source_refs,
-    )
 def _assistant_collect_source(
     source_id: str,
     request: Any,
     snapshot_at: str,
     identity: Optional[OperatorIdentity] = None,
 ) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    if source_id == "control_room":
-        payload = _sem_final_generic_list_for_path("/bff/v5/control-room")
-        if payload is None:
-            return _assistant_unavailable_source(
-                source_id,
-                href="/bff/v5/control-room",
-                snapshot_at=snapshot_at,
-                dataset="incidents",
-                identity=identity,
-            )
-        payload = _assistant_filter_payload_tenant(payload, identity)
-        return AssistantCollectedSource(
-            source_id=source_id,
-            href="/bff/v5/control-room",
-            payload=_assistant_attach_access_meta(
-                payload,
-                source_id=source_id,
-                identity=identity,
-                snapshot_at=snapshot_at,
-            ),
-        )
-    if source_id == "jobs":
-        return _assistant_collect_jobs_source(request, snapshot_at, identity)
-    if source_id == "alerts":
-        payload = _assistant_filter_payload_tenant(_build_operator_alerts_payload(snapshot_at), identity)
-        return AssistantCollectedSource(
-            source_id=source_id,
-            href="/bff/alerts",
-            payload=_assistant_attach_access_meta(
-                payload,
-                source_id=source_id,
-                identity=identity,
-                snapshot_at=snapshot_at,
-            ),
-        )
-    if source_id == "audit":
-        return _assistant_collect_audit_source(request, snapshot_at, identity)
-    if source_id == "recent_sse":
-        return _assistant_collect_recent_sse_source(request, snapshot_at, identity)
-    if source_id == "persona_health":
-        payload = _sem_final_generic_list_for_path("/bff/v5/execution/persona-health")
-        if payload is None:
-            return _assistant_unavailable_source(
-                source_id,
-                href="/bff/v5/execution/persona-health",
-                snapshot_at=snapshot_at,
-                dataset="personas",
-                identity=identity,
-            )
-        payload = _assistant_filter_payload_tenant(payload, identity)
-        return AssistantCollectedSource(
-            source_id=source_id,
-            href="/bff/v5/execution/persona-health",
-            payload=_assistant_attach_access_meta(
-                payload,
-                source_id=source_id,
-                identity=identity,
-                snapshot_at=snapshot_at,
-            ),
-        )
-    if source_id == "strategy_health":
-        payload = _sem_final_generic_list_for_path("/bff/v5/execution/strategy-health")
-        if payload is None:
-            return _assistant_unavailable_source(
-                source_id,
-                href="/bff/v5/execution/strategy-health",
-                snapshot_at=snapshot_at,
-                dataset="strategy_specs",
-                identity=identity,
-            )
-        payload = _assistant_filter_payload_tenant(payload, identity)
-        return AssistantCollectedSource(
-            source_id=source_id,
-            href="/bff/v5/execution/strategy-health",
-            payload=_assistant_attach_access_meta(
-                payload,
-                source_id=source_id,
-                identity=identity,
-                snapshot_at=snapshot_at,
-            ),
-        )
-    if source_id == "job_logs":
-        return _assistant_collect_job_logs_source(request, snapshot_at, identity)
-    if source_id == "docs_rag":
-        return _assistant_collect_docs_rag_source(request, snapshot_at, identity)
-    return None
+    """Composition-root binding for the single owner of assistant context
+    source collection (BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001).
+    Closes over the real runtime collaborators and delegates to
+    ``collect_assistant_context_source`` -- no second copy of any collector
+    logic may live here.  Mirrors the ``_resolve_agora_interaction_context_ref``
+    composition-root binding introduced by
+    BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001.
+    """
+    return collect_assistant_context_source(
+        source_id,
+        request,
+        snapshot_at,
+        identity,
+        deps=AssistantSourceCollectorDeps(
+            read_store=read_store,
+            list_governance_audit_events=_list_governance_audit_events,
+            filter_tenant_records_fn=_mgmt_nl_filter_tenant_records,
+            dataset_surface_status=_dataset_surface_status,
+            generic_path_collector=_sem_final_generic_list_for_path,
+            persona_service=persona_service,
+            build_operator_alerts_payload=_build_operator_alerts_payload,
+            get_job=_get_bff_job,
+            list_jobs=_list_bff_jobs,
+            tenant_payload_fn=_bff_me_tenant_payload,
+            read_roles=_READ_ROLES,
+        ),
+    )
 def _assistant_build_context_pack(session_id: str, request: Any, identity: OperatorIdentity) -> Any:
     from .assistant.context_composer import compose_context_pack
 
@@ -20288,6 +18132,15 @@ _events_router = _create_events_router(
 )
 app.include_router(_events_router)
 from .evolution.router import create_evolution_router as _create_evolution_router
+from .ports.evolution_program_commands import EvolutionServiceProgramCommandPort as _EvolutionServiceProgramCommandPort
+from services.evolution.client import EvolutionClient as _EvolutionClient
+
+# Typed write port for evolution program create/PATCH (U8A): calls the
+# Evolution service's owner API (/api/evolution/programs) via the shared
+# EvolutionClient, never the read surface. See
+# services/control-plane/bff/ports/evolution_program_commands.py.
+_evolution_program_commands = _EvolutionServiceProgramCommandPort(_EvolutionClient())
+
 app.include_router(
     _create_evolution_router(
         read_surface=app_deps.read_surface,
@@ -20302,6 +18155,12 @@ app.include_router(
         read_surface_meta=_read_surface_meta,
         raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
         meta_staleness=_meta_staleness,
+        mutation_review_projection=_mutation_review_projection,
+        # A lazy thunk (not the object itself) so tests can rebind the
+        # module-level ``_evolution_program_commands`` global after the app
+        # is built and still be seen — mirrors how ``read_store``/
+        # ``command_store`` are swapped by isolated-BFF test fixtures.
+        program_commands=lambda: _evolution_program_commands,
         submit_program_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
             ObjectType.EVOLUTION_PROGRAM,
             entity_id,
@@ -20444,18 +18303,7 @@ _deployment_router = (
 )
 app.include_router(_deployment_router)
 from .command_adapters.router import (
-    create_action_command_router as _create_action_command_router,
     create_command_adapters_router as _create_command_adapters_router,
-)
-app.include_router(
-    _create_action_command_router(
-        submit_command_admission=_submit_final_command_admission,
-        extract_identity=_extract_identity,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        command_store=app_deps.command_store,
-    )
 )
 app.include_router(
     _create_command_adapters_router(
@@ -20576,166 +18424,25 @@ app.include_router(
 )
 def _ensure_agora_servant_openclaw_agent(persona: Dict[str, Any]) -> Dict[str, Any]:
     return OpenClawOpsClient().ensure_agora_servant_agent(persona)
-def _resolve_agora_interaction_context_ref(
-    *,
-    kind: str,
-    ref_id: str,
-    ref_version: Optional[str],
-    resolved: Any,
-    session: Dict[str, Any],
-    context_refs: List[Dict[str, Any]],
-    authorization: Optional[str],
-    source_route: Optional[str],
-    focused_object: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Resolve only context kinds whose existing owner can prove audience scope.
-
-    Management positions, performance windows, and Human Inbox rows currently
-    have no canonical per-user ownership contract.  They remain explicit
-    dependency-unavailable sources instead of being promoted from a global
-    read-model row into a user-scoped interaction receipt.
+from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
+from .agora.interaction.context_resolver import resolve_agora_interaction_context_ref
+def _resolve_agora_interaction_context_ref(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    """Composition-root binding for the single ACL owner of interaction
+    context refs.  Explicitly imports ``_trade_journal_allowed`` at module
+    scope (see ``docs/operations/bff-test-migration-b05-journal-context-resolver-seam.md``
+    § 4.2) so the seam never depends on an undefined module global.
     """
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    if kind in {"position", "performance_window", "human_inbox_item"}:
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            f"Canonical {kind} interaction scope is unavailable",
-            f"{kind} does not yet expose a tenant-and-user-scoped ownership receipt",
-            precondition_failed=f"{kind}_scope_unavailable",
-        )
-
-    if kind == "decision_event":
-        if (
-            focused_object.get("kind") == "decision_event"
-            and str(focused_object.get("id") or "") == ref_id
-        ):
-            raise _bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Focused Decision Event interaction source is unavailable",
-                "No canonical frontend Decision Event source-route owner is registered yet",
-                precondition_failed="decision_event_source_route_unavailable",
-            )
-        from .agora.trading_room.router import _get_store as _get_trading_room_store
-
-        event = _get_trading_room_store().get_decision_event(ref_id)
-        if not isinstance(event, dict):
-            return {"row": None, "audience_verified": False}
-        event_strategy = str(event.get("strategy_id") or "")
-        event_version = str(event.get("strategy_spec_registry_id") or "")
-        scoped_strategy = str(session.get("strategy_id") or "")
-        scoped_version = str(session.get("active_strategy_spec_registry_id") or "")
-        audience_verified = bool(
-            event_strategy
-            and event_strategy == scoped_strategy
-            and (not event_version or event_version == scoped_version)
-        )
-        return {"row": event, "audience_verified": audience_verified}
-
-    if kind == "journal_entry":
-        from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
-        from services.control_plane.bff.trade_journal import _load as _load_trade_journal
-
-        episodes = _load_trade_journal("PANTHEON_BFF_TRADE_EPISODES_STORE")
-        matches = [
-            row for row in (episodes or [])
-            if str(row.get("trade_episode_id") or "") == ref_id
-        ]
-        if len(matches) == 1:
-            episode = matches[0]
-            schema_path = (
-                Path(__file__).resolve().parents[2]
-                / "telemetry"
-                / "trade_episode_projection.schema.json"
-            )
-            try:
-                projection_schema = json.loads(schema_path.read_text(encoding="utf-8"))
-                projection_valid = Draft7Validator(projection_schema).is_valid(episode)
-            except (OSError, TypeError, ValueError):
-                projection_valid = False
-            persona_id = str(episode.get("persona_id") or "")
-            referenced_personas = {
-                str(item.get("id") or "")
-                for item in context_refs
-                if item.get("kind") == "persona"
-            }
-            persona = _get_persona_directory_snapshot(
-                str(resolved.tenant_id or "").strip()
-            ).records_by_id.get(persona_id)
-            episode_strategy = str(episode.get("strategy_id") or "")
-            artifact_id = str(episode.get("artifact_id") or "")
-            artifact_version = str(episode.get("artifact_version") or "")
-            episode_strategy_version = str(episode.get("strategy_spec_registry_id") or "")
-            scoped_strategy = str(session.get("strategy_id") or "")
-            scoped_version = str(session.get("active_strategy_spec_registry_id") or "")
-            source = urlsplit(str(source_route or ""))
-            source_path = unquote(source.path).rstrip("/")
-            source_query = parse_qs(source.query, keep_blank_values=True)
-            focused_is_episode = (
-                focused_object.get("kind") == "journal_entry"
-                and str(focused_object.get("id") or "") == ref_id
-            )
-            canonical_persona_journal_route = bool(
-                source_path == f"/management/personas/{persona_id}"
-                and source_query.get("tab") == ["tradeJournal"]
-                and not source.fragment
-            )
-            canonical_workshop_route = bool(
-                not focused_is_episode
-                and source_path == f"/agora/strategy-workshop/{session.get('workshop_id')}"
-                and not source.fragment
-            )
-            audience_verified = bool(
-                projection_valid
-                and persona_id
-                and episode_strategy
-                and artifact_id
-                and artifact_version
-                and persona_id in referenced_personas
-                and isinstance(persona, dict)
-                and _persona_record_tenant_id(persona) == resolved.tenant_id
-                and _trade_journal_allowed(identity, persona_id)
-                and episode_strategy == scoped_strategy
-                and (not episode_strategy_version or episode_strategy_version == scoped_version)
-                and (canonical_persona_journal_route or canonical_workshop_route)
-            )
-            return {"row": episode, "audience_verified": audience_verified}
-
-        from .agora.identity.scope import resolve_canonical_agora_scope
-
-        scoped_tenant, scoped_user = resolve_canonical_agora_scope(
-            identity,
-            tenant_id=getattr(resolved, "tenant_id", None),
-            user_id=getattr(resolved, "user_id", None),
-        )
-        try:
-            journal_entries = read_store.list_decision_journal_entries(tenant_id=scoped_tenant, user_id=scoped_user)
-        except TypeError:
-            journal_entries = read_store.list_decision_journal_entries()
-        journal_rows = _agora_filter_private_records(
-            journal_entries,
-            identity,
-            tenant_id=scoped_tenant,
-            user_id=scoped_user,
-        )
-        journal = next(
-            (row for row in journal_rows if str(row.get("id") or row.get("entry_id") or "") == ref_id),
-            None,
-        )
-        # Legacy Decision Journal rows are returned for exact not-found/error
-        # semantics, but without explicit scope they are intentionally not
-        # elevated to an audience-verified receipt.
-        return {"row": journal, "audience_verified": False}
-
-    raise _bff_error(
-        503,
-        ErrorCode.DEPENDENCY_UNAVAILABLE,
-        f"Canonical {kind} readback is unavailable",
-        f"{kind}_store_unavailable",
-        precondition_failed=f"{kind}_store_unavailable",
+    return resolve_agora_interaction_context_ref(
+        *args,
+        read_store=read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        persona_directory_snapshot_fn=_get_persona_directory_snapshot,
+        persona_record_tenant_id_fn=_persona_record_tenant_id,
+        trade_journal_allowed_fn=_trade_journal_allowed,
+        utc_now=utc_now,
+        **kwargs,
     )
 from .auth.router import create_auth_router
 from .auth.service import AuthFacadeService
@@ -20847,13 +18554,12 @@ app.include_router(
         meta_staleness=_meta_staleness,
         redact_evidence_refs=redact_evidence_refs,
         capabilities_for_identity=_capabilities_for_identity,
-        submit_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
-            entity_type, entity_id, action_id, resolved_key, identity, payload
-        ),
+        read_surface_state=_read_surface_state,
+        submit_action=_command_adapter_service.submit_governance_action,
         publish_event=lambda event_type, data: _publish_event(
             _sse_buffers["audit"], _sse_subscribers["audit"], event_type, data
         ),
-
+        reject_body_idempotency_key=_reject_body_idempotency_key,
     )
 )
 from .postmortems.router import create_postmortem_router

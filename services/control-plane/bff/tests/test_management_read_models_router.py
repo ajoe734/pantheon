@@ -25,22 +25,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.responses import JSONResponse
 
-# Ensure bff root is on sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-# Main Assembly imports repository-level integration packages (for example
-# Agora's OpenClaw adapters).  Keep the repository root importable when this
-# file is run directly from a clean task worktree rather than relying on the
-# caller's PYTHONPATH.
+BFF_DIR = str(Path(__file__).resolve().parents[1])
 REPO_ROOT = str(Path(__file__).resolve().parents[4])
-sys.path.insert(0, REPO_ROOT)
 
-from management_read_models.router import (
+from services.control_plane.bff.management_read_models.router import (
     create_management_read_models_router,
     create_management_router,
     _default_extract_identity,
 )
-from management_read_models.service import ManagementService
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.management_read_models.service import ManagementService
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 EXPECTED_17_ROUTES = {
@@ -250,6 +244,13 @@ def _import_main_for_inventory() -> Any:
     replace only the package binding before importing the composition root.
     """
     import importlib
+
+    # ``main`` and this module's sibling ``test_normalized_route_uniqueness``
+    # are legacy bare (non-package-qualified) modules that only this
+    # AST/route-inventory family of tests still needs; scope the sys.path
+    # mutation to this helper rather than polluting the whole test module.
+    if BFF_DIR not in sys.path:
+        sys.path.insert(0, BFF_DIR)
 
     loaded = sys.modules.get("integrations")
     repo_package_dir = Path(REPO_ROOT) / "integrations"
