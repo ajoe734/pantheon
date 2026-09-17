@@ -6,7 +6,7 @@
   "reviewer": "Antigravity2",
   "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
   "delivery_state": "ready_for_review",
-  "base_sha": "85b89f93b6eb6861d03f450f189e3e822b209865",
+  "base_sha": "8c647cd3a86ab3d7220e0c1bc27c4510c5b09054",
   "depends_on": [
     "BFF-TEST-MIGRATION-REPARTITION-PLAN-002"
   ],
@@ -42,8 +42,8 @@
     "main_imports_after": 0,
     "sys_path_mutations_before": 13,
     "sys_path_mutations_after": 0,
-    "ceiling_before": 66,
-    "ceiling_after": 53
+    "ceiling_before": 55,
+    "ceiling_after": 42
   },
   "test_summary": {
     "target_suites_count": 13,
@@ -159,7 +159,7 @@
       "disposition": "DECOUPLED"
     }
   },
-  "rebase_reconciliation_note": "Origin/dev advanced to c6f39a8d8 with sibling batches (CB01, CB03, CB04, CB05, CB07, CB08) merged, progressing the ceiling from 86 to 66. Merging origin/dev into this branch resulted in a content conflict in bff_test_architecture_inventory.json. The conflict was resolved by merging dev's 11 migrated suites with this batch's 13 migrated suites (total 24), recomputing aggregates directly from the merged tests[] entries and running a live AST scan, which confirmed 53 live non-whitelisted main importers (66 - 13 = 53). All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (134 passed total).",
+  "rebase_reconciliation_note": "Origin/dev advanced to 8c647cd3a with sibling batch CB09 merged, progressing the ceiling from 66 to 55. Merging origin/dev into this branch resulted in a content conflict in bff_test_architecture_inventory.json. The conflict was resolved by merging dev's 22 migrated suites with this batch's 13 migrated suites (total 35), recomputing aggregates directly from the merged tests[] entries and running a live AST scan, which confirmed 42 live non-whitelisted main importers (55 - 13 = 42). All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (134 passed total).",
   "decoupling_approach": {
     "test_jobs_source_owner_contract": "Mounted create_jobs_router on isolated FastAPI app with fake JobReadPort injected into test client instead of bff_main.",
     "test_pkt016_knowledge_workbench_contract": "Mounted create_research_router on isolated FastAPI app with knowledge read ports fixture and in-memory ports double.",
