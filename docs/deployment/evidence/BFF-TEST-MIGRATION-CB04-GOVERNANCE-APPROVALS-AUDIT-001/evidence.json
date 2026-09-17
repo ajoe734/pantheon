@@ -5,7 +5,7 @@
   "reviewer": "Antigravity2",
   "status": "partially_decoupled_contract_discrepancy",
   "implementation_complete": false,
-  "source_base_sha": "8778521b4726e22c05a1aebe19a971e0f9dca5e7",
+  "source_base_sha": "f291b44d8ef39f13c412088a05bb646775206a66",
   "source_head_note": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py; this evidence manifest does not claim a commit can contain its own SHA.",
   "branch": "task/BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001",
   "changed_files": [
