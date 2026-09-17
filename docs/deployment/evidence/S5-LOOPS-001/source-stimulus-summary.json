@@ -1,0 +1,20 @@
+{
+  "anchor_source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor",
+  "distillation_job_ids": [
+    "distill-e9fb345a90b08dc829edcbd9",
+    "distill-8f02947c217da2b3fe324803"
+  ],
+  "ingest_run_id": "ingest-65d1dd0d00d5",
+  "is_real": false,
+  "market_snapshot_id": "mss-5fd4452dc6869e10c8e965b9",
+  "provenance": "simulation",
+  "source_container_hostname": "0a8d968a3ec3",
+  "source_ids": [
+    "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+    "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
+  ],
+  "source_worker_identity": "0a8d968a3ec3e9246475192d2e75f79e2895ec314b0fc58cdaf62137c47cfb82",
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+  "tenant_id": "tenant-dev",
+  "timestamp": "2026-09-15T03:20:08Z"
+}

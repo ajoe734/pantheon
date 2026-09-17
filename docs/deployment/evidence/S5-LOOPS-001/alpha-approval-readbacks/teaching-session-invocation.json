@@ -1,0 +1,84 @@
+{
+  "body": {
+    "session_id": "trn-20260917-7accca38530e",
+    "persona_id": "persona-strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+    "tenant_id": "tenant-dev",
+    "opened_by": "alpha-revalidation-worker",
+    "mode": "evaluation",
+    "session_type": "trainer",
+    "status": "active",
+    "started_at": "2026-09-17T00:57:01Z",
+    "ended_at": null,
+    "current_control_state_ref": null,
+    "trace_id": "trace-teaching-erun-alpha-d20376aef23b4bd0",
+    "context_refs": [
+      {
+        "type": "experiment_run",
+        "id": "rrun-20260915-009",
+        "domain_run_id": "erun-alpha-d20376aef23b4bd0",
+        "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588"
+      }
+    ],
+    "actor_context": {
+      "authenticated_actor_id": "training-session-preview-worker",
+      "actor_service": "training-session-preview-worker",
+      "delegated_actor_id": "alpha-revalidation-worker",
+      "roles": [
+        "training-service"
+      ],
+      "tenant_id": "tenant-dev",
+      "mfa_verified": true,
+      "token_kind": "jwt"
+    },
+    "events": [
+      {
+        "event_id": "tevt-20260917-b89287bc65-001",
+        "session_id": "trn-20260917-7accca38530e",
+        "tenant_id": "tenant-dev",
+        "event_type": "control_patch",
+        "actor_type": "user",
+        "payload": {
+          "summary": "Trainer controls patched.",
+          "patch_delta": [
+            {
+              "parameter_key": "short_window",
+              "previous_value": 5,
+              "new_value": 7
+            },
+            {
+              "parameter_key": "long_window",
+              "previous_value": 20,
+              "new_value": 21
+            }
+          ]
+        },
+        "timestamp": "2026-09-17T00:57:22Z",
+        "correlation_id": "trn-20260917-7accca38530e:tevt-20260917-b89287bc65-001",
+        "sequence_number": 1,
+        "emitted_at": "2026-09-17T00:57:22Z",
+        "actor": "alpha-revalidation-worker",
+        "summary": "Trainer controls patched.",
+        "patch_delta": [
+          {
+            "parameter_key": "short_window",
+            "previous_value": 5,
+            "new_value": 7
+          },
+          {
+            "parameter_key": "long_window",
+            "previous_value": 20,
+            "new_value": 21
+          }
+        ]
+      }
+    ],
+    "outcomes": [],
+    "id": "trn-20260917-7accca38530e",
+    "objective": "Evaluate controls against the admitted Alpha replication result erun-alpha-d20376aef23b4bd0",
+    "topic": "Evaluate controls against the admitted Alpha replication result erun-alpha-d20376aef23b4bd0"
+  },
+  "http_status": 201,
+  "method": "POST",
+  "observed_at": "2026-09-17T00:57:01Z",
+  "route": "/api/training/sessions"
+}

@@ -1,0 +1,103 @@
+{
+  "available": true,
+  "directly_observed_job_workers": {
+    "distill-8f02947c217da2b3fe324803": "distill-controller-5c099699",
+    "distill-e9fb345a90b08dc829edcbd9": "distill-controller-5c099699"
+  },
+  "jobs": [
+    {
+      "inbox": {
+        "event_id": "source-normalized:src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous:sha256:886a54f9eef6b5ea9b3f8e857d45601b6a1037714d0dc8b1abb42796ab711c6d",
+        "job_id": "distill-e9fb345a90b08dc829edcbd9",
+        "payload_digest": "sha256:886a54f9eef6b5ea9b3f8e857d45601b6a1037714d0dc8b1abb42796ab711c6d",
+        "status": "applied",
+        "attempts": 1,
+        "lease_owner": null,
+        "lease_token": null,
+        "lease_epoch": 1,
+        "lease_expires_at": null,
+        "result_ref": "seed-80dc026fd8371eb5",
+        "registry_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous-886a54f9eef6",
+        "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous-2796ab711c6d",
+        "version": "1.0.0",
+        "checksum": "sha256:1a3929e747c170910cab7760f39c2e300e66a1316a9bb986e16b8b9f3b993712",
+        "last_error": null,
+        "applied_at": 1789442409.578058,
+        "updated_at": 1789442409.578058
+      },
+      "outbox": {
+        "job_id": "distill-e9fb345a90b08dc829edcbd9",
+        "event_id": "source-normalized:src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous:sha256:886a54f9eef6b5ea9b3f8e857d45601b6a1037714d0dc8b1abb42796ab711c6d",
+        "source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+        "source_digest": "sha256:886a54f9eef6b5ea9b3f8e857d45601b6a1037714d0dc8b1abb42796ab711c6d",
+        "event_version": "source_record.normalized.v1",
+        "idempotency_key": "distill:src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous:sha256:886a54f9eef6b5ea9b3f8e857d45601b6a1037714d0dc8b1abb42796ab711c6d",
+        "status": "done",
+        "enqueued_at": 1789442408.9202847,
+        "processed_at": 1789442409.578058,
+        "available_at": 1789442408.9202847,
+        "seed_id": "seed-80dc026fd8371eb5",
+        "registry_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous-886a54f9eef6",
+        "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous-2796ab711c6d",
+        "version": "1.0.0",
+        "checksum": "sha256:1a3929e747c170910cab7760f39c2e300e66a1316a9bb986e16b8b9f3b993712",
+        "last_error": null,
+        "skip_reason": null,
+        "attempts": 1,
+        "max_attempts": 3,
+        "lease_owner": null,
+        "lease_token": null,
+        "lease_epoch": 1,
+        "lease_expires_at": null,
+        "updated_at": 1789442409.578058
+      }
+    },
+    {
+      "inbox": {
+        "event_id": "source-normalized:src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor:sha256:01c274a875884cec538eaab2a03c974b9a5ad7e8f9ec634e4463f7c22d08b81b",
+        "job_id": "distill-8f02947c217da2b3fe324803",
+        "payload_digest": "sha256:01c274a875884cec538eaab2a03c974b9a5ad7e8f9ec634e4463f7c22d08b81b",
+        "status": "applied",
+        "attempts": 1,
+        "lease_owner": null,
+        "lease_token": null,
+        "lease_epoch": 1,
+        "lease_expires_at": null,
+        "result_ref": "seed-2f4e99e7e094098b",
+        "registry_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+        "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+        "version": "1.0.0",
+        "checksum": "sha256:7ab1eb0c154591e2f5aa08aee27ddb61d0a38c2d0c02ed5ed1fe10678ae17ea5",
+        "last_error": null,
+        "applied_at": 1789442409.6161797,
+        "updated_at": 1789442409.6161797
+      },
+      "outbox": {
+        "job_id": "distill-8f02947c217da2b3fe324803",
+        "event_id": "source-normalized:src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor:sha256:01c274a875884cec538eaab2a03c974b9a5ad7e8f9ec634e4463f7c22d08b81b",
+        "source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor",
+        "source_digest": "sha256:01c274a875884cec538eaab2a03c974b9a5ad7e8f9ec634e4463f7c22d08b81b",
+        "event_version": "source_record.normalized.v1",
+        "idempotency_key": "distill:src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor:sha256:01c274a875884cec538eaab2a03c974b9a5ad7e8f9ec634e4463f7c22d08b81b",
+        "status": "done",
+        "enqueued_at": 1789442408.9316287,
+        "processed_at": 1789442409.6161797,
+        "available_at": 1789442408.9316287,
+        "seed_id": "seed-2f4e99e7e094098b",
+        "registry_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+        "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+        "version": "1.0.0",
+        "checksum": "sha256:7ab1eb0c154591e2f5aa08aee27ddb61d0a38c2d0c02ed5ed1fe10678ae17ea5",
+        "last_error": null,
+        "skip_reason": null,
+        "attempts": 1,
+        "max_attempts": 3,
+        "lease_owner": null,
+        "lease_token": null,
+        "lease_epoch": 1,
+        "lease_expires_at": null,
+        "updated_at": 1789442409.6161797
+      }
+    }
+  ]
+}
