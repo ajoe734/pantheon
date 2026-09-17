@@ -3,7 +3,7 @@
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
   "total_test_files": 384,
-  "migrated_in_task_count": 5,
+  "migrated_in_task_count": 11,
   "composition_allowlist": [
     "smoke_test.py",
     "smoke_test_incident.py",
@@ -22,11 +22,17 @@
     "tests/test_read_surface_caller_migration.py"
   ],
   "migrated_suites": [
+    "agora/performance/test_performance.py",
+    "test_bff_performance_ranking_read_model_contract.py",
     "test_cw01_consult_request_contract.py",
     "test_cw02_debate_transcript_contract.py",
     "test_cw04_redteam_memo_contract.py",
+    "tests/test_agora_performance_transport_and_isolated_store.py",
     "tests/test_governance_router.py",
-    "tests/test_operations_consultation_ports.py"
+    "tests/test_operations_consultation_ports.py",
+    "tests/test_pint_003_durable_opinions.py",
+    "tests/test_pint_013_durable_interactions.py",
+    "tests/test_pint_016_strict_browser_readiness.py"
   ],
   "layer_summary": {
     "adapter": 55,
@@ -36,17 +42,17 @@
     "router": 116
   },
   "main_by_layer": {
-    "adapter": 5,
-    "application": 46,
+    "adapter": 4,
+    "application": 42,
     "composition": 9,
     "hosted": 1,
-    "router": 36
+    "router": 35
   },
   "disposition_summary": {
     "ALLOWLIST": 15,
     "DECOUPLED": 278,
-    "MIGRATED": 5,
-    "PLANNED": 86
+    "MIGRATED": 11,
+    "PLANNED": 80
   },
   "tests": [
     {
@@ -108,9 +114,9 @@
     {
       "file": "agora/performance/test_performance.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "agora/strategy_workshop/test_operation_lifecycle.py",
@@ -570,9 +576,9 @@
     {
       "file": "test_bff_performance_ranking_read_model_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "test_bff_pm12_portfolio_book_contract.py",
@@ -1613,9 +1619,9 @@
     {
       "file": "tests/test_agora_performance_transport_and_isolated_store.py",
       "layer": "adapter",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: adapter)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "tests/test_agora_persona_interactions.py",
@@ -2502,9 +2508,9 @@
     {
       "file": "tests/test_pint_003_durable_opinions.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "tests/test_pint_012_real_persona_provider.py",
@@ -2516,9 +2522,9 @@
     {
       "file": "tests/test_pint_013_durable_interactions.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "tests/test_pint_013_interaction_store_postgres.py",
@@ -2530,9 +2536,9 @@
     {
       "file": "tests/test_pint_016_strict_browser_readiness.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
     },
     {
       "file": "tests/test_ports_namespace_consolidation.py",
@@ -2738,9 +2744,8 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 76,
+  "live_scan_non_whitelisted_main_importer_ceiling": 70,
   "live_scan_non_whitelisted_main_importers": [
-    "agora/performance/test_performance.py",
     "test_ask_001_sessions_contract.py",
     "test_ask_003_committee_lifecycle.py",
     "test_ask_004_memo_publish_contract.py",
@@ -2755,7 +2760,6 @@
     "test_bff_mgmt_ai_persistence_2026_06_03.py",
     "test_bff_mgmt_common_filters.py",
     "test_bff_mgmt_ops_006_operator_actions_contract.py",
-    "test_bff_performance_ranking_read_model_contract.py",
     "test_bff_pm12_portfolio_book_contract.py",
     "test_bff_promotion_review_governance.py",
     "test_bff_v5_loop_sentinel_contract.py",
@@ -2785,7 +2789,6 @@
     "test_tw02_parameter_controls_contract.py",
     "test_tw03_before_after_compare_contract.py",
     "test_tw04_teaching_replay_contract.py",
-    "tests/test_agora_performance_transport_and_isolated_store.py",
     "tests/test_bff_alerts_acknowledge.py",
     "tests/test_bff_auth_refresh.py",
     "tests/test_bff_b1_007_security_hardening.py",
@@ -2811,9 +2814,6 @@
     "tests/test_management_nl_single_owner.py",
     "tests/test_management_read_budget.py",
     "tests/test_overlay_retirement.py",
-    "tests/test_pint_003_durable_opinions.py",
-    "tests/test_pint_013_durable_interactions.py",
-    "tests/test_pint_016_strict_browser_readiness.py",
     "tests/test_ppl_alloc_009_assertion_semantics.py",
     "tests/test_ppl_alloc_012_ranking_projection.py"
   ]
