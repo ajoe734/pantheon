@@ -235,6 +235,11 @@ def test_build_live_config_projects_explicit_repository_source_roots(tmp_path: P
     repositories = rendered["coordination"]["repositories"]
     assert repositories["pantheon"]["local_path"] == str(command.resolve())
     assert repositories["execute_plans"]["local_path"] == str(execute_root.resolve())
+    # The renderer only owns host topology (local_path/integration_path); the
+    # committed GitHub slug must pass through unchanged so repository_slug()
+    # keeps resolving cross-repository review evidence for execute_plans.
+    assert repositories["pantheon"]["repo"] == "ajoe734/pantheon"
+    assert repositories["execute_plans"]["repo"] == "ajoe734/execute-plans"
 
 
 def test_build_live_config_projects_clean_standalone_integration_roots(
@@ -269,6 +274,8 @@ def test_build_live_config_projects_clean_standalone_integration_roots(
     assert repositories["execute_plans"]["integration_path"] == str(
         execute_integration.resolve()
     )
+    assert repositories["pantheon"]["repo"] == "ajoe734/pantheon"
+    assert repositories["execute_plans"]["repo"] == "ajoe734/execute-plans"
     for root in (pantheon_integration, execute_integration):
         assert _git(root, "status", "--porcelain", "--untracked-files=all") == ""
         assert _git(root, "rev-parse", "--git-common-dir") == ".git"

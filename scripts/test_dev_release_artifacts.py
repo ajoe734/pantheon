@@ -414,3 +414,38 @@ def test_capture_and_validate_images_accept_drift_recovery_allowed_revisions(tmp
                                         docker=docker, check_lease=lease, environment="dev",
                                         allowed_revisions=[drift_sha])
     assert restored["image_readback_verified"] is True
+
+
+def test_capture_and_validate_images_under_drift_recovery_source_identity(tmp_path):
+    root = tmp_path / "archives"
+    root.mkdir(mode=0o700)
+    docker = FakeDocker()
+    drift_sha = "d" * 40
+    for image_id in IDS:
+        docker.images[image_id]["revision"] = drift_sha
+    checks = []
+    lease = lambda: checks.append(True)
+
+    # When drift recovery uses the observed live SHA as the bundle source_sha
+    bundle = artifacts.capture_images(docker=docker, archive_root=root, source_sha=drift_sha,
+                                      check_lease=lease, allowed_revisions=[drift_sha])
+    assert bundle["source_sha"] == drift_sha
+    for service in artifacts.SERVICES:
+        assert bundle["services"][service]["oci_revision"] == drift_sha
+
+    raw = artifacts.manifest_bytes(bundle)
+    validated = artifacts.validate_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
+                                          expected_source_sha=drift_sha, archive_root=root,
+                                          allowed_revisions=[drift_sha])
+    assert validated["source_sha"] == drift_sha
+    for service in artifacts.SERVICES:
+        assert validated["services"][service]["oci_revision"] == drift_sha
+
+    compose = tmp_path / "compose.json"
+    compose.write_text(json.dumps({"services": {s: {"build": "."} for s in artifacts.SERVICES}}))
+    restored = artifacts.restore_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
+                                        expected_source_sha=drift_sha, archive_root=root,
+                                        compose_files=((compose, hashlib.sha256(compose.read_bytes()).hexdigest()),),
+                                        docker=docker, check_lease=lease, environment="dev",
+                                        allowed_revisions=[drift_sha])
+    assert restored["image_readback_verified"] is True

@@ -176,6 +176,10 @@ validate_artifact_restore_request() {
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}" != "$(printf '%064d' 0)" ]] \
       || error "artifact restore requires the external candidate image receipt path and digest"
   fi
+  if [[ "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE:-}" == *+live_bff_drift_recovery ]]; then
+    [[ "${PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA:-}" =~ ^[0-9a-f]{40}$ ]] \
+      || error "artifact restore requires valid 40-hex PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA under drift recovery"
+  fi
 }
 
 verify_dev_environment_lease_contract() {
@@ -373,6 +377,7 @@ Environment overrides:
   PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA
   PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA
   PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA
+  PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA
   PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD (created by the VM transport watchdog)
   DEV_DEPLOY_DEADLINE_SECONDS DEV_DEPLOY_TIMEOUT_SECONDS
   PANTHEON_DEPLOY_WORKTREE_ROOT
@@ -850,6 +855,7 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA \
     PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA \
     PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA \
+    PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA \
     PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
     command_prefix+=" ${artifact_variable}=$(shell_quote "${!artifact_variable:-}")"
   done
@@ -3334,6 +3340,10 @@ run_dev_artifact_driver() {
     || error "artifact operation requires the remote watchdog's private guard FD"
   [[ -z "${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}" || "${PANTHEON_DEV_ROLLBACK_BACKEND_SHA}" == "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA}" ]] \
     || error "requested rollback SHA differs from the sealed previous backend"
+  if [[ "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE:-}" == *+live_bff_drift_recovery ]]; then
+    [[ "${PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA:-}" =~ ^[0-9a-f]{40}$ ]] \
+      || error "sealed artifact operation requires valid 40-hex PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA under drift recovery"
+  fi
 
   # Authenticate the stable driver and its sibling library before executing
   # either. Never import an unverified copy from a candidate or prior checkout.
@@ -3390,6 +3400,14 @@ ARTIFACT_PY
       --candidate-image-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}")
   fi
 
+  local -a drift_args=()
+  if [[ -n "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE:-}" ]]; then
+    drift_args+=(--baseline-source "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE}")
+  fi
+  if [[ -n "${PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA:-}" ]]; then
+    drift_args+=(--observed-live-bff-sha "${PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA}")
+  fi
+
   # The trusted driver checks the external manifest seal, all exact identities,
   # immutable prior Compose bytes, guard pulses, image readbacks and owner
   # preservation. It restores allowlisted baseline paths and historical auth
@@ -3410,7 +3428,8 @@ ARTIFACT_PY
       --manifest-sha256 "${PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256}" \
       --bff-url "https://${PANTHEON_DEV_BFF_PUBLIC_HOST}" \
       --fe-url "https://${PANTHEON_DEV_FE_PUBLIC_HOST}" \
-      --guard-channel-fd "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD}" "${candidate_args[@]}"
+      --guard-channel-fd "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD}" \
+      "${candidate_args[@]}" "${drift_args[@]}"
 }
 
 validate_dev_candidate_override() {

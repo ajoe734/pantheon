@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-import os
-import sys
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.tests.conftest import build_auth_session_app
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 
@@ -34,23 +30,19 @@ def _jwt_token(*, sub: str = "op-cookie-logout", extra: dict | None = None) -> s
 
 
 @pytest.fixture(autouse=True)
-def isolated_session_lifecycle_store(tmp_path):
-    original_store = bff_main.session_lifecycle_store
-    bff_main.session_lifecycle_store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
-    try:
-        yield
-    finally:
-        bff_main.session_lifecycle_store = original_store
+def app(tmp_path):
+    store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
+    return build_auth_session_app(store)
 
 
-def _client(monkeypatch) -> TestClient:
+def _client(app, monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_BFF_DEFAULT_LOCALE", "en-US")
-    return TestClient(bff_main.app)
+    return TestClient(app)
 
 
-def _strict_cookie_client(monkeypatch) -> TestClient:
+def _strict_cookie_client(app, monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", JWT_SECRET)
@@ -58,11 +50,11 @@ def _strict_cookie_client(monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", JWT_AUDIENCE)
     monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
     monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://frontend.test")
-    return TestClient(bff_main.app)
+    return TestClient(app)
 
 
-def test_post_bff_logout_returns_200_with_logout_operation(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_post_bff_logout_returns_200_with_logout_operation(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     response = client.post(
         "/bff/logout",
         headers={"Authorization": "Bearer op-logout-1:operator"},
@@ -76,8 +68,8 @@ def test_post_bff_logout_returns_200_with_logout_operation(monkeypatch) -> None:
     assert data["session"]["authenticated"] is False
 
 
-def test_post_bff_logout_invalidates_session_for_subsequent_get_me(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_post_bff_logout_invalidates_session_for_subsequent_get_me(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     auth = "Bearer op-logout-persist:operator"
 
     logout_resp = client.post("/bff/logout", headers={"Authorization": auth})
@@ -90,8 +82,8 @@ def test_post_bff_logout_invalidates_session_for_subsequent_get_me(monkeypatch) 
     assert detail["error"]["details"]["reason"] == "SESSION_LOGGED_OUT"
 
 
-def test_post_bff_logout_clears_cookie_and_followup_me_returns_401(monkeypatch) -> None:
-    client = _strict_cookie_client(monkeypatch)
+def test_post_bff_logout_clears_cookie_and_followup_me_returns_401(app, monkeypatch) -> None:
+    client = _strict_cookie_client(app, monkeypatch)
     token = _jwt_token(extra={"sid": "session-cookie-logout-b1-006"})
     client.cookies.set("pantheon_session", token)
 
@@ -105,15 +97,15 @@ def test_post_bff_logout_clears_cookie_and_followup_me_returns_401(monkeypatch) 
     assert me_resp.status_code == 401
 
 
-def test_post_bff_logout_anonymous_returns_401(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_post_bff_logout_anonymous_returns_401(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     response = client.post("/bff/logout")
 
     assert response.status_code == 401
 
 
-def test_post_bff_logout_idempotency_replay(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_post_bff_logout_idempotency_replay(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     auth = "Bearer op-logout-idem:operator"
     headers = {"Authorization": auth, "Idempotency-Key": "logout-key-42"}
 
@@ -125,8 +117,8 @@ def test_post_bff_logout_idempotency_replay(monkeypatch) -> None:
     assert second.json()["meta"]["idempotency"]["replayed"] is True
 
 
-def test_post_bff_logout_idempotency_conflict_returns_409(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_post_bff_logout_idempotency_conflict_returns_409(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     auth = "Bearer op-logout-conflict:operator"
     key = "logout-conflict-key"
 
@@ -147,8 +139,8 @@ def test_post_bff_logout_idempotency_conflict_returns_409(monkeypatch) -> None:
     assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
 
 
-def test_post_bff_logout_sets_logged_out_at(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_post_bff_logout_sets_logged_out_at(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     response = client.post(
         "/bff/logout",
         headers={"Authorization": "Bearer op-logout-ts:operator"},

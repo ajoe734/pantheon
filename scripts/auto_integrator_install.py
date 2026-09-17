@@ -11,6 +11,11 @@ from pathlib import Path
 
 CRON_TAG = "# pantheon-auto-integrator"
 DEFAULT_INTERVAL = "*/5 * * * *"
+# Single declared source for the per-run task limit. run-auto-integrator.sh
+# only forwards --max-tasks when AUTO_INTEGRATOR_MAX_TASKS is explicitly set,
+# so rendering it into the cron line here is what makes the limit persist
+# across runtime promotion instead of depending on an interactive shell.
+DEFAULT_MAX_TASKS = 2
 
 
 def repo_root_from(value: str | None) -> Path:
@@ -35,7 +40,10 @@ def render_cron_line(
     config_file: Path | None = None,
     *,
     interval: str = DEFAULT_INTERVAL,
+    max_tasks: int = DEFAULT_MAX_TASKS,
 ) -> str:
+    if max_tasks < 1:
+        raise ValueError(f"max_tasks must be at least 1, got {max_tasks}")
     repo = shlex.quote(str(repo_root))
     status = shlex.quote(str(status_root))
     config = shlex.quote(str(config_file or status_root / ".orchestrator" / "config.json"))
@@ -44,6 +52,7 @@ def render_cron_line(
     return (
         f"{interval} cd {repo} && mkdir -p {log_dir} && "
         f"PANTHEON_STATUS_ROOT={status} PANTHEON_AUTO_INTEGRATOR_CONFIG={config} "
+        f"AUTO_INTEGRATOR_MAX_TASKS={shlex.quote(str(max_tasks))} "
         f"bash scripts/run-auto-integrator.sh "
         f">> {log_file} 2>&1 {CRON_TAG}"
     )
@@ -73,6 +82,7 @@ def install_cron(
     config_file: Path,
     *,
     interval: str,
+    max_tasks: int,
     dry_run: bool,
 ) -> None:
     line = render_cron_line(
@@ -80,6 +90,7 @@ def install_cron(
         status_root,
         config_file,
         interval=interval,
+        max_tasks=max_tasks,
     )
     existing = [raw for raw in current_crontab() if CRON_TAG not in raw]
     write_crontab([*existing, line], dry_run=dry_run)
@@ -113,6 +124,16 @@ def parse_args() -> argparse.Namespace:
             "Defaults to <status-root>/.orchestrator/config.json."
         ),
     )
+    parser.add_argument(
+        "--max-tasks",
+        type=int,
+        default=DEFAULT_MAX_TASKS,
+        help=(
+            "Per-run task limit rendered into the cron line as "
+            f"AUTO_INTEGRATOR_MAX_TASKS so it persists across runtime "
+            f"promotion. Defaults to {DEFAULT_MAX_TASKS}."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print intended crontab without applying it.")
     parser.add_argument("--uninstall", action="store_true", help="Remove the auto-integrator crontab entry.")
     return parser.parse_args()
@@ -135,6 +156,7 @@ def main() -> int:
                 status_root,
                 config_file,
                 interval=args.interval,
+                max_tasks=args.max_tasks,
                 dry_run=args.dry_run,
             )
     except subprocess.CalledProcessError as exc:
