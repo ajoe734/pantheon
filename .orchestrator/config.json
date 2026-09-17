@@ -485,7 +485,7 @@
     },
     "antigravity2": {
       "delivery_mode": "antigravity",
-      "account": "antigravity2",
+      "account": "antigravity",
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "config_home": "~/.gemini-agy2",

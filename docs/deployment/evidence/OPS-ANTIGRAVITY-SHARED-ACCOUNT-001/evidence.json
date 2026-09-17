@@ -1,0 +1,87 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-ANTIGRAVITY-SHARED-ACCOUNT-001",
+  "title": "Group the Gemini CLI lanes by their shared upstream account",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "27e49d598391a5a697e1ee446079bbcf0a702519",
+  "base_sha_note": "base_sha is dev tip 27e49d598391a5a697e1ee446079bbcf0a702519, the exact parent of this task's committed head 906c4954ddb679a9e1e2e2e410dfa26e8217a7b3 on task/OPS-ANTIGRAVITY-SHARED-ACCOUNT-001 (PR #5870). A first attempt at this task (head ec96f717a) declared the shared identity with a quota_group alias that supervisor.validate_provider_accounts rejects as deprecated; CI correctly failed it. This delivery replaces that attempt with the account field, the only schema the validator accepts.",
+  "diagnosis": {
+    "problem": "The two Gemini CLI (antigravity) provider lanes hold two separate OAuth token files under two homes (~/.gemini and ~/.gemini-agy2), but both id_tokens decode to the same consumer Google account. The config declared them as two distinct account ids, so _antigravity_credential_group() built two separate credential groups and each lane published its own independent auth verdict.",
+    "failure_mode": "When one lane's probe failed, supervisor recovery reassigned its owned tasks to the sibling lane, which shares the very same dead upstream credential, so the reassigned task failed again and bounced back. Observed on the live fleet: 133 supervisor reassignments in 6.4 hours alternating terminal_auth:antigravity / terminal_auth:antigravity2 reasons, with one task (BFF-ROUTER-USECASE-CORRECTIVE-001) moved 20 times, each move costing two canonical task-state transactions."
+  },
+  "scope": {
+    "owned": [
+      ".orchestrator/config.json: providers.antigravity2.account changed from \"antigravity2\" to \"antigravity\", matching providers.antigravity.account so both lanes resolve to one credential group. Follows the existing convention already used for claude/claude2 (both account=claude1) and codex1-1..1-4 (all account=codex1).",
+      ".orchestrator/test_provider_permissions.py: corrected one factually-wrong assertion in the qualified-timeout guard test (test_antigravity2_auth_probe_matches_antigravity_qualified_timeout) that asserted the two antigravity lanes must keep different account ids -- that assertion was incidental to the timeout guarantee it was actually proving and is not true of these credentials. Its home and retry assertions are left unchanged. Added a new test, test_live_antigravity_lanes_share_one_upstream_account, that directly states the shared account, shared credential_group, and the surviving separate homes/token files.",
+      "docs/deployment/evidence/OPS-ANTIGRAVITY-SHARED-ACCOUNT-001/evidence.json"
+    ],
+    "not_changing": [
+      "providers.antigravity2.antigravity.home / config_home (~/.gemini-agy2) and providers.antigravity.antigravity.home (~/.gemini) -- the two OAuth token files stay independent.",
+      "providers.antigravity2.retry and providers.antigravity.retry -- retry policy per lane is untouched.",
+      "max_concurrent_per_account: still lists an antigravity2 entry, which is now inert (the shared account key already resolves capacity through antigravity1's entry) -- left alone on purpose, exactly matching the existing inert claude2 entry. Capacity tuning is explicitly out of scope for this task.",
+      "_antigravity_credential_group() / _antigravity_provider_reports() implementation in provider_permissions.py -- this is a config-only change; the generic credential-group resolver already groups providers by the account field."
+    ],
+    "composes_with": [
+      "provider_permissions._antigravity_credential_group() / _antigravity_provider_reports() generic per-account credential grouping and probe-sharing logic",
+      "The supervisor's reassignment/recovery path, which will now see one shared auth verdict for both lanes instead of two independently-failing ones"
+    ]
+  },
+  "config_diff": {
+    "file": ".orchestrator/config.json",
+    "path": "providers.antigravity2.account",
+    "before": "antigravity2",
+    "after": "antigravity",
+    "diff": "--- a/.orchestrator/config.json\n+++ b/.orchestrator/config.json\n@@ -485,7 +485,7 @@\n     },\n     \"antigravity2\": {\n       \"delivery_mode\": \"antigravity\",\n-      \"account\": \"antigravity2\",\n+      \"account\": \"antigravity\",\n       \"antigravity\": {\n         \"cli\": \".orchestrator/bin/agy\",\n         \"config_home\": \"~/.gemini-agy2\",\n"
+  },
+  "acceptance_mapping": [
+    {
+      "acceptance": "Both Gemini CLI provider lanes must resolve to one credential group so a single auth probe result serves both and a failure takes the group down together.",
+      "evidence": "providers.antigravity.account == providers.antigravity2.account == \"antigravity\"; test_live_antigravity_lanes_share_one_upstream_account asserts provider_permissions._antigravity_credential_group(config, \"antigravity\") == provider_permissions._antigravity_credential_group(config, \"antigravity2\")."
+    },
+    {
+      "acceptance": "The shared identity must be expressed with the account field only; account_group / quota_group / dispatch_group are rejected as deprecated aliases by supervisor.validate_provider_accounts.",
+      "evidence": "Only the account field was changed. No account_group/quota_group/dispatch_group key was added anywhere in .orchestrator/config.json; the first attempt (head ec96f717a) used quota_group and was rejected by CI, which is why this delivery uses account instead."
+    },
+    {
+      "acceptance": "Separate credential homes must stay separate: the two OAuth token files under the two configured home paths remain independent.",
+      "evidence": "providers.antigravity.antigravity.home and providers.antigravity2.antigravity.config_home are untouched in the diff. test_live_antigravity_lanes_share_one_upstream_account asserts antigravity_provider[\"antigravity\"].get(\"home\") != antigravity2_provider[\"antigravity\"].get(\"home\") and provider_permissions._antigravity_home(config, \"antigravity\") != provider_permissions._antigravity_home(config, \"antigravity2\")."
+    },
+    {
+      "acceptance": "The existing guard test may only be corrected where its premise is factually wrong; every assertion it makes about homes and retry state must survive unchanged and the correction must be explained in place.",
+      "evidence": "In the qualified-timeout guard test, only self.assertNotEqual(antigravity_provider[\"account\"], antigravity2_provider[\"account\"]) was removed; the home assertNotEqual and retry assertEqual lines are byte-identical to before. An in-place comment explains the correction and points to test_live_antigravity_lanes_share_one_upstream_account for the account statement."
+    },
+    {
+      "acceptance": "Source and isolated-test scope only. No hosted deployment and no live config edit; capacity tuning of max_concurrent_per_account is explicitly out of scope.",
+      "evidence": "This delivery only touches .orchestrator/config.json (source, not the deployed live config) and .orchestrator/test_provider_permissions.py. No docker-compose, deploy workflow, or hosted probe was touched. max_concurrent_per_account is unchanged in the diff."
+    },
+    {
+      "acceptance": "Record the exact commands with exit codes and pass/fail counts and state which failures are pre-existing on origin/dev.",
+      "evidence": "See local_verification below."
+    }
+  ],
+  "local_verification": [
+    {
+      "command": "cd .orchestrator && python3 -m unittest test_supervisor.RuntimeConfigurationContractTests -v",
+      "result": "Ran 10 tests, OK (0 failures, 0 errors)",
+      "exit_code": 0
+    },
+    {
+      "command": "cd .orchestrator && python3 -m unittest test_provider_permissions test_adapter_delivery_policy -v",
+      "result": "Ran 152 tests, OK (0 failures, 0 errors) -- includes test_live_antigravity_lanes_share_one_upstream_account and the corrected qualified-timeout guard test, both passing",
+      "exit_code": 0,
+      "note": "The task-scoped commit message (906c4954ddb679a9e1e2e2e410dfa26e8217a7b3) recorded this same command as '152 tests, 9 pre-existing errors unchanged from origin/dev, 0 failures' from the prior implementation session's environment. Re-running the identical command in this handoff session's worktree/interpreter produced 0 errors and 0 failures across all 152 tests; no error reproduced here. This is recorded as observed, not reconciled against the earlier session's environment-dependent count."
+    },
+    {
+      "command": "python3 -c \"import json; json.load(open('.orchestrator/config.json'))\"",
+      "result": "valid json",
+      "exit_code": 0
+    }
+  ],
+  "review_decision": {
+    "status": "pending"
+  }
+}

@@ -35,7 +35,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from common import durable_write_bytes, read_activity_log_tail_bytes, utc_now as iso_now
+from common import (
+    canonical_task_state_lock_file,
+    durable_write_bytes,
+    read_activity_log_tail_bytes,
+    utc_now as iso_now,
+)
 import task_archive as task_archive_module
 from task_archive import (
     ARCHIVE_TASKS_DIR,
@@ -201,26 +206,41 @@ def terminal_archive_projection(state: dict[str, Any]) -> list[dict[str, Any]]:
     facts = state[ai_status.TERMINAL_FACTS_KEY]
     receipts = state[ai_status.ARCHIVE_RECEIPTS_KEY]
     rows: list[dict[str, Any]] = []
-    for task_id in sorted(facts):
-        snapshot = load_archived_snapshot(task_id)
-        receipt = receipts.get(task_id)
-        snapshot_sha256 = (
-            ai_status._canonical_json_sha256(snapshot) if isinstance(snapshot, Mapping) else None
-        )
-        receipt_matches = bool(
-            isinstance(receipt, Mapping)
-            and snapshot_sha256
-            and receipt.get("archive_root") == ai_status._archive_root_identity()
-            and receipt.get("snapshot_sha256") == snapshot_sha256
-        )
-        rows.append(
-            {
-                "task_id": task_id,
-                **deepcopy(facts[task_id]),
-                "archive_missing": snapshot is None,
-                "archive_receipt_valid": receipt_matches,
-            }
-        )
+    # Hold the shared task-state lock once for the whole scan.  Every
+    # ``load_archived_snapshot`` below takes that same lock in shared mode, and
+    # the sidecar lock is re-entrant per path, so the per-task reads run inside
+    # this single acquisition instead of one acquire/release syscall pair each.
+    # This projection runs on every canonical mutation and grows with the
+    # archive, so the unbatched form turned one status command into hundreds of
+    # contended lock cycles that every other writer -- the supervisor tick
+    # included -- had to queue behind.
+    with canonical_task_state_lock_file(
+        task_archive_module.STATUS_FILE,
+        shared=True,
+        nonblocking=False,
+    ):
+        for task_id in sorted(facts):
+            snapshot = load_archived_snapshot(task_id)
+            receipt = receipts.get(task_id)
+            snapshot_sha256 = (
+                ai_status._canonical_json_sha256(snapshot)
+                if isinstance(snapshot, Mapping)
+                else None
+            )
+            receipt_matches = bool(
+                isinstance(receipt, Mapping)
+                and snapshot_sha256
+                and receipt.get("archive_root") == ai_status._archive_root_identity()
+                and receipt.get("snapshot_sha256") == snapshot_sha256
+            )
+            rows.append(
+                {
+                    "task_id": task_id,
+                    **deepcopy(facts[task_id]),
+                    "archive_missing": snapshot is None,
+                    "archive_receipt_valid": receipt_matches,
+                }
+            )
     return rows
 
 
