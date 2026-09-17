@@ -19389,6 +19389,54 @@ class SupervisorBlockerTransitionCorrectiveTests(unittest.TestCase):
                     )
                 )
 
+class QueueRecordReconciliationUnsettledWorkerTests(unittest.TestCase):
+    """``reconcile_queue_records`` must leave a queue record alone while any
+    worker bound to it is unsettled.  Completing it early cannot be proven by a
+    terminal task status, so the reserved post-dispatch maintenance phase then
+    fails canonical transition revalidation and discards its whole result every
+    cycle (observed 2026-09-17 after a promotion drain)."""
+
+    def _state(self, worker_status: str, record_status: str) -> dict[str, object]:
+        return {
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "status": worker_status,
+                    "queue_event_id": "evt-1",
+                    "task_id": "TASK-1",
+                    "last_event_at": "2026-09-17T01:59:00Z",
+                }
+            },
+            "queue": {"events": {"evt-1": {"status": record_status, "event_key": "key-evt-1"}}},
+            "seen_event_keys": {},
+        }
+
+    def test_unsettled_worker_leaves_queue_record_untouched(self) -> None:
+        config = config_fixture()
+        for worker_status, record_status in (
+            ("recovery_pending", "failed"),
+            ("promotion_drained", "started"),
+            ("retry_queued", "queued"),
+        ):
+            with self.subTest(worker_status=worker_status):
+                state = self._state(worker_status, record_status)
+                self.assertFalse(supervisor.reconcile_queue_records(config, state))
+                self.assertEqual(state["queue"]["events"]["evt-1"]["status"], record_status)
+                self.assertNotIn("key-evt-1", state["seen_event_keys"])
+
+    def test_settled_worker_still_finalizes_queue_record(self) -> None:
+        config = config_fixture()
+        for worker_status, expected in (
+            ("superseded", "completed"),
+            ("completed", "completed"),
+            ("failed", "failed"),
+        ):
+            with self.subTest(worker_status=worker_status):
+                state = self._state(worker_status, "started")
+                self.assertTrue(supervisor.reconcile_queue_records(config, state))
+                self.assertEqual(state["queue"]["events"]["evt-1"]["status"], expected)
+                self.assertIn("key-evt-1", state["seen_event_keys"])
+
 
 if __name__ == "__main__":
     unittest.main()

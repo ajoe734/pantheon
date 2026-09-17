@@ -12469,6 +12469,14 @@ def trim_worker_history(state: dict[str, Any], max_entries: int) -> None:
     state["workers"] = dict(ordered[-max_entries:])
 
 
+# Worker statuses whose lifecycle is settled.  A queue record may only be
+# finalized once every worker bound to it has reached one of these; an
+# unsettled worker (``recovery_pending`` after a lost lease, ``promotion_drained``
+# during a planned runtime cutover, ``retry_queued`` before its retry launches)
+# is neither active nor finished, and its queue record must be left alone.
+SETTLED_WORKER_STATUSES = frozenset({"completed", "failed", "superseded"})
+
+
 def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bool:
     changed = False
     queue_events = state.get("queue", {}).get("events", {})
@@ -12487,6 +12495,13 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
         if not isinstance(record, dict):
             continue
         if any(worker.get("status") in active_statuses for worker in workers):
+            continue
+        # Completing the record of an unsettled worker cannot be proven by a
+        # terminal task status, so the reserved post-dispatch maintenance phase
+        # fails canonical transition revalidation and discards its whole result
+        # every cycle until the worker settles (observed 2026-09-17 after a
+        # promotion drain left two ``recovery_pending`` workers behind).
+        if any(worker.get("status") not in SETTLED_WORKER_STATUSES for worker in workers):
             continue
         latest = sorted(workers, key=lambda item: item.get("last_event_at") or "", reverse=True)[0]
         next_status = "failed" if any(worker.get("status") == "failed" for worker in workers) else "completed"

@@ -2356,6 +2356,40 @@ EOF
         self.assertFalse(ready)
         self.assertEqual(status, "quota_reached")
 
+    def test_antigravity_probe_ready_trusts_model_output_over_trailing_native_marker(self) -> None:
+        # Captured 2026-09-17: the CLI logged "authenticated successfully" and then,
+        # 26 microseconds later, a userInfo cache refresh logged "not logged into
+        # Antigravity" while the prompt round-trip still answered "OK".
+        native_log = "\n".join(
+            [
+                "W0917 02:59:52.246833 cache.go:135] error getting token source: You are not logged into Antigravity.",
+                "I0917 02:59:52.325494 server_oauth.go:201] OAuth: authenticated successfully as user@example.com",
+                "W0917 02:59:52.325520 cache.go:135] Cache(userInfo): Singleflight refresh failed: You are not logged into Antigravity.",
+                "E0917 02:59:52.325569 errorreport.go:224] error getting token source: You are not logged into Antigravity.",
+            ]
+        )
+        ready, error, status = provider_permissions._antigravity_probe_ready(
+            0, "OK", "OK", native_log=native_log
+        )
+        self.assertTrue(ready)
+        self.assertIsNone(error)
+        self.assertEqual(status, "ready")
+
+        # The same native trail with no model output is still a silent failure.
+        ready, _error, status = provider_permissions._antigravity_probe_ready(
+            0, "", "", native_log=native_log
+        )
+        self.assertFalse(ready)
+        self.assertEqual(status, "not_logged_in")
+
+        # A marker in the process output itself fails closed even with output.
+        notice = "You are not logged into Antigravity."
+        ready, _error, status = provider_permissions._antigravity_probe_ready(
+            0, notice, notice, native_log=""
+        )
+        self.assertFalse(ready)
+        self.assertEqual(status, "not_logged_in")
+
     def test_antigravity_auth_probe_not_ready_on_silent_exit_zero(self) -> None:
         config = {
             "providers": {"antigravity": {"antigravity": {"cli": "agy"}}},

@@ -1067,12 +1067,20 @@ def _antigravity_probe_ready(
             native_auth_failed = True
         elif "authenticated successfully" in event:
             native_auth_failed = False
-    if any(marker in combined.lower() for marker in auth_failures) or native_auth_failed:
-        return (
-            False,
-            "Antigravity CLI is not logged in (silent print-mode failure).",
-            "not_logged_in",
-        )
+    not_logged_in = (
+        False,
+        "Antigravity CLI is not logged in (silent print-mode failure).",
+        "not_logged_in",
+    )
+    if any(marker in combined.lower() for marker in auth_failures):
+        return not_logged_in
+    # The native log is only decisive for the silent case.  The CLI's userInfo
+    # cache refresh races its OAuth result and can log a trailing "You are not
+    # logged into Antigravity" microseconds after "authenticated successfully"
+    # even though the prompt round-trip then completes; non-empty model output
+    # proves the credential worked, so that trailing marker must not veto it.
+    if native_auth_failed and not stdout.strip():
+        return not_logged_in
     if not stdout.strip():
         return (
             False,
