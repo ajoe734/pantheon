@@ -822,3 +822,25 @@ test -f "{rollback_marker}"
     assert proc.returncode == 0, proc.stderr
     assert rollback_marker.read_text(encoding="utf-8") == "rollback\n"
     assert "unable to create backend component receipt directory" in proc.stderr
+
+
+def test_deploy_nonprod_vm_includes_drift_artifact_environment_variables() -> None:
+    """deploy_nonprod_vm.sh must document and forward drift artifact variables across SSH and to the driver."""
+    deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    # Help / environment overrides documentation
+    assert "PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA" in deploy_script
+
+    # validate_artifact_restore_request validates observed drift sha
+    assert '[[ "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE:-}" == *+live_bff_drift_recovery ]]' in deploy_script
+
+    # ssh_bash forwards drift variables in command_prefix
+    ssh_bash = deploy_script.split("ssh_bash() {", 1)[1].split("\n  local deadline_seconds=", 1)[0]
+    assert "PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA" in ssh_bash
+
+    # run_dev_artifact_driver validates and forwards drift args to python driver
+    driver_func = deploy_script.split("run_dev_artifact_driver() {", 1)[1].split("\nvalidate_dev_candidate_override()", 1)[0]
+    assert 'drift_args+=(--baseline-source "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE}")' in driver_func
+    assert 'drift_args+=(--observed-live-bff-sha "${PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA}")' in driver_func
+    assert '"${drift_args[@]}"' in driver_func
+

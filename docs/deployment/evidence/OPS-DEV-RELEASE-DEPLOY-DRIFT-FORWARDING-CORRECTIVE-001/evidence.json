@@ -1,0 +1,84 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-DEV-RELEASE-DEPLOY-DRIFT-FORWARDING-CORRECTIVE-001",
+  "worker": "Antigravity2",
+  "reviewer": "Codex",
+  "title": "Forward drift inputs through deploy_nonprod_vm.sh driver calls",
+  "status": "completed",
+  "reproduction": {
+    "failing_run_id": "35206610883",
+    "failing_stage": "seal-candidate then verify",
+    "exit_code": 75,
+    "error_code": "DEV_ARTIFACT_OPERATION_FAILED",
+    "failure_location": "dev_release_artifacts.py:324",
+    "observed_live_bff_sha": "dc15751a9b20f8bc0931529d68af8898e691c898",
+    "previous_backend_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "incident_description": "In deployment run 35206610883, capture passed following PR #5886, sealing the baseline manifest with image bundle source_sha equal to observed_live_bff_sha (dc15751a9b20f8bc0931529d68af8898e691c898). However, during deploy_nonprod_vm.sh, ssh_bash and run_dev_artifact_driver only forwarded the 8 fixed identity fields, omitting PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE and PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA. On the VM, the driver could not resolve drift recovery source (_drift_recovery_source returned None) and expected bundle source_sha to equal previous_backend_sha. During seal-candidate, validate_images failed at dev_release_artifacts.py:324 with 'bundle schema/source mismatch' (exit 75). In the ensuing rollback, DEV_CANDIDATE_RECEIPT_ACKED was false, triggering unchanged baseline verification which failed with the exact same mismatch."
+  },
+  "root_cause": {
+    "ssh_bash_omitted_drift_forwarding": "scripts/deploy_nonprod_vm.sh:ssh_bash() built command_prefix by iterating only 15 fixed artifact variables, omitting PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE and PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA so they were absent from the remote VM session.",
+    "run_dev_artifact_driver_omitted_drift_forwarding": "scripts/deploy_nonprod_vm.sh:run_dev_artifact_driver() only passed 8 identity fields to dev_release_artifact_driver.py, omitting --baseline-source and --observed-live-bff-sha across seal-candidate, verify, and restore."
+  },
+  "fix_description": {
+    "deploy_nonprod_vm_sh": "Forwarded PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE and PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA in ssh_bash command_prefix; validated 40-hex format for observed_live_bff_sha when baseline_source ends with +live_bff_drift_recovery in both validate_artifact_restore_request and run_dev_artifact_driver; forwarded --baseline-source and --observed-live-bff-sha in run_dev_artifact_driver to dev_release_artifact_driver.py; documented drift variables in environment overrides help.",
+    "test_coverage": "In test_deploy_nonprod_artifact_restore.py, added test_actual_ssh_command_forwards_drift_metadata, test_all_driver_call_points_forward_drift_inputs testing all 5 call sites (seal-candidate, rollback-verify, rollback-restore, external-verify, external-restore), test_driver_call_omits_drift_flags_when_drift_absent, test_run_dev_artifact_driver_rejects_invalid_observed_drift_sha, test_validate_artifact_restore_request_rejects_invalid_observed_drift_sha, and test_drifted_fixture_full_chain_reproduces_run_35206610883_without_forwarding_and_succeeds_with_forwarding exercising the full chain with the same drifted fixture; in test_deploy_nonprod_vm.py, added test_deploy_nonprod_vm_includes_drift_artifact_environment_variables."
+  },
+  "driver_call_points": [
+    {
+      "site": "seal_dev_candidate_images",
+      "operation": "seal-candidate",
+      "context": "candidate build post-up seal before mutation receipt ack"
+    },
+    {
+      "site": "rollback_dev_bff_on_failure (unacked)",
+      "operation": "verify",
+      "context": "post-up failure before candidate receipt ack; verifies unchanged prior baseline"
+    },
+    {
+      "site": "rollback_dev_bff_on_failure (acked)",
+      "operation": "restore",
+      "context": "post-up failure after candidate receipt ack; restores sealed prior artifact images"
+    },
+    {
+      "site": "external compensation verify (PANTHEON_DEV_ARTIFACT_VERIFY=true)",
+      "operation": "verify",
+      "context": "external operator/pipeline invocation verifying prior baseline state"
+    },
+    {
+      "site": "external compensation restore (PANTHEON_DEV_ARTIFACT_RESTORE=true)",
+      "operation": "restore",
+      "context": "external operator/pipeline invocation restoring prior baseline state"
+    }
+  ],
+  "invariants_enforced": {
+    "drift_identity_forwarded": "Drift inputs from the runner workflow are preserved across SSH and handed off to every driver call point.",
+    "eight_field_identity_preserved": "The 8-field identity contract (candidate_id, run_id, attempt, controller_sha, candidate_backend_sha, candidate_frontend_sha, previous_backend_sha, previous_frontend_sha) remains the immutable foundation.",
+    "fail_closed_validation": "Non-40-hex or malformed observed live BFF SHA fails closed before driver execution.",
+    "isolation": "Pure source and isolated test scope only; no hosted deployments, redeploys, or capital changes performed."
+  },
+  "validation": {
+    "pytest_command": "uv run --no-project --with pytest,pyyaml pytest scripts/test_deploy_nonprod_artifact_restore.py scripts/test_deploy_nonprod_vm.py scripts/test_capture_dev_artifact_baseline.py scripts/test_dev_release_artifact_driver.py scripts/test_dev_release_artifacts.py",
+    "passed": 570,
+    "skipped": 3,
+    "failed": 0,
+    "duration_seconds": 100.31,
+    "exit_code": 0
+  },
+  "scope_definition": {
+    "total_artifacts": 4,
+    "artifacts": {
+      "scripts/deploy_nonprod_vm.sh": {
+        "disposition": "MODIFIED"
+      },
+      "scripts/test_deploy_nonprod_artifact_restore.py": {
+        "disposition": "MODIFIED"
+      },
+      "scripts/test_deploy_nonprod_vm.py": {
+        "disposition": "MODIFIED"
+      },
+      "docs/deployment/evidence/OPS-DEV-RELEASE-DEPLOY-DRIFT-FORWARDING-CORRECTIVE-001/evidence.json": {
+        "disposition": "CREATED"
+      }
+    }
+  }
+}
