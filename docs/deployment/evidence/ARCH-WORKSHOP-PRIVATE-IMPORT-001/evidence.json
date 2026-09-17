@@ -1,0 +1,104 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "ARCH-WORKSHOP-PRIVATE-IMPORT-001",
+    "title": "Eliminate cross-module private imports of workshop internals",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "phase": "Arch rebaseline: ACG-06-002 and ACG-06-003 residual",
+    "target_repo": "pantheon",
+    "task_branch": "task/ARCH-WORKSHOP-PRIVATE-IMPORT-001",
+    "base_branch": "dev"
+  },
+  "summary": "Eliminated cross-module private imports of workshop internals (ACG-06-002 and ACG-06-003 residuals). Provided formal public interfaces ws_publish (and ws_replay_after) in strategy_workshop/events.py and build_readiness_assessment in strategy_workshop/readiness.py with backwards-compatible aliases. Migrated all cross-module consumers (agora/interaction/runner.py, agora/performance/consumer.py, agora/research/routes/common.py, and agora/trading_room/routes/common.py) to use public interfaces with zero private symbol residuals.",
+  "promoted_public_symbols": [
+    {
+      "module": "services/control-plane/bff/agora/strategy_workshop/events.py",
+      "public_symbol": "ws_publish",
+      "legacy_private_symbol": "_ws_publish",
+      "backwards_compatible_alias": true,
+      "description": "Publish an SSE event to the workshop buffer and all live subscribers."
+    },
+    {
+      "module": "services/control-plane/bff/agora/strategy_workshop/events.py",
+      "public_symbol": "ws_replay_after",
+      "legacy_private_symbol": "_ws_replay_after",
+      "backwards_compatible_alias": true,
+      "description": "Return buffered events that came after last_event_id for reconnect replay."
+    },
+    {
+      "module": "services/control-plane/bff/agora/strategy_workshop/readiness.py",
+      "public_symbol": "build_readiness_assessment",
+      "legacy_private_symbol": "_build_readiness_assessment",
+      "backwards_compatible_alias": true,
+      "description": "Compute readiness assessment for workshop session from events and completeness snapshot."
+    }
+  ],
+  "migrated_consumers": [
+    {
+      "file": "services/control-plane/bff/agora/interaction/runner.py",
+      "imported_symbol": "ws_publish",
+      "previous_import": "from services.control_plane.bff.agora.strategy_workshop.events import _ws_publish",
+      "call_sites": [
+        "drain_interaction_outbox (workshop_sse outbox drain)",
+        "run_persona_interaction (consultation.started event)",
+        "run_persona_interaction (workshop.openclaw.degraded event)",
+        "run_persona_interaction (consultation.completed event)"
+      ],
+      "residual_private_imports": 0
+    },
+    {
+      "file": "services/control-plane/bff/agora/performance/consumer.py",
+      "imported_symbol": "ws_publish",
+      "previous_import": "from ..strategy_workshop.events import _ws_publish",
+      "call_sites": [
+        "consume_performance_event (agora.performance.suggestion.created event)"
+      ],
+      "residual_private_imports": 0
+    },
+    {
+      "file": "services/control-plane/bff/agora/research/routes/common.py",
+      "imported_symbol": "ws_publish",
+      "previous_import": "getattr(mod, '_ws_publish') / from agora.strategy_workshop.events import _ws_publish",
+      "call_sites": [
+        "publish_research_event",
+        "publish_research_progress",
+        "publish_openclaw_degraded"
+      ],
+      "residual_private_imports": 0
+    },
+    {
+      "file": "services/control-plane/bff/agora/trading_room/routes/common.py",
+      "imported_symbol": "build_readiness_assessment",
+      "previous_import": "from ...strategy_workshop.router import _build_readiness_assessment",
+      "call_sites": [
+        "project_ready_strategies (readiness projection fallback)",
+        "project_trading_room_projections (readiness projection fallback)"
+      ],
+      "residual_private_imports": 0
+    }
+  ],
+  "artifacts": [
+    "services/control-plane/bff/agora/interaction/runner.py",
+    "services/control-plane/bff/agora/performance/consumer.py",
+    "services/control-plane/bff/agora/research/routes/common.py",
+    "services/control-plane/bff/agora/strategy_workshop/events.py",
+    "services/control-plane/bff/agora/strategy_workshop/readiness.py",
+    "services/control-plane/bff/agora/trading_room/routes/common.py",
+    "docs/deployment/evidence/ARCH-WORKSHOP-PRIVATE-IMPORT-001/evidence.json"
+  ],
+  "acceptance_verification": {
+    "public_interfaces_provided": true,
+    "cross_module_consumers_migrated": true,
+    "single_implementation_retained": true,
+    "no_duplicate_implementations": true,
+    "zero_residual_private_imports_in_migrated_consumers": true,
+    "regression_tests_passed": true
+  },
+  "verification": {
+    "test_command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/tests/test_agora_route_ownership.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/agora/trading_room/test_trading_room_stream.py",
+    "test_result": "240 passed, 1 skipped, 89 warnings in 142.12s",
+    "static_assertion_command": "python3 assertion verifying public and alias exports and zero residual private symbol references in consumers",
+    "static_assertion_result": "ALL CHECKS PASSED SUCCESSFULLY"
+  }
+}

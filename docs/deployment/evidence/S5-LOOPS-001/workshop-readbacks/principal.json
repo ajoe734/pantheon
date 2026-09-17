@@ -1,0 +1,134 @@
+{
+  "at": "2026-09-13T05:22:31.156899+00:00",
+  "path": "/bff/me",
+  "status": 200,
+  "body": {
+    "data": {
+      "operator_id": "pantheon-dev-operator-a",
+      "operatorId": "pantheon-dev-operator-a",
+      "user": {
+        "id": "pantheon-dev-operator-a",
+        "operator_id": "pantheon-dev-operator-a",
+        "display_name": "pantheon-dev-operator-a",
+        "roles": [
+          "operator"
+        ],
+        "capabilities": [
+          "runtime.read",
+          "risk.incident.read",
+          "risk.alert.read",
+          "artifact.read"
+        ],
+        "mfa_verified": false
+      },
+      "current_user": {
+        "id": "pantheon-dev-operator-a",
+        "operator_id": "pantheon-dev-operator-a",
+        "display_name": "pantheon-dev-operator-a",
+        "roles": [
+          "operator"
+        ],
+        "capabilities": [
+          "runtime.read",
+          "risk.incident.read",
+          "risk.alert.read",
+          "artifact.read"
+        ],
+        "mfa_verified": false
+      },
+      "currentUser": {
+        "id": "pantheon-dev-operator-a",
+        "operator_id": "pantheon-dev-operator-a",
+        "display_name": "pantheon-dev-operator-a",
+        "roles": [
+          "operator"
+        ],
+        "capabilities": [
+          "runtime.read",
+          "risk.incident.read",
+          "risk.alert.read",
+          "artifact.read"
+        ],
+        "mfa_verified": false
+      },
+      "tenant": {
+        "id": "tenant-dev",
+        "requested_id": null,
+        "default_id": "tenant-dev",
+        "allowed_ids": [
+          "tenant-dev",
+          "pantheon-dev",
+          "pantheon-local"
+        ],
+        "scope": "tenant",
+        "source": "default"
+      },
+      "tenant_id": "tenant-dev",
+      "tenantId": "tenant-dev",
+      "allowed_tenants": [
+        "tenant-dev",
+        "pantheon-dev",
+        "pantheon-local"
+      ],
+      "allowedTenants": [
+        "tenant-dev",
+        "pantheon-dev",
+        "pantheon-local"
+      ],
+      "locale": {
+        "resolved": "en-US",
+        "requested": null,
+        "accept_language": null,
+        "default": "en-US",
+        "timezone": "UTC",
+        "source": "default"
+      },
+      "environment": {
+        "name": "dev",
+        "deployment_stage": "dev",
+        "region": "",
+        "timezone": "UTC",
+        "auth_mode": "strict",
+        "strict_auth": true
+      },
+      "feature_flags": {
+        "executePlansBff": true,
+        "sessionAuthMe": true
+      },
+      "featureFlags": {
+        "executePlansBff": true,
+        "sessionAuthMe": true
+      },
+      "session": {
+        "id": "dev-login-8b38a2ed8ec84d8c9b0af89167f8b215",
+        "authenticated": true,
+        "auth_mode": "jwt",
+        "session_kind": "bearer",
+        "fresh": true,
+        "freshness_seconds_remaining": 1799,
+        "issued_at": "2026-09-13T05:22:31Z",
+        "expires_at": "2026-09-13T05:52:31Z",
+        "mfa_verified": false,
+        "checked_at": "2026-09-13T05:22:31Z",
+        "state": "active"
+      },
+      "session_kind": "bearer",
+      "sessionKind": "bearer",
+      "roles": [
+        "operator"
+      ],
+      "capabilities": [
+        "runtime.read",
+        "risk.incident.read",
+        "risk.alert.read",
+        "artifact.read"
+      ]
+    },
+    "meta": {
+      "route": "GET /bff/me",
+      "contract": "BFF-LUV-GAP-009",
+      "correlationId": "d817aecc-f90a-4275-8e31-d3d1778875e7",
+      "snapshot_at": "2026-09-13T05:22:31Z"
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "body": {
+    "source_record": {
+      "source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+      "connector_id": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+      "source_type": "market",
+      "title": "SIMULATION paper-only SPY previous dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+      "content_ref": "simulation://dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7/SPY/previous",
+      "status": "normalized",
+      "metadata": {
+        "acceptance_stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+        "access_scope": [
+          "research"
+        ],
+        "available_time": "2026-09-15T03:20:08Z",
+        "is_real": false,
+        "license_scope": "internal",
+        "normalized_row": {
+          "close": 519.243667,
+          "event_time": "2026-09-15T03:20:08Z",
+          "is_real": false,
+          "provenance": "simulation",
+          "symbol": "SPY"
+        },
+        "provenance": "simulation",
+        "tenant_id": "tenant-dev",
+        "raw_storage_refs": [
+          {
+            "ref_type": "raw_object",
+            "source": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+            "dataset": "market",
+            "date": "2026-09-15",
+            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260915t032008z-fdefb78114264130a108903d1d3884a7/market/date=2026-09-15/ingest-65d1dd0d00d5.jsonl",
+            "row_count": 2,
+            "compression": "none",
+            "retention_days": null,
+            "retention_policy_ref": null,
+            "storage_class": null
+          }
+        ],
+        "source_ingest_run_id": "ingest-65d1dd0d00d5",
+        "canonical_url": null,
+        "canonical_doi": null,
+        "canonical_repo": null,
+        "content_hash": "sha256:f308b057cf84705c871435f9c5efbf648a094e20266163744f3bbea4e691d29f",
+        "source_dedupe_key": "content:sha256:f308b057cf84705c871435f9c5efbf648a094e20266163744f3bbea4e691d29f"
+      },
+      "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+      "created_at": "2026-09-15T03:20:08Z"
+    }
+  },
+  "http_status": 200,
+  "method": "GET",
+  "observed_at": "2026-09-15T03:20:09Z",
+  "route": "/api/source-ingest/source-records/src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous"
+}

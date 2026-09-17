@@ -1,0 +1,17 @@
+{
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+  "session_id": "trn-20260917-7accca38530e",
+  "persona_id": "persona-strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+  "trigger_id": "trn-20260917-7accca38530e",
+  "terminal_output_id": "tevt-20260917-b89287bc65-001",
+  "preview_eval_id": "teval-20260917-7accca38530e-001",
+  "next_consumer_receipt_id": "ws-session-2afec261-fe60-43af-bacb-136c60a8f9ba",
+  "owner_worker_identity": "training-session-preview-worker",
+  "owner_container": "8ce1c0a736e6",
+  "status": "accepted",
+  "is_real": false,
+  "provenance": "simulation",
+  "tenant_id": "tenant-dev",
+  "controls_count": 3,
+  "events_count": 1
+}
