@@ -36,13 +36,6 @@ from fastapi.params import Param as FastAPIParam
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-def _resolve_param(val: Any) -> Any:
-    if isinstance(val, FastAPIParam):
-        if val.default is ... or type(val.default).__name__ == "PydanticUndefined":
-            return None
-        return val.default
-    return val
-
 from services.foundation import (  # noqa: E402
     ActorRef,
     ActorType,
@@ -151,6 +144,17 @@ from .emergency_containment_policy import validate_emergency_containment
 from .session_lifecycle_store import SessionLifecycleStore
 from .auth import policy as auth_policy
 from .auth.policy import create_auth_dependencies
+from .shared.cross_domain_utils import (
+    _management_as_float,
+    _management_first_float,
+    _management_nested_value,
+    _management_telemetry_rollup,
+    _merge_registry_records,
+    _ppl_alloc_009_paper_environment_guard,
+    _resolve_param,
+    _sort_records_latest_first,
+    _surface_degradation_reason,
+)
 from .management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
 from .agora_audit_store import AgoraAuditStore
 from .management_nl_command_idempotency import (
@@ -6265,22 +6269,6 @@ def _snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
     if staleness is not None:
         meta["staleness"] = staleness
     return meta
-def _surface_degradation_reason(
-    surface: Dict[str, Any],
-    *,
-    degraded_reason: str,
-    unavailable_reason: str,
-) -> Optional[str]:
-    status = surface.get("status")
-    if status == "ok":
-        return None
-    if status == "unavailable":
-        return unavailable_reason
-    if surface.get("message"):
-        return str(surface["message"])
-    if surface.get("note"):
-        return str(surface["note"])
-    return degraded_reason
 _COMMAND_RECEIPT_STATUS_MAP = {
     CommandStatus.SUBMITTED.value: CommandReceiptStatus.ACCEPTED,
     CommandStatus.PROCESSING.value: CommandReceiptStatus.QUEUED,
@@ -7159,30 +7147,6 @@ def _pm12_allocation_evaluation_record(evaluation_id: str) -> Dict[str, Any]:
             precondition_failed="allocation_evaluation_id",
         )
     return evaluation
-def _ppl_alloc_009_paper_environment_guard() -> None:
-    env_name = str(os.getenv("PANTHEON_ENV") or "").strip().lower()
-    if (
-        env_name != "dev"
-        or _bff_auth_mode() != "strict"
-        or auth_policy.bool_from_env(_BFF_AUTH_STUB_ENV, default=False)
-        or auth_policy.bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
-        or auth_policy.bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
-    ):
-        raise _bff_error(
-            403,
-            ErrorCode.PRECONDITION_FAILED,
-            "Governed paper allocation simulation is unavailable",
-            (
-                "The paper-only authority requires strict dev auth with both "
-                "live broker and canary execution disabled."
-            ),
-            precondition_failed="paper_simulation_environment",
-            suggestion=(
-                "Use the accepted strict dev BFF with "
-                "PANTHEON_LIVE_BROKER_ENABLED=false and "
-                "PANTHEON_CANARY_EXECUTION_ENABLED=false"
-            ),
-        )
 def _ppl_alloc_009_paper_rebalance_authority(
     cmd: OperatorCommand,
 ) -> bool:
@@ -7918,15 +7882,6 @@ def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
-def _management_as_float(value: Any) -> Optional[float]:
-    if isinstance(value, bool):
-        return None
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 def _management_first_non_empty(*values: Any) -> Any:
     for value in values:
         if value not in (None, ""):
@@ -7956,20 +7911,6 @@ def _management_position_records(telemetry: Dict[str, Any]) -> List[Dict[str, An
         if isinstance(raw_item, dict):
             return [raw_item]
     return []
-def _management_nested_value(record: Dict[str, Any], path: str) -> Any:
-    value: Any = record
-    for part in path.split("."):
-        if not isinstance(value, dict):
-            return None
-        value = value.get(part)
-    return value
-def _management_first_float(record: Dict[str, Any], *paths: str) -> Optional[float]:
-    for path in paths:
-        value = _management_nested_value(record, path)
-        number = _management_as_float(value)
-        if number is not None:
-            return number
-    return None
 def _management_latest_timestamp(items: List[Dict[str, Any]], *fields: str) -> Optional[str]:
     latest: Optional[str] = None
     for item in items:
@@ -7978,59 +7919,6 @@ def _management_latest_timestamp(items: List[Dict[str, Any]], *fields: str) -> O
             if value and (latest is None or value > latest):
                 latest = value
     return latest
-def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    if not records:
-        return {
-            "runtime_count": 0,
-            "total_pnl": None,
-            "max_drawdown": None,
-            "average_fill_rate": None,
-            "total_trades": 0,
-            "latest_collected_at": None,
-        }
-
-    pnl_values: List[float] = []
-    drawdown_values: List[float] = []
-    fill_rates: List[float] = []
-    total_trades = 0
-    latest_collected_at: Optional[str] = None
-
-    for record in records:
-        pnl = _management_first_float(record, "pnl", "summary.total_pnl", "summary.pnl")
-        drawdown = _management_first_float(
-            record,
-            "drawdown",
-            "max_drawdown",
-            "summary.max_drawdown",
-        )
-        fill_rate = _management_first_float(record, "fill_rate", "summary.fill_rate")
-        trades = _management_first_float(record, "total_trades", "summary.total_trades")
-        collected_at = str(
-            record.get("collected_at")
-            or record.get("collectedAt")
-            or record.get("updated_at")
-            or record.get("updatedAt")
-            or ""
-        ).strip()
-        if pnl is not None:
-            pnl_values.append(pnl)
-        if drawdown is not None:
-            drawdown_values.append(drawdown)
-        if fill_rate is not None:
-            fill_rates.append(fill_rate)
-        if trades is not None:
-            total_trades += int(trades)
-        if collected_at and (latest_collected_at is None or collected_at > latest_collected_at):
-            latest_collected_at = collected_at
-
-    return {
-        "runtime_count": len(records),
-        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
-        "max_drawdown": max(drawdown_values) if drawdown_values else None,
-        "average_fill_rate": round(sum(fill_rates) / len(fill_rates), 6) if fill_rates else None,
-        "total_trades": total_trades,
-        "latest_collected_at": latest_collected_at,
-    }
 def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
     if not record_id:
         return None
@@ -8615,18 +8503,6 @@ def _pm12_performance_attribution_rows(
         })
 
     return rows
-def _sort_records_latest_first(
-    records: List[Dict[str, Any]],
-    fields: tuple[str, ...],
-) -> List[Dict[str, Any]]:
-    return sorted(
-        records,
-        key=lambda item: next(
-            (str(item.get(field) or "") for field in fields if item.get(field)),
-            "",
-        ),
-        reverse=True,
-    )
 def _persona_fleet_runtime_matches(
     runtime_binding: Dict[str, Any],
     *,
@@ -16919,22 +16795,6 @@ def _read_store_fixture_records(dataset: str) -> List[Dict[str, Any]]:
     if isinstance(raw, list):
         return [dict(record) for record in raw if isinstance(record, dict)]
     return []
-def _merge_registry_records(
-    fixture_records: List[Dict[str, Any]],
-    registry_records: List[Dict[str, Any]],
-    id_keys: tuple[str, ...],
-) -> List[Dict[str, Any]]:
-    merged: Dict[str, Dict[str, Any]] = {}
-    for record in fixture_records + registry_records:
-        record_id = ""
-        for key in id_keys:
-            value = record.get(key)
-            if value not in (None, ""):
-                record_id = str(value)
-                break
-        if record_id:
-            merged[record_id] = dict(record)
-    return list(merged.values())
 def _mcp_server_fixture_records() -> List[Dict[str, Any]]:
     store_records = read_store.list_mcp_servers()
     if store_records:
