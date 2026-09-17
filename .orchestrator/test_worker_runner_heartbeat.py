@@ -35,7 +35,7 @@ import runtime_state
 def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None,
                         mutate_journal=None, during_run=None, local_stub=False,
                         publish_receipt=True, mutate_store=None, receipt_in_phase=False,
-                        hold_during_sandbox=False,
+                        hold_during_sandbox=False, harness_hook=None,
                         **_kwargs):
     """Publish an isolated supervisor receipt for one actual wrapper process.
 
@@ -82,7 +82,8 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
                if hold_during_sandbox else "")
             + "    return command\n"
             "wr.bind_worker_sandbox=sandbox\n"
-            "sys.exit(wr.main(sys.argv[2:]))"
+            + (harness_hook + "\n" if harness_hook else "")
+            + "sys.exit(wr.main(sys.argv[2:]))"
         )
         actual_argv = [sys.executable, "-c", harness, str(Path(_P).resolve().parent), *argv[2:]]
     proc = subprocess.Popen(actual_argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -2772,8 +2773,90 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
                                during_run=revoke_after_start)
         self.assertEqual(proc.returncode, 143, proc.stderr)
         self.assertFalse(self.marker.exists())
-        self.assertTrue(json.loads(self.runner_status.read_text())["dispatch_binding_revoked"])
+        status = json.loads(self.runner_status.read_text())
+        self.assertTrue(status["dispatch_binding_revoked"])
+        self.assertEqual(status.get("revocation_exception_type"), "RuntimeError")
+        self.assertEqual(status.get("revocation_binding_field"), "waiting_for")
+        self.assertIn("task is on an explicit hold", status.get("revocation_message", ""))
+        self.assertIn("RuntimeError", status.get("revocation_reason", ""))
+        activity_log = self.central / "ai-activity-log.jsonl"
+        self.assertTrue(activity_log.exists())
+        events = [json.loads(line) for line in activity_log.read_text().splitlines() if line.strip()]
+        rev_events = [e for e in events if e.get("type") == "worker_dispatch_binding_revoked"]
+        self.assertTrue(len(rev_events) >= 1)
+        self.assertEqual(rev_events[-1].get("exception_type"), "RuntimeError")
+        self.assertEqual(rev_events[-1].get("binding_field"), "waiting_for")
+        self.assertIn("task is on an explicit hold", rev_events[-1].get("exception_message", ""))
+
+    def test_transient_oserror_during_binding_check_does_not_kill_child(self):
+        ready = self.workspace / "ready"
+        harness_hook = (
+            "orig_validate = wr.validate_worker_entry_binding\n"
+            "transient_injected = False\n"
+            "def mocked_validate(*args, **kwargs):\n"
+            "    global transient_injected\n"
+            "    if not kwargs.get('entry', True) and not transient_injected:\n"
+            "        transient_injected = True\n"
+            "        raise OSError('temporary lock contention')\n"
+            "    return orig_validate(*args, **kwargs)\n"
+            "wr.validate_worker_entry_binding = mocked_validate\n"
+        )
+        proc = self.run_worker(
+            code=(
+                "from pathlib import Path; import time; "
+                "Path('ready').write_text('ready'); time.sleep(2.5); "
+                "Path('provider-effect').write_text('completed-safely')"
+            ),
+            harness_hook=harness_hook,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self.marker.exists())
+        self.assertEqual(self.marker.read_text(), "completed-safely")
+        status = json.loads(self.runner_status.read_text())
+        self.assertEqual(status.get("status"), "completed")
+        self.assertFalse(status.get("dispatch_binding_revoked", False))
+
+    def test_persistent_oserror_escalates_to_revocation(self):
+        ready = self.workspace / "ready"
+        harness_hook = (
+            "orig_validate = wr.validate_worker_entry_binding\n"
+            "def mocked_validate(*args, **kwargs):\n"
+            "    if not kwargs.get('entry', True):\n"
+            "        raise OSError('persistent disk corruption')\n"
+            "    return orig_validate(*args, **kwargs)\n"
+            "wr.validate_worker_entry_binding = mocked_validate\n"
+        )
+        with mock.patch.dict(
+            self.env,
+            {
+                "PANTHEON_BINDING_TRANSIENT_ERROR_THRESHOLD": "2",
+                "PANTHEON_BINDING_TRANSIENT_GRACE_SECONDS": "0.1",
+            },
+        ):
+            proc = self.run_worker(
+                code=(
+                    "from pathlib import Path; import time; "
+                    "Path('ready').write_text('ready'); time.sleep(10); "
+                    "Path('provider-effect').write_text('unauthorized')"
+                ),
+                harness_hook=harness_hook,
+            )
+        self.assertEqual(proc.returncode, 143, proc.stderr)
+        self.assertFalse(self.marker.exists())
+        status = json.loads(self.runner_status.read_text())
+        self.assertTrue(status.get("dispatch_binding_revoked"))
+        self.assertEqual(status.get("revocation_exception_type"), "OSError")
+        self.assertIn("persistent disk corruption", status.get("revocation_message", ""))
+        self.assertEqual(status.get("revocation_binding_field"), "filesystem")
+        activity_log = self.central / "ai-activity-log.jsonl"
+        self.assertTrue(activity_log.exists())
+        events = [json.loads(line) for line in activity_log.read_text().splitlines() if line.strip()]
+        rev_events = [e for e in events if e.get("type") == "worker_dispatch_binding_revoked"]
+        self.assertTrue(len(rev_events) >= 1)
+        self.assertEqual(rev_events[-1].get("exception_type"), "OSError")
+        self.assertEqual(rev_events[-1].get("binding_field"), "filesystem")
 
 
 if __name__ == "__main__":
     unittest.main()
+

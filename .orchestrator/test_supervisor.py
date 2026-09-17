@@ -14490,6 +14490,27 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     """Real isolated two-process CLI/TaskStore/outbox/runner-stop/poll/restart/owner-dispatch flow and crash race tests."""
 
     @staticmethod
+    def _reap(*processes, timeout=5):
+        """Join children and prove they exited before the temp tree is removed.
+
+        ``Process.join(timeout=...)`` returns whether or not the child ended.
+        These tests then leave their ``TemporaryDirectory`` block, so a child
+        still writing into the temp worktree makes ``rmtree`` fail with
+        "Directory not empty" -- an error attributed to whichever branch was
+        unlucky enough to run under load, not to any change it made.
+        """
+
+        for process in processes:
+            process.join(timeout=timeout)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=timeout)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=timeout)
+
+
+    @staticmethod
     def _copy_tooling(source_root: Path, dest: Path) -> None:
         for p in (source_root / ".orchestrator").glob("*.py"):
             dst = dest / ".orchestrator" / p.name
@@ -15775,6 +15796,27 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     except OSError:
                         pass
 
+    def test_reap_terminates_a_child_that_outlives_its_join_timeout(self) -> None:
+        """A child that ignores the join deadline must still be dead afterwards.
+
+        Regression for a shared CI flake: the two-process tests below left such
+        a child running inside their TemporaryDirectory, so its cleanup raised
+        OSError "Directory not empty" on whichever branch happened to run under
+        load.
+        """
+        ctx = multiprocessing.get_context("fork")
+        process = ctx.Process(target=time.sleep, args=(120,))
+        process.start()
+        try:
+            self.assertTrue(process.is_alive())
+            self._reap(process, timeout=1)
+            self.assertFalse(process.is_alive())
+            self.assertIsNotNone(process.exitcode)
+        finally:
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+
     def test_two_process_ordering1_reopen_completes_before_recovery_cas(self) -> None:
         """Two-process race ordering 1: Reviewer completes reopen before Recovery CAS; task stays gen 1, reaped cleanly."""
         ctx = multiprocessing.get_context("fork")
@@ -16014,8 +16056,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_reopen = q_reopen.get(timeout=15)
             res_rec = q_rec.get(timeout=15)
-            p_reopen.join(timeout=5)
-            p_rec.join(timeout=5)
+            self._reap(p_reopen, p_rec)
 
             self.assertEqual(res_reopen["returncode"], 0, f"Reopen failed: {res_reopen}")
             self.assertTrue(res_rec["result"])
@@ -16267,8 +16308,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_rec2 = q_rec.get(timeout=15)
             res_reopen2 = q_reopen.get(timeout=15)
-            p_rec2.join(timeout=5)
-            p_reopen2.join(timeout=5)
+            self._reap(p_rec2, p_reopen2)
 
             self.assertTrue(res_rec2["result"])
 
@@ -16447,8 +16487,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_fin = q_fin.get(timeout=15)
             res_rec = q_rec.get(timeout=15)
-            p_fin.join(timeout=5)
-            p_rec.join(timeout=5)
+            self._reap(p_fin, p_rec)
 
             self.assertEqual(res_fin["returncode"], 0)
             self.assertTrue(res_rec["result"])
@@ -16651,8 +16690,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_fin = q_fin.get(timeout=15)
             res_rec = q_rec.get(timeout=15)
-            p_fin.join(timeout=5)
-            p_rec.join(timeout=5)
+            self._reap(p_fin, p_rec)
 
             self.assertEqual(res_fin["returncode"], 0, f"Finalize failed: {res_fin['stderr']}\n{res_fin['stdout']}")
             self.assertTrue(res_rec["result"])
@@ -16845,8 +16883,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_reassign = q_reassign.get(timeout=15)
             res_stage = q_stage.get(timeout=15)
-            p_reassign.join(timeout=5)
-            p_stage.join(timeout=5)
+            self._reap(p_reassign, p_stage)
 
             self.assertFalse(res_reassign["success"], res_reassign)
             self.assertIn("active worker lease", res_reassign["stderr"])
@@ -17033,8 +17070,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_reassign = q_reassign.get(timeout=15)
             res_stale = q_stale.get(timeout=15)
-            p_reassign.join(timeout=5)
-            p_stale.join(timeout=5)
+            self._reap(p_reassign, p_stale)
 
             self.assertTrue(res_reassign["success"], f"Reassignment failed: {res_reassign}")
             self.assertNotEqual(res_stale["returncode"], 0)
@@ -19388,6 +19424,54 @@ class SupervisorBlockerTransitionCorrectiveTests(unittest.TestCase):
                         config, task_id="TASK-GUARD-2", message=msg
                     )
                 )
+
+class QueueRecordReconciliationUnsettledWorkerTests(unittest.TestCase):
+    """``reconcile_queue_records`` must leave a queue record alone while any
+    worker bound to it is unsettled.  Completing it early cannot be proven by a
+    terminal task status, so the reserved post-dispatch maintenance phase then
+    fails canonical transition revalidation and discards its whole result every
+    cycle (observed 2026-09-17 after a promotion drain)."""
+
+    def _state(self, worker_status: str, record_status: str) -> dict[str, object]:
+        return {
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "status": worker_status,
+                    "queue_event_id": "evt-1",
+                    "task_id": "TASK-1",
+                    "last_event_at": "2026-09-17T01:59:00Z",
+                }
+            },
+            "queue": {"events": {"evt-1": {"status": record_status, "event_key": "key-evt-1"}}},
+            "seen_event_keys": {},
+        }
+
+    def test_unsettled_worker_leaves_queue_record_untouched(self) -> None:
+        config = config_fixture()
+        for worker_status, record_status in (
+            ("recovery_pending", "failed"),
+            ("promotion_drained", "started"),
+            ("retry_queued", "queued"),
+        ):
+            with self.subTest(worker_status=worker_status):
+                state = self._state(worker_status, record_status)
+                self.assertFalse(supervisor.reconcile_queue_records(config, state))
+                self.assertEqual(state["queue"]["events"]["evt-1"]["status"], record_status)
+                self.assertNotIn("key-evt-1", state["seen_event_keys"])
+
+    def test_settled_worker_still_finalizes_queue_record(self) -> None:
+        config = config_fixture()
+        for worker_status, expected in (
+            ("superseded", "completed"),
+            ("completed", "completed"),
+            ("failed", "failed"),
+        ):
+            with self.subTest(worker_status=worker_status):
+                state = self._state(worker_status, "started")
+                self.assertTrue(supervisor.reconcile_queue_records(config, state))
+                self.assertEqual(state["queue"]["events"]["evt-1"]["status"], expected)
+                self.assertIn("key-evt-1", state["seen_event_keys"])
 
 
 if __name__ == "__main__":

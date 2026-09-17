@@ -137,6 +137,17 @@ except ImportError:
     sha256_checksum = lambda data: hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
 
 from ..auth.policy import bool_from_env
+from ..shared.cross_domain_utils import (
+    _management_as_float,
+    _management_first_float,
+    _management_nested_value,
+    _management_telemetry_rollup,
+    _merge_registry_records,
+    _ppl_alloc_009_paper_environment_guard,
+    _resolve_param,
+    _sort_records_latest_first,
+    _surface_degradation_reason,
+)
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.command_adapters.service import (
     CommandAdapterService,
@@ -699,8 +710,6 @@ def _is_persona_lifecycle_operational(value: Any) -> bool:
 
 # --- _STRATEGY_PERSONA_BFF_IDEMPOTENCY ---
 _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-
-
 
 
 # --- _PERSONA_PROVISIONING_STORE ---
@@ -8602,15 +8611,6 @@ _DEV_LOGIN_IDENTITY_DEFS: Dict[str, Dict[str, Any]] = {
 }
 
 
-# --- _resolve_param ---
-def _resolve_param(val: Any) -> Any:
-    if isinstance(val, FastAPIParam):
-        if val.default is ... or type(val.default).__name__ == "PydanticUndefined":
-            return None
-        return val.default
-    return val
-
-
 # --- _REQUEST_DRY_RUN_CONTEXT ---
 _REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)
 
@@ -8951,7 +8951,6 @@ def _bff_error(
 # --- _deprecation_constants ---
 _PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
 _PATH_DEDUPE_SUNSET_HTTP_DATE = "Mon, 25 May 2026 00:00:00 GMT"
-
 
 
 # --- _foundation_audit_for_command_record ---
@@ -10476,7 +10475,6 @@ def _management_prune_camel_aliases(value: Any) -> Any:
     return pruned
 
 
-
 # --- _management_evidence_public_item ---
 def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     ref_id = str(item.get("ref_id") or item.get("id") or "").strip()
@@ -10539,25 +10537,6 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     if "overall" in item:
         public_item["overall"] = item.get("overall")
     return public_item
-
-
-# --- _surface_degradation_reason ---
-def _surface_degradation_reason(
-    surface: Dict[str, Any],
-    *,
-    degraded_reason: str,
-    unavailable_reason: str,
-) -> Optional[str]:
-    status = surface.get("status")
-    if status == "ok":
-        return None
-    if status == "unavailable":
-        return unavailable_reason
-    if surface.get("message"):
-        return str(surface["message"])
-    if surface.get("note"):
-        return str(surface["note"])
-    return degraded_reason
 
 
 # --- _project_final_command_response ---
@@ -10698,33 +10677,6 @@ def _dry_run_success_response(
         content=jsonable_encoder({"data": data, "meta": meta}),
         headers=headers,
     )
-
-
-# --- _ppl_alloc_009_paper_environment_guard ---
-def _ppl_alloc_009_paper_environment_guard() -> None:
-    env_name = str(os.getenv("PANTHEON_ENV") or "").strip().lower()
-    if (
-        env_name != "dev"
-        or _bff_auth_mode() != "strict"
-        or bool_from_env(_BFF_AUTH_STUB_ENV, default=False)
-        or bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
-        or bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
-    ):
-        raise _bff_error(
-            403,
-            ErrorCode.PRECONDITION_FAILED,
-            "Governed paper allocation simulation is unavailable",
-            (
-                "The paper-only authority requires strict dev auth with both "
-                "live broker and canary execution disabled."
-            ),
-            precondition_failed="paper_simulation_environment",
-            suggestion=(
-                "Use the accepted strict dev BFF with "
-                "PANTHEON_LIVE_BROKER_ENABLED=false and "
-                "PANTHEON_CANARY_EXECUTION_ENABLED=false"
-            ),
-        )
 
 
 # --- _ppl_alloc_009_paper_capital_context ---
@@ -10900,7 +10852,6 @@ _PERSONA_PROVISIONING_RECONCILER_TASK: Optional[asyncio.Task[Any]] = None
 _PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
 
 
-
 # --- _normalize_lifecycle_state ---
 def _normalize_lifecycle_state(value: Any) -> str:
     text = str(value or "").strip().lower()
@@ -10911,109 +10862,6 @@ def _normalize_lifecycle_state(value: Any) -> str:
 def _normalize_risk_level(value: Any) -> str:
     text = str(value or "").strip().lower()
     return _STRATEGY_BFF_RISK_MAP.get(text, "medium")
-
-
-# --- _management_as_float ---
-def _management_as_float(value: Any) -> Optional[float]:
-    if isinstance(value, bool):
-        return None
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-# --- _management_nested_value ---
-def _management_nested_value(record: Dict[str, Any], path: str) -> Any:
-    value: Any = record
-    for part in path.split("."):
-        if not isinstance(value, dict):
-            return None
-        value = value.get(part)
-    return value
-
-
-# --- _management_first_float ---
-def _management_first_float(record: Dict[str, Any], *paths: str) -> Optional[float]:
-    for path in paths:
-        value = _management_nested_value(record, path)
-        number = _management_as_float(value)
-        if number is not None:
-            return number
-    return None
-
-
-# --- _management_telemetry_rollup ---
-def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    if not records:
-        return {
-            "runtime_count": 0,
-            "total_pnl": None,
-            "max_drawdown": None,
-            "average_fill_rate": None,
-            "total_trades": 0,
-            "latest_collected_at": None,
-        }
-
-    pnl_values: List[float] = []
-    drawdown_values: List[float] = []
-    fill_rates: List[float] = []
-    total_trades = 0
-    latest_collected_at: Optional[str] = None
-
-    for record in records:
-        pnl = _management_first_float(record, "pnl", "summary.total_pnl", "summary.pnl")
-        drawdown = _management_first_float(
-            record,
-            "drawdown",
-            "max_drawdown",
-            "summary.max_drawdown",
-        )
-        fill_rate = _management_first_float(record, "fill_rate", "summary.fill_rate")
-        trades = _management_first_float(record, "total_trades", "summary.total_trades")
-        collected_at = str(
-            record.get("collected_at")
-            or record.get("collectedAt")
-            or record.get("updated_at")
-            or record.get("updatedAt")
-            or ""
-        ).strip()
-        if pnl is not None:
-            pnl_values.append(pnl)
-        if drawdown is not None:
-            drawdown_values.append(drawdown)
-        if fill_rate is not None:
-            fill_rates.append(fill_rate)
-        if trades is not None:
-            total_trades += int(trades)
-        if collected_at and (latest_collected_at is None or collected_at > latest_collected_at):
-            latest_collected_at = collected_at
-
-    return {
-        "runtime_count": len(records),
-        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
-        "max_drawdown": max(drawdown_values) if drawdown_values else None,
-        "average_fill_rate": round(sum(fill_rates) / len(fill_rates), 6) if fill_rates else None,
-        "total_trades": total_trades,
-        "latest_collected_at": latest_collected_at,
-    }
-
-
-# --- _sort_records_latest_first ---
-def _sort_records_latest_first(
-    records: List[Dict[str, Any]],
-    fields: tuple[str, ...],
-) -> List[Dict[str, Any]]:
-    return sorted(
-        records,
-        key=lambda item: next(
-            (str(item.get(field) or "") for field in fields if item.get(field)),
-            "",
-        ),
-        reverse=True,
-    )
 
 
 # --- _persona_fleet_runtime_matches ---
@@ -11088,8 +10936,6 @@ def _human_inbox_priority(value: Any, *, fallback: str = "medium") -> str:
     if normalized in {"sev3", "p2"}:
         return "medium"
     return fallback
-
-
 
 
 # --- _human_inbox_sanitize_promotion_snapshot ---
@@ -11679,7 +11525,6 @@ _PM12_LEAGUE_TIER_DEFINITIONS = [
         "governance_posture": "research_only",
     },
 ]
-
 
 
 # --- _pm12_status_counts ---
@@ -12877,8 +12722,6 @@ def _pm12_ranking_snapshot_payload_items(
     return payload_items
 
 
-
-
 # --- _pm12_ranking_snapshot_content ---
 def _pm12_ranking_snapshot_content(
     items: List[Dict[str, Any]],
@@ -13097,8 +12940,6 @@ _PROMOTION_REVIEW_REVISION_RE = re.compile(
     r"^(?P<recommendation_id>.+)--snapshot-(?P<digest>[0-9a-f]{32})$"
 )
 _PROMOTION_REVIEW_ID_QUARTER_RE = re.compile(r"pm12-(?P<quarter>\d{4}-q[1-4])-", re.IGNORECASE)
-
-
 
 
 # --- _promotion_review_clean_id ---
@@ -13342,25 +13183,6 @@ def _read_store_fixture_records(dataset: str) -> List[Dict[str, Any]]:
     if isinstance(raw, list):
         return [dict(record) for record in raw if isinstance(record, dict)]
     return []
-
-
-# --- _merge_registry_records ---
-def _merge_registry_records(
-    fixture_records: List[Dict[str, Any]],
-    registry_records: List[Dict[str, Any]],
-    id_keys: tuple[str, ...],
-) -> List[Dict[str, Any]]:
-    merged: Dict[str, Dict[str, Any]] = {}
-    for record in fixture_records + registry_records:
-        record_id = ""
-        for key in id_keys:
-            value = record.get(key)
-            if value not in (None, ""):
-                record_id = str(value)
-                break
-        if record_id:
-            merged[record_id] = dict(record)
-    return list(merged.values())
 
 
 # --- _tool_fixture_records ---

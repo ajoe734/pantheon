@@ -1,0 +1,94 @@
+{
+  "loop_index": 9,
+  "canonical_id": "capital_pool_execution",
+  "loop_name": "Capital Pool Execution & Paper Lifecycle",
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+  "canonical_contract_spec": {
+    "modules": [
+      "services/execution/lean_runtime/paper_runtime.py",
+      "services/trade_journey/test_canonical_paper_lifecycle_integration.py"
+    ],
+    "architecture_docs": [
+      "PAPER_CANARY_LIVE_POLICY.md",
+      "TARGET_ARCHITECTURE.md",
+      "DEVELOPMENT_WORKBREAKDOWN.md"
+    ],
+    "mandatory_lifecycle_stages": [
+      "runtime_signal_generation",
+      "order_routing",
+      "simulated_paper_fill",
+      "portfolio_and_position_update",
+      "committed_telemetry_packet",
+      "separate_process_reload"
+    ],
+    "capital_safety_boundary": "is_real=false; live broker strictly fail-closed; zero live-capital side effects."
+  },
+  "deployed_evidence_audit": {
+    "strategy_target": {
+      "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+      "runtime_count": 0,
+      "total_trades": 0,
+      "signal_count": 0,
+      "order_count": 0,
+      "fill_count": 0
+    },
+    "capital_safety_verification": {
+      "live_capital_side_effect": false,
+      "live_broker_engaged": false,
+      "paper_simulation_only": true,
+      "fail_closed_boundary_preserved": true
+    },
+    "performance_readback": {
+      "reader": "Postgres projection reader / Agora performance attribution",
+      "endpoint": "/bff/performance-attribution/by-strategy",
+      "response_status": 200,
+      "strategy_listed": true,
+      "runtime_count": 0,
+      "total_trades": 0,
+      "evaluation": "Strategy is registered in read model but has zero executed trades and zero paper runtime signals."
+    },
+    "deferral_record": {
+      "gap_id": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "functional_owner": "Human/Ops",
+      "directive_timestamp": "2026-09-17T00:30:51Z",
+      "reason": "Deferred per Human/Ops directive until deployment pipeline prerequisites are fixed."
+    }
+  },
+  "five_field_receipt_check": {
+    "trigger_id": {
+      "value": null,
+      "present": false,
+      "gap": "MISSING_RUNTIME_SIGNAL_TRIGGER"
+    },
+    "terminal_output_id": {
+      "value": null,
+      "present": false,
+      "gap": "MISSING_PAPER_EXECUTION_RECEIPT"
+    },
+    "next_consumer_receipt_id": {
+      "value": null,
+      "present": false,
+      "gap": "MISSING_TELEMETRY_CONSUMER_RECEIPT"
+    },
+    "owner_worker_identity": {
+      "value": null,
+      "present": false,
+      "gap": "MISSING_OWNER_WORKER"
+    },
+    "durable_reload_readback": {
+      "value": "Verified empty execution state (runtime_count=0, total_trades=0) via performance reader",
+      "present": true,
+      "verified": false,
+      "evaluation": "Readback proves absence of execution rather than presence of completed paper lifecycle."
+    },
+    "status": "UNACCEPTED",
+    "deferral_status": "DEFERRED",
+    "fields_present_count": 1,
+    "fields_required_count": 5
+  },
+  "fail_closed_verdict": {
+    "accepted": false,
+    "verdict": "FAIL_CLOSED_UNACCEPTED",
+    "reason": "Loop 9 fails closed truthfully because natural paper lifecycle from fresh trigger through terminal receipt to committed telemetry was not executed on the causal stimulus chain. Zero live-capital side effects confirmed."
+  }
+}
