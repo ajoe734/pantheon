@@ -50,9 +50,9 @@
   },
   "disposition_summary": {
     "ALLOWLIST": 15,
-    "DECOUPLED": 285,
+    "DECOUPLED": 292,
     "MIGRATED": 11,
-    "PLANNED": 73
+    "PLANNED": 66
   },
   "tests": [
     {
@@ -401,9 +401,9 @@
     {
       "file": "test_audit_timestamp_filter_no_500.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled in BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001 (mounts real router factories on a standalone app)."
     },
     {
       "file": "test_bff_agora_core_contract.py",
@@ -422,16 +422,16 @@
     {
       "file": "test_bff_approvals_decide_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled in BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001 (mounts real router factories on a standalone app)."
     },
     {
       "file": "test_bff_audit_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled in BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001 (mounts real router factories on a standalone app)."
     },
     {
       "file": "test_bff_auth_facade.py",
@@ -653,9 +653,9 @@
     {
       "file": "test_consultation_surfaces.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled in BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001 (mounts real router factories on a standalone app)."
     },
     {
       "file": "test_current_twelve_owner_truth.py",
@@ -793,9 +793,9 @@
     {
       "file": "test_governance_command_submission.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled in BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001 (mounts real router factories on a standalone app)."
     },
     {
       "file": "test_idempotency_concurrency_guard.py",
@@ -1094,9 +1094,9 @@
     {
       "file": "test_pkt001_governance_review_queue_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled in BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001 (mounts real router factories on a standalone app)."
     },
     {
       "file": "test_pkt003_lineage_view_contract.py",
@@ -1129,9 +1129,9 @@
     {
       "file": "test_pkt006_approval_queue_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled in BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001 (mounts real router factories on a standalone app)."
     },
     {
       "file": "test_pkt007_deployment_diff_contract.py",
@@ -2744,14 +2744,11 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 63,
+  "live_scan_non_whitelisted_main_importer_ceiling": 56,
   "live_scan_non_whitelisted_main_importers": [
     "test_ask_001_sessions_contract.py",
     "test_ask_003_committee_lifecycle.py",
     "test_ask_004_memo_publish_contract.py",
-    "test_audit_timestamp_filter_no_500.py",
-    "test_bff_approvals_decide_contract.py",
-    "test_bff_audit_contract.py",
     "test_bff_consol_008_fixture_pack_a.py",
     "test_bff_consol_009_fixture_pack_b.py",
     "test_bff_consol_010_fixture_pack_c.py",
@@ -2763,9 +2760,7 @@
     "test_bff_pm12_portfolio_book_contract.py",
     "test_bff_promotion_review_governance.py",
     "test_bff_v5_loop_sentinel_contract.py",
-    "test_consultation_surfaces.py",
     "test_exp002_bff_research_experiments_contract.py",
-    "test_governance_command_submission.py",
     "test_inc001_rebaseline_incidents_contract.py",
     "test_incident_stream_route_order.py",
     "test_loop_auto_bff004_cross_loop_drill.py",
@@ -2773,8 +2768,6 @@
     "test_mgmt_qlib_006_artifact_research_linkage.py",
     "test_openclaw_ops_surface.py",
     "test_pkt001_deployment_review_console_contract.py",
-    "test_pkt001_governance_review_queue_contract.py",
-    "test_pkt006_approval_queue_contract.py",
     "test_pkt016_knowledge_workbench_contract.py",
     "test_research_oss_preactivation_contract.py",
     "test_rw01_research_ticket_contract.py",
