@@ -1,0 +1,81 @@
+{
+  "task_id": "OPS-ARCHIVE-LOCK-THRASH-001",
+  "title": "Batch the terminal archive projection lock",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "pr": "https://github.com/ajoe734/pantheon/pull/5869",
+  "implementation_commit": "e93e5d2c42fb05db7f56c1223d8132ceeba33a97",
+  "summary": "terminal_archive_projection previously called load_archived_snapshot() once per terminal fact, and each call independently acquired and released the shared canonical task-state flock (.orchestrator/task-state.lock). This made a single status command's archive scan take/drop the same shared lock hundreds of times as the archive grows, forcing the supervisor tick to queue behind that thrash. Commit e93e5d2c4 wraps the whole per-fact scan in one canonical_task_state_lock_file(shared=True) acquisition; because that lock is process-thread re-entrant for the same resolved path (see .orchestrator/common.py stable_sidecar_lock), every nested lock acquisition performed inside load_archived_snapshot() during the scan becomes a cheap in-process depth increment instead of a real flock(2) syscall, with identical read semantics and output.",
+  "change": {
+    "file": ".orchestrator/rewrite/status_projection.py",
+    "function": "terminal_archive_projection",
+    "description": "Acquire task_archive_module.STATUS_FILE's canonical task-state shared lock once around the sorted-facts loop, referenced as a module attribute (not a name bound at import time) so test monkeypatching of task_archive.STATUS_FILE keeps resolving to the same lock path as load_archived_snapshot()'s own internal lock acquisition."
+  },
+  "acceptance_verification": [
+    {
+      "requirement": "Keep terminal_archive_projection output identical: same rows and same archive_missing / archive_receipt_valid values for every terminal fact.",
+      "evidence": "scripts/test_ai_status.py::ArchiveWorkflowTests::test_terminal_projection_reports_missing_archive_without_losing_fact exercises exactly these row fields (archive_missing, archive_receipt_valid) and passed unchanged at this head."
+    },
+    {
+      "requirement": "Prove the lock traffic drop with a reproducible measurement rather than an assertion: count fcntl.flock calls before and after over the same archive size.",
+      "evidence": "Independently reproduced (owner re-verification of the pushed head, not re-implementation) with PANTHEON_RUNTIME_LOCK_TRACE, which appends one line per real acquire/release syscall performed by stable_sidecar_lock in .orchestrator/common.py (re-entrant depth increments emit no trace line, so the count reflects actual flock(2) calls only). Fixture: 200 synthetic terminal facts, each with a matching archived snapshot file under a temp ai-task-archive/tasks directory, calling status_projection.terminal_archive_projection(state) directly, both against the pre-fix tree (git show 4d78e49fe, the direct parent of e93e5d2c4) and against this PR's tree.",
+      "measurement": {
+        "terminal_facts_scanned": 200,
+        "before_fix": {
+          "source": "git show 4d78e49fe:.orchestrator/rewrite/status_projection.py (parent of e93e5d2c4; per-fact load_archived_snapshot calls with no outer shared lock)",
+          "real_flock_acquire_calls_task_state_plane": 200,
+          "real_flock_release_calls_task_state_plane": 200
+        },
+        "after_fix": {
+          "source": ".orchestrator/rewrite/status_projection.py at e93e5d2c42fb05db7f56c1223d8132ceeba33a97 (this PR)",
+          "real_flock_acquire_calls_task_state_plane": 1,
+          "real_flock_release_calls_task_state_plane": 1
+        },
+        "reduction": "200 real flock cycles -> 1 real flock cycle for a 200-terminal-fact scan (O(n) -> O(1))",
+        "note": "The commit message on e93e5d2c4 additionally reports 386 flock calls before / 2 after on an isolated 193-task archive fixture, consistent with this independent re-measurement's O(n) -> O(1) shape (the 2-vs-1 acquire/release pairing is the same single lock cycle, just counted per direction)."
+      }
+    },
+    {
+      "requirement": "Do not weaken or delete any existing assertion; scripts.test_ai_status must pass in full.",
+      "evidence": "Full suite run at this head: .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -> '512 passed, 345 subtests passed in 275.72s (0:04:35)'. No test was modified, skipped, or removed."
+    },
+    {
+      "requirement": "Source and isolated-test scope only. No hosted deployment and no live config edit; the live supervisor config is a promotion render artifact.",
+      "evidence": "Only .orchestrator/rewrite/status_projection.py is touched by the implementation commit. No config, workflow, or deployment file was changed; verification ran entirely via local pytest and a local Python reproduction script against temp directories."
+    },
+    {
+      "requirement": "Record the exact commands with exit codes and pass/fail counts in the review evidence.",
+      "evidence": "Commands recorded below."
+    }
+  ],
+  "commands": [
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "provisioned .venv-pantheon"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k terminal_projection  # at e93e5d2c4",
+      "exit_code": 0,
+      "result": "1 passed, 511 deselected"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py  # at e93e5d2c4",
+      "exit_code": 0,
+      "result": "512 passed, 345 subtests passed in 275.72s (0:04:35)"
+    },
+    {
+      "command": "python3 /tmp/measure_before.py  # status_projection.py from git show 4d78e49fe (parent of e93e5d2c4), PANTHEON_RUNTIME_LOCK_TRACE enabled, 200 synthetic terminal facts",
+      "exit_code": 0,
+      "result": "[BEFORE FIX] real flock acquire calls (task_state plane): 200; release calls: 200"
+    },
+    {
+      "command": "python3 /tmp/measure_lock_thrash.py  # status_projection.py at e93e5d2c4, same synthetic fixture",
+      "exit_code": 0,
+      "result": "real flock acquire calls (task_state plane): 1; release calls: 1"
+    }
+  ],
+  "no_regressions": "terminal_archive_projection's row shape, sort order, and archive_missing/archive_receipt_valid computation are byte-for-byte unchanged; only the lock acquisition boundary moved from per-iteration to per-scan.",
+  "risk_notes": "canonical_task_state_lock_file is documented in .orchestrator/common.py as process-thread re-entrant for an identical resolved lock path. The fix relies on that existing contract rather than introducing new locking behavior, and reads task_archive_module.STATUS_FILE dynamically (not a name captured at import time) so it keeps resolving to the same lock path as load_archived_snapshot()'s own internal call even when tests monkeypatch task_archive.STATUS_FILE.",
+  "owner_note": "The implementation in e93e5d2c4 (PR #5869) was already pushed to task/OPS-ARCHIVE-LOCK-THRASH-001 before this evidence file was added; per the task-closeout-finalization owner-finalize rule this file adds the required review evidence manifest without altering the reviewed source change, and the owner independently re-derived and re-ran the same fix and measurement methodology before adopting this head rather than re-implementing it."
+}
