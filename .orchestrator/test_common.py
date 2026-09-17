@@ -4295,6 +4295,10 @@ class ReviewBridgePolicyValidationTests(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
+            with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required and must be a mapping"):
+                common.load_config(cfg_path)
+
+
 class RunCommandStdinIsolationTests(unittest.TestCase):
     def test_run_command_defaults_to_devnull_stdin(self) -> None:
         proc = common.run_command(

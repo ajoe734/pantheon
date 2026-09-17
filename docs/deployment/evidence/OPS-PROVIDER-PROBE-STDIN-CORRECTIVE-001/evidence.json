@@ -3,7 +3,7 @@
   "task_id": "OPS-PROVIDER-PROBE-STDIN-CORRECTIVE-001",
   "title": "Close inherited stdin in provider auth probes",
   "owner": "Antigravity",
-  "reviewer": "Codex2",
+  "reviewer": "Claude",
   "task_class": "development_tooling",
   "target_repo": "pantheon",
   "delivery_state": "ready_for_independent_review",
@@ -47,7 +47,7 @@
   "changes": {
     ".orchestrator/common.py": "Updated run_command to default stdin=subprocess.DEVNULL and accept optional stdin/input parameters.",
     ".orchestrator/provider_permissions.py": "Explicitly passed stdin=subprocess.DEVNULL to run_command across _codex_auth_probe, _claude_auth_status_payload, _antigravity_auth_probe, and gcloud ADC checks.",
-    ".orchestrator/test_common.py": "Added RunCommandStdinIsolationTests verifying default DEVNULL behavior, closed stdin with parent pipe, and explicit stdin/input support. Isolated task-state event log environment variables in activity outbox integration test.",
+    ".orchestrator/test_common.py": "Added RunCommandStdinIsolationTests verifying default DEVNULL behavior, closed stdin with parent pipe, and explicit stdin/input support. Isolated task-state event log environment variables in activity outbox integration test. Restored missing assertion in test_load_config_rejects_missing_or_malformed_sections.",
     ".orchestrator/test_provider_permissions.py": "Added test_codex_auth_probe_closes_stdin_so_cli_blocking_on_inherited_stdin_succeeds in ProviderProbeGateTest proving that closed stdin allows a blocking CLI to succeed promptly and record healthy state, while unpatched probe reproduces timeout classification."
   },
   "acceptance_matrix": [
@@ -74,7 +74,7 @@
     {
       "criterion": "5. Run focused and full-file regression for changed modules and record exact commands with exit codes and pass/fail counts.",
       "status": "passed",
-      "evidence": "test_common.py: 138 tests passed (Ran 138 tests in 14.148s, OK); test_provider_permissions.py: 131 tests passed (Ran 131 tests in 68.663s, OK)."
+      "evidence": "test_common.py: 138 tests passed (Ran 138 tests in 14.967s, OK); test_provider_permissions.py: 131 tests passed (Ran 131 tests in 77.985s, OK)."
     },
     {
       "criterion": "6. Source and isolated-test scope only. No credential changes and no live probe against production accounts under this task.",
