@@ -7736,7 +7736,9 @@ def _run_reserved_runtime_phase(
                                 fresh_task,
                                 activity_events=fresh_events,
                             )
-                            if fresh_terminal is None:
+                            if fresh_terminal is None and not worker_fence_proves_queue_completion(
+                                r_worker
+                            ):
                                 cas_matches = False
                                 break
 
@@ -7987,6 +7989,39 @@ def status_event_matches_worker_process(
     lease = command.get("worker_lease") if isinstance(command, Mapping) else None
     return isinstance(lease, Mapping) and all(
         lease.get(field) == value for field, value in identity.items()
+    )
+
+
+def worker_fence_proves_queue_completion(worker: Mapping[str, Any]) -> bool:
+    """Return True when a lease fence already proves this attempt is finished.
+
+    ``canonical_worker_terminal_status`` proves a queue completion from the
+    worker's own exact lifecycle event.  A worker that lost its lease never
+    produces one: it was fenced mid-flight, so its task row stays non-terminal
+    and no exact completion event exists.  Its durable recovery receipt is the
+    proof instead -- the same evidence the superseded branch above already
+    accepts -- and the process must additionally be gone, so a live attempt can
+    never be completed out from under itself.
+
+    Without this, every reconciler that legitimately retires the fenced
+    attempt's queue record (``reconcile_queue_records`` by worker status,
+    ``reconcile_queue_intents`` by stale-dispatch skip) asserts a transition
+    this guard can never accept.  The whole reserved maintenance phase is then
+    discarded every cycle, and the delivery-health observations committed by
+    that same phase die with it -- which expires every lane's health evidence
+    and stops the fleet dispatching anything at all.
+    """
+
+    if not isinstance(worker, Mapping):
+        return False
+    if str(worker.get("status") or "") not in {"recovery_pending", "superseded"}:
+        return False
+    if not str(worker.get("lost_lease_receipt_id") or "").strip():
+        return False
+    if not str(worker.get("lease_fenced_at") or "").strip():
+        return False
+    return not pid_is_alive(worker.get("pid")) or not worker_process_generation_is_current(
+        worker
     )
 
 
