@@ -1,0 +1,749 @@
+{
+  "captured_at": "2026-09-17T04:54:35.503Z",
+  "task_id": "S5-JOURNEYS-001",
+  "operator_client_id": "pantheon-dev-operator-a-v1",
+  "served_identity": {
+    "fe_commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "bff_commit": "dc15751a9b20f8bc0931529d68af8898e691c898",
+    "image_digest": "sha256:39b53beefbf742b0ba263dd68a7c6e277945baca2b52f7bee1e693506abf269d",
+    "pair_id": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+    "deployment_profile": "operator-live",
+    "real_writes_enabled": "true",
+    "auth_posture": {
+      "auth_stub": false,
+      "auth_mode": "strict",
+      "dev_login_enabled": true,
+      "mfa_required": false,
+      "assistant_kernel_enabled": true,
+      "trade_journey_reader_backend": "postgres",
+      "trade_journey_projection_schema": "trade_journey_projection"
+    }
+  },
+  "session": {
+    "status": 200,
+    "cookie_domain": "api.dev.mvl-cap.tw",
+    "cookie_httponly": true,
+    "cookie_secure": true,
+    "cookie_samesite": "Lax"
+  },
+  "cockpit": {
+    "data": {
+      "id": "management-cockpit",
+      "snapshot_at": "2026-09-17T04:54:36Z",
+      "operator_home": {
+        "cards": [
+          {
+            "card_id": "alerts",
+            "label": "Alerts",
+            "status": "ok",
+            "summary": "No active incidents.",
+            "details": {
+              "total_incidents": 0,
+              "open_incidents": 0
+            },
+            "target_refs": [
+              {
+                "surface_id": "OC-02",
+                "label": "Open alerts rail",
+                "href": "/bff/alerts"
+              }
+            ]
+          },
+          {
+            "card_id": "incidents",
+            "label": "Incidents",
+            "status": "ok",
+            "summary": "No active incidents.",
+            "details": {
+              "total_incidents": 0,
+              "open_incidents": 0
+            },
+            "target_refs": [
+              {
+                "surface_id": "OC-02",
+                "label": "Incidents",
+                "href": "/bff/alerts"
+              }
+            ]
+          },
+          {
+            "card_id": "governance",
+            "label": "Governance",
+            "status": "ok",
+            "summary": "Governance queues clear.",
+            "details": {
+              "total_items": 0,
+              "pending_items": 0
+            },
+            "target_refs": [
+              {
+                "surface_id": "OC-01",
+                "label": "Approval Queue",
+                "href": "/api/v1/operator/governance/approval-queue"
+              }
+            ]
+          },
+          {
+            "card_id": "runtime",
+            "label": "Runtime",
+            "status": "ok",
+            "summary": "No active runtime bindings.",
+            "details": {
+              "runtime": {
+                "total_runtimes": 0,
+                "active_runtimes": 0
+              },
+              "telemetry": {
+                "telemetry_count": 0
+              }
+            },
+            "target_refs": [
+              {
+                "surface_id": "OC-04",
+                "label": "Runtime State",
+                "href": "/api/v1/operator/runtime-state"
+              }
+            ]
+          },
+          {
+            "card_id": "health",
+            "label": "Health",
+            "status": "ok",
+            "summary": "All health groups are responding normally.",
+            "details": {
+              "headline": "Control plane healthy",
+              "group_counts": {
+                "ok": 5,
+                "degraded": 0,
+                "unavailable": 0
+              },
+              "safe_mode_state": {
+                "status": "off",
+                "kill_switch_status": "armed",
+                "active": false,
+                "last_confirmed_at": "2026-09-17T04:54:36Z",
+                "last_triggered_at": null,
+                "secondary_path_available": true
+              }
+            },
+            "target_refs": [
+              {
+                "surface_id": "OC-03",
+                "label": "Health Status",
+                "href": "/api/v1/operator/health-status"
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "snapshot_at": "2026-09-17T04:54:36Z",
+          "surfaces": {
+            "operator_home": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-17T04:54:36Z"
+            },
+            "health_status": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-17T04:54:36Z"
+            },
+            "runtime": {
+              "status": "ok",
+              "source": "store"
+            },
+            "telemetry": {
+              "status": "ok",
+              "source": "store"
+            },
+            "incident": {
+              "status": "ok",
+              "source": "store"
+            },
+            "governance": {
+              "status": "ok",
+              "source": "store"
+            },
+            "kill_switch": {
+              "status": "ok",
+              "source": "store"
+            }
+          }
+        }
+      },
+      "runtime_health": {
+        "overall_status": "ok",
+        "headline": "Control plane healthy",
+        "message": "All health groups are responding normally.",
+        "group_counts": {
+          "ok": 5,
+          "degraded": 0,
+          "unavailable": 0
+        },
+        "safe_mode_state": {
+          "status": "off",
+          "kill_switch_status": "armed",
+          "active": false,
+          "last_confirmed_at": "2026-09-17T04:54:36Z",
+          "last_triggered_at": null,
+          "secondary_path_available": true
+        },
+        "secondary_control_path": {
+          "mode": "hidden",
+          "reason": null,
+          "targets": []
+        },
+        "groups": [
+          {
+            "group_id": "runtime",
+            "label": "Strategy Runtime Bindings",
+            "status": "ok",
+            "summary": "No active runtime bindings.",
+            "details": {
+              "total_runtimes": 0,
+              "active_runtimes": 0
+            },
+            "target_refs": [
+              {
+                "label": "Runtime State",
+                "href": "/api/v1/operator/runtime-state"
+              }
+            ]
+          },
+          {
+            "group_id": "telemetry",
+            "label": "Paper Execution Telemetry",
+            "status": "ok",
+            "summary": "No active telemetry feeds.",
+            "details": {
+              "telemetry_count": 0
+            },
+            "target_refs": [
+              {
+                "label": "Telemetry",
+                "href": "/bff/management/paper-telemetry"
+              }
+            ]
+          },
+          {
+            "group_id": "incident",
+            "label": "Active Incident Alerts",
+            "status": "ok",
+            "summary": "No active incidents.",
+            "details": {
+              "total_incidents": 0,
+              "open_incidents": 0
+            },
+            "target_refs": [
+              {
+                "label": "Incidents",
+                "href": "/bff/alerts"
+              }
+            ]
+          },
+          {
+            "group_id": "governance",
+            "label": "Governance & Approvals",
+            "status": "ok",
+            "summary": "Governance queues clear.",
+            "details": {
+              "total_items": 0,
+              "pending_items": 0
+            },
+            "target_refs": [
+              {
+                "label": "Approval Queue",
+                "href": "/api/v1/operator/governance/approval-queue"
+              }
+            ]
+          },
+          {
+            "group_id": "kill_switch",
+            "label": "Kill Switch & Safe Mode",
+            "status": "ok",
+            "summary": "Kill switch armed, Safe mode off.",
+            "details": {
+              "active": false,
+              "active_freeze_orders": [],
+              "last_checked_at": "",
+              "safe_mode_status": "off",
+              "status": "armed",
+              "last_triggered_at": null,
+              "last_confirmed_at": "",
+              "active_commands": [],
+              "secondary_path_available": true
+            },
+            "target_refs": [
+              {
+                "label": "Kill Switch",
+                "href": "/api/v1/operator/kill-switch"
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "snapshot_at": "2026-09-17T04:54:36Z",
+          "surfaces": {
+            "health_status": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-17T04:54:36Z"
+            },
+            "runtime": {
+              "status": "ok",
+              "source": "store"
+            },
+            "telemetry": {
+              "status": "ok",
+              "source": "store"
+            },
+            "incident": {
+              "status": "ok",
+              "source": "store"
+            },
+            "governance": {
+              "status": "ok",
+              "source": "store"
+            },
+            "kill_switch": {
+              "status": "ok",
+              "source": "store"
+            }
+          }
+        }
+      },
+      "alerts": {
+        "items": [],
+        "summary": {
+          "total_active": 0,
+          "highest_severity": "normal",
+          "by_severity": {},
+          "by_category": {}
+        },
+        "meta": {
+          "snapshot_at": "2026-09-17T04:54:36Z",
+          "version": "v1",
+          "acknowledgement_supported": true,
+          "surfaces": {
+            "alerts": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-17T04:54:36Z"
+            },
+            "incident_feed": {
+              "status": "ok",
+              "source": "store"
+            },
+            "review_queue": {
+              "status": "ok",
+              "source": "store"
+            },
+            "approval_queue": {
+              "status": "ok",
+              "source": "store"
+            },
+            "kill_switch": {
+              "status": "ok",
+              "source": "store"
+            },
+            "runtime_roster": {
+              "status": "ok",
+              "source": "store"
+            },
+            "telemetry_summary": {
+              "status": "ok",
+              "source": "store"
+            }
+          }
+        }
+      },
+      "human_inbox": {
+        "data": {
+          "id": "management-human-inbox",
+          "items": [],
+          "summary": {
+            "total": 0,
+            "total_items": 0,
+            "governance_review_count": 0,
+            "approval_count": 0,
+            "intervention_count": 0,
+            "sentinel_finding_count": 0,
+            "priority_counts": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          }
+        },
+        "page_info": {
+          "next_page_token": null,
+          "total": 0,
+          "page_size": 20
+        },
+        "meta": {
+          "snapshot_at": "2026-09-17T04:54:36Z",
+          "version": "v1",
+          "surfaces": {
+            "approval_queue": {
+              "status": "unavailable",
+              "source": "read_store",
+              "snapshot_at": "2026-09-17T04:54:36Z",
+              "message": "Approval queue has no readable source records."
+            },
+            "governance_review_queue": {
+              "status": "unavailable",
+              "source": "read_store",
+              "snapshot_at": "2026-09-17T04:54:36Z",
+              "message": "Governance review queue has no readable source records."
+            },
+            "v5_interventions": {
+              "status": "unavailable",
+              "source": "read_store",
+              "snapshot_at": "2026-09-17T04:54:36Z",
+              "message": "V5 interventions have no readable source records."
+            },
+            "sentinel_findings": {
+              "status": "unavailable",
+              "source": "missing",
+              "snapshot_at": "2026-09-17T04:54:36Z",
+              "message": "Sentinel findings have no readable source records."
+            },
+            "persona_readiness": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-17T04:54:36Z"
+            },
+            "human_inbox": {
+              "status": "degraded",
+              "source": "bff_composed",
+              "message": "One or more contributing surfaces for human_inbox are degraded.",
+              "snapshot_at": "2026-09-17T04:54:36Z"
+            }
+          }
+        }
+      },
+      "trading_pulse": {
+        "id": "management-trading-pulse",
+        "summary": {
+          "runtime_count": 0,
+          "telemetry_coverage_count": 0,
+          "by_status": {},
+          "by_stage": {},
+          "total_pnl": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "worst_slippage_bps": null,
+          "total_trades": 0,
+          "baseline_comparison_count": 0,
+          "baseline_breached_count": 0,
+          "baseline_watch_count": 0,
+          "by_baseline_status": {},
+          "row_health_degraded_count": 0,
+          "row_health_status_counts": {},
+          "monitoring_coverage_count": 0,
+          "missing_telemetry_runtime_ids": [],
+          "missing_monitoring_runtime_ids": [],
+          "missing_baseline_runtime_ids": [],
+          "metric_coverage": {
+            "pnl": {
+              "available_count": 0,
+              "missing_count": 0,
+              "missing_runtime_ids": []
+            },
+            "drawdown": {
+              "available_count": 0,
+              "missing_count": 0,
+              "missing_runtime_ids": []
+            },
+            "sharpe_ratio": {
+              "available_count": 0,
+              "missing_count": 0,
+              "missing_runtime_ids": []
+            },
+            "fill_rate": {
+              "available_count": 0,
+              "missing_count": 0,
+              "missing_runtime_ids": []
+            },
+            "avg_slippage_bps": {
+              "available_count": 0,
+              "missing_count": 0,
+              "missing_runtime_ids": []
+            },
+            "total_trades": {
+              "available_count": 0,
+              "missing_count": 0,
+              "missing_runtime_ids": []
+            }
+          },
+          "coverage": {
+            "runtime_count": 0,
+            "paper_runtime_count": 0,
+            "telemetry_coverage_count": 0,
+            "monitoring_coverage_count": 0,
+            "baseline_comparison_count": 0,
+            "missing_telemetry_runtime_ids": [],
+            "missing_monitoring_runtime_ids": [],
+            "missing_baseline_runtime_ids": [],
+            "row_health_status_counts": {},
+            "row_health_degraded_count": 0,
+            "degraded_runtime_ids": [],
+            "metric_coverage": {
+              "pnl": {
+                "available_count": 0,
+                "missing_count": 0,
+                "missing_runtime_ids": []
+              },
+              "drawdown": {
+                "available_count": 0,
+                "missing_count": 0,
+                "missing_runtime_ids": []
+              },
+              "sharpe_ratio": {
+                "available_count": 0,
+                "missing_count": 0,
+                "missing_runtime_ids": []
+              },
+              "fill_rate": {
+                "available_count": 0,
+                "missing_count": 0,
+                "missing_runtime_ids": []
+              },
+              "avg_slippage_bps": {
+                "available_count": 0,
+                "missing_count": 0,
+                "missing_runtime_ids": []
+              },
+              "total_trades": {
+                "available_count": 0,
+                "missing_count": 0,
+                "missing_runtime_ids": []
+              }
+            }
+          }
+        },
+        "cards": [
+          {
+            "card_id": "runtime-status",
+            "label": "Runtime Status",
+            "value": 0,
+            "details": {
+              "by_status": {},
+              "by_stage": {},
+              "row_health_status_counts": {}
+            }
+          },
+          {
+            "card_id": "row-health",
+            "label": "Row Health",
+            "value": 0,
+            "details": {
+              "row_health_status_counts": {},
+              "degraded_runtime_ids": []
+            }
+          },
+          {
+            "card_id": "pnl",
+            "label": "P&L",
+            "value": null,
+            "details": {
+              "telemetry_coverage_count": 0,
+              "metric_coverage": {
+                "available_count": 0,
+                "missing_count": 0,
+                "missing_runtime_ids": []
+              }
+            }
+          },
+          {
+            "card_id": "drawdown",
+            "label": "Worst Drawdown",
+            "value": null,
+            "details": {
+              "source": "telemetry_summaries",
+              "metric_coverage": {
+                "available_count": 0,
+                "missing_count": 0,
+                "missing_runtime_ids": []
+              }
+            }
+          },
+          {
+            "card_id": "execution-quality",
+            "label": "Execution Quality",
+            "value": null,
+            "details": {
+              "worst_slippage_bps": null,
+              "metric_coverage": {
+                "available_count": 0,
+                "missing_count": 0,
+                "missing_runtime_ids": []
+              }
+            }
+          },
+          {
+            "card_id": "baseline-comparison",
+            "label": "Baseline Comparison",
+            "value": 0,
+            "details": {
+              "baseline_comparison_count": 0,
+              "by_baseline_status": {},
+              "missing_baseline_runtime_ids": []
+            }
+          }
+        ],
+        "rankings": [],
+        "runtime_rows": [],
+        "baseline_comparisons": []
+      },
+      "anomalies": {
+        "items": [],
+        "summary": {
+          "total": 0
+        },
+        "meta": {
+          "snapshot_at": "2026-09-17T04:54:36Z",
+          "version": "v1",
+          "surfaces": {
+            "management_anomalies": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-17T04:54:36Z"
+            },
+            "anomalies": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-17T04:54:36Z"
+            },
+            "sentinel_findings": {
+              "status": "ok",
+              "source": "store"
+            },
+            "runtime_roster": {
+              "status": "ok",
+              "source": "store"
+            },
+            "telemetry_summary": {
+              "status": "ok",
+              "source": "store"
+            }
+          }
+        }
+      },
+      "links": {
+        "self": "/bff/management/cockpit",
+        "operator_home": "/api/v1/operator/home",
+        "runtime_health": "/api/v1/operator/health-status",
+        "alerts": "/bff/alerts",
+        "human_inbox": "/bff/management/human-inbox",
+        "trading_pulse": "/bff/management/trading-pulse"
+      }
+    },
+    "meta": {
+      "snapshot_at": "2026-09-17T04:54:36Z",
+      "surfaces": {
+        "management_cockpit": {
+          "status": "degraded",
+          "source": "bff_composed",
+          "message": "One or more contributing surfaces for management_cockpit are degraded.",
+          "snapshot_at": "2026-09-17T04:54:36Z"
+        },
+        "operator_home": {
+          "status": "ok",
+          "source": "bff_composed",
+          "snapshot_at": "2026-09-17T04:54:36Z"
+        },
+        "runtime_health": {
+          "status": "ok",
+          "source": "bff_composed",
+          "snapshot_at": "2026-09-17T04:54:36Z"
+        },
+        "alerts": {
+          "status": "ok",
+          "source": "bff_composed",
+          "snapshot_at": "2026-09-17T04:54:36Z"
+        },
+        "human_inbox": {
+          "status": "degraded",
+          "source": "bff_composed",
+          "message": "One or more contributing surfaces for human_inbox are degraded.",
+          "snapshot_at": "2026-09-17T04:54:36Z"
+        },
+        "trading_pulse": {
+          "status": "degraded",
+          "source": "bff_composed",
+          "message": "Trading pulse aggregate is available, but runtime, telemetry, monitoring, row health, or baseline coverage is degraded.",
+          "snapshot_at": "2026-09-17T04:54:36Z"
+        },
+        "management_trading_pulse": {
+          "status": "degraded",
+          "source": "bff_composed",
+          "message": "Trading pulse aggregate is available, but runtime, telemetry, monitoring, row health, or baseline coverage is degraded.",
+          "snapshot_at": "2026-09-17T04:54:36Z"
+        },
+        "anomalies": {
+          "status": "ok",
+          "source": "bff_composed",
+          "snapshot_at": "2026-09-17T04:54:36Z"
+        },
+        "management_anomalies": {
+          "status": "ok",
+          "source": "bff_composed",
+          "snapshot_at": "2026-09-17T04:54:36Z"
+        }
+      }
+    }
+  },
+  "shell_summary": {
+    "data": {
+      "counts": {
+        "pending_approvals": 0,
+        "running_jobs": 0,
+        "open_alerts": 0
+      },
+      "session": {
+        "operator_id": "pantheon-dev-operator-a",
+        "operatorId": "pantheon-dev-operator-a",
+        "display_name": "pantheon-dev-operator-a",
+        "displayLabel": "pantheon-dev-operator-a",
+        "roles": [
+          "operator"
+        ],
+        "session_kind": "bearer",
+        "sessionKind": "bearer",
+        "state": "active",
+        "fresh": true,
+        "mfa_verified": false,
+        "checked_at": "2026-09-17T04:54:36Z"
+      },
+      "transport": {
+        "bff_status": "ok",
+        "service": "operator-bff",
+        "api_version": "0.2.0"
+      }
+    },
+    "meta": {
+      "snapshot_at": "2026-09-17T04:54:36Z",
+      "surfaces": {
+        "shell_summary": {
+          "status": "ok",
+          "source": "bff_composed",
+          "snapshot_at": "2026-09-17T04:54:36Z"
+        },
+        "governance_approvals": {
+          "status": "ok",
+          "source": "store"
+        },
+        "jobs_read_model": {
+          "status": "ok",
+          "source": "store"
+        },
+        "incident_alerts": {
+          "status": "ok",
+          "source": "store"
+        }
+      }
+    }
+  }
+}
