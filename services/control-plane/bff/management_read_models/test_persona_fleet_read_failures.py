@@ -14,6 +14,9 @@ from services.control_plane.bff.personas.service import (
     _normalize_risk_level,
     _PERSONA_OPERATIONAL_LIFECYCLE_STATES,
 )
+from services.control_plane.bff.shared.cross_domain_utils import (
+    _sort_records_latest_first,
+)
 
 _FLEET_FUNCS = None
 
@@ -36,7 +39,6 @@ def _get_fleet_collector(store, personas, service=None, utc_now=None):
             "_project_persona_fleet_health",
             "_is_persona_lifecycle_operational",
             "_persona_fleet_runtime_matches",
-            "_sort_records_latest_first",
         }
         _FLEET_FUNCS = [
             n for n in tree.body
@@ -58,6 +60,7 @@ def _get_fleet_collector(store, personas, service=None, utc_now=None):
         "_normalize_lifecycle_state": _normalize_lifecycle_state,
         "_normalize_risk_level": _normalize_risk_level,
         "_PERSONA_OPERATIONAL_LIFECYCLE_STATES": _PERSONA_OPERATIONAL_LIFECYCLE_STATES,
+        "_sort_records_latest_first": _sort_records_latest_first,
     })
     mod = ast.Module(body=_FLEET_FUNCS, type_ignores=[])
     exec(compile(mod, "main_fleet.py", "exec"), ns)

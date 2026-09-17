@@ -298,8 +298,75 @@ def test_remote_script_forwards_only_viewer_and_inherited_channel(tmp_path):
     assert args[0] == "python3" and args[2] == "capture"
     for field, value in IDENTITY.items(): assert args[args.index("--" + field.replace("_", "-")) + 1] == value
     assert args[args.index("--compose-file") + 1] == str(c.ARTIFACT_ROOT / "compose" / IDENTITY["previous_backend_sha"] / "docker-compose.yml")
+    assert "--baseline-source" not in args
+    assert "--observed-live-bff-sha" not in args
     path = tmp_path / "capture.sh"; path.write_text(script)
     assert subprocess.run(["bash", "-n", str(path)], capture_output=True).returncode == 0
+
+
+def test_remote_script_forwards_drift_environment_when_present(tmp_path):
+    env = environment()
+    drift_source = "standby_frontend_pair_manifest+live_bff_drift_recovery"
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    env["PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE"] = drift_source
+    env["PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA"] = drift_sha
+    script = c.remote_script(IDENTITY, {name: b"# fixture implementation\n" for name in c.IMPLEMENTATIONS}, env, GUARD_ID)
+    command = script.splitlines()[-1]
+    args = shlex.split(command)[1:]
+    assert args[args.index("--baseline-source") + 1] == drift_source
+    assert args[args.index("--observed-live-bff-sha") + 1] == drift_sha
+    path = tmp_path / "capture.sh"; path.write_text(script)
+    assert subprocess.run(["bash", "-n", str(path)], capture_output=True).returncode == 0
+
+
+@pytest.mark.parametrize("invalid_sha", ["dc15751", "g" * 40])
+def test_rendered_script_refuses_invalid_observed_drift_sha(tmp_path, invalid_sha):
+    env = environment()
+    drift_source = "standby_frontend_pair_manifest+live_bff_drift_recovery"
+    env["PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE"] = drift_source
+    env["PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA"] = invalid_sha
+    script = c.remote_script(IDENTITY, {name: b"# fixture implementation\n" for name in c.IMPLEMENTATIONS}, env, GUARD_ID)
+    command = script.splitlines()[-1]
+    args = shlex.split(command)[1:]
+    assert args[args.index("--baseline-source") + 1] == drift_source
+    assert args[args.index("--observed-live-bff-sha") + 1] == invalid_sha
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    fake_python = fake_bin / "python3"
+    fake_python.write_text(f"""#!/bin/sh
+if [ "$1" = "-" ]; then
+    exit 0
+fi
+shift
+exec "{sys.executable}" "{c.ROOT}/scripts/dev_release_artifact_driver.py" "$@"
+""")
+    fake_python.chmod(0o755)
+
+    r_fd, w_fd = os.pipe()
+    os.write(w_fd, b"pulse")
+
+    try:
+        completed = subprocess.run(
+            ["bash"],
+            input=script,
+            text=True,
+            capture_output=True,
+            env={**os.environ,
+                 "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                 "PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD": str(r_fd),
+                 "PYTHONPATH": "/tmp/pytest-lib:."},
+            pass_fds=(r_fd,),
+        )
+        assert completed.returncode == 75
+        row = json.loads(completed.stderr)
+        assert row["failure_stage"] == "capture"
+        assert row["exit_code"] == 75
+        assert row["failure_kind"] == "contract"
+        assert row["failure_location"].startswith("dev_release_artifact_driver.py:")
+    finally:
+        os.close(r_fd)
+        os.close(w_fd)
 
 
 @pytest.fixture

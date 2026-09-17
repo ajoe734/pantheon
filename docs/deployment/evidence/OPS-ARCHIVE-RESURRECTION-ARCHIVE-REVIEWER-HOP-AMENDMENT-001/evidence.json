@@ -1,0 +1,96 @@
+{
+  "schema_version": "pantheon.ops-archive-resurrection-archive-reviewer-hop-amendment.v1",
+  "task": {
+    "id": "OPS-ARCHIVE-RESURRECTION-ARCHIVE-REVIEWER-HOP-AMENDMENT-001",
+    "title": "Accept archive-recorded reviewer hop in stale resurrection",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "base_branch": "dev",
+    "base_sha": "27e49d598391a5a697e1ee446079bbcf0a702519",
+    "task_branch": "task/OPS-ARCHIVE-RESURRECTION-ARCHIVE-REVIEWER-HOP-AMENDMENT-001"
+  },
+  "acceptance_clauses_audit": {
+    "clause_1_baseline_reproduction": {
+      "status": "satisfied",
+      "detail": "Reproduced failing verifier step against live PPL-ALLOC-007 canonical row: unamended verifier fails at _verified_reviewer_reassignment with SystemExit: 'Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata and no exact task_reassigned audit event chain explains the drift.' because the 2026-07-19 hop (Claude -> Codex2) predates the 2026-09-02 host rebuild and is not recorded in the live activity log."
+    },
+    "clause_2_single_case_widening": {
+      "status": "satisfied",
+      "detail": "Widened stale archive resurrection verification in scripts/ai_status.py by exactly one case: when live activity audit sources hold no chain for a pre-rebuild reviewer hop, accept the immutable archive's own review_evidence.reviewer_reassignment record. The record must have an authenticated supervisor or local operator event_id scheme (supervisor-reassign-, supervisor-task-reassigned-, human-ops-task-reassigned-, human-ops-reassign-), a payload digest verified via task_machine._assignment_activity_event_digest, matching old/new reviewers, and raw archive bytes matching bound SHA256."
+    },
+    "clause_3_unchanged_fences_and_precedence": {
+      "status": "satisfied",
+      "detail": "All other fences remain intact: live activity sources retain strict precedence when a chain exists (_verified_reassignment_chain is queried first); raw archive bytes match bound SHA256; scope comparison (spec hash, acceptance criteria, artifacts), delivery comparison (commit, repository), review comparison and active task flags, transaction-time CAS revalidation, and runtime/lease/queue fencing remain untouched."
+    },
+    "clause_4_zero_effect_negatives": {
+      "status": "satisfied",
+      "detail": "Proved zero-effect negatives through real CLI invocations and isolated fixtures in scripts/test_ai_status.py: (1) test_negative_archive_reviewer_hop_tampered_block: rejects tampered message/digest; (2) test_negative_archive_reviewer_hop_mismatched_endpoints: rejects old/new reviewer mismatch; (3) test_negative_archive_reviewer_hop_missing_or_unauthenticated_id: rejects missing or unauthenticated event_id; (4) test_negative_archive_reviewer_hop_drifted_archive_bytes: rejects post-preflight byte drift and corrupted archive files. All CLI runs exit non-zero and leave active row, archive snapshot, and terminal facts untouched."
+    },
+    "clause_5_positive_path_process_proof": {
+      "status": "satisfied",
+      "detail": "Proved positive path in test_positive_archive_resurrection_archive_reviewer_hop using genuine isolated CLI and TaskStore and outbox fixture: show returns eligible diagnostic; reconcile_merged_done exits 0; recover exits 0; active row retires; terminal fact is recorded (generation 1, outcome completed); on-disk snapshot and raw bytes are preserved; receipt written; downstream task REG-003 dependency is satisfied."
+    },
+    "clause_6_manifest_and_no_live_reconciliation_hold": {
+      "status": "satisfied",
+      "detail": "Recorded exact commands, exit codes, and test counts in this evidence manifest. Governed boundary strictly maintained: source and isolated-test scope only; zero live reconciliation of PPL-ALLOC-007 was performed under this task. Read-only diagnostic proves PPL-ALLOC-007 is now eligible for stale role recovery (eligible: True, reason: eligible_for_stale_role_recovery) without touching or mutating live state."
+    }
+  },
+  "diagnostics": {
+    "ppl_alloc_007_baseline": {
+      "task_id": "PPL-ALLOC-007",
+      "archive_generation": 1,
+      "eligible": false,
+      "unamended_exception": "SystemExit: Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata and no exact task_reassigned audit event chain explains the drift."
+    },
+    "ppl_alloc_007_amended_read_only": {
+      "task_id": "PPL-ALLOC-007",
+      "archive_generation": 1,
+      "eligible": true,
+      "reason": "eligible_for_stale_role_recovery",
+      "archive_event_id": "supervisor-reassign-50f84270dffe8135e267d193c794f5a12eb34daece145ca0ec55a7bcf1ad142e",
+      "archive_file_sha256": "cf95cc79c44a027f42046f83572029d07563a207fa1cc66a4685b755f7ce4c78",
+      "delivery_commit": "c62c0e8b9a49643c42f67614c542578afb233e84",
+      "delivery_repository": "ajoe734/execute-plans",
+      "hold_preserved": true,
+      "detail": "Read-only inspection only. Live PPL-ALLOC-007 row was NOT reconciled or retired under this task."
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      {
+        "name": "archive_reviewer_hop_suite",
+        "command": "python3 -m unittest -v scripts.test_ai_status.TestStaleArchiveResurrectionContract.test_positive_archive_resurrection_archive_reviewer_hop scripts.test_ai_status.TestStaleArchiveResurrectionContract.test_negative_archive_reviewer_hop_tampered_block scripts.test_ai_status.TestStaleArchiveResurrectionContract.test_negative_archive_reviewer_hop_mismatched_endpoints scripts.test_ai_status.TestStaleArchiveResurrectionContract.test_negative_archive_reviewer_hop_missing_or_unauthenticated_id scripts.test_ai_status.TestStaleArchiveResurrectionContract.test_negative_archive_reviewer_hop_drifted_archive_bytes scripts.test_ai_status.TestStaleArchiveResurrectionContract.test_archive_reviewer_hop_live_sources_precedence",
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "Ran 6 tests in 25.109s, OK"
+      },
+      {
+        "name": "full_stale_archive_resurrection_suite",
+        "command": "python3 -m unittest -v scripts.test_ai_status.TestStaleArchiveResurrectionContract",
+        "passed": 49,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "Ran 49 tests in 200.239s, OK"
+      }
+    ],
+    "totals": {
+      "passed": 49,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "not_claimed": [
+    "Live PPL-ALLOC-007 retirement or reconciliation (deferred to Human/Ops post-merge)",
+    "Privileged execution authorization grant",
+    "Production runtime or capital-affecting changes"
+  ],
+  "qualification_handoff": {
+    "source_acceptance": "pending independent exact-head review by Claude, required checks, and dev merge",
+    "qualified_tooling_runtime": "pending coordinator-owned promotion through existing qualified runtime workflow after source acceptance",
+    "coordinator_next": "Promote accepted source to qualified runtime; execute local Human/Ops reconcile_merged_done PPL-ALLOC-007 using the existing operator command to retire the stale row."
+  }
+}

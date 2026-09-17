@@ -638,7 +638,7 @@ def _gemini_auth_ready(
         if source.get("GOOGLE_APPLICATION_CREDENTIALS"):
             return True
         gcloud = command_exists("gcloud")
-        return bool(gcloud) and run_command([gcloud, "auth", "application-default", "print-access-token"]).returncode == 0
+        return bool(gcloud) and run_command([gcloud, "auth", "application-default", "print-access-token"], stdin=subprocess.DEVNULL).returncode == 0
     return False
 
 
@@ -724,7 +724,7 @@ def _codex_auth_probe(
         if cache_path is not None:
             cache_identity_before_probe = _codex_cache_identity(cache_path)
     try:
-        result = run_command(command, timeout=timeout, env=env)
+        result = run_command(command, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return _auth_probe_record(
             provider_id,
@@ -775,7 +775,7 @@ def _codex_auth_probe(
             )
         metadata["models_cache_recovery"] = cache_recovery
         try:
-            result = run_command(command, timeout=timeout, env=env)
+            result = run_command(command, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
             return _auth_probe_record(
                 provider_id,
@@ -903,7 +903,7 @@ def _claude_auth_status_payload(
     settings = _auth_probe_settings(config, provider_id)
     timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
     try:
-        result = run_command([binary, "auth", "status"], timeout=timeout, env=env)
+        result = run_command([binary, "auth", "status"], timeout=timeout, env=env, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
         return {}
     if result.returncode != 0 or not result.stdout:
@@ -1067,12 +1067,20 @@ def _antigravity_probe_ready(
             native_auth_failed = True
         elif "authenticated successfully" in event:
             native_auth_failed = False
-    if any(marker in combined.lower() for marker in auth_failures) or native_auth_failed:
-        return (
-            False,
-            "Antigravity CLI is not logged in (silent print-mode failure).",
-            "not_logged_in",
-        )
+    not_logged_in = (
+        False,
+        "Antigravity CLI is not logged in (silent print-mode failure).",
+        "not_logged_in",
+    )
+    if any(marker in combined.lower() for marker in auth_failures):
+        return not_logged_in
+    # The native log is only decisive for the silent case.  The CLI's userInfo
+    # cache refresh races its OAuth result and can log a trailing "You are not
+    # logged into Antigravity" microseconds after "authenticated successfully"
+    # even though the prompt round-trip then completes; non-empty model output
+    # proves the credential worked, so that trailing marker must not veto it.
+    if native_auth_failed and not stdout.strip():
+        return not_logged_in
     if not stdout.strip():
         return (
             False,
@@ -1172,7 +1180,7 @@ def _antigravity_auth_probe(
         command.extend(["--log-file", str(native_log_path)])
         command.extend(["--prompt", prompt])
         try:
-            result = run_command(command, timeout=timeout, env=env)
+            result = run_command(command, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
             return _auth_probe_record(
                 provider_id,

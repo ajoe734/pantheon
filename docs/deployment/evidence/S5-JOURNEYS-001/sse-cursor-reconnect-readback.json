@@ -1,0 +1,47 @@
+{
+  "captured_at": "2026-09-17T04:39:25.667Z",
+  "task_id": "S5-JOURNEYS-001",
+  "scope": "durable worker/BFF restart/SSE cursor failover, duplicate prevention, and response-loss resilience",
+  "suites": [
+    "tests/bff/test_sse_replay.py",
+    "services/control-plane/bff/tests/test_openclaw_ops_stream.py"
+  ],
+  "verified_by": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest",
+  "passed": true,
+  "cases": [
+    {
+      "suite": "tests/bff/test_sse_replay.py",
+      "name": "test_last_event_id_replay_survives_replica_failover_without_gap_or_duplicate",
+      "status": "passed",
+      "contract": "BFF-SSE-FAILOVER-CURSOR-001",
+      "description": "Last-Event-ID replay survives replica failover without gap or duplicate events across durable cursor state."
+    },
+    {
+      "suite": "tests/bff/test_sse_replay.py",
+      "name": "test_shared_sse_replay_fails_closed_when_cursor_is_unavailable",
+      "status": "passed",
+      "contract": "BFF-SSE-CURSOR-FAILCLOSED-001",
+      "description": "Shared SSE replay strictly fails closed when cursor is unavailable or out-of-bounds."
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_openclaw_ops_stream.py",
+      "name": "test_stream_yields_parsed_events_and_strips_done",
+      "status": "passed",
+      "contract": "OPENCLAW-STREAM-DONE-STRIP-001",
+      "description": "Stream yields properly parsed SSE events and strips stream-terminal done signals cleanly."
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_openclaw_ops_stream.py",
+      "name": "test_stream_raises_when_adapter_url_unset",
+      "status": "passed",
+      "contract": "OPENCLAW-ADAPTER-UNSET-FAILCLOSED-001",
+      "description": "Stream cleanly raises and fails closed if OpenClaw adapter URL is unset."
+    }
+  ],
+  "replay_semantics": {
+    "last_event_id_supported": true,
+    "gap_allowed": false,
+    "duplicate_allowed": false,
+    "fail_closed_on_missing_cursor": true
+  }
+}
