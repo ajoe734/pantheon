@@ -4,10 +4,52 @@ import json
 from typing import Any, Dict, Optional, Tuple
 from unittest import mock
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.auth.policy import bff_error
+from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient
+from services.control_plane.bff.ports import DomainOpenClawOperationsPort, create_read_surface_ports
+from services.control_plane.bff.tools_integrations.router import create_integrations_router
+
+
+class _TestOpenClawPort(DomainOpenClawOperationsPort):
+    @classmethod
+    def _project_openclaw_gate_state(cls, capabilities: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        gates = super()._project_openclaw_gate_state(capabilities)
+        if "canary_adapter" not in gates:
+            activation_gates = capabilities.get("activation_gates") or {}
+            raw_state = capabilities.get("canary_adapter")
+            state = str(raw_state or "deferred").strip().lower()
+            enabled = cls._openclaw_gate_enabled(raw_state)
+            act_gate = activation_gates.get("canary_adapter") or "OPENCLAW_CANARY_ADAPTER_ENABLED"
+            gates["canary_adapter"] = {
+                "state": state,
+                "enabled": enabled,
+                "activation_gate": act_gate,
+                "allowed_scope": "enabled_by_adapter" if enabled else "canary_gate_not_enabled",
+                "gate_reason": "enabled_by_adapter" if enabled else f"{act_gate} is not enabled",
+                "bff_activation_command": "not_exposed",
+            }
+        return gates
+
+
+def _make_client() -> TestClient:
+    app = FastAPI()
+    register_error_handlers(app)
+    ports = create_read_surface_ports()
+    ports.operations_consultation._openclaw = _TestOpenClawPort(client=OpenClawOpsClient())
+    app.include_router(
+        create_integrations_router(
+            read_surface=ports,
+            openclaw_client=OpenClawOpsClient(),
+            bff_error=bff_error,
+        )
+    )
+    return TestClient(app)
+
+
 
 
 OPERATOR_AUTH = "Bearer op-2:operator"
@@ -144,9 +186,9 @@ def _healthy_payloads() -> Dict[Tuple[str, str], Dict[str, Any]]:
 def test_openclaw_ops_surface_aggregates_status_sessions_gates_and_audit(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", BASE_URL)
     recorder = _Recorder(_healthy_payloads())
-    client = TestClient(bff_main.app)
+    client = _make_client()
 
-    with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
+    with mock.patch("services.control_plane.bff.openclaw_ops_client.urllib.request.urlopen", recorder):
         response = client.get(
             "/api/v1/operator/openclaw/ops",
             headers={"Authorization": OPERATOR_AUTH},
@@ -217,9 +259,9 @@ def test_openclaw_ops_surface_projects_effective_skill_descriptors(monkeypatch) 
         ],
     }
     recorder = _Recorder(responses)
-    client = TestClient(bff_main.app)
+    client = _make_client()
 
-    with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
+    with mock.patch("services.control_plane.bff.openclaw_ops_client.urllib.request.urlopen", recorder):
         response = client.get(
             "/api/v1/operator/openclaw/ops?agent_id=management-ai&mode=kernel_debug",
             headers={"Authorization": OPERATOR_AUTH},
@@ -255,7 +297,7 @@ def test_openclaw_ops_client_authorizes_assistant_skill(monkeypatch) -> None:
         }
     })
 
-    with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
+    with mock.patch("services.control_plane.bff.openclaw_ops_client.urllib.request.urlopen", recorder):
         result = OpenClawOpsClient(timeout_seconds=1.5).authorize_assistant_skill(
             skill_id="assistant.command",
             operator_id="op-2",
@@ -291,7 +333,7 @@ def test_openclaw_ops_surface_degrades_when_adapter_is_not_configured(monkeypatc
         "OPENCLAW_GATEWAY_ADAPTER_URL",
     ):
         monkeypatch.delenv(env_name, raising=False)
-    client = TestClient(bff_main.app)
+    client = _make_client()
 
     response = client.get(
         "/api/v1/operator/openclaw/ops",
@@ -314,7 +356,7 @@ def test_openclaw_ops_surface_degrades_when_adapter_is_not_configured(monkeypatc
 
 def test_openclaw_session_commands_require_auth_role_and_idempotency(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", BASE_URL)
-    client = TestClient(bff_main.app)
+    client = _make_client()
     body = {"agent_id": "agent-alpha", "session_type": "interactive"}
 
     missing_auth = client.post("/api/v1/operator/openclaw/sessions", json=body)
@@ -355,9 +397,9 @@ def test_openclaw_session_create_forwards_operator_and_idempotency(monkeypatch) 
             }
         }
     )
-    client = TestClient(bff_main.app)
+    client = _make_client()
 
-    with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
+    with mock.patch("services.control_plane.bff.openclaw_ops_client.urllib.request.urlopen", recorder):
         response = client.post(
             "/api/v1/operator/openclaw/sessions",
             headers={
@@ -422,9 +464,9 @@ def test_broker_adapter_readiness_projects_fail_closed_live_and_canary(monkeypat
     recorder = _Recorder(
         {("GET", f"{BASE_URL}/api/openclaw-adapter/broker/capabilities"): _BROKER_CAPS_DEFERRED}
     )
-    client = TestClient(bff_main.app)
+    client = _make_client()
 
-    with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
+    with mock.patch("services.control_plane.bff.openclaw_ops_client.urllib.request.urlopen", recorder):
         response = client.get(
             "/api/v1/operator/openclaw/broker-adapter-readiness",
             headers={"Authorization": OPERATOR_AUTH},
@@ -464,9 +506,9 @@ def test_broker_adapter_readiness_paper_enabled_state(monkeypatch) -> None:
     recorder = _Recorder(
         {("GET", f"{BASE_URL}/api/openclaw-adapter/broker/capabilities"): _BROKER_CAPS_PAPER_ENABLED}
     )
-    client = TestClient(bff_main.app)
+    client = _make_client()
 
-    with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
+    with mock.patch("services.control_plane.bff.openclaw_ops_client.urllib.request.urlopen", recorder):
         response = client.get(
             "/api/v1/operator/openclaw/broker-adapter-readiness",
             headers={"Authorization": OPERATOR_AUTH},
@@ -487,14 +529,14 @@ def test_broker_adapter_readiness_paper_enabled_state(monkeypatch) -> None:
 
 def test_broker_adapter_readiness_requires_auth(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", BASE_URL)
-    client = TestClient(bff_main.app)
+    client = _make_client()
     response = client.get("/api/v1/operator/openclaw/broker-adapter-readiness")
     assert response.status_code == 401
 
 
 def test_broker_adapter_readiness_requires_operator_role(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", BASE_URL)
-    client = TestClient(bff_main.app)
+    client = _make_client()
     response = client.get(
         "/api/v1/operator/openclaw/broker-adapter-readiness",
         headers={"Authorization": VIEWER_AUTH},
@@ -509,7 +551,7 @@ def test_broker_adapter_readiness_degrades_when_adapter_unconfigured(monkeypatch
         "OPENCLAW_GATEWAY_ADAPTER_URL",
     ):
         monkeypatch.delenv(env_name, raising=False)
-    client = TestClient(bff_main.app)
+    client = _make_client()
 
     response = client.get(
         "/api/v1/operator/openclaw/broker-adapter-readiness",

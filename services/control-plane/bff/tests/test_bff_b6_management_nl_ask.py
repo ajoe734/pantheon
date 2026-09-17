@@ -32,8 +32,12 @@ from typing import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.ports import create_read_surface_ports
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
+    get_management_nl_module,
+    get_management_nl_sse_buffer,
+    management_nl_test_client,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -93,16 +97,13 @@ class _B6NlAskTestStore:
         return getattr(self.ports, name)
 
 
-def _fresh_client(td: str) -> TestClient:
+@contextmanager
+def _fresh_client(td: str = "") -> Iterator[TestClient]:
     store = _B6NlAskTestStore()
-    bff_main.read_store = store
-    bff_main._MGMT_AI_AUDIT_EVENTS.clear()
-    bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
-        storage_path="off",
-        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
-    )
-    bff_main._sse_buffers["ask"].clear()
-    return TestClient(bff_main.app)
+    main_mod = get_management_nl_module()
+    main_mod._MGMT_AI_AUDIT_EVENTS.clear()
+    with management_nl_test_client(store) as client:
+        yield client
 
 
 # ---------------------------------------------------------------------------
@@ -111,9 +112,7 @@ def _fresh_client(td: str) -> TestClient:
 
 def test_nl_ask_authenticated_returns_202_with_data_fields() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": "What is the current portfolio PnL?"},
@@ -147,7 +146,7 @@ def test_nl_ask_authenticated_returns_202_with_data_fields() -> None:
             assert body["meta"]["lifecycle_status"] == "completed"
             assert "lifecycleStatus" not in body["meta"]
             assert "surfaces" in body["meta"]
-            sse_events = [event for _, event in bff_main._sse_buffers["ask"]]
+            sse_events = [event for _, event in get_management_nl_sse_buffer("ask")]
             event_types = [event.get("type") for event in sse_events]
             assert "management.nl.ask.accepted" in event_types
             assert "ask.message.completed" in event_types
@@ -168,20 +167,16 @@ def test_nl_ask_authenticated_returns_202_with_data_fields() -> None:
             assert domain_completed["data"]["audit_log"]["href"] == data["audit_log"]["href"]
             assert "auditLog" not in domain_completed["data"]
             assert domain_completed["data"]["conversation"]["href"] == data["conversation"]["href"]
-        finally:
-            bff_main.read_store = original
 
 
 def test_nl_ask_dry_run_returns_compact_receipt_without_context_work(monkeypatch) -> None:
+    main_mod = get_management_nl_module()
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        def fail_collect_context(*args, **kwargs):
+            raise AssertionError("dry-run must not collect management context")
 
-            def fail_collect_context(*args, **kwargs):
-                raise AssertionError("dry-run must not collect management context")
-
-            monkeypatch.setattr(bff_main, "_mgmt_nl_collect_context", fail_collect_context)
+        monkeypatch.setattr(main_mod, "_mgmt_nl_collect_context", fail_collect_context)
+        with _fresh_client(td) as client:
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": "probe", "focus": "all", "context": "probe-script"},
@@ -200,10 +195,8 @@ def test_nl_ask_dry_run_returns_compact_receipt_without_context_work(monkeypatch
             assert body["meta"]["durable"] is False
             assert body["meta"]["dry_run_mode"] == "compact_receipt"
             assert body["meta"]["idempotency"]["idempotencyKey"] == "test-idem-b6-dry-run"
-            assert len(bff_main._MGMT_AI_AUDIT_EVENTS) == 0
-            assert len(bff_main._sse_buffers["ask"]) == 0
-        finally:
-            bff_main.read_store = original
+            assert len(main_mod._MGMT_AI_AUDIT_EVENTS) == 0
+            assert len(get_management_nl_sse_buffer("ask")) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -211,17 +204,17 @@ def test_nl_ask_dry_run_returns_compact_receipt_without_context_work(monkeypatch
 # ---------------------------------------------------------------------------
 
 def test_nl_ask_anonymous_returns_401() -> None:
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
-    resp = client.post(
-        "/bff/management/nl/ask",
-        json={"question": "Hello?"},
-        headers={"Idempotency-Key": "anon-ik-001"},
-    )
-    assert resp.status_code == 401
-    body = resp.json()
-    assert "detail" not in body
-    assert body["error"]["code"] == "AUTH_REQUIRED"
-    assert body["meta"]["correlationId"]
+    with management_nl_test_client(raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "Hello?"},
+            headers={"Idempotency-Key": "anon-ik-001"},
+        )
+        assert resp.status_code == 401
+        body = resp.json()
+        assert "detail" not in body
+        assert body["error"]["code"] == "AUTH_REQUIRED"
+        assert body["meta"]["correlationId"]
 
 
 # ---------------------------------------------------------------------------
@@ -230,9 +223,7 @@ def test_nl_ask_anonymous_returns_401() -> None:
 
 def test_nl_ask_focus_trading_pulse_restricts_sources() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": "How is trading?", "focus": "trading_pulse"},
@@ -248,8 +239,6 @@ def test_nl_ask_focus_trading_pulse_restricts_sources() -> None:
             assert "persona_fleet" not in sources
             # focus echoed in data
             assert body["data"]["focus"] == "trading_pulse"
-        finally:
-            bff_main.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -257,19 +246,18 @@ def test_nl_ask_focus_trading_pulse_restricts_sources() -> None:
 # ---------------------------------------------------------------------------
 
 def test_nl_ask_idempotency_replay_returns_cached() -> None:
+    main_mod = get_management_nl_module()
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             call_count = {"n": 0}
 
-            original_collect = bff_main._mgmt_nl_collect_context
+            original_collect = main_mod._mgmt_nl_collect_context
 
             def counting_collect(focus: str, snapshot_at: str, **kwargs):
                 call_count["n"] += 1
                 return original_collect(focus, snapshot_at, **kwargs)
 
-            bff_main._mgmt_nl_collect_context = counting_collect
+            main_mod._mgmt_nl_collect_context = counting_collect
             try:
                 payload = {"question": "Replay test question?"}
                 headers = {**OPERATOR_HEADERS, "Idempotency-Key": "ik-replay-b6-001"}
@@ -286,16 +274,12 @@ def test_nl_ask_idempotency_replay_returns_cached() -> None:
 
                 assert resp2.json() == resp1.json()
             finally:
-                bff_main._mgmt_nl_collect_context = original_collect
-        finally:
-            bff_main.read_store = original
+                main_mod._mgmt_nl_collect_context = original_collect
 
 
 def test_nl_ask_assistant_transcript_aliases_management_store() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": "Show the durable assistant transcript.", "sessionId": "mgmt-asst-alias-session"},
@@ -313,29 +297,21 @@ def test_nl_ask_assistant_transcript_aliases_management_store() -> None:
             assert turns[0]["content"] == "Show the durable assistant transcript."
             assert turns[1]["content"] == resp.json()["data"]["answer"]
             assert transcript_resp.json()["meta"]["count"] == 2
-        finally:
-            bff_main.read_store = original
 
 
 def test_nl_ask_assistant_transcript_unknown_session_returns_404() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             resp = client.get(
                 "/bff/assistant/sessions/local-only-browser-session/transcript",
                 headers=OPERATOR_HEADERS,
             )
             assert resp.status_code == 404
-        finally:
-            bff_main.read_store = original
 
 
 def test_nl_ask_idempotency_replay_does_not_duplicate_assistant_transcript() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             payload = {
                 "question": "Replay should not duplicate transcript turns.",
                 "sessionId": "mgmt-asst-idem-session",
@@ -356,24 +332,19 @@ def test_nl_ask_idempotency_replay_does_not_duplicate_assistant_transcript() -> 
             turns = transcript_resp.json()["data"]
             assert [turn["role"] for turn in turns] == ["user", "assistant"]
             assert transcript_resp.json()["meta"]["count"] == 2
-        finally:
-            bff_main.read_store = original
 
 
 def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> None:
+    main_mod = get_management_nl_module()
     with tempfile.TemporaryDirectory() as td:
-        original_read_store = bff_main.read_store
-        original_conversation_store = bff_main._MGMT_AI_CONVERSATION_STORE
         store_path = os.path.join(td, "management-ai.json")
-        try:
-            bff_main.read_store = _B6NlAskTestStore()
-            bff_main._MGMT_AI_AUDIT_EVENTS.clear()
-            bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
-                storage_path=store_path,
-                attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
-            )
-            client = TestClient(bff_main.app)
-
+        store = _B6NlAskTestStore()
+        main_mod._MGMT_AI_AUDIT_EVENTS.clear()
+        main_mod._MGMT_AI_CONVERSATION_STORE = main_mod.ManagementAiConversationStore(
+            storage_path=store_path,
+            attachment_store=main_mod.ManagementAiAttachmentStore(storage_path="off"),
+        )
+        with management_nl_test_client(store, reset_conversation_store=False) as client:
             ask_resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": "Persist this through a store reload.", "sessionId": "mgmt-asst-reload-session"},
@@ -381,9 +352,9 @@ def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> Non
             )
             assert ask_resp.status_code == 202, ask_resp.text
 
-            bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
+            main_mod._MGMT_AI_CONVERSATION_STORE = main_mod.ManagementAiConversationStore(
                 storage_path=store_path,
-                attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+                attachment_store=main_mod.ManagementAiAttachmentStore(storage_path="off"),
             )
 
             transcript_resp = client.get(
@@ -394,9 +365,6 @@ def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> Non
             turns = transcript_resp.json()["data"]
             assert [turn["role"] for turn in turns] == ["user", "assistant"]
             assert turns[0]["content"] == "Persist this through a store reload."
-        finally:
-            bff_main.read_store = original_read_store
-            bff_main._MGMT_AI_CONVERSATION_STORE = original_conversation_store
 
 
 # ---------------------------------------------------------------------------
@@ -405,9 +373,7 @@ def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> Non
 
 def test_nl_ask_missing_question_returns_422() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"focus": "cockpit"},
@@ -418,8 +384,6 @@ def test_nl_ask_missing_question_returns_422() -> None:
             assert "detail" not in body
             assert body["error"]["code"] == "VALIDATION_FAILED"
             assert body["meta"]["correlationId"]
-        finally:
-            bff_main.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -428,9 +392,7 @@ def test_nl_ask_missing_question_returns_422() -> None:
 
 def test_nl_ask_session_id_echoed_when_supplied() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             supplied_id = "my-session-b6-xyz"
             resp = client.post(
                 "/bff/management/nl/ask",
@@ -440,15 +402,11 @@ def test_nl_ask_session_id_echoed_when_supplied() -> None:
             assert resp.status_code == 202, resp.text
             assert resp.json()["data"]["session_id"] == supplied_id
             assert "sessionId" not in resp.json()["data"]
-        finally:
-            bff_main.read_store = original
 
 
 def test_nl_ask_session_id_generated_when_omitted() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": "Generate session?"},
@@ -459,8 +417,6 @@ def test_nl_ask_session_id_generated_when_omitted() -> None:
             assert isinstance(session_id, str) and session_id
             # Auto-generated IDs use the mgmt-nl- prefix
             assert session_id.startswith("mgmt-nl-")
-        finally:
-            bff_main.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -475,9 +431,7 @@ def test_nl_ask_focus_persona_fleet_populates_context() -> None:
     appear in data.sources and persona_fleet must be present in summary_context.
     """
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": "How is the persona fleet?", "focus": "persona_fleet"},
@@ -494,8 +448,6 @@ def test_nl_ask_focus_persona_fleet_populates_context() -> None:
             assert "persona_fleet" in summary_ctx, (
                 "persona_fleet missing from summary_context"
             )
-        finally:
-            bff_main.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -534,12 +486,11 @@ def _nl_evidence_client() -> Iterator[TestClient]:
             encoding="utf-8",
         )
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
-        original_store = bff_main.read_store
         try:
-            bff_main.read_store = _B6NlAskTestStore()
-            yield TestClient(bff_main.app)
+            store = _B6NlAskTestStore()
+            with management_nl_test_client(store) as client:
+                yield client
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -553,9 +504,7 @@ def _nl_evidence_client() -> Iterator[TestClient]:
 
 def test_nl_ask_response_includes_audit_ref() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": "Audit ref test?"},
@@ -575,8 +524,6 @@ def test_nl_ask_response_includes_audit_ref() -> None:
             assert isinstance(href, str) and "ManagementNLExchange" in href, (
                 f"audit_ref.href must reference ManagementNLExchange, got: {href}"
             )
-        finally:
-            bff_main.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -609,9 +556,7 @@ def test_nl_ask_response_includes_evidence_refs_with_api_href() -> None:
 
 def test_nl_ask_response_includes_redacted_evidence_count() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as client:
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": "Redacted count test?"},
@@ -626,5 +571,3 @@ def test_nl_ask_response_includes_redacted_evidence_count() -> None:
             assert isinstance(count, int) and count >= 0, (
                 f"meta.redacted_evidence_count must be non-negative int, got: {count!r}"
             )
-        finally:
-            bff_main.read_store = original
