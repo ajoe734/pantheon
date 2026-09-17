@@ -1,0 +1,81 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-DEV-RELEASE-CAPTURE-DRIFT-CONTRACT-001",
+  "worker": "Antigravity2",
+  "reviewer": "Codex",
+  "title": "Honour drift-recovery baseline in dev release capture",
+  "status": "completed",
+  "reproduction": {
+    "failing_run_id": "35120908258",
+    "failing_stage": "capture",
+    "exit_code": 75,
+    "error_code": "DEV_ARTIFACT_OPERATION_FAILED",
+    "failure_location": "dev_release_artifact_driver.py:345",
+    "observed_live_bff_sha": "dc15751a9b20f8bc0931529d68af8898e691c898",
+    "previous_backend_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "incident_description": "Failed deployment run 34926312378 on 2026-09-15 replaced containers with dc15751a9 but skipped admit/switch, leaving the live VM BFF serving dc15751a9 while the accepted frontend pair deployment.json ledger retained ae41705b4 as previous_backend_sha. On run 35120908258, step rollback_baseline detected the discrepancy and classified baseline_source as standby_frontend_pair_manifest+live_bff_drift_recovery, but dev_release_artifact_driver.py rigidly enforced source_commit_sha == previous_backend_sha, failing with exit 75."
+  },
+  "root_cause": {
+    "driver_public_mismatch": "dev_release_artifact_driver.py:_public() checked version.get('source_commit_sha') == args.previous_backend_sha unconditionally.",
+    "artifacts_image_revisions": "dev_release_artifacts.py:capture_images(), validate_images(), and restore_images() enforced service image revisions to strictly equal source_sha without allowing observed live drift revisions.",
+    "workflow_outputs_missing": ".github/workflows/nonprod-deploy.yml step rollback_baseline did not write baseline_source or observed_live_bff_sha to $GITHUB_OUTPUT for artifact_baseline or deploy."
+  },
+  "fix_description": {
+    "dev_release_artifacts_py": "Added allowed_revisions parameter to capture_images, validate_images, and restore_images, accepting OCI revisions that match allowed_revisions in addition to source_sha.",
+    "dev_release_artifact_driver_py": "Added _drift_recovery_source(args) helper validating +live_bff_drift_recovery and 40-hex lowercase SHA; plumbed validation into _identity(); updated _public() to accept drift_sha in allowed_sources; updated RestoreCAS._public_source() to permit drift_sha; passed allowed_revisions into capture, seal-candidate, verify, and restore; added --baseline-source and --observed-live-bff-sha CLI arguments with env var fallback.",
+    "nonprod_deploy_yml": "Exported baseline_source and observed_live_bff_sha from step rollback_baseline to GITHUB_OUTPUT; injected PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE and PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA into step artifact_baseline and step deploy.",
+    "test_coverage": "Added unit and regression tests in test_dev_release_artifacts.py (test_capture_and_validate_images_accept_drift_recovery_allowed_revisions) and test_dev_release_artifact_driver.py (reproduction test, drift recovery capture/seal/verify/restore test, and fail-closed tests covering non-JSON/500 BFF version, 3rd party SHA, permissive/stub auth, viewer readback denial, tampered FE manifest, invalid drift SHA format, and missing drift recovery classification)."
+  },
+  "invariants_enforced": {
+    "eight_field_identity": "The 8-field identity contract (candidate_id, run_id, attempt, controller_sha, candidate_backend_sha, candidate_frontend_sha, previous_backend_sha, previous_frontend_sha) is unchanged; rollback authority remains previous_backend_sha.",
+    "manifest_structure": "Baseline manifest schema pantheon.dev-release-artifact-baseline.v1 and all 12 top-level keys remain strictly preserved.",
+    "fail_closed_security": "Any unadmitted SHA, stubbed auth, non-strict posture, tampered frontend manifest, or unclassified drift strictly fails closed with ArtifactError.",
+    "isolation": "Pure source and isolated test scope only; no hosted deployments, redeploys, or capital changes performed."
+  },
+  "validation": {
+    "pytest_command": "PYTHONPATH=/tmp/pytest-lib:. /tmp/pytest-lib/bin/pytest scripts/test_dev_release_artifact_driver.py scripts/test_dev_release_artifacts.py scripts/test_nonprod_dev_artifact_workflow.py",
+    "passed": 312,
+    "skipped": 1,
+    "failed": 0,
+    "duration_seconds": 96.53,
+    "exit_code": 0
+  },
+  "scope_definition": {
+    "total_artifacts": 6,
+    "artifacts": {
+      "scripts/dev_release_artifacts.py": {
+        "sha256": "60a7c9fed4a25d56a99abe219d3ed1d2bad536781e06169839a00781dd0c91d4",
+        "lines": 479,
+        "bytes": 23844,
+        "disposition": "MODIFIED"
+      },
+      "scripts/test_dev_release_artifacts.py": {
+        "sha256": "9e836b31db81da69a83274657ba18254cc55dd5dd24599f6a412f9ad8784b3f4",
+        "lines": 416,
+        "bytes": 20718,
+        "disposition": "MODIFIED"
+      },
+      "scripts/dev_release_artifact_driver.py": {
+        "sha256": "bbb3dce104a86abd4293355f5b06d9bbf6b9377a23c8a08375421648aa3e4606",
+        "lines": 794,
+        "bytes": 46056,
+        "disposition": "MODIFIED"
+      },
+      "scripts/test_dev_release_artifact_driver.py": {
+        "sha256": "37279ec24a0e5ef70a6aabf938c89258bb36c19e667ce22641d748f771854be3",
+        "lines": 983,
+        "bytes": 51994,
+        "disposition": "MODIFIED"
+      },
+      ".github/workflows/nonprod-deploy.yml": {
+        "sha256": "bd3052114e17820516b8808e9bcf96b086a11f28ae40b9802e03b27046d9c4be",
+        "lines": 2721,
+        "bytes": 159444,
+        "disposition": "MODIFIED"
+      },
+      "docs/deployment/evidence/OPS-DEV-RELEASE-CAPTURE-DRIFT-CONTRACT-001/evidence.json": {
+        "disposition": "CREATED"
+      }
+    }
+  }
+}
