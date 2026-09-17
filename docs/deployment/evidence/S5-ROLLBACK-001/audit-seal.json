@@ -2,10 +2,14 @@
   "algorithm": "sha256",
   "description": "Cryptographic SHA-256 seal of all evidence files in docs/deployment/evidence/S5-ROLLBACK-001/ (excluding evidence.json to remain strictly acyclic).",
   "files": {
-    "docs/deployment/evidence/S5-ROLLBACK-001/README.md": "75cb8ae214075e26f18dc09abbe72880d0aedaae0457afeaeb6c08cfe73247f8",
+    "docs/deployment/evidence/S5-ROLLBACK-001/README.md": "c647cd3a8c594049503181573d12f70a1bb1304cdd39775459c6c21a98d5882f",
+    "docs/deployment/evidence/S5-ROLLBACK-001/accepted-I-capture.json": "cf3a1c6e6175d9e18a8ec0207812af06c3e25db48b288a5cb33ebc5ae9ef8b45",
+    "docs/deployment/evidence/S5-ROLLBACK-001/accepted-I-returned.json": "ea603c705f4847f15d4e3954c4d1c692aa5b051c5b2a4592fe1f83f8a2d043c2",
+    "docs/deployment/evidence/S5-ROLLBACK-001/exact-prior-E-restored.json": "759637e188f978e0c1cf88eb2516358f54048c66cdda9cccf1dac0ed4bfa9569",
     "docs/deployment/evidence/S5-ROLLBACK-001/release-f-compensation-reconciliation.json": "3c558f522a4c6b52c4051c713c1aca277ae6c19a0b0ab14985a688a69f81a462",
     "docs/deployment/evidence/S5-ROLLBACK-001/release-g-manual-recovery-reconciliation.json": "25f7f1e12dfd7cb6866fa018631adabfe95334cf7ae5c80f80fe4574834e9892",
     "docs/deployment/evidence/S5-ROLLBACK-001/release-h-manual-recovery-reconciliation.json": "fa8361e0fe4524de687dd4b885453de35d77433f7c998760b972b71dd6450c7b",
-    "docs/deployment/evidence/S5-ROLLBACK-001/roundtrip-drill-readiness-and-hold-boundary.json": "424aed1d0247047de59627076f33c1dfdf428c6682d90ac0f6c73ca5b6cfb95a"
+    "docs/deployment/evidence/S5-ROLLBACK-001/roundtrip-drill-execution.json": "685151251f0fa15258d786d91fd109e7193173c9d18580943427bfd16e9a9b8e",
+    "docs/deployment/evidence/S5-ROLLBACK-001/roundtrip-drill-readiness-and-hold-boundary.json": "7d84e78f18323a2278d4d96309b5e32a2cc0e1848688dcec70b095f6c0609605"
   }
 }

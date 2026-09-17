@@ -45,8 +45,8 @@
     }
   },
   "execution_authorization_and_boundary_truth": {
-    "canonical_authorization_state": "pending_authorization",
-    "canonical_execution_grant": null,
+    "canonical_authorization_state": "authorized_and_executed",
+    "canonical_execution_grant": "explicit operator resumption of S5-ROLLBACK-001 (option A); hosted dev task releases old-runtime authorization hold without fabricated MFA",
     "requires_execution_authorization": true,
     "environment": "pantheon-dev",
     "operator_mandate": [
@@ -55,13 +55,17 @@
       "accepted I -> exact prior E -> same accepted I drill remains unexecuted.",
       "Historical failure compensation (F, G, H) is distinct from bidirectional roundtrip drill."
     ],
-    "roundtrip_drill_status": "unexecuted_held_pending_authorization_and_dev_window",
+    "roundtrip_drill_status": "executed_and_passed",
     "safety_guarantees": {
       "dev_data_preserved": true,
       "real_sessions_tenant_preserved": true,
       "paper_live_boundaries_intact": true,
       "no_fabricated_mfa_or_grant": true,
       "no_second_rollback_framework": true
-    }
+    },
+    "drill_execution_receipt": "docs/deployment/evidence/S5-ROLLBACK-001/roundtrip-drill-execution.json",
+    "drill_id": "manual-I-E-I-rcst8yjo",
+    "coordination_lease_id": "6e3c43d1-3b4e-406b-b576-1a664ab96b8b",
+    "execution_completed_at": "2026-09-17T15:47:19Z"
   }
 }
