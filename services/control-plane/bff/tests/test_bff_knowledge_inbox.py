@@ -1,18 +1,70 @@
 from __future__ import annotations
 
-import os
-import sys
 import tempfile
+from types import SimpleNamespace
+from typing import Any, Callable, Dict, Optional
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.console_gap.knowledge import create_knowledge_router
+from services.control_plane.bff.ports.read_surface_ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-knowledge:operator,reviewer"}
+
+
+def _extract_identity(auth: Optional[str]) -> Optional[Any]:
+    if not auth or not auth.startswith("Bearer "):
+        return None
+    token = auth[len("Bearer "):].strip()
+    if ":" in token:
+        op_id, roles_str = token.split(":", 1)
+        roles = {r.strip() for r in roles_str.split(",") if r.strip()}
+    else:
+        op_id = token
+        roles = {"operator", "reviewer"}
+    return SimpleNamespace(operator_id=op_id, roles=roles)
+
+
+def _require_read_role(identity: Optional[Any]) -> None:
+    if identity is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _dataset_surface_status(
+    dataset: str,
+    *,
+    snapshot_at: str = "2026-06-15T08:00:00Z",
+    source: Optional[str] = None,
+    has_data: Optional[bool] = None,
+    missing_message: Optional[str] = None,
+) -> Dict[str, Any]:
+    if source == "missing" or has_data is False:
+        return {
+            "status": "unavailable",
+            "source": source or "missing",
+            "snapshot_at": snapshot_at,
+            "message": missing_message or f"{dataset} has no readable records",
+        }
+    return {
+        "status": "ok",
+        "source": source or "service_store",
+        "snapshot_at": snapshot_at,
+    }
+
+
+def _create_app(store_getter: Callable[[], Any]) -> FastAPI:
+    app = FastAPI()
+    router = create_knowledge_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        read_store_getter=store_getter,
+        utc_now=lambda: "2026-06-15T08:10:00Z",
+        dataset_surface_status=_dataset_surface_status,
+    )
+    app.include_router(router)
+    return app
 
 
 def _knowledge_store(td: str, *, empty: bool = False):
@@ -86,68 +138,63 @@ def _knowledge_store(td: str, *, empty: bool = False):
 
 def test_bff_knowledge_inbox_returns_canonical_list_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            bff_main.read_store = _knowledge_store(td)
-            client = TestClient(bff_main.app)
+        store = _knowledge_store(td)
+        app = _create_app(lambda: store)
+        client = TestClient(app)
 
-            response = client.get("/bff/knowledge", headers=OPERATOR_HEADERS)
+        response = client.get("/bff/knowledge", headers=OPERATOR_HEADERS)
 
-            assert response.status_code == 200, response.text
-            body = response.json()
-            assert body["data"] == body["items"]
-            assert body["page_info"]["total"] == 5
-            assert body["page_info"]["page_size"] == 20
-            assert body["page_info"]["returned"] == 5
-            assert body["page_info"]["next_page_token"] is None
-            assert {item["inboxType"] for item in body["items"]} == {
-                "research_note",
-                "evidence_ref",
-                "insight",
-                "strategy_spec",
-                "memory_entry",
-            }
-            assert body["meta"]["surfaces"]["knowledge_inbox"] == {
-                "status": "ok",
-                "source": "bff_composed",
-            }
-            assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["source"] == "service_store"
-            assert body["meta"]["composition"]["itemCounts"]["research_note"] == 1
-            assert "GET /api/v1/knowledge/evidence" in body["meta"]["composition_sources"]
-        finally:
-            bff_main.read_store = original_store
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["data"] == body["items"]
+        assert body["page_info"]["total"] == 5
+        assert body["page_info"]["page_size"] == 20
+        assert body["page_info"]["returned"] == 5
+        assert body["page_info"]["next_page_token"] is None
+        assert {item["inboxType"] for item in body["items"]} == {
+            "research_note",
+            "evidence_ref",
+            "insight",
+            "strategy_spec",
+            "memory_entry",
+        }
+        assert body["meta"]["surfaces"]["knowledge_inbox"] == {
+            "status": "ok",
+            "source": "bff_composed",
+        }
+        assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["source"] == "service_store"
+        assert body["meta"]["composition"]["itemCounts"]["research_note"] == 1
+        assert "GET /api/v1/knowledge/evidence" in body["meta"]["composition_sources"]
 
 
 def test_bff_knowledge_inbox_empty_store_returns_degraded_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            bff_main.read_store = _knowledge_store(td, empty=True)
-            client = TestClient(bff_main.app)
+        store = _knowledge_store(td, empty=True)
+        app = _create_app(lambda: store)
+        client = TestClient(app)
 
-            response = client.get("/bff/knowledge", headers=OPERATOR_HEADERS)
+        response = client.get("/bff/knowledge", headers=OPERATOR_HEADERS)
 
-            assert response.status_code == 200, response.text
-            body = response.json()
-            assert body["data"] == []
-            assert body["items"] == []
-            assert body["page_info"]["total"] == 0
-            assert body["page_info"]["returned"] == 0
-            assert body["meta"]["surfaces"]["knowledge_inbox"]["status"] == "unavailable"
-            assert body["meta"]["surfaces"]["knowledge_inbox"]["source"] == "missing"
-            assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["status"] == "unavailable"
-            assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["source"] == "missing"
-        finally:
-            bff_main.read_store = original_store
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["data"] == []
+        assert body["items"] == []
+        assert body["page_info"]["total"] == 0
+        assert body["page_info"]["returned"] == 0
+        assert body["meta"]["surfaces"]["knowledge_inbox"]["status"] == "unavailable"
+        assert body["meta"]["surfaces"]["knowledge_inbox"]["source"] == "missing"
+        assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["status"] == "unavailable"
+        assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["source"] == "missing"
 
 
 def test_bff_knowledge_inbox_auth_and_openapi_contract() -> None:
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    app = _create_app(lambda: None)
+    client = TestClient(app, raise_server_exceptions=False)
 
     anonymous = client.get("/bff/knowledge")
     assert anonymous.status_code == 401, anonymous.text
 
-    bff_main.app.openapi_schema = None
-    schema = bff_main.app.openapi()
+    app.openapi_schema = None
+    schema = app.openapi()
     assert "/bff/knowledge" in schema["paths"]
     assert "get" in schema["paths"]["/bff/knowledge"]

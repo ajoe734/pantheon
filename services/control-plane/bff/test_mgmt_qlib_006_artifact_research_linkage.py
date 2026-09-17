@@ -7,23 +7,26 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Dict, Iterator, Optional
+from types import SimpleNamespace
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+)
+from services.control_plane.bff.ports import create_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.strategies.router import create_strategies_router
 
 BFF_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BFF_DIR.parents[2]
 LINKAGE_PACKET_PATH = (
     REPO_ROOT / "support" / "evidence" / "MGMT-QLIB-006" / "management_linkage_packet.json"
 )
-
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-from ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort  # noqa: E402
-from ports import create_read_surface_ports  # noqa: E402
-
 
 HEADERS = {"Authorization": "Bearer op-mgmt-qlib:operator,reviewer"}
 
@@ -164,15 +167,82 @@ def _seed_qlib_management_linkage() -> tuple[Any, dict]:
     return store, packet
 
 
+def _create_app(store: Any) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
+
+    def _extract_identity(auth_header: Optional[str]) -> Any:
+        return SimpleNamespace(operator_id="op-mgmt-qlib", roles=["operator", "reviewer"], token_kind="operator")
+
+    def _require_read_role(ident: Any) -> None:
+        pass
+
+    def _require_operator_role(ident: Any) -> None:
+        pass
+
+    def _dataset_surface_status(
+        dataset: str,
+        *,
+        snapshot_at: str = "2026-05-15T17:30:00Z",
+        source: Optional[str] = None,
+        has_data: Optional[bool] = None,
+        missing_message: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return {"status": "ok", "source": source or "local_snapshot", "snapshot_at": snapshot_at}
+
+    def _bff_error(
+        status_code: int,
+        code: Any,
+        message: str,
+        reason: Optional[str] = None,
+        **kwargs: Any,
+    ) -> HTTPException:
+        return HTTPException(
+            status_code=status_code,
+            detail={
+                "error": {
+                    "code": getattr(code, "value", str(code)),
+                    "message": message,
+                    "reason": reason or message,
+                    "details": kwargs,
+                }
+            },
+        )
+
+    research_router = create_research_router(
+        get_read_store=lambda: store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-05-15T17:30:00Z",
+        dataset_surface_status=_dataset_surface_status,
+        include_prepared_subrouters=True,
+    )
+    strategies_router = create_strategies_router(
+        get_read_store=lambda: store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-05-15T17:30:00Z",
+    )
+    app.include_router(research_router)
+    app.include_router(strategies_router)
+    return app
+
+
 @contextmanager
 def _seeded_client() -> Iterator[tuple[TestClient, dict]]:
-    original_store = bff_main.read_store
     store, packet = _seed_qlib_management_linkage()
-    bff_main.read_store = store
-    try:
-        yield TestClient(bff_main.app), packet
-    finally:
-        bff_main.read_store = original_store
+    app = _create_app(store)
+    yield TestClient(app, raise_server_exceptions=False), packet
 
 
 def _data(payload: dict) -> dict:

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import os
-import sys
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Optional
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff.research.router import create_research_router
 from services.control_plane.bff.research.routes.knowledge import _build_knowledge_workbench_overview
 from services.control_plane.bff.research.routes.common import ResearchRouteContext
 
@@ -18,8 +17,25 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 EXAMPLE_PATH = Path(__file__).resolve().parents[3] / "docs" / "examples" / "PKT-knowledge-workbench.json"
 
 
+def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"error": {"code": getattr(code, "value", str(code)), "message": message, "reason": reason or message, **kwargs}},
+    )
+
+
 def test_pkt016_knowledge_workbench_returns_truthful_overview_payload() -> None:
-    client = TestClient(bff_main.app)
+    app = FastAPI()
+    router = create_research_router(
+        get_read_store=lambda: None,
+        extract_identity=lambda _: SimpleNamespace(operator_id="op-2", roles={"operator"}),
+        require_read_role=lambda _: None,
+        require_operator_role=lambda _: None,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-04-22T00:00:00Z",
+    )
+    app.include_router(router)
+    client = TestClient(app)
 
     response = client.get(
         "/api/v1/workbench/knowledge",
@@ -57,7 +73,7 @@ def test_pkt016_knowledge_workbench_example_matches_builder() -> None:
         get_read_store=lambda: None,
         extract_identity=lambda _: None,
         require_read_role=lambda _: None,
-        bff_error=bff_main._bff_error,
+        bff_error=_bff_error,
         utc_now=lambda: "2026-04-22T00:00:00Z",
     )
     expected = _build_knowledge_workbench_overview(ctx, "2026-04-22T00:00:00Z")

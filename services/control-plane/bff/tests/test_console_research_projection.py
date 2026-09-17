@@ -9,16 +9,19 @@ from typing import Iterator
 
 from fastapi.testclient import TestClient
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-BFF_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(BFF_ROOT))
+from types import SimpleNamespace
+from typing import Any, Dict, Iterator, Optional
 
-from scripts import cleanup_legacy_research_evidence_refs as legacy_cleanup  # noqa: E402
-from scripts import project_research_to_bff_surfaces as projector  # noqa: E402
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from scripts import cleanup_legacy_research_evidence_refs as legacy_cleanup
+from scripts import project_research_to_bff_surfaces as projector
+from services.control_plane.bff.console_gap.knowledge import create_knowledge_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
@@ -180,7 +183,6 @@ def _projected_bff(monkeypatch) -> Iterator[TestClient]:
             monkeypatch.setenv(key, str(value))
         monkeypatch.delenv("PANTHEON_MEMORY_API_URL", raising=False)
 
-        original_store = bff_main.read_store
         ports = create_in_memory_read_surface_ports(
             research_knowledge_source_kwargs={
                 "research_tickets_store": stores["research_tickets"],
@@ -196,11 +198,99 @@ def _projected_bff(monkeypatch) -> Iterator[TestClient]:
             stores["institutional_memory_entries"].values()
         )
         ports.dataset_source = lambda _dataset: "test_projection"
-        bff_main.read_store = ports
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
+        app = _create_console_projection_app(ports)
+        yield TestClient(app)
+
+
+def _create_console_projection_app(ports: Any) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
+
+    def _extract_identity(auth_header: Optional[str]) -> Any:
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return SimpleNamespace(operator_id="anonymous", roles=[])
+        return SimpleNamespace(operator_id="op-dev", roles=["operator", "admin"])
+
+    def _require_read_role(ident: Any) -> None:
+        roles = getattr(ident, "roles", [])
+        if not roles or ("operator" not in roles and "admin" not in roles):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    def _require_operator_role(ident: Any) -> None:
+        roles = getattr(ident, "roles", [])
+        if not roles or ("operator" not in roles and "admin" not in roles):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    def _dataset_surface_status(
+        dataset: str,
+        *,
+        snapshot_at: str = "2026-06-15T08:00:00Z",
+        source: Optional[str] = None,
+        has_data: Optional[bool] = None,
+        missing_message: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "status": "ok",
+            "source": source or "test_projection",
+            "snapshot_at": snapshot_at,
+        }
+
+    def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
+        return HTTPException(
+            status_code=status_code,
+            detail={
+                "error": {
+                    "code": getattr(code, "value", str(code)),
+                    "message": message,
+                    "reason": reason or message,
+                    "details": kwargs,
+                }
+            },
+        )
+
+    knowledge_router = create_knowledge_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        read_store_getter=lambda: ports,
+        utc_now=lambda: "2026-06-15T11:00:00Z",
+        dataset_surface_status=_dataset_surface_status,
+    )
+    app.include_router(knowledge_router)
+
+    research_router = create_research_router(
+        read_surface=lambda: ports,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-06-15T11:00:00Z",
+        dataset_surface_status=_dataset_surface_status,
+        include_prepared_subrouters=False,
+    )
+    app.include_router(research_router)
+
+    @app.get("/bff/research/tasks")
+    async def bff_research_tasks(request: Request):
+        ident = _extract_identity(request.headers.get("authorization"))
+        _require_read_role(ident)
+        tasks = ports.list_research_tickets() if hasattr(ports, "list_research_tickets") else []
+        return {
+            "items": tasks,
+            "page_info": {"total": len(tasks), "page_size": 20, "next_page_token": None},
+            "meta": {
+                "surfaces": {
+                    "research_task_list": {"status": "ok", "source": "test_projection"}
+                }
+            },
+        }
+
+    return app
 
 
 def test_projector_does_not_promote_artifact_only_runs_to_evidence(monkeypatch) -> None:
