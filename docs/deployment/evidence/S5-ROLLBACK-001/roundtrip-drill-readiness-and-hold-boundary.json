@@ -1,0 +1,67 @@
+{
+  "specification_scope": "Accepted Release I to exact prior pair E bidirectional rollback drill readiness and governance boundary",
+  "task_id": "S5-ROLLBACK-001",
+  "planned_drill_architecture": {
+    "roundtrip_path": "accepted_I -> exact_prior_E -> SAME_accepted_I_bytes",
+    "drill_controller_entrypoint": "/tmp/pantheon-delivery-20260913.MnZdSN/run-I-roundtrip.py",
+    "remote_execution_script": "/tmp/pantheon-delivery-20260913.MnZdSN/rollback-I-roundtrip-remote.py",
+    "lease_controller_cli": "scripts/dev_environment_lease.py (SHA256: 52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048)",
+    "lease_wrapper": "scripts/run_with_dev_environment_lease.sh (SHA256: 6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2)",
+    "frontend_symlink_cas": "scripts/atomic-symlink-cas.py (SHA256: e130ecae36f8ceccf774b8fc489940bca2853ad55bce946e6db1baad372943e1)",
+    "artifact_driver": "scripts/dev_release_artifacts.py (SHA256: 77d54b122dd1dbe9f4eb3f6f95884abf603dfd6cb0dc4ec5af17980581e97483)"
+  },
+  "accepted_release_i_target": {
+    "backend_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "frontend_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "release_candidate_id": "db72b8b9087fe1d2ec0f11ebd8033631070a82385bf0976bc325aab1091bef03",
+    "pair_id": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+    "parent_run_id": "34750913608",
+    "fe_gate_run_id": "34751164876",
+    "fe_deploy_run_id": "34751773220",
+    "operator_live_deploy_run_id": "34752443280",
+    "served_images": {
+      "operator-bff": "sha256:a9ceabe68af47623dbfeae554b01d64a5663be7fe0d6d4089f0d952c14dc0467",
+      "agora-interaction-worker": "sha256:b01d9e2762b3120c9626bd3bd8e19d7b342a399334082e20c6be96bfc365cd58",
+      "loop-run-projector-scheduler": "sha256:5fd644bca12fdac5355f569fad7dfbc192f50f32a2543da44464f7fabc73190d"
+    },
+    "served_frontend": {
+      "read_only_dist_sha256": "eab971709869b3f443222a13f769862072a4b2ad63557363c613ca0f1c982386",
+      "operator_live_dist_sha256": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
+      "release_store_root": "/var/www/pantheon-dev-fe-releases",
+      "live_symlink": "/var/www/pantheon-dev-fe"
+    }
+  },
+  "exact_prior_pair_e_baseline": {
+    "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+    "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+    "pair_id": "230cff55a7f299cf7b4c924b9200a7694f428a1064202f405a42d8b229e4030f",
+    "dist_sha256": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+    "manifest_sha256": "54d73cbfd331c04d0f0839ae8b141bdaaa84ba95ed39b6eb429648dcf5a7dfba",
+    "target": "/var/www/pantheon-dev-fe-releases/20260913T074001Z-ba0b47f44551-gate-34744818811-34745406166-1-240646",
+    "images": {
+      "operator-bff": "sha256:bef3371f6e0df6eec4d100905021b6c709cfbe454a6fa00057a3c00ba91228b7",
+      "agora-interaction-worker": "sha256:45847dcc4ab19673b743bcc7ff596e0cd99f90a197c9ab8402bd9578518bcbab",
+      "loop-run-projector-scheduler": "sha256:9d5ec8482a1c07d13a431b71def7e744c13ea5208d2a8dc8a3b785814b5084ad"
+    }
+  },
+  "execution_authorization_and_boundary_truth": {
+    "canonical_authorization_state": "pending_authorization",
+    "canonical_execution_grant": null,
+    "requires_execution_authorization": true,
+    "environment": "pantheon-dev",
+    "operator_mandate": [
+      "Do not auto-run the unexecuted temporary rollback script or expand safety gates.",
+      "Hosted work requires a genuine execution grant; never fabricate MFA or operator proof.",
+      "accepted I -> exact prior E -> same accepted I drill remains unexecuted.",
+      "Historical failure compensation (F, G, H) is distinct from bidirectional roundtrip drill."
+    ],
+    "roundtrip_drill_status": "unexecuted_held_pending_authorization_and_dev_window",
+    "safety_guarantees": {
+      "dev_data_preserved": true,
+      "real_sessions_tenant_preserved": true,
+      "paper_live_boundaries_intact": true,
+      "no_fabricated_mfa_or_grant": true,
+      "no_second_rollback_framework": true
+    }
+  }
+}

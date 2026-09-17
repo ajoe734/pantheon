@@ -1,0 +1,11 @@
+{
+  "algorithm": "sha256",
+  "description": "Cryptographic SHA-256 seal of all evidence files in docs/deployment/evidence/S5-ROLLBACK-001/ (excluding evidence.json to remain strictly acyclic).",
+  "files": {
+    "docs/deployment/evidence/S5-ROLLBACK-001/README.md": "75cb8ae214075e26f18dc09abbe72880d0aedaae0457afeaeb6c08cfe73247f8",
+    "docs/deployment/evidence/S5-ROLLBACK-001/release-f-compensation-reconciliation.json": "3c558f522a4c6b52c4051c713c1aca277ae6c19a0b0ab14985a688a69f81a462",
+    "docs/deployment/evidence/S5-ROLLBACK-001/release-g-manual-recovery-reconciliation.json": "25f7f1e12dfd7cb6866fa018631adabfe95334cf7ae5c80f80fe4574834e9892",
+    "docs/deployment/evidence/S5-ROLLBACK-001/release-h-manual-recovery-reconciliation.json": "fa8361e0fe4524de687dd4b885453de35d77433f7c998760b972b71dd6450c7b",
+    "docs/deployment/evidence/S5-ROLLBACK-001/roundtrip-drill-readiness-and-hold-boundary.json": "424aed1d0247047de59627076f33c1dfdf428c6682d90ac0f6c73ca5b6cfb95a"
+  }
+}

@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "task_id": "S5-ROLLBACK-001",
+  "task_title": "Exercise exact prior FE/BFF rollback drill",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "phase": "step-5-rollback",
+  "work_class": "hosted",
+  "timestamp": "2026-09-17T06:45:00Z",
+  "specification_reference": {
+    "step5_plan": "docs/04/pantheon-artifacts/dev-diagnostics-20260907/step5-execution-tasks.json",
+    "sa": "docs/04/pantheon-artifacts/dev-diagnostics-20260907/SA.md",
+    "sd": "docs/04/pantheon-artifacts/dev-diagnostics-20260907/SD.md",
+    "operator_handoff": "2026-09-13T13:16:20Z / 2026-09-13T14:06:54Z operator handoff in canonical activity log"
+  },
+  "acceptance_matrix": {
+    "acceptance_1_preserve_immutable_prior_bytes_no_rebuild": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "exact_prior_pair_e": {
+        "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+        "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+        "pair_id": "230cff55a7f299cf7b4c924b9200a7694f428a1064202f405a42d8b229e4030f",
+        "dist_sha256": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+        "manifest_sha256": "54d73cbfd331c04d0f0839ae8b141bdaaa84ba95ed39b6eb429648dcf5a7dfba",
+        "target": "/var/www/pantheon-dev-fe-releases/20260913T074001Z-ba0b47f44551-gate-34744818811-34745406166-1-240646",
+        "images": {
+          "operator-bff": "sha256:bef3371f6e0df6eec4d100905021b6c709cfbe454a6fa00057a3c00ba91228b7",
+          "agora-interaction-worker": "sha256:45847dcc4ab19673b743bcc7ff596e0cd99f90a197c9ab8402bd9578518bcbab",
+          "loop-run-projector-scheduler": "sha256:9d5ec8482a1c07d13a431b71def7e744c13ea5208d2a8dc8a3b785814b5084ad"
+        }
+      },
+      "no_source_rebuild_enforced": true,
+      "details": "Preserved immutable prior Pair E FE bytes, BFF container image IDs, Compose configuration, and manifest without source rebuild across Release F, G, and H compensations and Release I baseline capture."
+    },
+    "acceptance_2_bounded_failure_and_exact_pair_restore": {
+      "status": "reconciled_historical_compensation_exercised_roundtrip_drill_unexecuted",
+      "literal_criterion_satisfied": false,
+      "reconciliation_rationale": "Bounded candidate failure and exact prior pair restoration were verified in Releases F (automatic Actions compensation), G (manual recovery), and H (manual recovery). The planned bidirectional roundtrip drill (accepted I -> exact prior E -> same accepted I) has not been executed; canonical execution authorization remains pending_authorization (grant: null), and the temporary script run-I-roundtrip.py was not auto-run per operator instructions.",
+      "historical_compensations": {
+        "release_f": {
+          "run_id": "34746588532",
+          "mode": "automatic_exact_compensation_in_actions",
+          "candidate_id": "70e330ee62ccb720efb55ecefdb9961600609f1a949c70eafb9b1020c4fd12fc",
+          "rejected_pair": {
+            "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+            "frontend_sha": "43a1df560317cc85e1b7ecf3044e5e5cc931329a"
+          },
+          "restored_pair": {
+            "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+            "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1"
+          },
+          "outcome": "compensated"
+        },
+        "release_g": {
+          "run_id": "34748213471",
+          "mode": "manual_recovery_via_existing_entrypoint",
+          "interruption_reason": "GitHub API 500 interrupted Actions runner",
+          "candidate_id": "0ab6097e05231da126930e608608507afdba8cbcfa6a72029c9fe043168edf52",
+          "lease_id": "48e61b04-488d-445b-8656-1cdb859115aa",
+          "rejected_pair": {
+            "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+            "frontend_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a"
+          },
+          "restored_pair": {
+            "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+            "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1"
+          },
+          "outcome": "compensated"
+        },
+        "release_h": {
+          "run_id": "34749911751",
+          "mode": "manual_recovery_via_existing_entrypoint",
+          "interruption_reason": "GitHub API 500 interrupted Actions runner",
+          "candidate_id": "2677e22ccf35cb3c7322301523f70f28b64eb3c8d26f19dfb1c0cad253488252",
+          "rejected_pair": {
+            "backend_sha": "d7ce1036d87640a61f30aa3382200c55ef2165cd",
+            "frontend_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a"
+          },
+          "restored_pair": {
+            "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+            "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1"
+          },
+          "outcome": "compensated"
+        }
+      },
+      "roundtrip_drill_status": "unexecuted_held_pending_authorization_and_dev_window"
+    },
+    "acceptance_3_strict_auth_cors_readiness_safe_write_defaults": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "strict_auth": {
+        "auth_mode": "strict",
+        "auth_stub": false,
+        "strict_auth_denials_verified": true
+      },
+      "cors": {
+        "canonical_origin": "https://app.dev.mvl-cap.tw",
+        "credentials": true,
+        "verified": true
+      },
+      "service_readiness": {
+        "protected_owners_unchanged": true,
+        "verified_services": [
+          "capital",
+          "deployment",
+          "deployment-outbox-consumer",
+          "dev-paper-principal-issuer",
+          "governance",
+          "registry",
+          "runtime-manager"
+        ]
+      },
+      "safe_write_defaults": {
+        "backend_paper_enabled": true,
+        "backend_live_broker_enabled": false,
+        "fail_closed_live_capital": true
+      },
+      "details": "Strict authentication, CORS origin app.dev.mvl-cap.tw, protected business owners readiness, and paper-only broker configuration verified in all compensation readbacks."
+    },
+    "acceptance_4_separate_failure_and_restored_pair_receipts": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "failure_artifacts_separated": true,
+      "compensation_receipts_separated": true,
+      "never_called_successful_candidate_release": true,
+      "details": "Separate candidate failure logs/verdicts and restored-pair compensation receipts published across Releases F, G, and H; compensation was strictly distinguished from successful candidate release."
+    }
+  },
+  "delivered_evidence_files": [
+    "docs/deployment/evidence/S5-ROLLBACK-001/README.md",
+    "docs/deployment/evidence/S5-ROLLBACK-001/release-f-compensation-reconciliation.json",
+    "docs/deployment/evidence/S5-ROLLBACK-001/release-g-manual-recovery-reconciliation.json",
+    "docs/deployment/evidence/S5-ROLLBACK-001/release-h-manual-recovery-reconciliation.json",
+    "docs/deployment/evidence/S5-ROLLBACK-001/roundtrip-drill-readiness-and-hold-boundary.json",
+    "docs/deployment/evidence/S5-ROLLBACK-001/audit-seal.json",
+    "docs/deployment/evidence/S5-ROLLBACK-001/evidence.json"
+  ],
+  "verification_summary": {
+    "focused_test_suite": "201 passed, 3 skipped in 91.76s",
+    "test_command": "pytest scripts/test_agora_compat_manifest.py scripts/test_check_shared_deploy_workflow_disabled.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod_vm.py scripts/test_dev_release_artifacts.py",
+    "readback_verification": "Release F/G/H compensation readbacks independently cross-checked against original artifacts"
+  }
+}
