@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main  # noqa: E402
-from ports import create_read_surface_ports  # noqa: E402
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer inc001-operator:operator"}
@@ -42,9 +41,7 @@ _INCIDENT_CASE_EVIDENCE_FIELDS = (
 def _isolated_incident_bff(
     incidents: list[dict[str, Any]] | None,
 ) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
     original_env = {key: os.environ.get(key) for key in _TRACKED_ENV}
-    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
     with tempfile.TemporaryDirectory(prefix="inc001_bff_") as td:
         root = Path(td)
         incident_dir = root / "incidents"
@@ -58,8 +55,6 @@ def _isolated_incident_bff(
             )
             os.environ["INCIDENTS_DATA_DIR"] = str(incident_dir)
 
-        from ports import create_in_memory_read_surface_ports
-
         if incidents is not None:
             store = create_in_memory_read_surface_ports(
                 lifecycle_telemetry_governance_kwargs={
@@ -70,14 +65,20 @@ def _isolated_incident_bff(
         else:
             store = create_in_memory_read_surface_ports()
             store.dataset_source = lambda ds: "missing" if ds == "incidents" else "typed_store"
-        bff_main.read_store = store
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
+
+        app = FastAPI()
+        register_error_handlers(app)
+        idempotency_ledger: dict[str, Any] = {}
+        app.include_router(
+            create_incident_router(
+                read_surface=store,
+                get_read_store=lambda: store,
+                idempotency_ledger=idempotency_ledger,
+            )
+        )
         try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
+            yield TestClient(app, raise_server_exceptions=False)
         finally:
-            bff_main.read_store = original_store
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
             for key, value in original_env.items():
                 if value is None:
                     os.environ.pop(key, None)

@@ -3,7 +3,7 @@
   "task_id": "BFF-TEST-MIGRATION-CB02-ASK-TEACHING-WORKSHOP-001",
   "batch_index": 2,
   "batch_alias": "B20",
-  "base_sha": "85b89f93b6eb6861d03f450f189e3e822b209865",
+  "base_sha": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
   "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
@@ -17,13 +17,13 @@
     "services/control-plane/bff/agora/strategy_workshop/router.py"
   ],
   "architecture_gate": {
-    "live_scan_non_whitelisted_main_importers_before": 66,
-    "live_scan_non_whitelisted_main_importers_after": 57,
-    "live_scan_ceiling_before": 66,
-    "live_scan_ceiling_after": 57,
+    "live_scan_non_whitelisted_main_importers_before": 49,
+    "live_scan_non_whitelisted_main_importers_after": 40,
+    "live_scan_ceiling_before": 49,
+    "live_scan_ceiling_after": 40,
     "ceiling_delta": -9,
-    "migrated_suites_count_before": 11,
-    "migrated_suites_count_after": 20,
+    "migrated_suites_count_before": 28,
+    "migrated_suites_count_after": 37,
     "migrated_suites_delta": 9,
     "layer_delta": {
       "application": -1,
@@ -129,7 +129,7 @@
     }
   },
   "residual_disposition": {
-    "summary": "All 9 CB02 test suites fully decoupled from bff/main.py composition root and passing cleanly; live-scan non-whitelisted main importer ceiling successfully lowered from 66 to 57; 0 residual blockers",
+    "summary": "All 9 CB02 test suites fully decoupled from bff/main.py composition root and passing cleanly; live-scan non-whitelisted main importer ceiling successfully lowered from 49 to 40; 0 residual blockers",
     "decoupled_suites": [
       "services/control-plane/bff/test_ask_001_sessions_contract.py",
       "services/control-plane/bff/test_ask_003_committee_lifecycle.py",
@@ -156,12 +156,12 @@
   "verification": [
     {
       "command": "python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
-      "result": "8 passed in 7.30s",
+      "result": "8 passed in 4.77s",
       "exit_code": 0
     },
     {
       "command": "python3 -m pytest -q services/control-plane/bff/test_ask_001_sessions_contract.py services/control-plane/bff/test_ask_003_committee_lifecycle.py services/control-plane/bff/test_ask_004_memo_publish_contract.py services/control-plane/bff/test_trn002_trainer_session_contract.py services/control-plane/bff/test_trn003_rapid_eval_contract.py services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_tw03_before_after_compare_contract.py services/control-plane/bff/test_tw04_teaching_replay_contract.py",
-      "result": "172 passed, 4 warnings in 142.71s",
+      "result": "172 passed, 4 warnings in 133.63s",
       "exit_code": 0
     }
   ],
@@ -169,6 +169,6 @@
     "owner": "Antigravity2",
     "reviewer": "Antigravity",
     "decision": "ready_for_review",
-    "notes": "All 9 CB02 suites decoupled from bff/main.py composition root and passing cleanly via isolated FastAPI app fixtures. 0 main imports, 0 dynamic imports, 0 subprocess calls, 0 sys.path mutations, 0 global read_store monkeypatches across all 9 suites. AST live-scan ceiling lowered from 66 to 57."
+    "notes": "All 9 CB02 suites decoupled from bff/main.py composition root and passing cleanly via isolated FastAPI app fixtures. 0 main imports, 0 dynamic imports, 0 subprocess calls, 0 sys.path mutations, 0 global read_store monkeypatches across all 9 suites. AST live-scan ceiling lowered from 49 to 40."
   }
 }
