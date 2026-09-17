@@ -9,8 +9,8 @@
   "reviewer": "Claude",
   "delivery_state": "ready_for_independent_review",
   "target_repo": "ajoe734/pantheon",
-  "base_ref": "dev@1d7e2a620cf626fc4e883daaa8a9726251c3bdf7",
-  "base_sha": "1d7e2a620cf626fc4e883daaa8a9726251c3bdf7",
+  "base_ref": "dev@85b89f93b6eb6861d03f450f189e3e822b209865",
+  "base_sha": "85b89f93b6eb6861d03f450f189e3e822b209865",
   "summary": "Decoupled 6 target test suites (114 test cases across Management NL ask, OpenClaw ops surface, assistant provider, NL high-risk refusal, security hardening, and single-owner seam) from BFF main.py composition root imports, global monkeypatching (main.read_store, bff_main.read_store, app_deps.read_surface =), and sys.path surgery. Replaced direct composition root imports with dynamic module resolution via rebalance_authority_test_support, isolated TestClient harnesses, and test-scoped read store bindings on both BFF composition and context read services while preserving 100% of test assertions and contracts. Decreased inventory live_scan_non_whitelisted_main_importer_ceiling from 66 to 60 on rebased dev, registered all 6 suites in migrated_suites (bringing total migrated suites to 17), verified all 8 architecture invariant tests pass, and achieved 100% pass rate (114/114 passed) across the migrated test suites.",
   "target_suites": [
     "services/control-plane/bff/test_openclaw_ops_surface.py",
