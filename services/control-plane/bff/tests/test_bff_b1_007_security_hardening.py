@@ -29,7 +29,7 @@ from services.control_plane.bff.models import (
     utc_now,
 )
 from services.control_plane.bff.auth.policy import extract_identity_stub
-from services.control_plane.bff.tests.command_security_app_support import (
+from services.control_plane.bff.tests.conftest import (
     ApprovalDecisionReadSurface,
     build_command_security_app,
     noop_process_command,

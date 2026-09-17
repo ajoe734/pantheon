@@ -7,7 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "base_sha": "27e49d598",
   "delivery_state": "ready_for_independent_review",
-  "summary": "Decoupled 7 of 8 assigned test files (test_bff_auth_refresh.py, test_bff_logout.py, test_bff_me_locale.py, test_bff_me_session_bootstrap.py, test_bff_alerts_acknowledge.py, test_bff_b1_007_security_hardening.py, test_bff_b5_001_security_hardening.py) from main.py, rebuilding each as a standalone FastAPI app mounting real production router factories (auth.router.create_auth_router, incidents.router.create_incident_router, command_adapters.router.create_command_adapters_router, control_loops.router.create_control_loops_router) with only test-local fakes for injected collaborators. test_bff_path_dedupe.py remains blocked: its assertions audit the fully-assembled application route table (all ~20 domain routers plus deprecated-alias wiring), and main.py exposes no app-assembly function separate from the module-level `app` singleton, so there is no seam to build an equivalent fresh instance without `import main`. All 168 tests across the 7 migrated files plus 4 related already-migrated sibling files pass; 0 regressions found in that slice.",
+  "summary": "Decoupled 7 of 8 assigned test files (test_bff_auth_refresh.py, test_bff_logout.py, test_bff_me_locale.py, test_bff_me_session_bootstrap.py, test_bff_alerts_acknowledge.py, test_bff_b1_007_security_hardening.py, test_bff_b5_001_security_hardening.py) from main.py, rebuilding each as a standalone FastAPI app mounting real production router factories (auth.router.create_auth_router, incidents.router.create_incident_router, command_adapters.router.create_command_adapters_router, control_loops.router.create_control_loops_router) with only test-local fakes for injected collaborators. Shared, business-logic-free app builders live in conftest.py (the only shared-scaffolding location inside this task's declared artifact contract). test_bff_path_dedupe.py remains blocked: its assertions audit the fully-assembled application route table (all ~20 domain routers plus deprecated-alias wiring), and main.py exposes no app-assembly function separate from the module-level `app` singleton, so there is no seam to build an equivalent fresh instance without `import main`. All 167 tests across the 7 migrated files plus 4 related already-migrated sibling files pass; 0 regressions found in that slice.",
   "target_files_reconfirmation": {
     "instruction": "Re-ran the live AST scan (test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded) against HEAD before starting, per task acceptance criteria.",
     "result": "The 8 files named in the task brief all appeared in the live-scanned non-whitelisted main-importer list before this task's changes; no discrepancy found between the assigned list and reality."
@@ -20,10 +20,13 @@
     "services/control-plane/bff/tests/test_bff_alerts_acknowledge.py",
     "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py",
     "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py",
-    "services/control-plane/bff/tests/auth_session_app_support.py",
-    "services/control-plane/bff/tests/command_security_app_support.py",
-    "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    "services/control-plane/bff/tests/conftest.py"
   ],
+  "artifact_contract_note": {
+    "finding": "This task's enforced artifact contract (checked by ai-status.sh handoff) allows only the 8 named test files, tests/conftest.py, and this evidence.json. Two new shared-support module files originally added to avoid duplicating the app-builder code across the 6 auth/command test files (tests/auth_session_app_support.py, tests/command_security_app_support.py) were rejected by the handoff preflight as outside the declared scope and were folded into tests/conftest.py instead (conftest.py is on the allowed list and is imported the same way tests/test_bff_auth_facade.py already imports `asgi_request` from it).",
+    "consequence": "services/control-plane/bff/tests/bff_test_architecture_inventory.json is likewise outside the declared artifact contract for this task, so the `live_scan_non_whitelisted_main_importer_ceiling` lowering (86 -> 79) and the 7 corresponding PLANNED->DECOUPLED entries described in the task instructions were NOT committed in this delivery, even though the underlying migration work that would justify them is complete and green. As a direct result, `pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded` now fails against this branch (live scan finds 79 offenders; the inventory still records the pre-migration 86-entry list as `recorded`, so the staleness equality check trips; the `<= ceiling` bound itself is not exceeded).",
+    "recommended_follow_up": "Either (a) the task owner expands this task's artifact contract to include services/control-plane/bff/tests/bff_test_architecture_inventory.json and re-runs this same diff with that file's update re-applied (the exact JSON edit -- ceiling 86->79, and the 7 files' entries changed from {imports_main: true, disposition: PLANNED} to {imports_main: false, disposition: DECOUPLED} -- was verified locally and is trivial to reapply), or (b) a narrow fast-follow task is opened solely to update that inventory file once this PR merges, before it is relied on for CI gating."
+  },
   "left_unmigrated": [
     {
       "file": "services/control-plane/bff/tests/test_bff_path_dedupe.py",
@@ -52,18 +55,17 @@
     "decoupled_main_importers_count": 7,
     "blocked_main_importers_count": 1,
     "live_scan_before": {
-      "ceiling": 86,
-      "note": "Inventory ceiling prior to this task (docs/deployment/evidence sibling batches recorded the same 8 files -- 6 as PLANNED, 2 as still requiring composition -- against this ceiling)."
+      "ceiling": 86
     },
-    "live_scan_after": {
+    "live_scan_after_this_pr_merges_conceptually": {
       "command": "pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
-      "ceiling": 79,
       "live_offenders_count": 79,
       "delta": -7,
-      "note": "7 of the 8 target files removed from the live-scanned non-whitelisted main-importer list (test_bff_path_dedupe.py remains, as recorded above). Inventory JSON's live_scan_non_whitelisted_main_importer_ceiling lowered 86 -> 79 and the 7 filenames removed from live_scan_non_whitelisted_main_importers and composition_allowlist detail entries (PLANNED -> DECOUPLED, imports_main: true -> false).",
-      "architecture_invariant_check_exit_code": 0,
-      "architecture_invariant_check_passed": 8,
-      "architecture_invariant_check_failed": 0
+      "note": "7 of the 8 target files are removed from the live-scanned non-whitelisted main-importer list by this PR's test-file changes (test_bff_path_dedupe.py remains, as recorded above). The inventory JSON's ceiling/list update that would make the architecture-invariant test green again could NOT be committed in this delivery -- see artifact_contract_note above for why and the exact follow-up needed.",
+      "architecture_invariant_check_exit_code_as_delivered": 1,
+      "architecture_invariant_check_passed_as_delivered": 7,
+      "architecture_invariant_check_failed_as_delivered": 1,
+      "architecture_invariant_check_failure_is_expected_and_documented": true
     }
   },
   "file_dispositions": {
@@ -72,28 +74,28 @@
       "tests_passed": 3,
       "main_imports": 0,
       "sys_path_mutations": 0,
-      "production_wiring": "services.control_plane.bff.auth.router.create_auth_router + auth.service.AuthFacadeService + auth.handlers.create_auth_handlers/create_auth_dependencies (via new tests/auth_session_app_support.py helper) + core.errors.register_error_handlers, with an injected fresh session_lifecycle_store.SessionLifecycleStore per test"
+      "production_wiring": "services.control_plane.bff.auth.router.create_auth_router + auth.service.AuthFacadeService + auth.handlers.create_auth_handlers/create_auth_dependencies (via tests/conftest.py's build_auth_session_app helper) + core.errors.register_error_handlers, with an injected fresh session_lifecycle_store.SessionLifecycleStore per test"
     },
     "services/control-plane/bff/tests/test_bff_logout.py": {
       "disposition": "DECOUPLED",
       "tests_passed": 7,
       "main_imports": 0,
       "sys_path_mutations": 0,
-      "production_wiring": "same as test_bff_auth_refresh.py via tests/auth_session_app_support.py"
+      "production_wiring": "same as test_bff_auth_refresh.py via tests/conftest.py's build_auth_session_app"
     },
     "services/control-plane/bff/tests/test_bff_me_locale.py": {
       "disposition": "DECOUPLED",
       "tests_passed": 6,
       "main_imports": 0,
       "sys_path_mutations": 0,
-      "production_wiring": "same as test_bff_auth_refresh.py via tests/auth_session_app_support.py"
+      "production_wiring": "same as test_bff_auth_refresh.py via tests/conftest.py's build_auth_session_app"
     },
     "services/control-plane/bff/tests/test_bff_me_session_bootstrap.py": {
       "disposition": "DECOUPLED",
       "tests_passed": 2,
       "main_imports": 0,
       "sys_path_mutations": 0,
-      "production_wiring": "same as test_bff_auth_refresh.py via tests/auth_session_app_support.py"
+      "production_wiring": "same as test_bff_auth_refresh.py via tests/conftest.py's build_auth_session_app"
     },
     "services/control-plane/bff/tests/test_bff_alerts_acknowledge.py": {
       "disposition": "DECOUPLED",
@@ -107,7 +109,7 @@
       "tests_passed": 26,
       "main_imports": 0,
       "sys_path_mutations": 0,
-      "production_wiring": "services.control_plane.bff.command_adapters.service.CommandAdapterService + command_adapters.router.create_command_adapters_router + control_loops.router.create_control_loops_router (via new tests/command_security_app_support.py helper), exercising the real confirm-token, approval-decision, and two-man-signature precondition pipeline in command_adapters/preconditions.py and the real foundation-context builder in command_adapters/contracts.py, against a real command_queue.CommandStore and a real ports.read_surface_ports-backed ApprovalDecisionReadSurface. This is a strictly larger real-code surface than the composition-import fallback a prior batch (BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001) recorded as blocked for this same file; command_adapters/service.py has since matured enough (also exercised by the already-migrated test_v5_interventions.py) to fully decouple it."
+      "production_wiring": "services.control_plane.bff.command_adapters.service.CommandAdapterService + command_adapters.router.create_command_adapters_router + control_loops.router.create_control_loops_router (via tests/conftest.py's build_command_security_app helper), exercising the real confirm-token, approval-decision, and two-man-signature precondition pipeline in command_adapters/preconditions.py and the real foundation-context builder in command_adapters/contracts.py, against a real command_queue.CommandStore and a real ports.read_surface_ports-backed ApprovalDecisionReadSurface. This is a strictly larger real-code surface than the composition-import fallback a prior batch (BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001) recorded as blocked for this same file; command_adapters/service.py has since matured enough (also exercised by the already-migrated test_v5_interventions.py) to fully decouple it."
     },
     "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py": {
       "disposition": "DECOUPLED",
@@ -131,12 +133,12 @@
         "purpose": "provision the pantheon-py interpreter for this worktree"
       },
       {
-        "cmd": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_bff_auth_refresh.py services/control-plane/bff/tests/test_bff_logout.py services/control-plane/bff/tests/test_bff_me_locale.py services/control-plane/bff/tests/test_bff_me_session_bootstrap.py services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py services/control-plane/bff/tests/test_bff_path_dedupe.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_bff_session_auth_me_contract.py",
-        "result": "168 passed, 0 failed"
+        "cmd": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_bff_auth_refresh.py services/control-plane/bff/tests/test_bff_logout.py services/control-plane/bff/tests/test_bff_me_locale.py services/control-plane/bff/tests/test_bff_me_session_bootstrap.py services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py services/control-plane/bff/tests/test_bff_path_dedupe.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_bff_session_auth_me_contract.py",
+        "result": "167 passed, 0 failed"
       },
       {
         "cmd": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
-        "result": "8 passed, 0 failed (was 7 passed / 1 failed against the stale inventory prior to the JSON update in this task)"
+        "result": "7 passed, 1 failed (test_non_whitelisted_main_importers_is_live_scanned_and_bounded fails as expected/documented -- see artifact_contract_note; inventory JSON update was out of this task's enforced artifact-contract scope)"
       }
     ],
     "unrelated_pre_existing_collection_errors_observed": [

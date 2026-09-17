@@ -11,7 +11,7 @@ from services.control_plane.bff.auth.policy import bff_error
 from services.control_plane.bff.command_executor import execute_command_with_status
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.models import CommandStatus, CommandType, ErrorCode, RiskLevel, OperatorIdentity
-from services.control_plane.bff.tests.command_security_app_support import (
+from services.control_plane.bff.tests.conftest import (
     ApprovalDecisionReadSurface,
     build_command_security_app,
     noop_process_command,

@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
-from services.control_plane.bff.tests.auth_session_app_support import build_auth_session_app
+from services.control_plane.bff.tests.conftest import build_auth_session_app
 
 
 @pytest.fixture(autouse=True)
