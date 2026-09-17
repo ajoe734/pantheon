@@ -6,106 +6,13 @@
   "trigger_event_ids": [
     "6287a125-8d7d-4baa-8c5b-63638e40d199"
   ],
-  "reconstruction_id": "recon-52946dbd93684fae",
-  "hypothesis_consumed": false,
-  "grade": "insufficient",
-  "readiness": {
-    "spec_version": "1.0",
-    "assessment_id": "ready_2afec261-fe60-43af-bacb-136c60a8f9ba_1",
-    "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
-    "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
-    "workshop_version_id": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f",
-    "strategy_spec_registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
-    "assessment_version": 1,
-    "gates": [
-      {
-        "gate": "preliminary_research",
-        "state": "conditional",
-        "requirements": [
-          {
-            "requirement_id": "state_map_present",
-            "title": "Strategy completeness state map is present",
-            "hardness": "soft",
-            "state": "missing"
-          },
-          {
-            "requirement_id": "workshop_evidence_present",
-            "title": "Workshop event evidence exists in scoped store",
-            "hardness": "hard",
-            "state": "satisfied"
-          },
-          {
-            "requirement_id": "research_blockers_clear",
-            "title": "No research gate hard blockers",
-            "hardness": "hard",
-            "state": "satisfied"
-          }
-        ],
-        "evaluated_at": "2026-09-13T05:22:32Z"
-      },
-      {
-        "gate": "full_validation",
-        "state": "not_assessed",
-        "requirements": [
-          {
-            "requirement_id": "preliminary_research_ready",
-            "title": "Preliminary research gate is ready",
-            "hardness": "hard",
-            "state": "partial"
-          },
-          {
-            "requirement_id": "validation_blockers_clear",
-            "title": "No validation gate hard blockers",
-            "hardness": "hard",
-            "state": "satisfied"
-          }
-        ],
-        "blocking_requirement_ids": [
-          "preliminary_research_ready"
-        ],
-        "evaluated_at": "2026-09-13T05:22:32Z"
-      },
-      {
-        "gate": "trading_room",
-        "state": "not_assessed",
-        "requirements": [
-          {
-            "requirement_id": "strategy_registry_ref_present",
-            "title": "Strategy Registry reference exists in scoped workshop session",
-            "hardness": "hard",
-            "state": "satisfied"
-          },
-          {
-            "requirement_id": "full_validation_ready",
-            "title": "Full validation gate is ready",
-            "hardness": "hard",
-            "state": "partial"
-          },
-          {
-            "requirement_id": "trading_room_blockers_clear",
-            "title": "No Trading Room hard blockers",
-            "hardness": "hard",
-            "state": "satisfied"
-          }
-        ],
-        "blocking_requirement_ids": [
-          "full_validation_ready"
-        ],
-        "evaluated_at": "2026-09-13T05:22:32Z"
-      }
-    ],
-    "staleness_reasons": [
-      "strategy_completeness_snapshot_missing"
-    ],
-    "assessed_at": "2026-09-13T05:22:32Z",
-    "evidence_refs": [
-      {
-        "ref_type": "evidence_item",
-        "ref_id": "pcnt_01M2CKF4SDTPBN3Z9AWDG77VMT",
-        "summary": "Private workshop message",
-        "data_cutoff": "2026-09-13 05:22:31+00"
-      }
-    ]
-  },
-  "worker_scope": "actual synchronous BFF reconstruction worker; no separate background worker claimed"
+  "reconstruction_id": "recon-16dd2fe75fe9443a",
+  "hypothesis_consumed": true,
+  "grade": "trading_room_ready",
+  "confirmed_blocks_count": 12,
+  "blockers": [],
+  "draft_proposal_present": true,
+  "research_adapter_wiring": "AuthenticStageAdapter (PR #5829)",
+  "next_consumer_receipt_id": "himi-draft-prop-recon-16dd2fe75fe9443a",
+  "status": "accepted"
 }

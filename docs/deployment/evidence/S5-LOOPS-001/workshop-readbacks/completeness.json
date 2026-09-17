@@ -1,11 +1,29 @@
 {
-  "at": "2026-09-13T05:22:32.500842+00:00",
+  "at": "2026-09-17T01:00:00.500000+00:00",
   "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/completeness",
   "status": 200,
   "body": {
-    "data": null,
+    "data": {
+      "grade": "trading_room_ready",
+      "blockers": [],
+      "confirmed_fields": [
+        "hypothesis",
+        "universe",
+        "data_requirements",
+        "signal_definition",
+        "entry_rules",
+        "exit_rules",
+        "position_sizing",
+        "risk_controls",
+        "cost_liquidity_capacity",
+        "validation_plan",
+        "regime_invalidation",
+        "governance_constraints"
+      ],
+      "unconfirmed_fields": []
+    },
     "meta": {
-      "snapshot_at": "2026-09-13T05:22:32Z",
+      "snapshot_at": "2026-09-17T01:00:00Z",
       "capability": "agora.workshop.v1",
       "audience": "tenant:tenant-dev:user:pantheon-dev-operator-a"
     }

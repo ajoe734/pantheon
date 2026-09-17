@@ -1,11 +1,11 @@
 {
   "service": "operator-bff",
   "version": "0.2.0",
-  "source_commit_sha": "1daddc740598e271ab159fd2045ca3d318a7ec84",
-  "commit": "1daddc740598e271ab159fd2045ca3d318a7ec84",
+  "source_commit_sha": "dc15751a9b20f8bc0931529d68af8898e691c898",
+  "commit": "dc15751a9b20f8bc0931529d68af8898e691c898",
   "source_commit_known": true,
-  "image_digest": "sha256:409f73a05371f856a260e1d82ea3e70832694eed7f5e903b7b3eeebe63e99c9e",
-  "build_time": "2026-09-13T05:08:20Z",
+  "image_digest": "sha256:39b53beefbf742b0ba263dd68a7c6e277945baca2b52f7bee1e693506abf269d",
+  "build_time": "2026-09-15T03:49:41Z",
   "environment": "dev",
   "config_posture": {
     "auth_stub": false,

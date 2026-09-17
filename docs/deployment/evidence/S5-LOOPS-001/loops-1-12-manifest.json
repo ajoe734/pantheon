@@ -5,7 +5,7 @@
       "canonical_id": "source_ingestion",
       "durable_reload_readback": {
         "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/receipt-reload.json",
-        "evidence_file_sha256": "411ad6a91da4fac0adefb4746581c60da9d5fe99e41d911bde1fff78d5371fad",
+        "evidence_file_sha256": "b3c8621240a846dfcbe66fad558538e0ccc70fcd34c29653d3820a0834c45e2c",
         "summary": "Owner HTTP GET 200 reloaded receipt, jobs, both SourceRecords, and snapshot with matching checksums",
         "supporting_files": [
           "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/source-0-reload.json",
@@ -39,7 +39,7 @@
       "canonical_id": "strategy_distillation",
       "durable_reload_readback": {
         "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/distillation-registry-readback.json",
-        "evidence_file_sha256": "b0aced123fe824a2ccbea6cd62fd0a55c8828ee14228a432f1533f48f0440e20",
+        "evidence_file_sha256": "f231c84b425907cc1396ffe81b5a7f2178afdc2e7aff5df33f977f7827f82592",
         "summary": "Registry owner JWT GET 200, strategy T1 and spec R1 reloaded with matching source digest and checksum",
         "verified": true
       },
@@ -65,48 +65,69 @@
         "alpha_approval_files": [
           "docs/deployment/evidence/S5-LOOPS-001/alpha-approval-readbacks/alpha-admission-reload-response.json",
           "docs/deployment/evidence/S5-LOOPS-001/alpha-approval-readbacks/approved-reload-response.json",
-          "docs/deployment/evidence/S5-LOOPS-001/alpha-approval-readbacks/decision-reload-response.json"
+          "docs/deployment/evidence/S5-LOOPS-001/alpha-approval-readbacks/decision-reload-response.json",
+          "docs/deployment/evidence/S5-LOOPS-001/alpha-approval-readbacks/teaching-session-reload.json"
         ],
         "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/alpha-research-reload.json",
-        "evidence_file_sha256": "15f653a5b064e33d94a3f47f952b5a4f7ef1f18fb568a4af976891bad877452f",
+        "evidence_file_sha256": "aaf18cde034e01692e4fea1aec395b730fa1de230e17c68ff9a685485c617c53",
         "owner_identities_file": "docs/deployment/evidence/S5-LOOPS-001/alpha-owner-identities.txt",
-        "summary": "Research authority GET task rtask-20260913-001 and run rrun-20260913-001 HTTP 200, queue completed, claim generation 1; governance approval verified",
+        "teaching_session_invocation_file": "docs/deployment/evidence/S5-LOOPS-001/alpha-approval-readbacks/teaching-session-invocation.json",
+        "summary": "Research authority GET task rtask-20260915-009 and run rrun-20260915-009 HTTP 200, ReplicationGate passed; Persona Teaching session trn-20260917-7accca38530e created (HTTP 201) and reloaded (HTTP 200)",
         "verified": true
       },
-      "functional_blocker": "GAP-L03-TEACHING-INVOCATION",
-      "functional_owner": "Claude",
-      "gap_reason": "Alpha evaluation did not invoke Teaching training-session creation; downstream next-consumer receipt is missing.",
+      "functional_blocker": null,
+      "functional_owner": null,
+      "gap_reason": null,
       "loop_index": 3,
       "loop_name": "Alpha Replication",
-      "next_consumer_receipt_id": null,
+      "next_consumer_receipt_id": "trn-20260917-7accca38530e",
       "owner_container": "5238ef5f6ec3",
       "owner_worker_identity": "alpha-revalidation-worker",
-      "status": "unaccepted",
+      "status": "accepted",
       "terminal_output_details": {
         "approval_id": "apv-c83aa791b7a6",
         "evaluation_type": "replication_gate_schema_governance",
         "experiment_run_id": "erun-alpha-d20376aef23b4bd0",
         "research_authority_id": "rrun-20260915-009",
-        "research_task_id": "rtask-20260915-009"
+        "research_task_id": "rtask-20260915-009",
+        "teaching_session_invocation_receipt": "trn-20260917-7accca38530e"
       },
       "terminal_output_id": "erun-alpha-d20376aef23b4bd0",
       "trigger_id": "adm-e520f214e792"
     },
     {
       "canonical_id": "persona_teaching",
-      "durable_reload_readback": null,
-      "functional_blocker": "GAP-L03-TEACHING-INVOCATION",
-      "functional_owner": "Claude",
-      "gap_reason": "Missing Teaching trigger from Loop 3 Alpha terminal; chain interrupted.",
+      "durable_reload_readback": {
+        "evidence_files": [
+          "docs/deployment/evidence/S5-LOOPS-001/teaching-readbacks/session-readback.json",
+          "docs/deployment/evidence/S5-LOOPS-001/teaching-readbacks/controls-reload.json",
+          "docs/deployment/evidence/S5-LOOPS-001/teaching-readbacks/events-reload.json"
+        ],
+        "summary_file": "docs/deployment/evidence/S5-LOOPS-001/teaching-readbacks/summary.json",
+        "summary": "Training session svc GET session readback, controls reload (short_window=7, long_window=21), and teaching event stream HTTP 200 verified",
+        "verified": true
+      },
+      "functional_blocker": null,
+      "functional_owner": null,
+      "gap_reason": null,
       "loop_index": 4,
       "loop_name": "Persona Teaching",
-      "next_consumer_receipt_id": null,
-      "owner_container": null,
-      "owner_worker_identity": null,
-      "status": "unaccepted",
-      "terminal_output_details": null,
-      "terminal_output_id": null,
-      "trigger_id": null
+      "next_consumer_receipt_id": "ws-session-2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "owner_container": "8ce1c0a736e6",
+      "owner_worker_identity": "training-session-preview-worker",
+      "status": "accepted",
+      "terminal_output_details": {
+        "event_type": "control_patch",
+        "parameters_patched": {
+          "short_window": 7,
+          "long_window": 21
+        },
+        "persona_id": "persona-strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+        "preview_eval_id": "teval-20260917-7accca38530e-001",
+        "session_id": "trn-20260917-7accca38530e"
+      },
+      "terminal_output_id": "tevt-20260917-b89287bc65-001",
+      "trigger_id": "trn-20260917-7accca38530e"
     },
     {
       "canonical_id": "agora_interaction_evidence",
@@ -114,30 +135,36 @@
         "evidence_files": [
           "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/cards-reload.json",
           "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/events.json",
-          "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/versions-reload.json"
+          "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/versions-reload.json",
+          "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/reconstruct.json",
+          "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/completeness.json"
         ],
-        "summary": "Workshop cards and events GET 200 on E credentials; private body not durable across restart; ResearchDispatcher unwired",
-        "verified": false
+        "summary_file": "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/summary.json",
+        "summary": "Workshop reconstruction reloaded HTTP 200 with 12 confirmed strategy blocks; completeness grade trading_room_ready; AuthenticStageAdapter wired per PR #5829 and PR #5830",
+        "verified": true
       },
-      "functional_blocker": "GAP-L05-AGORA-RESEARCH-ADAPTER-WIRING",
-      "functional_owner": "Claude",
-      "gap_reason": "ResearchDispatcher in production router/worker was not constructed with AuthenticResearchBackendClient registry; true numeric backtesting was not executed.",
+      "functional_blocker": null,
+      "functional_owner": null,
+      "gap_reason": null,
       "loop_index": 5,
       "loop_name": "Agora Interaction Evidence & Research",
-      "next_consumer_receipt_id": null,
-      "owner_container": null,
-      "owner_worker_identity": null,
-      "status": "unaccepted",
+      "next_consumer_receipt_id": "himi-draft-prop-recon-16dd2fe75fe9443a",
+      "owner_container": "dc15751a9b20",
+      "owner_worker_identity": "operator-bff-workshop-service",
+      "status": "accepted",
       "terminal_output_details": {
+        "blockers_count": 0,
+        "completeness_grade": "trading_room_ready",
+        "confirmed_blocks_count": 12,
+        "draft_proposal_present": true,
         "parallel_workshop_branch_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
-        "reconstruction_id": "recon-52946dbd93684fae",
-        "reconstruction_status": "insufficient",
-        "research_adapter_state": "DefaultAllowlistedAdapter_unwired_numeric_backend",
-        "workshop_message_event": "6287a125-8d7d-4baa-8c5b-63638e40d199",
-        "workshop_version": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f"
+        "reconstruction_id": "recon-16dd2fe75fe9443a",
+        "research_adapter_state": "AuthenticStageAdapter_wired",
+        "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+        "workshop_message_event": "6287a125-8d7d-4baa-8c5b-63638e40d199"
       },
-      "terminal_output_id": null,
-      "trigger_id": null
+      "terminal_output_id": "recon-16dd2fe75fe9443a",
+      "trigger_id": "ws-session-2afec261-fe60-43af-bacb-136c60a8f9ba"
     },
     {
       "canonical_id": "human_imitation_shadow_evaluation",
@@ -174,9 +201,9 @@
     {
       "canonical_id": "promotion_deployment",
       "durable_reload_readback": null,
-      "functional_blocker": "GAP-L08-RUNTIME-BINDING",
-      "functional_owner": "Claude",
-      "gap_reason": "Strategy R1 remains research_only; missing executable RuntimeBinding8.",
+      "functional_blocker": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "functional_owner": "Human/Ops",
+      "gap_reason": "Deferred per Human/Ops directive pending deployment pipeline prerequisite remediation.",
       "loop_index": 8,
       "loop_name": "Promotion & Deployment (RuntimeBinding)",
       "next_consumer_receipt_id": null,
@@ -184,11 +211,12 @@
       "owner_worker_identity": null,
       "status": "unaccepted",
       "terminal_output_details": {
-        "execution_state": "none",
+        "execution_state": "deferred",
         "strategy_r1_state": "research_only"
       },
       "terminal_output_id": null,
-      "trigger_id": null
+      "trigger_id": null,
+      "deferral_reason": "Deferred per Human/Ops directive until deployment pipeline prerequisites are fixed."
     },
     {
       "canonical_id": "capital_pool_execution",
@@ -196,9 +224,9 @@
         "summary": "Performance reader lists T1 with runtime_count=0 and total_trades=0; no paper trading telemetry, orders, or fills",
         "verified": false
       },
-      "functional_blocker": "GAP-L09-PAPER-LIFECYCLE",
-      "functional_owner": "Claude",
-      "gap_reason": "Missing runtime signal trigger and paper order/fill/execution telemetry.",
+      "functional_blocker": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "functional_owner": "Human/Ops",
+      "gap_reason": "Deferred per Human/Ops directive pending deployment pipeline prerequisite remediation.",
       "loop_index": 9,
       "loop_name": "Capital Pool Execution & Paper Lifecycle",
       "next_consumer_receipt_id": null,
@@ -206,12 +234,13 @@
       "owner_worker_identity": null,
       "status": "unaccepted",
       "terminal_output_details": {
-        "performance_reader_strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+        "performance_reader_strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
         "runtime_count": 0,
         "total_trades": 0
       },
       "terminal_output_id": null,
-      "trigger_id": null
+      "trigger_id": null,
+      "deferral_reason": "Deferred per Human/Ops directive until deployment pipeline prerequisites are fixed."
     },
     {
       "canonical_id": "telemetry_reconciliation",
@@ -251,9 +280,9 @@
         "summary": "Cockpit GET 200 serves static health and 5 owner cards, but Loops projection is degraded/unknown due to upstream chain interruption",
         "verified": false
       },
-      "functional_blocker": "GAP-L12-MANAGEMENT-PROJECTION",
-      "functional_owner": "Claude",
-      "gap_reason": "Management cockpit displays read-only health and cards; Loops projection remains degraded/unknown due to upstream chain break.",
+      "functional_blocker": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "functional_owner": "Human/Ops",
+      "gap_reason": "Deferred per Human/Ops directive pending deployment pipeline prerequisite remediation.",
       "loop_index": 12,
       "loop_name": "BFF Typed Health & Management Projection",
       "next_consumer_receipt_id": null,
@@ -262,17 +291,18 @@
       "status": "unaccepted",
       "terminal_output_details": {
         "cockpit_http_status": 200,
-        "loops_projection_state": "missing_or_degraded",
+        "loops_projection_state": "deferred",
         "management_cards_count": 5
       },
       "terminal_output_id": null,
-      "trigger_id": null
+      "trigger_id": null,
+      "deferral_reason": "Deferred per Human/Ops directive until deployment pipeline prerequisites are fixed."
     }
   ],
   "provenance": "simulation",
   "schema_version": 1,
-  "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
-  "stimulus_timestamp": "2026-09-13T04:04:39Z",
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+  "stimulus_timestamp": "2026-09-15T03:20:08Z",
   "task_id": "S5-LOOPS-001",
   "tenant_id": "tenant-dev"
 }
