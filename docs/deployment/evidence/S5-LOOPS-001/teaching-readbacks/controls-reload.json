@@ -1,0 +1,28 @@
+{
+  "session_id": "trn-20260917-7accca38530e",
+  "tenant_id": "tenant-dev",
+  "controls": [
+    {
+      "parameter_key": "short_window",
+      "display_label": "Short moving-average window",
+      "baseline_value": 5,
+      "current_value": 7,
+      "allowed_range": {
+        "min": 1,
+        "max": 64
+      },
+      "last_modified_at": "2026-09-17T00:57:22Z"
+    },
+    {
+      "parameter_key": "long_window",
+      "display_label": "Long moving-average window",
+      "baseline_value": 20,
+      "current_value": 21,
+      "allowed_range": {
+        "min": 2,
+        "max": 256
+      },
+      "last_modified_at": "2026-09-17T00:57:22Z"
+    }
+  ]
+}

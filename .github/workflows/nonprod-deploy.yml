@@ -606,6 +606,8 @@ jobs:
           echo "sha=${previous}" >> "${GITHUB_OUTPUT}"
           echo "frontend_sha=${previous_frontend}" >> "${GITHUB_OUTPUT}"
           echo "is_bootstrap=${BOOTSTRAP_EMPTY_HOST:-false}" >> "${GITHUB_OUTPUT}"
+          echo "baseline_source=${baseline_source}" >> "${GITHUB_OUTPUT}"
+          echo "observed_live_bff_sha=${observed_previous}" >> "${GITHUB_OUTPUT}"
 
       - name: Seal exact-pair admission artifact before any dev switch
         id: release_admission_upload
@@ -1140,6 +1142,8 @@ jobs:
           PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
           PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
+          PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE: ${{ steps.rollback_baseline.outputs.baseline_source }}
+          PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA: ${{ steps.rollback_baseline.outputs.observed_live_bff_sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           controller="${GITHUB_WORKSPACE}/.lease-controller"
@@ -1280,6 +1284,8 @@ jobs:
           PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
           PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
+          PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE: ${{ steps.rollback_baseline.outputs.baseline_source }}
+          PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA: ${{ steps.rollback_baseline.outputs.observed_live_bff_sha }}
           PANTHEON_DEV_ARTIFACT_MANIFEST_PATH: ${{ steps.artifact_baseline.outputs.manifest_path }}
           PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256: ${{ steps.artifact_baseline.outputs.manifest_sha256 }}
           PANTHEON_DEV_ARTIFACT_DRIVER_PATH: ${{ steps.artifact_baseline.outputs.driver_path }}

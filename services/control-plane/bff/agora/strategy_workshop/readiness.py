@@ -12,6 +12,11 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ._common import _clean_optional, _safe_card_id
 
+__all__ = [
+    "build_readiness_assessment",
+    "_build_readiness_assessment",
+]
+
 def _project_winner_branch_state_map(state_map: Dict[str, str]) -> Dict[str, str]:
     winner_keys = {
         "market_scope",
@@ -234,7 +239,7 @@ def _build_evidence_refs(
     return refs
 
 
-def _build_readiness_assessment(
+def build_readiness_assessment(
     *,
     session: Dict[str, Any],
     events: List[Dict[str, Any]],
@@ -404,8 +409,6 @@ def _build_readiness_assessment(
     })
 
 
-# Public API consumed outside this package (e.g. Trading Room's readiness
-# fallback projector). The underscore-prefixed name above is retained as
-# the module's own internal implementation name; this is the stable public
-# entry point callers should import.
-build_readiness_assessment = _build_readiness_assessment
+# Backward compatibility alias for callers that historically imported the
+# underscore-prefixed name.
+_build_readiness_assessment = build_readiness_assessment

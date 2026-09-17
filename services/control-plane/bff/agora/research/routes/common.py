@@ -1745,8 +1745,8 @@ class AgoraResearchRouteContext:
         return member
 
     def publish_research_event(self, workshop_id: str, event_type: str, data: Dict[str, Any]) -> None:
-        _ws_publish = _get_ws_publish()
-        _ws_publish(workshop_id, event_type, data, utc_now_fn=self.utc_now)
+        publisher = _resolve_workshop_publisher()
+        publisher(workshop_id, event_type, data, utc_now_fn=self.utc_now)
 
     def build_candidate_pool(self, body: CandidatePoolCreateRequest, scope: Any, now: str) -> Dict[str, Any]:
         operator_id = getattr(scope, "operator_id", scope.user_id)
@@ -2080,19 +2080,24 @@ class AgoraResearchRouteContext:
         return projection
 
 
-def _get_ws_publish() -> Callable[..., str]:
+def _resolve_workshop_publisher() -> Callable[..., str]:
     import sys
-    if "agora.strategy_workshop.events" in sys.modules:
-        return getattr(sys.modules["agora.strategy_workshop.events"], "_ws_publish")
-    if "services.control_plane.bff.agora.strategy_workshop.events" in sys.modules:
-        return getattr(sys.modules["services.control_plane.bff.agora.strategy_workshop.events"], "_ws_publish")
+    for mod_name in (
+        "agora.strategy_workshop.events",
+        "services.control_plane.bff.agora.strategy_workshop.events",
+    ):
+        if mod_name in sys.modules:
+            mod = sys.modules[mod_name]
+            fn = getattr(mod, "ws_publish", None)
+            if fn is not None:
+                return fn
     try:
-        from agora.strategy_workshop.events import _ws_publish
-        return _ws_publish
+        from agora.strategy_workshop.events import ws_publish
+        return ws_publish
     except ImportError:
         pass
-    from services.control_plane.bff.agora.strategy_workshop.events import _ws_publish
-    return _ws_publish
+    from services.control_plane.bff.agora.strategy_workshop.events import ws_publish
+    return ws_publish
 
 
 def publish_research_progress(
@@ -2104,8 +2109,8 @@ def publish_research_progress(
     phase: str = "running",
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    _ws_publish = _get_ws_publish()
-    return _ws_publish(
+    publisher = _resolve_workshop_publisher()
+    return publisher(
         workshop_id,
         "research.run.progress",
         {
@@ -2124,8 +2129,8 @@ def publish_openclaw_degraded(
     *,
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    _ws_publish = _get_ws_publish()
-    return _ws_publish(
+    publisher = _resolve_workshop_publisher()
+    return publisher(
         workshop_id,
         "workshop.openclaw.degraded",
         {

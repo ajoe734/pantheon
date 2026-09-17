@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": "source record not found"
+  },
+  "http_status": 404,
+  "method": "GET",
+  "observed_at": "2026-09-15T03:20:08Z",
+  "route": "/api/source-ingest/source-records/src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous"
+}
