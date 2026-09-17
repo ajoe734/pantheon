@@ -3,10 +3,10 @@
   "task_id": "BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
   "branch": "task/BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
   "owner": "Antigravity",
-  "reviewer": "Codex",
+  "reviewer": "Antigravity2",
   "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
   "delivery_state": "ready_for_review",
-  "base_sha": "8778521b4726e22c05a1aebe19a971e0f9dca5e7",
+  "base_sha": "c6f39a8d87aeb480800d55f72c88286dc3bddb3d",
   "depends_on": [
     "BFF-TEST-MIGRATION-REPARTITION-PLAN-002"
   ],
@@ -42,8 +42,8 @@
     "main_imports_after": 0,
     "sys_path_mutations_before": 13,
     "sys_path_mutations_after": 0,
-    "ceiling_before": 86,
-    "ceiling_after": 73
+    "ceiling_before": 66,
+    "ceiling_after": 53
   },
   "test_summary": {
     "target_suites_count": 13,
@@ -159,6 +159,7 @@
       "disposition": "DECOUPLED"
     }
   },
+  "rebase_reconciliation_note": "Origin/dev advanced to c6f39a8d8 with sibling batches (CB01, CB03, CB04, CB05, CB07, CB08) merged, progressing the ceiling from 86 to 66. Merging origin/dev into this branch resulted in a content conflict in bff_test_architecture_inventory.json. The conflict was resolved by merging dev's 11 migrated suites with this batch's 13 migrated suites (total 24), recomputing aggregates directly from the merged tests[] entries and running a live AST scan, which confirmed 53 live non-whitelisted main importers (66 - 13 = 53). All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (134 passed total).",
   "decoupling_approach": {
     "test_jobs_source_owner_contract": "Mounted create_jobs_router on isolated FastAPI app with fake JobReadPort injected into test client instead of bff_main.",
     "test_pkt016_knowledge_workbench_contract": "Mounted create_research_router on isolated FastAPI app with knowledge read ports fixture and in-memory ports double.",

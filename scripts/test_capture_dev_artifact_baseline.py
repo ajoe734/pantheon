@@ -481,3 +481,163 @@ def test_unexpected_seal_bug_reports_local_boundary_without_accepting_evidence(f
     assert row["failure_location"].startswith("capture_dev_artifact_baseline.py:")
     assert "fixture-secret" not in public.out + public.err
     assert not list(evidence.iterdir()) and not output.exists()
+
+
+def drifted_manifest(identity=None, drift_sha="dc15751a9b20f8bc0931529d68af8898e691c898"):
+    outer = manifest(identity)
+    bundle = outer["image_bundle"]
+    bundle["source_sha"] = drift_sha
+    for s in bundle["services"].values():
+        s["oci_revision"] = drift_sha
+    outer["image_bundle_sha256"] = c.digest(c.encoded(bundle))
+    return outer
+
+
+def drifted_result(identity=None, drift_sha="dc15751a9b20f8bc0931529d68af8898e691c898"):
+    identity = identity or IDENTITY
+    outer = drifted_manifest(identity, drift_sha)
+    return {
+        "manifest_path": str(c.ARTIFACT_ROOT / f"baseline-{identity['run_id']}-{identity['attempt']}-{identity['candidate_id']}" / "manifest.json"),
+        "manifest_sha256": c.digest(c.encoded(outer)),
+        "manifest": outer,
+    }
+
+
+def test_reproduction_run_35193009030_drift_seal_mismatch_fails_closed():
+    # Run 35193009030 reproduction: remote driver capture succeeded on VM with
+    # service oci_revision equal to live drifted sha dc15751a9, but wrapper seal
+    # validation at capture_dev_artifact_baseline.py line 283 rejected it because
+    # DRIFT_FIELDS were only forwarded to remote_script and not consulted during seal.
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    emitted = result()
+    for s in emitted["manifest"]["image_bundle"]["services"].values():
+        s["oci_revision"] = drift_sha
+    emitted["manifest"]["image_bundle_sha256"] = c.digest(c.encoded(emitted["manifest"]["image_bundle"]))
+    emitted["manifest_sha256"] = c.digest(c.encoded(emitted["manifest"]))
+
+    with pytest.raises(c.CaptureError, match="capture image revision differs from prior"):
+        c.seal_result(json.dumps(emitted).encode(), IDENTITY)
+
+
+def test_drifted_manifest_seal_succeeds_and_records_accepted_pair_and_observed_sha():
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    emitted = drifted_result(IDENTITY, drift_sha)
+    drift_source = "standby_frontend_pair_manifest+live_bff_drift_recovery"
+
+    raw, outputs = c.seal_result(
+        json.dumps(emitted).encode(),
+        IDENTITY,
+        baseline_source=drift_source,
+        observed_live_bff_sha=drift_sha,
+    )
+    assert raw == primitive.manifest_bytes(emitted["manifest"])
+    assert outputs["manifest_path"] == emitted["manifest_path"]
+    assert outputs["manifest_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert outputs["previous_backend_sha"] == IDENTITY["previous_backend_sha"]
+    assert outputs["previous_frontend_sha"] == IDENTITY["previous_frontend_sha"]
+    assert outputs["observed_live_bff_sha"] == drift_sha
+
+    sealed = json.loads(raw)
+    assert sealed["identity"]["previous_backend_sha"] == IDENTITY["previous_backend_sha"]
+    assert sealed["identity"]["previous_frontend_sha"] == IDENTITY["previous_frontend_sha"]
+    assert sealed["frontend"]["backend_sha"] == IDENTITY["previous_backend_sha"]
+    assert sealed["frontend"]["frontend_sha"] == IDENTITY["previous_frontend_sha"]
+    assert sealed["image_bundle"]["source_sha"] == drift_sha
+    for s in sealed["image_bundle"]["services"].values():
+        assert s["oci_revision"] == drift_sha
+
+
+def test_drifted_manifest_without_drift_inputs_fails_existing_checks():
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    emitted = drifted_result(IDENTITY, drift_sha)
+
+    # Calling seal_result without drift inputs fails at source_sha check
+    with pytest.raises(c.CaptureError, match="capture image bundle differs from admitted prior"):
+        c.seal_result(json.dumps(emitted).encode(), IDENTITY)
+
+    # When source_sha matches previous_backend_sha but revisions are drifted, fails at revision check
+    partial = result()
+    for s in partial["manifest"]["image_bundle"]["services"].values():
+        s["oci_revision"] = drift_sha
+    partial["manifest"]["image_bundle_sha256"] = c.digest(c.encoded(partial["manifest"]["image_bundle"]))
+    partial["manifest_sha256"] = c.digest(c.encoded(partial["manifest"]))
+    with pytest.raises(c.CaptureError, match="capture image revision differs from prior"):
+        c.seal_result(json.dumps(partial).encode(), IDENTITY)
+
+
+@pytest.mark.parametrize("invalid_sha", ["dc15751", "g" * 40, "", "DC15751A9B20F8BC0931529D68AF8898E691C898", "1" * 39, "1" * 41])
+def test_drifted_manifest_invalid_observed_sha_fails_closed(invalid_sha):
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    emitted = drifted_result(IDENTITY, drift_sha)
+    drift_source = "standby_frontend_pair_manifest+live_bff_drift_recovery"
+
+    with pytest.raises(c.CaptureError, match="invalid observed live BFF drift identity"):
+        c.seal_result(
+            json.dumps(emitted).encode(),
+            IDENTITY,
+            baseline_source=drift_source,
+            observed_live_bff_sha=invalid_sha,
+        )
+
+
+def test_drifted_manifest_observed_sha_mismatch_fails_closed():
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    other_sha = "1" * 40
+    emitted = drifted_result(IDENTITY, drift_sha)
+    drift_source = "standby_frontend_pair_manifest+live_bff_drift_recovery"
+
+    # observed_live_bff_sha does not match manifest image bundle source_sha or image revisions
+    with pytest.raises(c.CaptureError, match="capture image bundle differs from admitted prior"):
+        c.seal_result(
+            json.dumps(emitted).encode(),
+            IDENTITY,
+            baseline_source=drift_source,
+            observed_live_bff_sha=other_sha,
+        )
+
+    # When bundle source_sha equals other_sha, but service revisions still have drift_sha
+    emitted_source_other = drifted_result(IDENTITY, other_sha)
+    for s in emitted_source_other["manifest"]["image_bundle"]["services"].values():
+        s["oci_revision"] = drift_sha
+    emitted_source_other["manifest"]["image_bundle_sha256"] = c.digest(c.encoded(emitted_source_other["manifest"]["image_bundle"]))
+    emitted_source_other["manifest_sha256"] = c.digest(c.encoded(emitted_source_other["manifest"]))
+    with pytest.raises(c.CaptureError, match="capture image revision differs from prior"):
+        c.seal_result(
+            json.dumps(emitted_source_other).encode(),
+            IDENTITY,
+            baseline_source=drift_source,
+            observed_live_bff_sha=other_sha,
+        )
+
+
+def test_real_wrapper_seal_path_with_drift_environment_succeeds(fake_transport, monkeypatch):
+    source, identity, _, marker, evidence, output, transport = fake_transport
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    drift_source = "standby_frontend_pair_manifest+live_bff_drift_recovery"
+    emitted = drifted_result(identity, drift_sha)
+
+    # Configure transport to emit the drifted result
+    transport.write_text("import json,sys,os\nfrom pathlib import Path\n"
+                         "args=sys.argv[1:]\np=Path(args[args.index('--script-file')+1])\n"
+                         f"Path({str(marker)!r}).write_text(json.dumps({{'args':args,'script_path':str(p),'mode':p.stat().st_mode & 0o777,'viewer_present':{VIEWER_SECRET!r} in p.read_text()}}))\n"
+                         f"print({json.dumps(emitted)!r})\n")
+
+    monkeypatch.setenv("PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE", drift_source)
+    monkeypatch.setenv("PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA", drift_sha)
+
+    assert c.main() == 0
+
+    sealed_bytes = (evidence / "artifact-baseline.json").read_bytes()
+    assert sealed_bytes == c.encoded(emitted["manifest"])
+    assert (evidence / "SHA256SUMS").read_text() == emitted["manifest_sha256"] + "  artifact-baseline.json\n"
+
+    sealed = json.loads(sealed_bytes)
+    assert sealed["identity"]["previous_backend_sha"] == identity["previous_backend_sha"]
+    assert sealed["identity"]["previous_frontend_sha"] == identity["previous_frontend_sha"]
+    assert sealed["image_bundle"]["source_sha"] == drift_sha
+
+    outputs_content = output.read_text()
+    assert f"previous_backend_sha={identity['previous_backend_sha']}" in outputs_content
+    assert f"previous_frontend_sha={identity['previous_frontend_sha']}" in outputs_content
+    assert f"observed_live_bff_sha={drift_sha}" in outputs_content
+    assert f"compose_file={c.ARTIFACT_ROOT}/compose/{identity['previous_backend_sha']}/docker-compose.yml" in outputs_content
