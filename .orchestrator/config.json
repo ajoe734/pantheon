@@ -103,6 +103,7 @@
         "repo": "ajoe734/pantheon"
       },
       "execute_plans": {
+        "repo": "ajoe734/execute-plans",
         "local_path": "../code/execute-plans"
       }
     }
