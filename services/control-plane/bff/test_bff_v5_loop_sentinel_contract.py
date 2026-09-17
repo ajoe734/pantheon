@@ -36,7 +36,8 @@ from services.control_plane.bff.downstream_health_monitor import (
 )
 import services.control_plane.bff.command_executor as command_executor
 from services.runtime_auth_inbound import encode_jwt_hs256
-import services.telemetry.main as telemetry_main
+import importlib
+telemetry_main = importlib.import_module("services.telemetry.main")
 from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 from services.telemetry.test_infrastructure_health_ingest import (

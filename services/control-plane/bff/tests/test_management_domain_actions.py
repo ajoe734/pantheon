@@ -21,7 +21,7 @@ import urllib.error
 
 import pytest
 
-from services.control_plane.bff.models import CommandStatus, CommandType
+from services.control_plane.bff.models import CommandStatus, CommandType, ObjectType
 from services.control_plane.bff.command_adapters import (
     ActionUnavailableError,
     CapitalCommandAdapter,
@@ -41,18 +41,55 @@ from services.control_plane.bff.command_adapters import (
 from services.control_plane.bff.command_executor import execute_command, execute_command_with_status
 
 
+def _load_main_command_helpers():
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path(__file__).resolve().parent.parent.joinpath("main.py").read_text())
+    needed = {
+        "_DRAWER_RUNTIME_COMMANDS",
+        "_TWO_MAN_EVIDENCE_FIELDS",
+        "_HUMAN_GATE_DECISIONS_BY_COMMAND",
+        "_stored_command_params",
+        "_resolve_execution_params_for_record",
+    }
+    nodes = [ast.parse("from __future__ import annotations").body[0]]
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in needed:
+            nodes.append(node)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in needed:
+                    nodes.append(node)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id in needed:
+                nodes.append(node)
+
+    mod = ast.Module(body=nodes, type_ignores=[])
+    ns = {
+        "CommandType": CommandType,
+        "ObjectType": ObjectType,
+        "Dict": dict,
+        "Any": object,
+        "Optional": object,
+    }
+    exec(compile(mod, "main_command_helpers.py", "exec"), ns)
+    return ns
+
+
+_MAIN_HELPERS = _load_main_command_helpers()
+
+
 @pytest.mark.parametrize("command,alias", [("PausePaperRuntime", "start"), ("ResumePaperRuntime", "pause")])
 def test_canonical_paper_command_cannot_be_redirected_by_params(command, alias):
-    from services.control_plane.bff import main
-    from services.control_plane.bff.models import ObjectType
     malicious = {"action_id": alias, "actionId": alias, "entity_type": "CapitalPool"}
     cmd = SimpleNamespace(command=CommandType(command), params=malicious, action=alias,
         target=SimpleNamespace(type=ObjectType.RUNTIME, id="rt-paper-001"))
-    stored = main._stored_command_params(cmd, SimpleNamespace(operator_id="unit-operator", roles=["operator"]))
+    stored = _MAIN_HELPERS["_stored_command_params"](cmd, SimpleNamespace(operator_id="unit-operator", roles=["operator"]))
     assert stored["action_id"] == stored["actionId"] == command
     assert stored["entity_type"] == "Runtime"
     # Execution also normalizes historical records before choosing an adapter.
-    params = main._resolve_execution_params_for_record({"type": command, "target": {"type": "Runtime", "id": "rt-paper-001"}, "params": malicious})
+    params = _MAIN_HELPERS["_resolve_execution_params_for_record"]({"type": command, "target": {"type": "Runtime", "id": "rt-paper-001"}, "params": malicious})
     assert params["action_id"] == params["actionId"] == command
     adapter = find_adapter(command, params["entity_type"], params["action_id"])
     assert isinstance(adapter, RuntimeCommandAdapter)
