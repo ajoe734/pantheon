@@ -31,19 +31,44 @@ their root) are reimplemented here directly against the fixture, following
 from __future__ import annotations
 
 import copy
-import os
-import sys
-from contextlib import contextmanager
+import tempfile
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-sys.path.insert(0, os.path.dirname(__file__))
-from ports import create_in_memory_read_surface_ports
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import main as bff_main
-from main import app
 
-client = TestClient(app)
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity_stub,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.ports import (
+    create_in_memory_read_surface_ports,
+    create_persona_registry_write_owner,
+)
+
 AUTH = "Bearer test-operator:operator,admin"
+
+
+class _FakeRankingWriteOwner:
+    def __init__(self) -> None:
+        self.snapshots: Dict[str, Any] = {}
+
+    def put_ranking_snapshot(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        sid = snapshot.get("snapshot_id") or "snap-1"
+        self.snapshots[sid] = snapshot
+        return {"status": "created", "snapshot_id": sid, "snapshot": snapshot}
+
+    def get_ranking_snapshot(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+        return self.snapshots.get(snapshot_id)
+
+    def list_ranking_snapshots(self) -> List[Dict[str, Any]]:
+        return list(self.snapshots.values())
 
 
 # --------------------------------------------------------------------------- #
@@ -362,15 +387,48 @@ def _build_consultation_ports() -> _ConsultationSurfacePorts:
     )
 
 
-@contextmanager
-def _seeded_app_read_store():
-    seeded = _build_consultation_ports()
-    original_read_store = bff_main.read_store
-    bff_main.read_store = seeded
-    try:
-        yield
-    finally:
-        bff_main.read_store = original_read_store
+def _build_client() -> TestClient:
+    """Standalone app mounting the real governance + personas router factories.
+
+    Consultation routes (CS-01..CS-06) and the persona-detail dead-link check
+    both live behind these two production router factories; no shadow app
+    logic is reimplemented here.
+    """
+    store = _build_consultation_ports()
+
+    write_owner = create_persona_registry_write_owner()
+    persona_read_store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={"personas": _PERSONAS}
+    )
+    persona_service = PersonaService(
+        write_owner=write_owner,
+        ranking_write_owner=_FakeRankingWriteOwner(),
+        read_store=persona_read_store,
+        command_store=CommandStore(
+            str(Path(tempfile.mkdtemp(prefix="consultation-surfaces-")) / "commands.jsonl")
+        ),
+    )
+
+    app = FastAPI()
+    app.include_router(
+        create_governance_router(
+            read_surface=store,
+            extract_identity=extract_identity_stub,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+        )
+    )
+    app.include_router(
+        create_personas_router(
+            service=persona_service,
+            extract_identity_fn=extract_identity_stub,
+            require_read_role_fn=require_read_role,
+            require_operator_role_fn=require_operator_role,
+            bff_error_fn=bff_error,
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def test_consultation_surfaces():
@@ -533,93 +591,93 @@ def test_consultation_surfaces():
 
 def test_consultation_routes_requester_happy_path():
     """HTTP-level: requester session returns populated participants, outcome, and evidence."""
-    with _seeded_app_read_store():
-        # CS-02: detail
-        resp = client.get("/api/v1/consultations/cs-20260410-001", headers={"Authorization": AUTH})
-        assert resp.status_code == 200, f"CS-02 requester detail failed: {resp.status_code}"
-        body = resp.json()
-        assert body["data"]["session_id"] == "cs-20260410-001"
-        links = body["data"]["_links"]
-        assert "participants" in links
-        assert "outcome" in links
-        assert "evidence" in links
-        print("HTTP CS-02: requester consultation detail OK")
+    client = _build_client()
+    # CS-02: detail
+    resp = client.get("/api/v1/consultations/cs-20260410-001", headers={"Authorization": AUTH})
+    assert resp.status_code == 200, f"CS-02 requester detail failed: {resp.status_code}"
+    body = resp.json()
+    assert body["data"]["session_id"] == "cs-20260410-001"
+    links = body["data"]["_links"]
+    assert "participants" in links
+    assert "outcome" in links
+    assert "evidence" in links
+    print("HTTP CS-02: requester consultation detail OK")
 
-        # CS-03: participants
-        resp = client.get("/api/v1/consultations/cs-20260410-001/participants", headers={"Authorization": AUTH})
-        assert resp.status_code == 200, f"CS-03 participants failed: {resp.status_code}"
-        data = resp.json()["data"]
-        assert len(data) >= 1, "CS-03: requester path should have at least one participant"
-        roles = {p["consultation_role"] for p in data}
-        assert "requester" in roles, "CS-03: requester role must be present"
-        print(f"HTTP CS-03: requester participants returns {len(data)} participant(s)")
+    # CS-03: participants
+    resp = client.get("/api/v1/consultations/cs-20260410-001/participants", headers={"Authorization": AUTH})
+    assert resp.status_code == 200, f"CS-03 participants failed: {resp.status_code}"
+    data = resp.json()["data"]
+    assert len(data) >= 1, "CS-03: requester path should have at least one participant"
+    roles = {p["consultation_role"] for p in data}
+    assert "requester" in roles, "CS-03: requester role must be present"
+    print(f"HTTP CS-03: requester participants returns {len(data)} participant(s)")
 
-        # CS-04: outcome
-        resp = client.get("/api/v1/consultations/cs-20260410-001/outcome", headers={"Authorization": AUTH})
-        assert resp.status_code == 200, f"CS-04 outcome failed: {resp.status_code}"
-        outcome = resp.json()["data"]
-        assert outcome["metadata"]["consultation"]["outcome"] is not None, "CS-04: outcome must not be null"
-        print(f"HTTP CS-04: requester outcome={outcome['metadata']['consultation']['outcome']!r}")
+    # CS-04: outcome
+    resp = client.get("/api/v1/consultations/cs-20260410-001/outcome", headers={"Authorization": AUTH})
+    assert resp.status_code == 200, f"CS-04 outcome failed: {resp.status_code}"
+    outcome = resp.json()["data"]
+    assert outcome["metadata"]["consultation"]["outcome"] is not None, "CS-04: outcome must not be null"
+    print(f"HTTP CS-04: requester outcome={outcome['metadata']['consultation']['outcome']!r}")
 
-        # CS-05: evidence
-        resp = client.get("/api/v1/consultations/cs-20260410-001/evidence", headers={"Authorization": AUTH})
-        assert resp.status_code == 200, f"CS-05 evidence failed: {resp.status_code}"
-        evidence = resp.json()["data"]
-        assert len(evidence) >= 1, "CS-05: at least one evidence ref"
-        print(f"HTTP CS-05: requester evidence returns {len(evidence)} ref(s)")
+    # CS-05: evidence
+    resp = client.get("/api/v1/consultations/cs-20260410-001/evidence", headers={"Authorization": AUTH})
+    assert resp.status_code == 200, f"CS-05 evidence failed: {resp.status_code}"
+    evidence = resp.json()["data"]
+    assert len(evidence) >= 1, "CS-05: at least one evidence ref"
+    print(f"HTTP CS-05: requester evidence returns {len(evidence)} ref(s)")
 
 
 def test_consultation_routes_responder_path():
     """HTTP-level: responder session id resolves to root data (non-empty participants/outcome/evidence)."""
     resp_id = "cs-resp-20260410-001"
 
-    with _seeded_app_read_store():
-        # CS-02: responder detail is served (200)
-        resp = client.get(f"/api/v1/consultations/{resp_id}", headers={"Authorization": AUTH})
-        assert resp.status_code == 200, f"CS-02 responder detail failed: {resp.status_code}"
-        print("HTTP CS-02: responder session detail OK")
+    client = _build_client()
+    # CS-02: responder detail is served (200)
+    resp = client.get(f"/api/v1/consultations/{resp_id}", headers={"Authorization": AUTH})
+    assert resp.status_code == 200, f"CS-02 responder detail failed: {resp.status_code}"
+    print("HTTP CS-02: responder session detail OK")
 
-        # CS-03: participants are non-empty (resolved from root)
-        resp = client.get(f"/api/v1/consultations/{resp_id}/participants", headers={"Authorization": AUTH})
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert len(data) >= 1, "CS-03: responder path must resolve root participants (non-empty)"
-        roles = {p["consultation_role"] for p in data}
-        assert "requester" in roles, "CS-03: root requester must appear in participant list"
-        print(f"HTTP CS-03: responder participants resolved from root -- {len(data)} participant(s)")
+    # CS-03: participants are non-empty (resolved from root)
+    resp = client.get(f"/api/v1/consultations/{resp_id}/participants", headers={"Authorization": AUTH})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert len(data) >= 1, "CS-03: responder path must resolve root participants (non-empty)"
+    roles = {p["consultation_role"] for p in data}
+    assert "requester" in roles, "CS-03: root requester must appear in participant list"
+    print(f"HTTP CS-03: responder participants resolved from root -- {len(data)} participant(s)")
 
-        # CS-04: outcome is non-null (resolved from root)
-        resp = client.get(f"/api/v1/consultations/{resp_id}/outcome", headers={"Authorization": AUTH})
-        assert resp.status_code == 200
-        outcome_meta = resp.json()["data"]["metadata"]["consultation"]
-        assert outcome_meta["outcome"] is not None, "CS-04: responder path must resolve non-null outcome from root"
-        print(f"HTTP CS-04: responder outcome resolved from root -- outcome={outcome_meta['outcome']!r}")
+    # CS-04: outcome is non-null (resolved from root)
+    resp = client.get(f"/api/v1/consultations/{resp_id}/outcome", headers={"Authorization": AUTH})
+    assert resp.status_code == 200
+    outcome_meta = resp.json()["data"]["metadata"]["consultation"]
+    assert outcome_meta["outcome"] is not None, "CS-04: responder path must resolve non-null outcome from root"
+    print(f"HTTP CS-04: responder outcome resolved from root -- outcome={outcome_meta['outcome']!r}")
 
-        # CS-05: evidence is non-empty (resolved from root)
-        resp = client.get(f"/api/v1/consultations/{resp_id}/evidence", headers={"Authorization": AUTH})
-        assert resp.status_code == 200
-        evidence = resp.json()["data"]
-        assert len(evidence) >= 1, "CS-05: responder path must resolve non-empty evidence from root"
-        print(f"HTTP CS-05: responder evidence resolved from root -- {len(evidence)} ref(s)")
+    # CS-05: evidence is non-empty (resolved from root)
+    resp = client.get(f"/api/v1/consultations/{resp_id}/evidence", headers={"Authorization": AUTH})
+    assert resp.status_code == 200
+    evidence = resp.json()["data"]
+    assert len(evidence) >= 1, "CS-05: responder path must resolve non-empty evidence from root"
+    print(f"HTTP CS-05: responder evidence resolved from root -- {len(evidence)} ref(s)")
 
 
 def test_consultation_participant_persona_links_resolve():
     """HTTP-level: persona_id values on participants resolve to real persona records (200)."""
-    with _seeded_app_read_store():
-        resp = client.get(
-            "/api/v1/consultations/cs-20260410-001/participants",
-            headers={"Authorization": AUTH},
+    client = _build_client()
+    resp = client.get(
+        "/api/v1/consultations/cs-20260410-001/participants",
+        headers={"Authorization": AUTH},
+    )
+    assert resp.status_code == 200
+    participants = resp.json()["data"]
+    for p in participants:
+        pid = p.get("persona_id")
+        assert pid, f"participant missing persona_id: {p}"
+        persona_resp = client.get(f"/api/v1/personas/{pid}", headers={"Authorization": AUTH})
+        assert persona_resp.status_code == 200, (
+            f"participant persona_id={pid!r} returns {persona_resp.status_code} -- dead link"
         )
-        assert resp.status_code == 200
-        participants = resp.json()["data"]
-        for p in participants:
-            pid = p.get("persona_id")
-            assert pid, f"participant missing persona_id: {p}"
-            persona_resp = client.get(f"/api/v1/personas/{pid}", headers={"Authorization": AUTH})
-            assert persona_resp.status_code == 200, (
-                f"participant persona_id={pid!r} returns {persona_resp.status_code} -- dead link"
-            )
-            print(f"HTTP persona link: /api/v1/personas/{pid} -> 200")
+        print(f"HTTP persona link: /api/v1/personas/{pid} -> 200")
 
 
 if __name__ == "__main__":

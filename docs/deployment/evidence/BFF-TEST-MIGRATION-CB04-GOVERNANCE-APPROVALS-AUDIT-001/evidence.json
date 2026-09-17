@@ -1,0 +1,143 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "status": "partially_decoupled_contract_discrepancy",
+  "implementation_complete": false,
+  "source_base_sha": "8778521b4726e22c05a1aebe19a971e0f9dca5e7",
+  "source_head_note": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py; this evidence manifest does not claim a commit can contain its own SHA.",
+  "branch": "task/BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001",
+  "changed_files": [
+    "services/control-plane/bff/test_bff_approvals_decide_contract.py",
+    "services/control-plane/bff/test_pkt001_governance_review_queue_contract.py",
+    "services/control-plane/bff/test_pkt006_approval_queue_contract.py",
+    "services/control-plane/bff/test_audit_timestamp_filter_no_500.py",
+    "services/control-plane/bff/test_bff_audit_contract.py",
+    "services/control-plane/bff/test_consultation_surfaces.py",
+    "services/control-plane/bff/test_governance_command_submission.py",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001/evidence.json"
+  ],
+  "partition": {
+    "path": "docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-002/evidence.json",
+    "batch_index": 4,
+    "batch_alias": "B22"
+  },
+  "prior_discrepancy_note": "The reviewed migration_approach directed following the B05 pattern. On this task's actual base (dev 8778521b4, well ahead of the repartition plan's 27e49d598 snapshot), test_bff_approvals_decide_contract.py -- which B05 had already decoupled into a standalone shadow app -- had since been intentionally re-coupled to the real composition root (bff_main.app) by BFF-AUDIT-ADMISSION-GOVERNANCE-SUBMIT-CORRECTIVE-001 (commit 6f94d6fd1), specifically to exercise the real governance/router.py submit_action wiring bug it fixed. This delivery re-decouples that file onto a standalone app while preserving that same real-wiring guarantee: submit_action is bound to a real CommandAdapterService.submit_governance_action instance (the exact production callable main.py's composition root binds), not a test-local reimplementation of the action_kind/action_id -> ObjectType/CommandType mapping.",
+  "migration_approach_applied": "Follow B05 pattern: instantiate standalone app mounting governance/incidents/personas/command_adapters/control_loops router factories with injected read-surface ports and command stores. For test_governance_command_submission.py, per the reviewed migration_approach's explicit carve-out ('avoid importing main._VALIDATORS by providing explicit validator mocks'), test-scoped validator mocks reproduce only the required-field and role-gate checks the suite's own assertions exercise; the mutation-family and committee-sponsor validators delegate to the real, already-importable GovernanceService.mutation_review_projection / .committee_projection (production code, not reimplemented business logic) for the allowedActions gate, exactly mirroring what main.py's own validators call through to.",
+  "decoupling_result": {
+    "decoupled_this_task": [
+      {
+        "file": "services/control-plane/bff/test_pkt001_governance_review_queue_contract.py",
+        "router_factories_mounted": ["services.control_plane.bff.governance.router.create_governance_router"],
+        "test_count": 3,
+        "passing": 3,
+        "failing": 0
+      },
+      {
+        "file": "services/control-plane/bff/test_pkt006_approval_queue_contract.py",
+        "router_factories_mounted": ["services.control_plane.bff.governance.router.create_governance_router"],
+        "test_count": 2,
+        "passing": 2,
+        "failing": 0
+      },
+      {
+        "file": "services/control-plane/bff/test_audit_timestamp_filter_no_500.py",
+        "router_factories_mounted": ["services.control_plane.bff.incidents.router.create_incident_router"],
+        "test_count": 9,
+        "passing": 9,
+        "failing": 0
+      },
+      {
+        "file": "services/control-plane/bff/test_bff_audit_contract.py",
+        "router_factories_mounted": ["services.control_plane.bff.incidents.router.create_incident_router"],
+        "test_count": 11,
+        "passing": 11,
+        "failing": 0
+      },
+      {
+        "file": "services/control-plane/bff/test_consultation_surfaces.py",
+        "router_factories_mounted": [
+          "services.control_plane.bff.governance.router.create_governance_router",
+          "services.control_plane.bff.personas.router.create_personas_router"
+        ],
+        "test_count": 4,
+        "passing": 4,
+        "failing": 0
+      },
+      {
+        "file": "services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "router_factories_mounted": ["services.control_plane.bff.governance.router.create_governance_router"],
+        "test_count": 23,
+        "passing": 23,
+        "failing": 0,
+        "note": "submit_action is bound to a real CommandAdapterService.submit_governance_action instance; see prior_discrepancy_note."
+      },
+      {
+        "file": "services/control-plane/bff/test_governance_command_submission.py",
+        "router_factories_mounted": [
+          "services.control_plane.bff.command_adapters.router.create_command_adapters_router",
+          "services.control_plane.bff.control_loops.router.create_control_loops_router"
+        ],
+        "test_count": 23,
+        "passing": 23,
+        "failing": 0,
+        "note": "Uses the CB04 migration_approach's explicit test-scoped validator-mock carve-out; see migration_approach_applied."
+      }
+    ],
+    "blocked_not_decoupled": [
+      {
+        "file": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+        "test_count": 25,
+        "passing": 0,
+        "failing": 25,
+        "still_imports_main": true,
+        "disposition": "blocked_architecture_seam_gap_and_unrelated_regression",
+        "reason": "Identical disposition to BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001's finding, reconfirmed unchanged on this task's base (dev 8778521b4): (1) this file asserts directly on main.py-only _human_inbox_trusted_promotion_submission / _human_inbox_decision_recommendation_id / _human_inbox_decision_projection_from_record / _human_inbox_surface_timeout_seconds and the _mutation_review_*/_VALIDATORS family (main.py ~3275-3554, ~10554-10958), none of which are extracted into an importable module; forking them into this test file would fork hundreds of lines of production business logic, which acceptance criterion 2 forbids. (2) Independently of that gap, all 25 tests in this file fail even byte-identical to origin/dev: PromotionReviewTestReadPorts(ReadSurfacePorts) raises AttributeError: ReadSurfacePorts._ranking_snapshots has been retired and deleted (services/control-plane/bff/ports/read_surface_ports.py:114) as soon as ranking-recommendation code paths are exercised -- a pre-existing, unrelated regression from a prior migration to ports/read_surface_ports.py, out of this task's artifact scope (main.py and non-test files are not in the artifacts list; this task's receiver modules are governance/router.py and governance/service.py only).",
+        "required_correction": "1) A prerequisite corrective task must extract the _human_inbox_*/_mutation_review_*/_VALIDATORS family out of main.py into an importable module (mirroring command_adapters/preconditions.py and auth/policy.py). 2) Separately, a corrective task must either restore a compatible _ranking_snapshots surface on ReadSurfacePorts or update this test's fixture subclass and any production caller still depending on the retired attribute; that correction is outside the eight declared artifact paths for this task."
+      }
+    ]
+  },
+  "inventory_summary": {
+    "files": 8,
+    "main_importers_remaining": 1,
+    "migrated_or_decoupled": 7,
+    "test_functions": 100,
+    "passing": 75,
+    "failing": 25,
+    "failing_breakdown": "25 pre-existing, unrelated ReadSurfacePorts._ranking_snapshots regression in test_bff_promotion_review_governance.py (see blocked_not_decoupled above); 0 regressions caused by the 7 files decoupled in this delivery."
+  },
+  "ceiling_update": {
+    "field": "live_scan_non_whitelisted_main_importer_ceiling",
+    "previous": 86,
+    "new": 79,
+    "delta": -7,
+    "note": "Lowered by exactly the 7 files decoupled in this delivery; test_bff_promotion_review_governance.py remains a recorded live-scan offender per blocked_not_decoupled above."
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/test_bff_promotion_review_governance.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_pkt001_governance_review_queue_contract.py services/control-plane/bff/test_pkt006_approval_queue_contract.py services/control-plane/bff/test_audit_timestamp_filter_no_500.py services/control-plane/bff/test_bff_audit_contract.py services/control-plane/bff/test_consultation_surfaces.py -W ignore::DeprecationWarning",
+      "exit_code": 1,
+      "result": "75 passed, 25 failed in 71.89s. All 25 failures are the pre-existing, unrelated regression in test_bff_promotion_review_governance.py (see blocked_not_decoupled); 0 regressions caused by the 7 files decoupled in this delivery, and their individual per-file test counts are unchanged from the pre-migration baseline."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "8 passed. Live AST scan confirms the 7 decoupled files have zero main imports and zero sys.path mutations; inventory's live_scan_non_whitelisted_main_importers and the ceiling (86 -> 79) are updated to match the live scan exactly."
+    },
+    {
+      "method": "python ast.parse/ast.walk on the 7 decoupled files after all edits; inspect imports and sys.path mutations.",
+      "exit_code": 0,
+      "result": "7/8 files now have zero main imports and zero sys.path mutations. 1/8 (test_bff_promotion_review_governance.py) remains a blocked main importer with an explicit architecture-seam gap and an unrelated pre-existing regression recorded above, per acceptance criterion 4."
+    }
+  ],
+  "review": {
+    "decision": "pending",
+    "manifest_role": "Partial delivery evidence: 7 of 8 files fully decoupled and passing; 1 of 8 intentionally left coupled to main.py with two specific, actionable, out-of-scope gaps recorded for governed contract revision, per acceptance criterion 4 (do not silently widen scope to fork production business logic into the tests) and criterion 11 (do not mark partial completion as fully completed)."
+  },
+  "delivery": {
+    "merge_commit": null,
+    "note": "Delivered through normal task branch + PR flow for independent review."
+  }
+}

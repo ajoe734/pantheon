@@ -9,31 +9,52 @@ same missing-symbol affected `_parse_rfc3339` call sites
 """
 from __future__ import annotations
 
-import os
-import sys
-from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
+from services.control_plane.bff.auth.policy import extract_identity_stub
+from services.control_plane.bff.incidents.router import _parse_rfc3339, create_incident_router
+from services.control_plane.bff.incidents.service import IncidentService
 
-os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
-os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
-
-import main as bff_main  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-
-CLIENT = TestClient(bff_main.app)
 HEADERS = {"Authorization": "Bearer op-audit:operator,admin,reviewer:mfa"}
 
 
+class _AuditReadStore:
+    def list_governance_audit_events(
+        self,
+        actor: Optional[str] = None,
+        action_types: Optional[List[str]] = None,
+        target_type: Optional[str] = None,
+        from_ts: Optional[Any] = None,
+        to_ts: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        return []
+
+    def dataset_source(self, dataset: str) -> str:
+        return "ok"
+
+
+def _build_client() -> TestClient:
+    read_store = _AuditReadStore()
+    service = IncidentService(get_read_store=lambda: read_store)
+    router = create_incident_router(service=service, extract_identity=extract_identity_stub)
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app, raise_server_exceptions=False)
+
+
+CLIENT = _build_client()
+
+
 def test_parse_rfc3339_is_defined_and_safe():
-    assert hasattr(bff_main, "_parse_rfc3339")
-    assert bff_main._parse_rfc3339("2026-01-01T00:00:00Z") is not None
-    assert bff_main._parse_rfc3339("-1") is None
-    assert bff_main._parse_rfc3339("") is None
-    assert bff_main._parse_rfc3339(None) is None
+    assert _parse_rfc3339("2026-01-01T00:00:00Z") is not None
+    assert _parse_rfc3339("-1") is None
+    assert _parse_rfc3339("") is None
+    assert _parse_rfc3339(None) is None
 
 
 @pytest.mark.parametrize(
