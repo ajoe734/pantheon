@@ -1,0 +1,69 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-FENCED-WORKER-QUEUE-PROOF-001",
+  "title": "Accept a lease fence as proof of queue completion",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "8778521b4726e22c05a1aebe19a971e0f9dca5e7",
+  "scope": {
+    "owned": [
+      "_run_reserved_runtime_phase revalidation guard in .orchestrator/supervisor.py",
+      "new worker_fence_proves_queue_completion helper and its regression coverage"
+    ],
+    "not_changing": [
+      "reconcile_queue_records and reconcile_queue_intents themselves (kept as-is; the guard is the single fenced-completion acceptance point)",
+      "the exact-event proof path for a worker that can still emit its own canonical lifecycle event",
+      "PR #5871 (OPS-QUEUE-RECONCILE-CAS-001), which independently teaches reconcile_queue_records to skip unsettled workers and is kept unmodified by this change"
+    ],
+    "composes_with": [
+      "OPS-QUEUE-RECONCILE-CAS-001 (merged dev commit 546a9cf01) -- that fix stops one reconciler from racing an unsettled worker; this fix is required in addition because reconcile_queue_intents still retires the same record through its stale_dispatch_event route and the reserved-phase guard still rejected that completion before this change"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "A worker that loses its lease is fenced mid-flight, so its task row stays non-terminal and it never emits its own exact completion event; canonical_worker_terminal_status returns None for it forever.",
+    "prior_outcome": "Every reconciler that legitimately retires such an attempt's queue record then asserts a transition the reserved-phase revalidation in _run_reserved_runtime_phase could not accept. Shielding only one reconciler (reconcile_queue_records, via #5871) hands the same rejection to the other (reconcile_queue_intents' stale_dispatch_event route), so the whole post_dispatch_maintenance phase is discarded every cycle and the delivery-health observations committed by that same phase die with it. Health evidence has a 300s TTL, so within five minutes every lane reads stale and evaluate_task_delivery_admission answers HEALTH_REFRESH_REQUIRED for all of them; the fleet stops dispatching entirely and a supervisor restart does not help because the fenced record lives in runtime state, not the process. Observed on the live fleet 2026-09-17: 65 runtime_phase_cas_conflict entries (reason canonical_transition_revalidation_failed), one per cycle.",
+    "regression": "test_recovery_contract_boundaries.py adds coverage that fences a worker (recovery_pending status, lost_lease_receipt_id, lease_fenced_at, dead process) and drives both the reconcile_queue_records and reconcile_queue_intents retirement shapes through _run_reserved_runtime_phase, asserting the phase commits and the unrelated delivery_health observation from the same phase survives. It also asserts a live process (current generation, alive pid) is still refused, and that a worker able to emit its own canonical completion event is still validated through that exact-event path unchanged."
+  },
+  "implementation": {
+    "guard_fix": "worker_fence_proves_queue_completion(worker) in .orchestrator/supervisor.py returns True only when: worker.status is recovery_pending or superseded, lost_lease_receipt_id and lease_fenced_at are both present, and the process is gone (not pid_is_alive or not worker_process_generation_is_current). _run_reserved_runtime_phase's CAS revalidation now accepts a queue completion when fresh_terminal is None but this predicate holds, instead of unconditionally rejecting on fresh_terminal is None.",
+    "exact_event_path_preserved": "canonical_worker_terminal_status and its exact-lifecycle-event validation are unchanged; a worker capable of producing its own canonical completion event is still required to go through it.",
+    "both_reconcilers_covered": "The fix is at the single guard both reconcile_queue_records and reconcile_queue_intents pass through (_run_reserved_runtime_phase), so shielding is not duplicated per-reconciler.",
+    "new_module_added": false,
+    "new_config_surface_added": false
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_recovery_contract_boundaries.py .orchestrator/test_supervisor.py .orchestrator/test_supervisor_recovery_process_e2e.py .orchestrator/test_worker_runner_heartbeat.py",
+        "result": "467 passed, 81 subtests passed"
+      }
+    ],
+    "pre_existing_base_failure_proof": {
+      "method": "Cloned a fresh checkout of unmodified origin/dev (4519908b719a382b6b10b779e63f5c40d15a508c, an ancestor of this PR's merged base), copied only the new .orchestrator/test_recovery_contract_boundaries.py test file onto that unmodified base with no supervisor.py change, and ran it there.",
+      "command": "python3 -m pytest -q .orchestrator/test_recovery_contract_boundaries.py",
+      "result_on_unmodified_base": "2 failed, 24 passed -- test_fenced_worker_queue_completion_commits_only_when_the_process_is_gone[False] (assert False is True) and test_fence_proof_requires_receipt_fence_timestamp_and_a_dead_process (AttributeError: module 'supervisor' has no attribute 'worker_fence_proves_queue_completion')",
+      "result_on_fixed_branch": "26 passed (0 failed) at the same base; 467 passed across the combined suite at the final merged head"
+    },
+    "flaky_unrelated_observation": {
+      "test": "SupervisorCycleLatencyRecoveryTests::test_supervisor_cycle_metrics_and_latency_under_1600_records_fixture_load",
+      "detail": "Failed once mid-run at 5.38s against a 5.0s wall-clock threshold under concurrent host load, then passed in isolation at 4.00s and passed again in a full clean re-run. Timing-based and unrelated to the guard change; not part of this task's scope."
+    },
+    "scope_note": "Source and isolated-test scope only per acceptance criteria: no hosted deployment run and no live runtime state edit performed for this task.",
+    "runner": {
+      "python": "3.12.3",
+      "pytest": "9.1.1"
+    },
+    "checksums": {
+      ".orchestrator/supervisor.py": "d1b9ae79d8603d9741cf0d4907f0a3a42dbf0d60d59d17cf05f5a73bd6ca7c34",
+      ".orchestrator/test_recovery_contract_boundaries.py": "225b961d20ac8c10f5a9289285e9e4126ab5eb3c57a13a5f718c321f6b37ba03"
+    }
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity2",
+    "note": "Independently verify: the reserved-phase guard accepts a fenced-and-dead worker's queue completion through both reconcile_queue_records and reconcile_queue_intents retirement shapes, still refuses a live/current-generation attempt, still validates an exact-event-capable worker through canonical_worker_terminal_status unchanged, and that the delivery_health observation committed by the same reserved phase survives. Confirm PR #5871's independent reconcile_queue_records fix is preserved and unmodified, and that this guard-level fix is still required because reconcile_queue_intents' stale_dispatch_event route was not covered by #5871."
+  }
+}
