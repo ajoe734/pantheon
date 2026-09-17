@@ -1337,16 +1337,56 @@ EOF
             provider_permissions.AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS,
         )
 
-        # The explicit timeout does not merge credentials, capacity, or retry
-        # state between the two provider lanes.
+        # The explicit timeout does not merge the two provider lanes' distinct
+        # credential homes or retry state.  The shared account id below is a
+        # separate, deliberate statement about the upstream identity and is not
+        # something this timeout may change: see
+        # test_live_antigravity_lanes_share_one_upstream_account.
         antigravity_provider = config["providers"]["antigravity"]
         antigravity2_provider = config["providers"]["antigravity2"]
-        self.assertNotEqual(antigravity_provider["account"], antigravity2_provider["account"])
         self.assertNotEqual(
             antigravity_provider["antigravity"].get("home"),
             antigravity2_provider["antigravity"].get("home"),
         )
         self.assertEqual(antigravity_provider["retry"], antigravity2_provider["retry"])
+
+    def test_live_antigravity_lanes_share_one_upstream_account(self) -> None:
+        """Both antigravity lanes authenticate one upstream Google account.
+
+        They keep separate credential homes and separate OAuth token files, but
+        both tokens carry the same consumer identity, so one upstream rate
+        limit hits both.  ``account`` is the only schema the config validator
+        accepts for that (``account_group``/``quota_group``/``dispatch_group``
+        are rejected as deprecated aliases by
+        ``supervisor.validate_provider_accounts``), so the shared identity has
+        to be declared there.
+
+        When the lanes declared two accounts they formed two credential groups,
+        each published its own auth verdict, and a lane-scoped probe failure
+        reassigned owned tasks to the sibling lane that shared the very same
+        dead credential -- the tasks then bounced back and forth.
+        """
+        config = json.loads((Path(ROOT) / ".orchestrator" / "config.json").read_text(encoding="utf-8"))
+
+        antigravity_provider = config["providers"]["antigravity"]
+        antigravity2_provider = config["providers"]["antigravity2"]
+
+        self.assertEqual(antigravity_provider["account"], antigravity2_provider["account"])
+        self.assertEqual(
+            provider_permissions._antigravity_credential_group(config, "antigravity"),
+            provider_permissions._antigravity_credential_group(config, "antigravity2"),
+        )
+
+        # One shared account must not collapse the lanes into one worker
+        # identity: separate homes keep the two token files independent.
+        self.assertNotEqual(
+            antigravity_provider["antigravity"].get("home"),
+            antigravity2_provider["antigravity"].get("home"),
+        )
+        self.assertNotEqual(
+            provider_permissions._antigravity_home(config, "antigravity"),
+            provider_permissions._antigravity_home(config, "antigravity2"),
+        )
 
     def test_configured_claude_probes_use_their_isolated_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
