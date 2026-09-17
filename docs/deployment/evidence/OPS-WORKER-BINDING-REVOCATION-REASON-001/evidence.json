@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-WORKER-BINDING-REVOCATION-REASON-001",
+  "scope": "orchestrator worker lifecycle: record and narrow worker dispatch binding revocation",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "review_status": "pending_independent_exact_head_review",
+  "source": {
+    "repository": "ajoe734/pantheon",
+    "branch": "task/OPS-WORKER-BINDING-REVOCATION-REASON-001",
+    "base_sha": "27e49d598391a5a697e1ee446079bbcf0a702519",
+    "files_sha256": {
+      ".orchestrator/worker_runner.py": "f7647a2091c48f67212feba470962516b5ae25dabd41b0eba137905484b8ce06",
+      ".orchestrator/test_worker_runner_heartbeat.py": "ddb6f5e6779668303e4ee2c465eb7d503ca97c176ece619cb9844d4d2d7e660e"
+    },
+    "delivery_head_binding": "The governed handoff freezes the PR head containing this manifest; implementation_commit is its source ancestor."
+  },
+  "dispatch_runtime": {
+    "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/e401682d1fa8cc90e7820c1b39d396ccb4e5b477",
+    "source_sha": "e401682d1fa8cc90e7820c1b39d396ccb4e5b477"
+  },
+  "problem": {
+    "summary": "worker_runner periodically re-checks dispatch binding during worker child execution. Previously, when validate_worker_entry_binding raised RuntimeError, ValueError, or OSError, worker_runner caught and completely swallowed the exception inside except (RuntimeError, ValueError, OSError), setting only dispatch_binding_revoked = True before issuing SIGTERM to the child process group. No exception type, error message, or failed binding field was recorded in either the worker status file or the canonical activity log. As a result, transient filesystem or lock errors could not be separated from genuine revocations, and terminated processes (such as a reviewer killed shortly after submitting approve) left zero attribution for root cause analysis."
+  },
+  "fix": {
+    "exception_and_field_recording": "validate_worker_entry_binding now annotates every raised exception with its exact failing binding_field (e.g., waiting_for, assignment, owner, reviewer, lease_expires_at, status, task_generation, command, worker_receipt, identity, task_state_identity, request_snapshot.metadata, workspace_source_root). When a revocation occurs, _record_dispatch_binding_revoked writes revocation_exception_type, revocation_message, revocation_binding_field, revocation_reason, and dispatch_binding_revocation to the worker runner status file, and emits a structured worker_dispatch_binding_revoked event to the canonical activity log.",
+    "transient_error_hysteresis": "Periodic re-checks encountering an OSError (transient I/O or lock contention) are no longer treated as immediate revocations. They are retried across a bounded window (default 15.0s, configurable via PANTHEON_BINDING_TRANSIENT_GRACE_SECONDS) and escalate only after repeated consecutive failures (default 3, configurable via PANTHEON_BINDING_TRANSIENT_ERROR_THRESHOLD). The child process is not interrupted during transient retries.",
+    "prompt_genuine_revocation": "A genuine revocation (RuntimeError or ValueError from an explicit operator hold, reassignment, expired lease, or generation mismatch) immediately stops the child via SIGTERM with zero retry delay, ensuring prompt-stop latency does not regress."
+  },
+  "before_after_behavior_map": [
+    {
+      "scenario": "Transient filesystem or lock error during periodic binding re-check",
+      "before": "Immediately flagged dispatch_binding_revoked=True and killed child process with SIGTERM; swallowed exception without logging.",
+      "after": "Retried within bounded grace window; child continues execution undisturbed; child completes with return code 0; dispatch_binding_revoked remains False."
+    },
+    {
+      "scenario": "Persistent filesystem error exceeding consecutive threshold and grace window",
+      "before": "Killed child without recording exception or failing field.",
+      "after": "Escalates to revocation; records OSError, message, and field='filesystem' in runner status; appends worker_dispatch_binding_revoked event to activity log; terminates child."
+    },
+    {
+      "scenario": "Operator sets task waiting_for (explicit hold) during run",
+      "before": "Killed child promptly with exit code 143, but runner status only carried boolean dispatch_binding_revoked=True with no reason or activity log record.",
+      "after": "Promptly kills child with exit code 143 (no latency regression); records RuntimeError, exact hold message, and field='waiting_for' in runner status; appends worker_dispatch_binding_revoked event to activity log."
+    }
+  ],
+  "validation": [
+    {
+      "name": "test_active_operator_hold_stops_child_before_next_effect",
+      "command": "python3 .orchestrator/test_worker_runner_heartbeat.py TestCanonicalWorkerEntryProcess.test_active_operator_hold_stops_child_before_next_effect",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "1 passed in 2.45s; verified prompt SIGTERM (143), status file carries revocation_exception_type='RuntimeError', revocation_binding_field='waiting_for', revocation_message, and activity log contains worker_dispatch_binding_revoked event"
+    },
+    {
+      "name": "test_transient_oserror_during_binding_check_does_not_kill_child",
+      "command": "python3 .orchestrator/test_worker_runner_heartbeat.py TestCanonicalWorkerEntryProcess.test_transient_oserror_during_binding_check_does_not_kill_child",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "1 passed in 3.61s; verified child survives transient lock contention, writes provider effect, exits code 0, status is 'completed' with dispatch_binding_revoked=False"
+    },
+    {
+      "name": "test_persistent_oserror_escalates_to_revocation",
+      "command": "python3 .orchestrator/test_worker_runner_heartbeat.py TestCanonicalWorkerEntryProcess.test_persistent_oserror_escalates_to_revocation",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "1 passed in 3.43s; verified repeated consecutive OSErrors past threshold and grace window escalate to revocation, kill child (143), record OSError and field='filesystem' in status and activity log"
+    },
+    {
+      "name": "test_canonical_worker_entry_process_suite",
+      "command": "python3 .orchestrator/test_worker_runner_heartbeat.py TestCanonicalWorkerEntryProcess",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "36 passed in 46.68s; all TestCanonicalWorkerEntryProcess tests passed cleanly"
+    },
+    {
+      "name": "test_worker_runner_heartbeat_full_suite",
+      "command": "python3 .orchestrator/test_worker_runner_heartbeat.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "83 passed in 68.04s; full worker runner heartbeat suite passed with 0 failures and 0 errors"
+    },
+    {
+      "name": "test_worker_runner_retired_helpers",
+      "command": "python3 .orchestrator/rewrite/test_worker_runner_retired_helpers.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "2 passed in 0.03s; verified AST constraints on validate_worker_entry_binding re-check call in main"
+    }
+  ]
+}
