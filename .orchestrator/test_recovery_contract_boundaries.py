@@ -261,3 +261,78 @@ def test_fence_proof_requires_receipt_fence_timestamp_and_a_dead_process(tmp_pat
     assert sup.worker_fence_proves_queue_completion({**worker, "lease_fenced_at": ""}) is False
     assert sup.worker_fence_proves_queue_completion({**worker, "status": "superseded"}) is True
     assert sup.worker_fence_proves_queue_completion(None) is False
+
+
+def test_health_observation_survives_a_rejected_transition_in_the_same_cycle(tmp_path):
+    """A read-only observation must not be discarded by an unrelated write.
+
+    Regression for the fleet-wide stall: delivery-health observations were
+    committed inside the maintenance phase, so every transition that phase could
+    not prove also threw away that cycle's probe results. Evidence expires after
+    delivery_health.evidence_ttl_seconds, so a sustained discard rate expired
+    every lane and the dispatcher then refused every lane for
+    HEALTH_REFRESH_REQUIRED -- with no worker left to change the state that
+    would have ended it.
+    """
+    root = tmp_path / "status"
+    (root / ".orchestrator").mkdir(parents=True)
+    config = config_fixture(root)
+    config["paths"]["approval_queue"] = str(root / ".orchestrator" / "approvals.json")
+    config["task_state_store"] = {"mode": "authoritative", "event_log": str(tmp_path / "tasks.jsonl")}
+    _non_terminal_canonical(config, tmp_path)
+
+    # A worker that can never prove its own queue completion: still alive, so
+    # the fence proof is refused too. Any phase that completes its queue record
+    # is therefore rejected.
+    worker, proc = _fenced_worker("TASK-9", "run-9", "event-9", alive=True)
+    worker["status"] = "running"
+    runtime = runtime_state.default_state()
+    runtime["workers"][worker["run_id"]] = worker
+    runtime["queue"]["events"][worker["queue_event_id"]] = {
+        "status": "failed",
+        "intent": {"event_id": worker["queue_event_id"], "task_id": worker["task_id"]},
+    }
+    runtime_state.save_runtime_state(config, runtime)
+
+    def rejected_transition(scratch):
+        scratch["queue"]["events"][worker["queue_event_id"]]["status"] = "completed"
+        return True
+
+    observations = [{
+        "endpoint_id": "lane-9",
+        "account_id": "acct-9",
+        "probe": {"provider": "lane-9", "ready": True, "status": "ready",
+                  "source": "live", "checked_at": "2026-09-17T12:00:00Z"},
+    }]
+    try:
+        # Exactly what the cycle calls, in the same order.
+        health_committed = sup.commit_delivery_health_observations(config, observations)
+        transition_committed = sup._run_reserved_runtime_phase(
+            config, "post_dispatch_maintenance", rejected_transition)
+    finally:
+        if proc is not None:
+            proc.communicate(timeout=5)
+
+    final = runtime_state.load_runtime_state(config)
+    assert health_committed is True, "the observation phase has no transition to reject"
+    assert transition_committed is False, "the unprovable queue completion must still be refused"
+    landed = final.get("delivery_health", {}).get("endpoints", {}).get("lane-9") or {}
+    assert landed.get("state") == "healthy", "the observation must survive the rejection"
+    assert final["queue"]["events"]["event-9"]["status"] == "failed", "the refused transition must not land"
+
+
+def test_sustained_reserved_phase_discards_escalate_beyond_one_log_line(tmp_path):
+    """A phase that loses its CAS every cycle is a stall, not contention."""
+    phase = "phase-under-test"
+    sup._PHASE_DISCARD_STREAKS.pop(phase, None)
+    try:
+        streaks = [
+            sup.record_reserved_phase_outcome(phase, committed=False) for _ in range(4)
+        ]
+        assert streaks == [1, 2, 3, 4]
+        assert sup.SUSTAINED_PHASE_DISCARD_THRESHOLD <= streaks[-1]
+        # One commit clears it, so ordinary contention never escalates.
+        assert sup.record_reserved_phase_outcome(phase, committed=True) == 0
+        assert sup.record_reserved_phase_outcome(phase, committed=False) == 1
+    finally:
+        sup._PHASE_DISCARD_STREAKS.pop(phase, None)
