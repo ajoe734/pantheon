@@ -1,0 +1,94 @@
+{
+  "frontend": {
+    "backend_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "dist_sha256": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
+    "frontend_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "manifest_sha256": "bf857d4af2a5829a1b4aa5fef474fbc84438121befe5b18d3dee547077304744",
+    "target": "/var/www/pantheon-dev-fe-releases/20260913T104814Z-dbe737e06766-gate-34751164876-34752443280-1-1351147-operator-live"
+  },
+  "image_bundle": {
+    "archives": {
+      "sha256:5fd644bca12fdac5355f569fad7dfbc192f50f32a2543da44464f7fabc73190d": {
+        "name": "5fd644bca12fdac5355f569fad7dfbc192f50f32a2543da44464f7fabc73190d-5ac3625aa0d3d91ae26adc0b1124a43d4b12a81bbcb01c20dead2d29b7de3de1.tar",
+        "sha256": "5ac3625aa0d3d91ae26adc0b1124a43d4b12a81bbcb01c20dead2d29b7de3de1",
+        "size": 111152640
+      },
+      "sha256:a9ceabe68af47623dbfeae554b01d64a5663be7fe0d6d4089f0d952c14dc0467": {
+        "name": "a9ceabe68af47623dbfeae554b01d64a5663be7fe0d6d4089f0d952c14dc0467-f72d8114425cec3642521cffa10c1b5bdb590ab659a9002811a3c6f77e6ac6e3.tar",
+        "sha256": "f72d8114425cec3642521cffa10c1b5bdb590ab659a9002811a3c6f77e6ac6e3",
+        "size": 130222592
+      },
+      "sha256:b01d9e2762b3120c9626bd3bd8e19d7b342a399334082e20c6be96bfc365cd58": {
+        "name": "b01d9e2762b3120c9626bd3bd8e19d7b342a399334082e20c6be96bfc365cd58-b7f639239f59f105377eec9b737094b7793a24e68e4e826e3d094b6f20cfe26d.tar",
+        "sha256": "b7f639239f59f105377eec9b737094b7793a24e68e4e826e3d094b6f20cfe26d",
+        "size": 130222592
+      }
+    },
+    "schema_version": "pantheon.dev-bff-image-bundle.v1",
+    "services": {
+      "agora-interaction-worker": {
+        "image_id": "sha256:b01d9e2762b3120c9626bd3bd8e19d7b342a399334082e20c6be96bfc365cd58",
+        "oci_revision": "ae41705b4637110e665d2eed735afbd8307e28e6",
+        "repo_digests": []
+      },
+      "loop-run-projector-scheduler": {
+        "image_id": "sha256:5fd644bca12fdac5355f569fad7dfbc192f50f32a2543da44464f7fabc73190d",
+        "oci_revision": "ae41705b4637110e665d2eed735afbd8307e28e6",
+        "repo_digests": []
+      },
+      "operator-bff": {
+        "image_id": "sha256:a9ceabe68af47623dbfeae554b01d64a5663be7fe0d6d4089f0d952c14dc0467",
+        "oci_revision": "ae41705b4637110e665d2eed735afbd8307e28e6",
+        "repo_digests": []
+      }
+    },
+    "source_sha": "ae41705b4637110e665d2eed735afbd8307e28e6"
+  },
+  "image_bundle_sha256": "0c5abfe23aa20dc0cec12111a610a67aef94907ac370128adea1ae025ed72bac",
+  "operation": "manual capture of already accepted I; not candidate admission",
+  "original_actions_run_id": "34750913608",
+  "owners": {
+    "capital": {
+      "container_id": "54ae4f60d4b91e82f3944403be26a2bdb34a3062fb2dd7e46f2f348d03f846f2",
+      "image_id": "sha256:2f6c3942888fc3ae7862ae019668431e0946c08f92603c0731e9944864ea3975",
+      "restart_count": 0,
+      "started_at": "2026-09-17T14:47:01.57873176Z"
+    },
+    "deployment": {
+      "container_id": "76a9cf8ef493c5dfec51d6fec68cf028677cd3d130f30b169efecd0576018b40",
+      "image_id": "sha256:94587522157b01531ed823b5027d05ee2220c55473bf73113296006286935f39",
+      "restart_count": 0,
+      "started_at": "2026-09-17T14:47:08.426585679Z"
+    },
+    "deployment-outbox-consumer": {
+      "container_id": "90479363c8983c9eeb5a87da561e7c1fe9d5b73e06b4dc4e79caeed49896a4cb",
+      "image_id": "sha256:a33bd800b10b3c9aa80ad8efeb476594a339cde7db7f3fa87b63ae1f99485809",
+      "restart_count": 0,
+      "started_at": "2026-09-17T14:48:13.095364154Z"
+    },
+    "dev-paper-principal-issuer": {
+      "container_id": "31e539119e7d05ffd73558d4a12d61ce03c9525d4f26f4ad1546591f5dce7157",
+      "image_id": "sha256:083971bf894ba59cad48158e43287c1f64b082f2f73508ea943fba9009d32405",
+      "restart_count": 0,
+      "started_at": "2026-09-17T14:44:31.462245423Z"
+    },
+    "governance": {
+      "container_id": "38ba89c571215c4ce15fc24084f6fd69fed4866f2a6b92fa3caaf1bbe981a446",
+      "image_id": "sha256:6fa2c71ba82431f3c4f08bd789a658969fd2cc3588e358973b9f47c24649ab49",
+      "restart_count": 0,
+      "started_at": "2026-09-17T14:47:01.509447519Z"
+    },
+    "registry": {
+      "container_id": "2f3f654153d71241ce9a762d07c152f94240f2da079ef96f0822d15cb4318103",
+      "image_id": "sha256:0519f374225cfc0b1c817f5b681d281361ed2841d8f2bcc38e40a533be6ce3cb",
+      "restart_count": 0,
+      "started_at": "2026-09-17T14:47:01.514059495Z"
+    },
+    "runtime-manager": {
+      "container_id": "63cf08670cadc2002ef1f319c55a8a73cae57058871e44bde128ad5a530d01ce",
+      "image_id": "sha256:3e81653a51a441dc8f9e99cbd0a4e33064c0b9eb7d74defdf92fa72d19f6b822",
+      "restart_count": 0,
+      "started_at": "2026-09-17T14:48:07.348678302Z"
+    }
+  }
+}

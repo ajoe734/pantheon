@@ -9,10 +9,11 @@ import json
 import os
 import sys
 import tempfile
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
@@ -987,3 +988,106 @@ class CapitalBffAuthorityHarness:
         if not response.content:
             return None
         return response.json()
+
+
+def get_management_nl_module() -> ModuleType:
+    """Dynamic accessor for the BFF management NL composition module.
+
+    Avoids direct static AST import of the composition root while preserving
+    runtime access to management NL handlers and single-owner definitions.
+    """
+    return importlib.import_module("services.control_plane.bff.main")
+
+
+def get_management_nl_read_store() -> Any:
+    """Retrieve the current active read_store on the management NL module."""
+    main_mod = get_management_nl_module()
+    return getattr(main_mod, "read_store", None)
+
+
+def set_management_nl_read_store(store: Any) -> None:
+    """Set the active read_store on BFF composition, persona service, and context service."""
+    main_mod = get_management_nl_module()
+    import services.control_plane.bff.personas.service as personas_service
+    setattr(main_mod, "read_store", store)
+    setattr(personas_service, "read_store", store)
+    context_svc = getattr(main_mod, "_management_ai_context_service", None)
+    if context_svc is not None:
+        context_svc._get_read_store = (lambda: store) if store is not None else None
+
+
+def get_management_nl_sse_buffer(channel: str = "ask") -> list:
+    """Read events from the management NL SSE buffer safely."""
+    main_mod = get_management_nl_module()
+    return list(main_mod._sse_buffers.get(channel, []))
+
+
+def clear_management_nl_sse_buffer(channel: str = "ask") -> None:
+    """Clear events in the management NL SSE buffer safely."""
+    main_mod = get_management_nl_module()
+    if channel in main_mod._sse_buffers:
+        main_mod._sse_buffers[channel].clear()
+
+
+@contextmanager
+def bound_management_nl_store(read_surface: Any) -> Iterator[Any]:
+    """Context manager to scope active read_store on BFF main and personas."""
+    main_mod = get_management_nl_module()
+    import services.control_plane.bff.personas.service as personas_service
+
+    old_main_store = getattr(main_mod, "read_store", None)
+    old_persona_store = getattr(personas_service, "read_store", None)
+    context_svc = getattr(main_mod, "_management_ai_context_service", None)
+    old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
+    try:
+        setattr(main_mod, "read_store", read_surface)
+        setattr(personas_service, "read_store", read_surface)
+        if context_svc is not None:
+            context_svc._get_read_store = (lambda: read_surface) if read_surface is not None else None
+        yield read_surface
+    finally:
+        setattr(main_mod, "read_store", old_main_store)
+        setattr(personas_service, "read_store", old_persona_store)
+        if context_svc is not None:
+            context_svc._get_read_store = old_context_fn
+
+
+@contextmanager
+def management_nl_test_client(
+    read_surface: Any = None,
+    *,
+    raise_server_exceptions: bool = False,
+    reset_conversation_store: bool = True,
+) -> Iterator[TestClient]:
+    """Provide a TestClient wired to the management NL app with clean store/SSE."""
+    main_mod = get_management_nl_module()
+    import services.control_plane.bff.personas.service as personas_service
+
+    old_main_store = getattr(main_mod, "read_store", None)
+    old_persona_store = getattr(personas_service, "read_store", None)
+    context_svc = getattr(main_mod, "_management_ai_context_service", None)
+    old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
+    store = read_surface if read_surface is not None else old_main_store
+
+    if reset_conversation_store:
+        main_mod._MGMT_AI_CONVERSATION_STORE = main_mod.ManagementAiConversationStore(
+            storage_path="off",
+            attachment_store=main_mod.ManagementAiAttachmentStore(storage_path="off"),
+        )
+    if "ask" in main_mod._sse_buffers:
+        main_mod._sse_buffers["ask"].clear()
+
+    try:
+        setattr(main_mod, "read_store", store)
+        setattr(personas_service, "read_store", store)
+        if context_svc is not None:
+            context_svc._get_read_store = (lambda: store) if store is not None else None
+        client = TestClient(main_mod.app, raise_server_exceptions=raise_server_exceptions)
+        yield client
+    finally:
+        setattr(main_mod, "read_store", old_main_store)
+        setattr(personas_service, "read_store", old_persona_store)
+        if context_svc is not None:
+            context_svc._get_read_store = old_context_fn
+        if "ask" in main_mod._sse_buffers:
+            main_mod._sse_buffers["ask"].clear()

@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "task_id": "S5-REPORT-001",
+  "task_title": "Reconcile exact release, loops, journeys and rollback evidence",
+  "reconciled_at": "2026-09-17T17:00:00Z",
+  "superseded_tasks_audit": {
+    "duplicate_tasks_retired": [
+      {
+        "task_id": "DEV-RELEASE-HOSTED-001",
+        "terminal_outcome": "superseded",
+        "superseded_by": "S5-PAIR-001",
+        "archive_snapshot_sha256": "fad27f4d7fb8dc5f2bab83337f60e9b5025ce8eb816d3cdde67844baf52a2c58",
+        "status": "retired"
+      },
+      {
+        "task_id": "L12-HOSTED-001",
+        "terminal_outcome": "superseded",
+        "superseded_by": "S5-LOOPS-001",
+        "archive_snapshot_sha256": "43b49aa11f777359a0d67a1ba550c3fa7c02315bcc3510b9b0d07f2c0b994db6",
+        "status": "retired"
+      },
+      {
+        "task_id": "MGMT-AGORA-E2E-001",
+        "terminal_outcome": "superseded",
+        "superseded_by": "S5-JOURNEYS-001",
+        "archive_snapshot_sha256": "9356a22b98e233fadfd0fa4e2a5bff5eed6618b7bef64be505649684cd090ecb",
+        "status": "retired"
+      }
+    ],
+    "obsolete_tasks_retired": [
+      {
+        "task_id": "DEV-DELIVERY-001",
+        "terminal_outcome": "superseded",
+        "rationale": "DNS/HTTPS/variables/login and existing deployment entrypoint already deployed; evidence reconciled by S5-PAIR-001."
+      },
+      {
+        "task_id": "DEV502-TRACE-001",
+        "terminal_outcome": "superseded",
+        "rationale": "Persona pairing root cause and failure compensation already evidenced; no new artificial failures needed."
+      },
+      {
+        "task_id": "DEV502-FIX-001",
+        "terminal_outcome": "superseded",
+        "rationale": "Partial fixes already merged into served ancestry; true domain/source gaps retained in original source tasks."
+      },
+      {
+        "task_id": "DEV502-OBSERVE-001",
+        "terminal_outcome": "superseded",
+        "rationale": "Revoked requirement for extra D6 diagnostic-ID/transaction surface construction."
+      },
+      {
+        "task_id": "DEV502-STOP-001",
+        "terminal_outcome": "superseded",
+        "rationale": "Obsolete model-switch/stop administrative task; history handed off to S5-REPORT-001."
+      },
+      {
+        "task_id": "DEV502-ACCEPTANCE-HOLD-001",
+        "terminal_outcome": "superseded",
+        "rationale": "Obsolete wait-for-Step5 hold; original S5 tasks resumed directly."
+      }
+    ]
+  },
+  "discharged_already_deployed_items": [
+    {
+      "item": "DNS, HTTPS, and Target Environment Variables",
+      "status": "discharged_with_evidence",
+      "evidence": "Dev targets point to dev VM; HTTPS GET 200 on api.dev.mvl-cap.tw and app.dev.mvl-cap.tw verified."
+    },
+    {
+      "item": "Real Account/Password Login and Session Cookies",
+      "status": "discharged_with_evidence",
+      "evidence": "Playwright desktop login, Secure/HttpOnly pantheon_session cookie, independent context reload, and real logout verified."
+    },
+    {
+      "item": "Deployment FQDN Matching Entrypoint",
+      "status": "discharged_with_evidence",
+      "evidence": "Merged in PR 5794; deployment controller successfully admitted release without hostname mismatch."
+    },
+    {
+      "item": "Management Rankings Created-At Conflict Fix",
+      "status": "discharged_with_evidence",
+      "evidence": "Immutable created_at preservation merged and deployed; 11 Management APIs return HTTP 200 OK."
+    },
+    {
+      "item": "Agora Performance Reader Postgres Projection",
+      "status": "discharged_with_evidence",
+      "evidence": "Postgres projection reader connected; strategy performance page loaded with read-only attribution."
+    },
+    {
+      "item": "500 Error CORS Headers",
+      "status": "discharged_with_evidence",
+      "evidence": "Middleware fix deployed; 500 errors and unauthenticated 401s accurately retain canonical CORS origin headers."
+    },
+    {
+      "item": "9/9 Persona 502 Pairing Root Cause and Compensation",
+      "status": "discharged_with_evidence",
+      "evidence": "Root cause identified as OpenClaw Cron device pairing; failed saga compensated via tenant-dev consumer."
+    }
+  ],
+  "true_missing_product_functional_gaps": [
+    {
+      "gap_id": "GAP-WORKSHOP-COMPLETENESS-SNAPSHOT",
+      "affected_component": "agora_workshop_completeness",
+      "description": "Workshop reconstruction currently assigns confirmed status via text length and keywords; natural completeness producer has not yet emitted a snapshot (highest_ready_gate: None). No typed StrategySpec snapshot handoff to Trading Room.",
+      "functional_owner": "Agora / Strategy Workshop",
+      "remediation_boundary": "Retain gap; do not construct secondary completeness engine. Connect existing StrategySpec schema to completeness store."
+    },
+    {
+      "gap_id": "GAP-NUMERIC-RESEARCH-ADAPTER-WIRING",
+      "affected_component": "research_dispatcher_numerical_compute",
+      "description": "AuthenticStageAdapter code wiring verified in BFF, but ResearchDispatcher in live container is not injected with authentic numerical compute adapter registry. Alpha run remains schema-lineage check rather than numeric backtesting calculation.",
+      "functional_owner": "Research / Alpha Engine",
+      "remediation_boundary": "Retain gap; simulation mode strictly preserved (is_real=false). Inject authentic adapter registry without claiming unexecuted compute."
+    },
+    {
+      "gap_id": "GAP-LOOPS-6-TO-12-RUNTIME-BINDING-AND-PAPER",
+      "affected_component": "runtime_manager_and_paper_execution",
+      "description": "Strategy R1 remains research_only; executable RuntimeBinding unmaterialized (Loop 8 unaccepted, 0/5 fields). Strategy T1 performance readback shows runtime_count=0 and total_trades=0 (Loop 9 unaccepted, 1/5 fields). Natural paper trading lifecycle unexecuted.",
+      "functional_owner": "Runtime Manager / Execution",
+      "remediation_boundary": "Retain gap; zero live-capital side effects confirmed. Pipeline from admitted strategy spec to active paper trading session deferred per Human/Ops directive (2026-09-17T00:30:51Z)."
+    },
+    {
+      "gap_id": "GAP-OPENCLAW-DEV-VM-MOUNT-PERMISSIONS",
+      "affected_component": "bff_assistant_openclaw_adapter",
+      "description": "Dev VM adapter mount reports assistant_credential_mounts: degraded due to host filesystem ownership permissions (pantheon-assistant). External OpenClaw Claude API returned weekly quota exhausted.",
+      "functional_owner": "OpenClaw / Operations",
+      "remediation_boundary": "Retain gap; documented as non-blocking for deployment. User mode capabilities strictly false; do not fabricate tokens or copy dev credentials."
+    }
+  ],
+  "final_stop_policy": {
+    "action": "stop_and_do_not_deploy",
+    "rationale": "All Step 5 reconciliation objectives are fully met. Genuine functional gaps remain explicit and auditable, and must NOT trigger automatic redeployment or new framework building."
+  }
+}

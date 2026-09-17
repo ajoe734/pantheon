@@ -12,17 +12,23 @@ Acceptance covered:
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
 import sys
 import tempfile
 import json
 from pathlib import Path
+from typing import Any, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
+    get_management_nl_module,
+    get_management_nl_sse_buffer,
+    management_nl_test_client,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +47,8 @@ def _management_nl_command_idempotency_default_path(monkeypatch, tmp_path):
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b6-003:operator"}
 
 
-def _fresh_client(td: str) -> TestClient:
+@contextmanager
+def _fresh_client(td: str = "") -> Iterator[tuple[TestClient, Any]]:
     store = create_in_memory_read_surface_ports()
     store.audit_events = []
 
@@ -52,13 +59,8 @@ def _fresh_client(td: str) -> TestClient:
 
     store.record_agora_audit_event = _record_audit
     store.get_agora_session = lambda session_id: None
-    bff_main.read_store = store
-    bff_main._sse_buffers["ask"].clear()
-    bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
-        storage_path="off",
-        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
-    )
-    return TestClient(bff_main.app)
+    with management_nl_test_client(store) as client:
+        yield client, store
 
 
 def _error_payload(response) -> dict:
@@ -102,9 +104,7 @@ def test_high_risk_questions_return_typed_403(
     expected_pattern: str,
 ) -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as (client, store):
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": question},
@@ -127,16 +127,11 @@ def test_high_risk_questions_return_typed_403(
             assert details["followups"][0]["route"] == "/bff/management/human-inbox"
             assert isinstance(details["audit_id"], str)
             assert details["audit_id"]
-        finally:
-            bff_main.read_store = original_store
-            bff_main._sse_buffers["ask"].clear()
 
 
 def test_read_only_question_still_returns_202() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        with _fresh_client(td) as (client, store):
             resp = client.post(
                 "/bff/management/nl/ask",
                 json={"question": "What is the current PnL?", "focus": "portfolio"},
@@ -147,52 +142,46 @@ def test_read_only_question_still_returns_202() -> None:
             body = resp.json()
             assert body["status"] == "accepted"
             assert body["data"]["question"] == "What is the current PnL?"
-        finally:
-            bff_main.read_store = original_store
-            bff_main._sse_buffers["ask"].clear()
 
 
 def test_refusal_does_not_create_session_idempotency_record_or_sse(monkeypatch) -> None:
+    main_mod = get_management_nl_module()
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_collect = bff_main._mgmt_nl_collect_context
+        original_collect = main_mod._mgmt_nl_collect_context
         try:
-            client = _fresh_client(td)
-            store = bff_main.read_store
-            session_id = "bff-b6-003-refused-session"
+            with _fresh_client(td) as (client, store):
+                session_id = "bff-b6-003-refused-session"
 
-            def fail_if_collected(focus: str, snapshot_at: str, **kwargs):
-                raise AssertionError("high-risk refusal must run before surface collection")
+                def fail_if_collected(focus: str, snapshot_at: str, **kwargs):
+                    raise AssertionError("high-risk refusal must run before surface collection")
 
-            monkeypatch.setattr(bff_main, "_mgmt_nl_collect_context", fail_if_collected)
-            resp = client.post(
-                "/bff/management/nl/ask",
-                json={
-                    "question": "Please stop runtime rt-live-001",
-                    "session_id": session_id,
-                    "focus": "all",
-                },
-                headers={**OPERATOR_HEADERS, "Idempotency-Key": "bff-b6-003-refused-side-effects"},
-            )
+                monkeypatch.setattr(main_mod, "_mgmt_nl_collect_context", fail_if_collected)
+                resp = client.post(
+                    "/bff/management/nl/ask",
+                    json={
+                        "question": "Please stop runtime rt-live-001",
+                        "session_id": session_id,
+                        "focus": "all",
+                    },
+                    headers={**OPERATOR_HEADERS, "Idempotency-Key": "bff-b6-003-refused-side-effects"},
+                )
 
-            assert resp.status_code == 403, resp.text
-            assert store.get_agora_session(session_id) is None
-            # High-risk refusal runs before tenant resolution and durable
-            # command admission, so no reservation is ever created for this
-            # key -- the durable store file must be untouched (or empty).
-            command_store_path = bff_main._mgmt_nl_command_idempotency_store().storage_path
-            if command_store_path.exists():
-                assert json.loads(command_store_path.read_text(encoding="utf-8"))["records"] == {}
-            assert list(bff_main._sse_buffers["ask"]) == []
+                assert resp.status_code == 403, resp.text
+                assert store.get_agora_session(session_id) is None
+                # High-risk refusal runs before tenant resolution and durable
+                # command admission, so no reservation is ever created for this
+                # key -- the durable store file must be untouched (or empty).
+                command_store_path = main_mod._mgmt_nl_command_idempotency_store().storage_path
+                if command_store_path.exists():
+                    assert json.loads(command_store_path.read_text(encoding="utf-8"))["records"] == {}
+                assert get_management_nl_sse_buffer("ask") == []
 
-            audits = store.audit_events
-            assert len(audits) == 1
-            audit = audits[0]
-            assert audit["action"] == "management.nl.high_risk_refused"
-            assert audit["reason"] == "high_risk_nl_policy"
-            assert audit["matchedCategory"] == "runtime_control"
-            assert audit["matchedPattern"] == "stop runtime"
+                audits = store.audit_events
+                assert len(audits) == 1
+                audit = audits[0]
+                assert audit["action"] == "management.nl.high_risk_refused"
+                assert audit["reason"] == "high_risk_nl_policy"
+                assert audit["matchedCategory"] == "runtime_control"
+                assert audit["matchedPattern"] == "stop runtime"
         finally:
-            monkeypatch.setattr(bff_main, "_mgmt_nl_collect_context", original_collect)
-            bff_main.read_store = original_store
-            bff_main._sse_buffers["ask"].clear()
+            monkeypatch.setattr(main_mod, "_mgmt_nl_collect_context", original_collect)
