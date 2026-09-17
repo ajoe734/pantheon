@@ -16,7 +16,7 @@ import re
 import stat
 import subprocess
 import tempfile
-from typing import Callable
+from typing import Callable, Collection
 
 
 SERVICES = ("operator-bff", "agora-interaction-worker", "loop-run-projector-scheduler")
@@ -250,7 +250,8 @@ def _image(docker: Docker, image_id: str) -> dict:
 
 
 def capture_images(*, docker: Docker, archive_root: Path, source_sha: str,
-                   check_lease: Callable[[], None]) -> dict:
+                   check_lease: Callable[[], None],
+                   allowed_revisions: Collection[str] | None = None) -> dict:
     """Capture observed IDs and authenticated archives; never invent RepoDigests.
 
     ``source_sha`` must already be bound to the served baseline by the caller.
@@ -264,7 +265,10 @@ def capture_images(*, docker: Docker, archive_root: Path, source_sha: str,
         image_id = _current(docker, service)["image_id"]
         image = _image(docker, image_id)
         revision = image["revision"]
-        if revision not in (None, "", "unknown", source_sha):
+        valid_revisions = {None, "", "unknown", source_sha}
+        if allowed_revisions:
+            valid_revisions.update(allowed_revisions)
+        if revision not in valid_revisions:
             raise ArtifactError("observed OCI revision conflicts with baseline")
         services[service] = {"image_id": image_id, "oci_revision": revision,
                              "repo_digests": image["repo_digests"]}
@@ -296,7 +300,8 @@ def capture_images(*, docker: Docker, archive_root: Path, source_sha: str,
               "services": services, "archives": archives}
     raw = manifest_bytes(result)
     validate_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
-                    expected_source_sha=source_sha, archive_root=root)
+                    expected_source_sha=source_sha, archive_root=root,
+                    allowed_revisions=allowed_revisions)
     directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(directory_fd)
@@ -306,7 +311,8 @@ def capture_images(*, docker: Docker, archive_root: Path, source_sha: str,
 
 
 def validate_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str,
-                    archive_root: Path) -> dict:
+                    archive_root: Path,
+                    allowed_revisions: Collection[str] | None = None) -> dict:
     """Verify a component manifest against a separately trusted outer digest."""
     _match(expected_sha256, DIGEST, "manifest digest")
     _match(expected_source_sha, SHA, "source SHA")
@@ -322,7 +328,10 @@ def validate_images(raw: bytes, *, expected_sha256: str, expected_source_sha: st
     for row in bundle["services"].values():
         _keys(row, ("image_id", "oci_revision", "repo_digests"), "service")
         image_ids.add(_match(row["image_id"], IMAGE, "image ID"))
-        if row["oci_revision"] not in (None, "", "unknown", expected_source_sha):
+        valid_revisions = {None, "", "unknown", expected_source_sha}
+        if allowed_revisions:
+            valid_revisions.update(allowed_revisions)
+        if row["oci_revision"] not in valid_revisions:
             raise ArtifactError("invalid observed OCI revision")
         digests = row["repo_digests"]
         if digests is not None and (not isinstance(digests, list) or len(digests) > 32 or
@@ -343,7 +352,8 @@ def validate_images(raw: bytes, *, expected_sha256: str, expected_source_sha: st
 
 def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str,
                    archive_root: Path, compose_files: tuple[tuple[Path, str], ...],
-                   docker: Docker, check_lease: Callable[[], None], environment: str) -> dict:
+                   docker: Docker, check_lease: Callable[[], None], environment: str,
+                   allowed_revisions: Collection[str] | None = None) -> dict:
     """Restore ONLY three images. Caller owns authenticated admission/config/guard.
 
     No FE switch, issuer preparation, environment dump or fallback build/pull.
@@ -353,7 +363,8 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
         raise ArtifactError("artifact restore requires dev and trusted Compose files")
     check_lease()
     bundle = validate_images(raw, expected_sha256=expected_sha256,
-                             expected_source_sha=expected_source_sha, archive_root=archive_root)
+                             expected_source_sha=expected_source_sha, archive_root=archive_root,
+                             allowed_revisions=allowed_revisions)
     for path, digest in compose_files:
         _match(digest, DIGEST, "Compose digest")
         if _file_digest(path)[0] != digest:

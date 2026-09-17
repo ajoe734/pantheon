@@ -1,0 +1,15 @@
+{
+  "idempotency_key": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7:research-review:propose",
+  "payload": {
+    "candidate_digest": "sha256:7ab1eb0c154591e2f5aa08aee27ddb61d0a38c2d0c02ed5ed1fe10678ae17ea5",
+    "expected_version": 0,
+    "expires_at": "2026-09-15T09:20:08Z",
+    "owner_user_id": "pantheon-dev-approver",
+    "risk_level": "low",
+    "target_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+    "target_type": "registry_entry",
+    "target_version": "1.0.0",
+    "tenant_id": "tenant-dev"
+  },
+  "route": "/api/governance/approvals"
+}

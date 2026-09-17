@@ -1,0 +1,131 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-GATE-CORRECTIVE-001",
+  "base_ref": "dev@4d78e49fe9b788955eb2b367972914be95bf3535",
+  "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "normative_plan": "Human/Ops corrective finding 2026-09-17: the acceptance-2 requirement (\"AST/import graph 計算而非 JSON 數字上限\") was not actually implemented; gate compared two self-reported JSON numbers and was never wired into any required CI check.",
+  "problem_statement": {
+    "before": [
+      "test_total_main_importers_is_bounded_and_strictly_decreased compared inventory[\"audited_baseline_main_importers\"] and inventory[\"current_main_importers\"], both self-reported integers with no live scan behind them.",
+      "The AST scan that did exist (test_migrated_suites_do_not_import_main) only covered the 5-file migrated_suites list, so new main-importing test files anywhere else in the tree were invisible to the gate.",
+      "No workflow ran services/control-plane/bff/tests/test_bff_test_architecture.py; branch-ci.yml's Smoke acceptance job only ran bwrap sandbox and worker-runner-heartbeat tests. None of the 3 required checks (Commit trailers / Runtime mirror guard / Smoke acceptance) covered this gate.",
+      "Consequence: at least two real new BFF main importers landed undetected this week (e.g. tests/test_management_nl_single_owner.py manipulating main._sse_buffers directly).",
+      "Local run at dev@4d78e49fe was 7 passed, 1 failed; the only failure was the inventory still referencing the retired services/control-plane/bff/tests/test_actions_to_commands_adapter.py.",
+      "The composition_allowlist was missing at least one legitimate composition-root test, services/control-plane/bff/tests/test_http_auth_composition_owner.py, which tests the composition root itself."
+    ]
+  },
+  "results": {
+    "live_ast_gate": {
+      "file": "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "test_name": "test_non_whitelisted_main_importers_is_live_scanned_and_bounded",
+      "replaces": "test_total_main_importers_is_bounded_and_strictly_decreased (deleted; relied on two self-reported JSON integers)",
+      "scan_rule": "ast.Import name == 'main' or endswith '.main'; ast.ImportFrom module == 'main' or endswith '.main'; or 'from services.control_plane.bff import main'. Excludes services.research.main (a distinct service's own main, not the BFF composition root).",
+      "scan_scope": "Every *.py file under services/control-plane/bff (recursive) whose name starts with 'test_' or 'smoke_test', discovered fresh from disk on every test run -- not read from the inventory's own file list.",
+      "assertion": "live-scanned non-whitelisted importer count and exact file list must equal the values recorded in the inventory (catches drift), and the count must not exceed live_scan_non_whitelisted_main_importer_ceiling.",
+      "ceiling_process_rule": "The ceiling may only be lowered in a subsequent PR (never raised); each migration wave that decouples suites from main must lower it to match."
+    },
+    "negative_evidence": {
+      "method": "Added services/control-plane/bff/tests/test_zzz_negative_evidence_probe.py containing 'from services.control_plane.bff import main as bff_main' with no other content, ran the gate, observed failure, then deleted the probe file before committing.",
+      "observed_failure": "test_non_whitelisted_main_importers_is_live_scanned_and_bounded FAILED: live scan found 87 offenders (recorded inventory only lists 86); AssertionError on the live_offenders == sorted(recorded) equality check.",
+      "post_removal_state": "8 passed, 0 failed (probe file confirmed deleted from the tree before this evidence and the task commit)."
+    },
+    "inventory_corrections": {
+      "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+      "version": "1.0 -> 2.0",
+      "retired_entry_removed": "tests/test_actions_to_commands_adapter.py (file no longer exists on disk)",
+      "missing_entries_added": 44,
+      "missing_entries_added_files": [
+        "auth/test_browser_session.py",
+        "auth/test_dev_approver_governance.py",
+        "auth/test_policy.py",
+        "governance/test_decision_journal_write_owner.py",
+        "management_read_models/test_management_service_context_observations.py",
+        "management_read_models/test_persona_fleet_read_failures.py",
+        "management_read_models/test_twelve_loop_projector.py",
+        "migrations/test_overlay_retirement.py",
+        "migrations/test_twelve_loop_truth.py",
+        "personas/test_router_isolation.py",
+        "strategies/test_router_isolation.py",
+        "smoke_test_incident.py",
+        "tests/test_agora_authentic_adapter_negative_controls.py",
+        "tests/test_agora_chain_001_natural_owner_and_receipt.py",
+        "tests/test_agora_performance_transport_and_isolated_store.py",
+        "tests/test_assistant_source_collectors_owner.py",
+        "tests/test_command_admission_single_owner.py",
+        "tests/test_command_audit_scope.py",
+        "tests/test_command_store_multiprocess.py",
+        "tests/test_evolution_program_action_receipts.py",
+        "tests/test_evolution_program_owner_contract.py",
+        "tests/test_http_auth_composition_owner.py",
+        "tests/test_jobs_source_owner_contract.py",
+        "tests/test_journal_context_resolver_owner.py",
+        "tests/test_legacy_command_write_retirement.py",
+        "tests/test_management_nl_single_owner.py",
+        "tests/test_management_session_harness.py",
+        "tests/test_mgmt_read_001_persona_fleet_owner_observations.py",
+        "tests/test_mutation_review_projection_policy.py",
+        "tests/test_overlay_retirement.py",
+        "tests/test_persona_create_owner_contract.py",
+        "tests/test_persona_deployment_wire_contract.py",
+        "tests/test_persona_governance_caller_contract.py",
+        "tests/test_persona_health_single_owner.py",
+        "tests/test_persona_owner_transport_contract.py",
+        "tests/test_persona_paper_owner_lifecycle_contract.py",
+        "tests/test_persona_paper_principal_transport_contract.py",
+        "tests/test_persona_paper_registry_owner_contract.py",
+        "tests/test_persona_provisioning_reconcile.py",
+        "tests/test_ranking_snapshot_write_port.py",
+        "tests/test_read_surface_paper_fleet_owner.py",
+        "tests/test_research_jobs_action_receipts.py",
+        "tests/test_strategy_registry_owner_prerequisite.py",
+        "tests/test_workshop_request_authorization.py"
+      ],
+      "imports_main_flags_corrected_by_live_scan": "All 384 entries' imports_main / disposition were regenerated from the live AST scan rather than trusted from prior self-reported values. Example correction: agora/performance/test_performance.py was recorded imports_main=false but actually imports 'from services.control_plane.bff import main as bff_main' inside a function body at line 1557; live scan now records it correctly as imports_main=true, disposition=PLANNED.",
+      "total_test_files": 384,
+      "layer_summary": {"adapter": 55, "application": 189, "composition": 13, "hosted": 11, "router": 116},
+      "disposition_summary": {"ALLOWLIST": 15, "DECOUPLED": 278, "MIGRATED": 5, "PLANNED": 86}
+    },
+    "composition_allowlist_correction": {
+      "added": "tests/test_http_auth_composition_owner.py",
+      "rationale": "Tests the composition root itself (asserts identity of the shared http_auth object as constructed by main.py's composition), not a downstream consumer of main; matches the same class of test as tests/test_bff_main_composition.py and tests/test_agora_servant_production_write_owner.py already on the allowlist.",
+      "count": "14 -> 15"
+    },
+    "live_scan_non_whitelisted_main_importer_ceiling": {
+      "value": 86,
+      "measured_at": "dev@4d78e49fe9b788955eb2b367972914be95bf3535, this task's worktree, after the allowlist and inventory corrections above",
+      "note": "Human/Ops's preliminary manual estimate in the task brief was 84; the authoritative live-scanned figure recorded here (86) additionally covers 44 test files under auth/, governance/, management_read_models/, migrations/, personas/, strategies/, and agora/performance/ that existed on disk but were previously absent from the inventory's own tracked file list entirely (item 4 of this task's acceptance criteria). The full offender list is recorded verbatim in bff_test_architecture_inventory.json's live_scan_non_whitelisted_main_importers array so any future drift is caught by the gate's equality assertion, not just the count."
+    },
+    "ci_wiring": {
+      "file": ".github/workflows/branch-ci.yml",
+      "job": "smoke (name: Smoke acceptance)",
+      "change": "Added an unconditional 'BFF test architecture gate' step running 'python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py', plus 'python3 -m pip install httpx' in the existing 'Install deps (best-effort)' step.",
+      "why_unconditional": "Placed before the tooling/product boundary classification step so it runs on every PR touching this repo, matching the task's acceptance that new main imports anywhere (not just tooling- or product-classified diffs) must be caught.",
+      "why_httpx_install": "services/control-plane/bff/tests/conftest.py (loaded by pytest for any collection under that directory) imports httpx for its asgi_request fixture. httpx is declared in services/control-plane/bff/requirements.txt but the Smoke acceptance job only installs the repo-root requirements.txt plus a small explicit tooling dependency set (cryptography, pyyaml, pydantic, pytest) -- it does not otherwise exercise BFF runtime deps. Without this one-line addition, collection of test_bff_test_architecture.py would fail on ModuleNotFoundError: httpx in a fresh CI runner, even though the gate test module itself only needs ast/json/pytest from the standard library.",
+      "why_no_branch_protection_change": "smoke is already one of the 3 required status checks (Commit trailers / Runtime mirror guard / Smoke acceptance); adding a step inside an already-required job does not require a branch protection change."
+    }
+  },
+  "verification": {
+    "commands": [
+      "PANTHEON_DEPENDENCY_PYTHON=<main-checkout>/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      ".venv-pantheon/bin/python3 -m unittest scripts.test_branch_ci_gate_selection",
+      ".venv-pantheon/bin/python3 -m unittest scripts.test_component_boundary",
+      "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/branch-ci.yml'))\""
+    ],
+    "results": {
+      "gate_before_fix": "1 failed, 7 passed (failure: retired inventory entry tests/test_actions_to_commands_adapter.py missing from disk)",
+      "gate_after_fix": "8 passed, 0 failed",
+      "negative_control": "adding a throwaway test file that imports main flips the new gate test to FAILED as documented above; removed before commit",
+      "branch_ci_gate_selection_tests": "9 passed",
+      "component_boundary_tests": "11 passed",
+      "workflow_yaml": "parses as valid YAML"
+    }
+  },
+  "scope_boundary": {
+    "not_changed": [
+      "services/control-plane/bff/main.py (untouched, per acceptance)",
+      "Branch protection rules (smoke was already a required check)",
+      "No hosted/production deploy performed"
+    ]
+  }
+}

@@ -373,3 +373,44 @@ def test_unexpected_data_error_retains_checked_in_source_location():
     assert row["failure_kind"] == "invalid-data"
     assert row["failure_location"].startswith("dev_release_artifacts.py:")
     assert "fixture-secret" not in json.dumps(row)
+
+
+def test_capture_and_validate_images_accept_drift_recovery_allowed_revisions(tmp_path):
+    root = tmp_path / "archives"
+    root.mkdir(mode=0o700)
+    docker = FakeDocker()
+    drift_sha = "d" * 40
+    docker.images[IDS[0]]["revision"] = drift_sha
+    checks = []
+    lease = lambda: checks.append(True)
+
+    # Without allowed_revisions, capture rejects the drifted revision
+    with pytest.raises(artifacts.ArtifactError, match="observed OCI revision conflicts with baseline"):
+        artifacts.capture_images(docker=docker, archive_root=root, source_sha=SOURCE, check_lease=lease)
+
+    # With allowed_revisions containing drift_sha, capture succeeds
+    bundle = artifacts.capture_images(docker=docker, archive_root=root, source_sha=SOURCE,
+                                     check_lease=lease, allowed_revisions=[drift_sha])
+    assert bundle["services"]["operator-bff"]["oci_revision"] == drift_sha
+
+    # validate_images also accepts drift_sha when passed in allowed_revisions
+    raw = artifacts.manifest_bytes(bundle)
+    validated = artifacts.validate_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
+                                          expected_source_sha=SOURCE, archive_root=root,
+                                          allowed_revisions=[drift_sha])
+    assert validated["services"]["operator-bff"]["oci_revision"] == drift_sha
+
+    # validate_images rejects drift_sha if allowed_revisions does not include it
+    with pytest.raises(artifacts.ArtifactError, match="invalid observed OCI revision"):
+        artifacts.validate_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
+                                  expected_source_sha=SOURCE, archive_root=root)
+
+    # restore_images also accepts drift_sha with allowed_revisions
+    compose = tmp_path / "compose.json"
+    compose.write_text(json.dumps({"services": {s: {"build": "."} for s in artifacts.SERVICES}}))
+    restored = artifacts.restore_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
+                                        expected_source_sha=SOURCE, archive_root=root,
+                                        compose_files=((compose, hashlib.sha256(compose.read_bytes()).hexdigest()),),
+                                        docker=docker, check_lease=lease, environment="dev",
+                                        allowed_revisions=[drift_sha])
+    assert restored["image_readback_verified"] is True

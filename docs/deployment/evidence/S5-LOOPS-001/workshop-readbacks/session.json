@@ -1,0 +1,31 @@
+{
+  "at": "2026-09-13T05:22:31.562049+00:00",
+  "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba",
+  "status": 200,
+  "body": {
+    "data": {
+      "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "tenant_id": "tenant-dev",
+      "user_id": "pantheon-dev-operator-a",
+      "servant_persona_id": null,
+      "openclaw_session_id": null,
+      "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+      "active_strategy_spec_registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+      "selected_version_id": null,
+      "active_workshop_version_id": null,
+      "final_strategy_spec_registry_id": null,
+      "final_workshop_version_id": null,
+      "status": "open",
+      "lock_version": 1,
+      "created_at": "2026-09-13 05:22:31+00",
+      "updated_at": "2026-09-13 05:22:31+00",
+      "concluded_at": null
+    },
+    "meta": {
+      "snapshot_at": "2026-09-13T05:22:31Z",
+      "capability": "agora.workshop.v1",
+      "audience": "tenant:tenant-dev:user:pantheon-dev-operator-a",
+      "etag": "W/\"workshop:2afec261-fe60-43af-bacb-136c60a8f9ba:v1\""
+    }
+  }
+}
