@@ -727,6 +727,107 @@ class V2StartupCacheTests(unittest.TestCase):
         self.assertNotIn("evt-cas-loser", final_state["queue"]["events"])
         self.assertEqual(final_state["supervisor"]["last_heartbeat_at"], "2026-08-14T12:00:00Z")
 
+    def test_health_observation_survives_a_rejected_transition_in_the_same_cycle(
+        self,
+    ) -> None:
+        """A read-only observation must not be discarded by a write it does
+        not participate in.
+
+        Regression for the fleet-wide dispatch stall: delivery-health
+        observations were committed inside the maintenance phase, so every
+        transition that phase's revalidation could not prove also discarded
+        that cycle's probe results. Evidence expires after
+        delivery_health.evidence_ttl_seconds, so a sustained discard rate
+        expired every lane and the dispatcher then refused every lane for
+        HEALTH_REFRESH_REQUIRED, with no worker left to change the state that
+        would have ended it.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            runtime_state.save_runtime_state(config, runtime_state.default_state())
+
+            observations = [{
+                "endpoint_id": "lane-9",
+                "account_id": "acct-9",
+                "probe": {
+                    "provider": "lane-9",
+                    "ready": True,
+                    "status": "ready",
+                    "source": "live",
+                    "checked_at": "2026-09-17T12:00:00Z",
+                },
+            }]
+            # Exactly what run_once calls, in the same order: the observation
+            # phase performs no transition, so it has nothing to reject.
+            self.assertTrue(
+                supervisor.commit_delivery_health_observations(config, observations)
+            )
+
+            def unrelated_rejected_transition(scratch: dict[str, object]) -> bool:
+                scratch.setdefault("queue", {}).setdefault("events", {})[
+                    "evt-unrelated"
+                ] = {"status": "completed"}
+                # A concurrent writer advances the underlying runtime state
+                # while this phase still holds its stale scratch snapshot, so
+                # its own CAS at save time is refused.
+                with runtime_state.runtime_state_update(config) as current:
+                    current["supervisor"]["last_heartbeat_at"] = "2026-09-17T12:00:01Z"
+                return True
+
+            with mock.patch.object(supervisor, "write_activity_log"):
+                self.assertFalse(
+                    supervisor._run_reserved_runtime_phase(
+                        config,
+                        "post_dispatch_maintenance",
+                        unrelated_rejected_transition,
+                    )
+                )
+
+            final_state = runtime_state.load_runtime_state(config)
+
+        landed = final_state.get("delivery_health", {}).get("endpoints", {}).get(
+            "lane-9"
+        ) or {}
+        self.assertEqual(landed.get("state"), "healthy")
+        self.assertNotIn("evt-unrelated", final_state["queue"]["events"])
+
+    def test_sustained_reserved_phase_discards_escalate_beyond_one_log_line(
+        self,
+    ) -> None:
+        """A phase that loses its CAS every cycle is a stall, not contention.
+
+        A single lost CAS is ordinary concurrent-writer contention and the
+        only trace was previously one activity-log line, while cycle metrics
+        still reported the phase as executed and the watchdog still reported
+        the supervisor healthy. Track the consecutive-discard streak per
+        phase so a genuine stall becomes visible on the supervisor's own
+        console once it crosses the configured threshold.
+        """
+
+        phase = "phase-under-test"
+        supervisor._PHASE_DISCARD_STREAKS.pop(phase, None)
+        try:
+            streaks = [
+                supervisor.record_reserved_phase_outcome(phase, committed=False)
+                for _ in range(4)
+            ]
+            self.assertEqual(streaks, [1, 2, 3, 4])
+            self.assertLessEqual(
+                supervisor.SUSTAINED_PHASE_DISCARD_THRESHOLD, streaks[-1]
+            )
+            # A commit clears the streak, so ordinary contention never escalates.
+            self.assertEqual(
+                supervisor.record_reserved_phase_outcome(phase, committed=True), 0
+            )
+            self.assertEqual(
+                supervisor.record_reserved_phase_outcome(phase, committed=False), 1
+            )
+        finally:
+            supervisor._PHASE_DISCARD_STREAKS.pop(phase, None)
+
 
 def config_fixture(root: Path | None = None) -> dict[str, object]:
     paths: dict[str, str] = {}
