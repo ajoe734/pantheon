@@ -6,7 +6,7 @@
   "reviewer": "Antigravity2",
   "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
   "delivery_state": "ready_for_review",
-  "base_sha": "c6f39a8d87aeb480800d55f72c88286dc3bddb3d",
+  "base_sha": "85b89f93b6eb6861d03f450f189e3e822b209865",
   "depends_on": [
     "BFF-TEST-MIGRATION-REPARTITION-PLAN-002"
   ],
