@@ -1,30 +1,49 @@
 """MGMT-OODA-004 contract tests for BFF OODA packet read routes."""
 from __future__ import annotations
 
-import json
-import tempfile
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Iterator, Optional
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.control_loops.router import (
+    _default_extract_identity,
+    _default_require_read_role,
+    create_control_loops_router,
+)
+from services.control_plane.bff.control_loops.service import default_bff_error
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.evolution.router import (
+    _default_page_slice,
+    _default_read_surface_meta,
+    _default_utc_now,
+    create_evolution_router,
+)
+from services.control_plane.bff.evolution.service import (
+    ooda_packet_list_payload as _production_ooda_packet_list_payload,
+    ooda_packet_routes_enabled,
+)
+from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.runtime.router import create_runtime_router
+from services.control_plane.bff.strategies.router import create_strategies_router
 
-# BFF-TEST-MIGRATION-B12: RETAINED_COMPOSITION. This file exercises
-# /bff/runtimes/{id}/ooda, /bff/strategies/{id}/ooda, and
-# /bff/evolution-programs/{id}/ooda together with /bff/ooda/packets. The
-# first three routes are only reachable via runtime/router.py's
-# create_runtime_router(), whose RuntimeRouterService has NO fallback
-# defaults -- every dependency (e.g. _ooda_packet_list_payload,
-# _require_ooda_packet_routes_enabled, _dataset_surface_status,
-# _page_slice, ~25 others) must be supplied by the composition root and is
-# currently only assembled as closures inside main.py (see
-# main.py:19614-19659). Reimplementing that dependency graph in a test file
-# would duplicate production wiring rather than reuse it, so this file
-# continues to exercise the assembled `main.app` until those closures are
-# extracted into an injectable module.
+# BFF-TEST-MIGRATION-CB07: DECOUPLED. As of this migration, the four route
+# groups this file exercises (/bff/runtimes/{id}/ooda, /bff/strategies/{id}/ooda,
+# /bff/evolution-programs/{id}/ooda, /bff/ooda/packets[...]) live across four
+# already-extracted domain routers -- control_loops/router.py, evolution/router.py,
+# strategies/router.py (via routes/detail.py), and runtime/router.py -- none of
+# which import main.py. Three of the four (control_loops, evolution, strategies'
+# own read_surface_meta fallback) now ship real default wiring; only
+# runtime/router.py's RuntimeRouterService still has zero fallback defaults
+# (every dependency resolves through service.dependency(name) with no default),
+# so its four required callables (_extract_identity, _require_read_role,
+# _require_ooda_packet_routes_enabled, _ooda_packet_list_payload) are supplied
+# explicitly below, reusing the same production primitives (control_loops'
+# default identity/role checks, evolution.service.ooda_packet_routes_enabled,
+# and evolution.service.ooda_packet_list_payload) rather than duplicating
+# main.py's private closures.
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-ooda:operator,reviewer,admin:mfa"}
@@ -81,40 +100,111 @@ def _normalize_ooda_packets(raw_packets: Optional[list[dict]]) -> Optional[list[
     return list(materialized.values()) + passthrough
 
 
+def _require_ooda_packet_routes_enabled() -> None:
+    """Reusable feature-flag gate for routers with no built-in default.
+
+    Composes the real production predicate (``ooda_packet_routes_enabled``)
+    with the real production error envelope builder (``default_bff_error``);
+    it does not reimplement any packet-listing business logic.
+    """
+    if ooda_packet_routes_enabled():
+        return
+    raise default_bff_error(
+        503,
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
+        "OODA packet read routes disabled",
+        "PANTHEON_OODA_PACKET_ENABLED is disabled for this BFF instance.",
+        precondition_failed="ooda_packet_feature_flag",
+        suggestion="Re-enable the OODA packet read surface before retrying this route.",
+    )
+
+
+def _wired_ooda_packet_list_payload(
+    packets: list[dict],
+    *,
+    surface_key: str,
+    page_token: Optional[str] = None,
+    page_size: int = 20,
+    related: Optional[dict] = None,
+) -> dict:
+    """Adapt the production ``ooda_packet_list_payload`` to the calling
+    convention used by strategies/routes/detail.py and runtime/router.py,
+    which invoke it without ``snapshot_at``/``page_slice_fn``/
+    ``read_surface_meta_fn`` (those routers own that plumbing internally for
+    their own routes; the composition root supplies it for the others)."""
+    return _production_ooda_packet_list_payload(
+        packets,
+        surface_key=surface_key,
+        page_token=page_token,
+        page_size=page_size,
+        related=related,
+        snapshot_at=_default_utc_now(),
+        page_slice_fn=_default_page_slice,
+        read_surface_meta_fn=_default_read_surface_meta,
+    )
+
+
+def _mounted_app(store) -> FastAPI:
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(
+        create_control_loops_router(
+            read_surface=store,
+            extract_identity=_default_extract_identity,
+            require_read_role=_default_require_read_role,
+            bff_error=default_bff_error,
+        )
+    )
+    app.include_router(
+        create_evolution_router(
+            read_surface=store,
+            extract_identity=_default_extract_identity,
+            require_read_role=_default_require_read_role,
+            bff_error=default_bff_error,
+        )
+    )
+    app.include_router(
+        create_strategies_router(
+            read_surface=store,
+            extract_identity=_default_extract_identity,
+            require_read_role=_default_require_read_role,
+            bff_error=default_bff_error,
+            ooda_packet_list_payload=_wired_ooda_packet_list_payload,
+            require_ooda_packet_routes_enabled=_require_ooda_packet_routes_enabled,
+        )
+    )
+    app.include_router(
+        create_runtime_router(
+            read_surface=store,
+            dependencies={
+                "_extract_identity": _default_extract_identity,
+                "_require_read_role": _default_require_read_role,
+                "_require_ooda_packet_routes_enabled": _require_ooda_packet_routes_enabled,
+                "_ooda_packet_list_payload": _wired_ooda_packet_list_payload,
+            },
+        )
+    )
+    return app
+
+
 @contextmanager
 def _ooda_client(
     monkeypatch,
     *,
     packets: Optional[list[dict]] = OODA_PACKETS,
 ) -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-        monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-        monkeypatch.setenv("PANTHEON_OODA_API_URL", "")
-        monkeypatch.setenv("PANTHEON_CONTROL_PLANE_OODA_URL", "")
-        monkeypatch.delenv("PANTHEON_OODA_PACKET_ENABLED", raising=False)
-        if packets is not None:
-            store_path = Path(td) / "ooda_packets.jsonl"
-            store_path.write_text(
-                "\n".join(json.dumps(packet, sort_keys=True) for packet in packets) + "\n",
-                encoding="utf-8",
-            )
-            monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(store_path))
-            normalized = _normalize_ooda_packets(packets)
-            store = create_in_memory_read_surface_ports(
-                ooda_management_kwargs={"ooda_packets": normalized}
-            )
-            store.dataset_source = lambda ds: "service_store" if ds == "ooda_packets" else "typed_store"
-        else:
-            monkeypatch.delenv("PANTHEON_BFF_OODA_PACKET_STORE", raising=False)
-            store = create_in_memory_read_surface_ports()
-            store.dataset_source = lambda ds: "missing" if ds == "ooda_packets" else "typed_store"
-        bff_main.read_store = store
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original_store
+    monkeypatch.delenv("PANTHEON_OODA_PACKET_ENABLED", raising=False)
+    if packets is not None:
+        normalized = _normalize_ooda_packets(packets)
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"ooda_packets": normalized}
+        )
+        store.dataset_source = lambda ds: "service_store" if ds == "ooda_packets" else "typed_store"
+    else:
+        store = create_in_memory_read_surface_ports()
+        store.dataset_source = lambda ds: "missing" if ds == "ooda_packets" else "typed_store"
+    app = _mounted_app(store)
+    yield TestClient(app, raise_server_exceptions=False)
 
 
 def test_ooda_packet_list_and_detail_read_jsonl_store(monkeypatch) -> None:
