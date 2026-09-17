@@ -1,0 +1,89 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001-EXACT-HEAD-1A0D293C7F0F",
+  "recorded_at": "2026-09-17T13:08:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "scope": "Root-cause the auto-integrator exact-head-merge-conflict rejection for BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001 and confirm the original PR is updated and no longer stranded.",
+  "repository": "ajoe734/pantheon",
+  "command_runtime_sha": "f15be762ef373cd24707b89e5b9b286650b9a097",
+  "unblock_request": {
+    "source_task_id": "BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001",
+    "source_task_generation": 2,
+    "pr": 5889,
+    "head_sha": "9d1da0b4bdb4887cb8d28eb3b1ece04bcd24d41a",
+    "reason": "exact-head-merge-conflict",
+    "request_sha256": "2d156ee6f78a749f8c2ca79b259db75e469d90617d8a542d879cb1392e9eea35",
+    "detail": "PR #5889's evaluated head 9d1da0b4bdb4887cb8d28eb3b1ece04bcd24d41a no longer merges cleanly with dev; a real conflict, not just staleness. Owner resolves it (new commit, new review) rather than waiting it out."
+  },
+  "root_cause": {
+    "summary": "During integration of PR #5889, scripts/git/auto_integrator.py lines 3078-3110 evaluated whether the approved head 9d1da0b4bdb4887cb8d28eb3b1ece04bcd24d41a could be cleanly merged into current dev. While PR #5889 was in review_approved awaiting the integration cycle, prior PRs #5888 (CB03, commit fdcd8dea3) and #5887 (CB04, commit 1d7e2a620) merged into dev. Both PRs updated services/control-plane/bff/tests/bff_test_architecture_inventory.json, progressively lowering the live-scan ceiling from 80 to 74, then to 66, and modifying test entry classifications. PR #5889 (based on dev at f15be762ef373cd24707b89e5b9b286650b9a097) had also modified bff_test_architecture_inventory.json (lowering ceiling from 80 to 74). Consequently, git merge-tree encountered a real content merge conflict in bff_test_architecture_inventory.json. In accordance with lines 3078-3087 of scripts/git/auto_integrator.py, the auto-integrator refused to perform an unauthorized silent rebase (which would invalidate exact-head independent review approval) and correctly failed closed by creating this unblock task.",
+    "check_implicated": "scripts/git/auto_integrator.py:3078-3110 (rebase_status == 'exact_head_merge_conflict')",
+    "conflicting_paths": [
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ],
+    "not_an_integrator_defect": true,
+    "integrator_behavior": "scripts/git/auto_integrator.py performed as designed: it detected that the reviewed head no longer merged cleanly with current dev tip, avoided moving the head beyond what the reviewer approved, and unblocked the lane via governance."
+  },
+  "pr_refresh": {
+    "original_pr_number": 5889,
+    "original_pr_url": "https://github.com/ajoe734/pantheon/pull/5889",
+    "base_branch": "dev",
+    "previous_head_sha": "9d1da0b4bdb4887cb8d28eb3b1ece04bcd24d41a",
+    "refreshed_head_sha": "5f3a2bf0c32677bdbe963c54d574174962a440fa",
+    "merge_parents": [
+      "9d1da0b4bdb4887cb8d28eb3b1ece04bcd24d41a",
+      "1d7e2a620cf626fc4e883daaa8a9726251c3bdf7"
+    ],
+    "conflict_resolution": "Resolved conflict in services/control-plane/bff/tests/bff_test_architecture_inventory.json by incorporating the latest dev baseline (ceiling 66 after CB03 and CB04), applying CB08's 6 decoupled test suites, lowering ceiling from 66 to 60 as proven by live AST scan, and registering all 17 cumulative migrated suites. Updated CB08 evidence.json with rebased base_ref dev@1d7e2a620cf626fc4e883daaa8a9726251c3bdf7 and new ceiling 60.",
+    "gh_pr_status_after_push": {
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "BLOCKED",
+      "autoMergeRequest": null
+    }
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "8 passed in 5.81s; all 8 architectural invariants verified at refreshed head 5f3a2bf0c"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_openclaw_ops_surface.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/tests/test_management_nl_single_owner.py",
+      "exit_code": 0,
+      "result": "114 passed, 4 warnings in 49.32s (100% pass rate across all 6 target test suites)"
+    },
+    {
+      "command": "git merge-base --is-ancestor 1d7e2a620cf626fc4e883daaa8a9726251c3bdf7 5f3a2bf0c32677bdbe963c54d574174962a440fa",
+      "exit_code": 0,
+      "result": "Current dev tip 1d7e2a620 is an ancestor of refreshed PR head 5f3a2bf0c"
+    },
+    {
+      "command": "gh pr view 5889 --json number,title,state,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus",
+      "exit_code": 0,
+      "result": "PR #5889 is OPEN, mergeable: MERGEABLE, headRefOid: 5f3a2bf0c32677bdbe963c54d574174962a440fa, no longer conflicting or stranded"
+    }
+  ],
+  "source_review_followup": {
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "required_actions": [
+      "Owner reopens BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001 to clear previous head 9d1da0b4b approval binding.",
+      "Owner hands off PR #5889 with refreshed exact head 5f3a2bf0c32677bdbe963c54d574174962a440fa and updated evidence manifest.",
+      "Claude independently reviews and approves the new exact-head delivery.",
+      "Supervisor auto-integrator merges PR #5889 cleanly into dev."
+    ]
+  },
+  "resolution": {
+    "state": "original_pr_refreshed_mergeable_ready_for_review",
+    "integrator_code_changed": false,
+    "reason_no_code_change": "scripts/git/auto_integrator.py operated correctly. Exact-head merge conflicts require manual resolution and fresh review by design.",
+    "original_pr_number": 5889,
+    "original_pr_head_sha": "5f3a2bf0c32677bdbe963c54d574174962a440fa",
+    "original_pr_mergeable": "MERGEABLE"
+  },
+  "acceptance": {
+    "root_cause_documented": true,
+    "original_pr_updated_or_superseded_and_no_longer_stranded": true
+  }
+}
