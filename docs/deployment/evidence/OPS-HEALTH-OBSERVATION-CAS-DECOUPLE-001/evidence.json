@@ -11,12 +11,14 @@
   "scope": {
     "owned": [
       "Delivery health observation commit path in .orchestrator/supervisor.py: commit_delivery_health_observations() and the run_once() call site that runs it ahead of, and independently of, the maintenance phase",
-      "Sustained reserved-phase discard visibility: record_reserved_phase_outcome() per-phase consecutive-discard streak tracking and the console_log escalation past SUSTAINED_PHASE_DISCARD_THRESHOLD"
+      "Sustained reserved-phase discard visibility: record_reserved_phase_outcome() per-phase consecutive-discard streak tracking and the console_log escalation past SUSTAINED_PHASE_DISCARD_THRESHOLD",
+      "Two regression tests in .orchestrator/test_supervisor.py (V2StartupCacheTests), the task's declared test artifact"
     ],
     "not_changing": [
       "Existing guard semantics for worker and queue transitions inside _run_reserved_runtime_phase (unchanged)",
       "apply_post_dispatch_maintenance's own transition logic (unchanged; it now simply receives delivery_health_observations=() because those observations are committed earlier)",
-      "Topology reconcile, which still runs after maintenance and still observes the health writes because that phase reloads runtime state"
+      "Topology reconcile, which still runs after maintenance and still observes the health writes because that phase reloads runtime state",
+      ".orchestrator/test_recovery_contract_boundaries.py: the first delivered head added its two regression tests to this file instead of the declared test_supervisor.py artifact; this closeout head moves them into test_supervisor.py and leaves test_recovery_contract_boundaries.py identical to origin/dev"
     ],
     "composes_with": [
       "OPS-FENCED-WORKER-QUEUE-PROOF-001 (removed the worst discard trigger but left this CAS coupling in place; this task removes the coupling itself)"
@@ -25,7 +27,7 @@
   "failure_reproduction": {
     "case": "Delivery health is read-only evidence about a provider endpoint. It took part in no worker or queue transition, but was committed inside the maintenance phase's single reserved-phase transaction, so any unrelated transition that transaction could not prove (a queue record the guard could not justify, a worker whose exact completion event had not landed) also discarded that cycle's health probe results.",
     "prior_outcome": "delivery_health.evidence_ttl_seconds is 300s live. A sustained discard rate expires every lane's health evidence; the dispatcher then refuses every lane with HEALTH_REFRESH_REQUIRED, and no worker is left to change the state that would end the stall. Measured 2026-09-17 after the worst trigger (OPS-FENCED-WORKER-QUEUE-PROOF-001) was already fixed: 9 post_dispatch_maintenance discards in 3 hours, with health evidence age at 272s against the 300s threshold. The failure was externally silent: metrics showed the phase executed, cycles had no error, watchdog reported healthy; only one activity-log line (runtime_phase_cas_conflict) per discard showed anything.",
-    "regression": "test_recovery_contract_boundaries.py adds two tests: one proves a delivery-health observation survives a same-cycle rejected worker/queue transition (it must not be discarded by a write it does not participate in), and one proves a phase that keeps losing its CAS emits a console escalation once SUSTAINED_PHASE_DISCARD_THRESHOLD consecutive discards accumulate. Both tests fail on the unmodified base and pass with this change."
+    "regression": "test_supervisor.py::V2StartupCacheTests gains two tests: test_health_observation_survives_a_rejected_transition_in_the_same_cycle proves a delivery-health observation committed via commit_delivery_health_observations() survives a same-cycle unrelated transition that _run_reserved_runtime_phase then refuses (forced with the same stale-scratch-vs-concurrent-writer technique as the file's existing test_lost_reserved_phase_cannot_leave_a_detached_queue_intent); test_sustained_reserved_phase_discards_escalate_beyond_one_log_line proves record_reserved_phase_outcome's per-phase streak reaches SUSTAINED_PHASE_DISCARD_THRESHOLD after that many consecutive discards and resets on a commit. Both tests fail with AttributeError on the unmodified base (commit_delivery_health_observations/_PHASE_DISCARD_STREAKS do not exist there) and pass with this change."
   },
   "implementation": {
     "new_phase_added": "DELIVERY_HEALTH_OBSERVATION_PHASE = \"delivery_health_observations\", run as its own _run_reserved_runtime_phase transaction via commit_delivery_health_observations(), called from run_once() ahead of apply_post_dispatch_maintenance",
@@ -36,25 +38,25 @@
   "verification": {
     "passed": [
       {
-        "command": "PANTHEON_DEPENDENCY_PYTHON=<sibling-worktree>/.venv-pantheon/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+        "command": "PANTHEON_DEPENDENCY_PYTHON=<sibling-task-worktree>/.venv-pantheon/bin/python3 python3 scripts/dev/provision_python_distribution.py",
         "result": "provisioned checkout-scoped .venv-pantheon; verified importable from a foreign cwd with no PYTHONPATH"
       },
       {
-        "command": "<checkout>/.venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_recovery_contract_boundaries.py",
-        "result": "28 passed (includes the 2 new regression tests for this task; both fail on the unmodified base)"
-      },
-      {
         "command": "<checkout>/.venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-        "result": "353 passed, 81 subtests passed in 114.59s"
+        "result": "355 passed, 81 subtests passed in 95.50s (includes the 2 new regression tests for this task)"
       },
       {
-        "command": "<checkout>/.venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_recovery_process_e2e.py",
-        "result": "5 passed in 32.61s"
+        "command": "<checkout>/.venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_recovery_process_e2e.py .orchestrator/test_recovery_contract_boundaries.py",
+        "result": "31 passed in 41.73s (5 + 26; test_recovery_contract_boundaries.py is unchanged from origin/dev)"
+      },
+      {
+        "command": "<checkout>/.venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"health_observation_survives_a_rejected_transition or sustained_reserved_phase_discards_escalate\" against a temporary copy of .orchestrator/supervisor.py restored to origin/dev c6f39a8d8 (unmodified base)",
+        "result": "2 failed with AttributeError (commit_delivery_health_observations / _PHASE_DISCARD_STREAKS absent), confirming the regression fails on the unmodified base; supervisor.py was restored immediately after and the full suite re-passed at 355 passed / 81 subtests"
       }
     ],
     "broader_nonpassing_observations": [
       {
-        "note": "The owner's original implementation note referenced 2 local pre-existing failures in this suite (test_crash_retry_window_outbox_committed_runner_terminated_receipt_retry and test_real_isolated_runner_stop_and_dispatch_flow), asserted to fail identically with and without this change. Re-running the full test_supervisor.py plus test_supervisor_recovery_process_e2e.py suites at the merged head (after rebasing onto origin/dev c6f39a8d8) in this closeout pass produced 0 failures (353 + 5 = 358 passed). This is consistent with the stated claim that those 2 were environment-flaky rather than caused by this change; no failure was observed to be introduced by this task in either run."
+        "note": "The first delivered head's own commit message (dccea755e) cited 2 local pre-existing failures in test_supervisor.py/test_supervisor_recovery_process_e2e.py (test_crash_retry_window_outbox_committed_runner_terminated_receipt_retry and test_real_isolated_runner_stop_and_dispatch_flow), asserted to fail identically with and without this change. Re-running the full suites at this closeout head (rebased onto origin/dev c6f39a8d8) produced 0 failures. This is consistent with those 2 being environment-flaky rather than caused by this task; no failure was observed to be introduced by this task in this pass."
       }
     ],
     "runner": {
@@ -63,12 +65,12 @@
     },
     "checksums": {
       ".orchestrator/supervisor.py": "4985a0736e193bc36b602fcc31def25a84909c95b36a462c829d2d5be5cadc08",
-      ".orchestrator/test_recovery_contract_boundaries.py": "efbc347c109b3ee9df9d7d5fd28c58fd54405ef9d7d14b8eb168d98f00f05c85"
+      ".orchestrator/test_supervisor.py": "df2257ec644f83fca3ab97239ff889e52ca548a6251328999027a36fd9c63ffb"
     }
   },
   "review_decision": {
     "status": "pending",
     "reviewer": "Antigravity2",
-    "note": "Independently verify that the health-observation commit is decoupled from the maintenance CAS without weakening existing worker/queue transition guards, that the sustained-discard escalation fires at the configured threshold, and that the measured per-cycle lock cost stays within one additional short transaction."
+    "note": "Independently verify that the health-observation commit is decoupled from the maintenance CAS without weakening existing worker/queue transition guards, that the sustained-discard escalation fires at the configured threshold, that the measured per-cycle lock cost stays within one additional short transaction, and that the diff at this head touches only the three declared artifacts (supervisor.py, test_supervisor.py, this evidence manifest)."
   }
 }
