@@ -168,7 +168,7 @@ Optional settings live under `.orchestrator/config.json`:
 {
   "branch_workflow": {
     "auto_integrator": {
-      "max_tasks_per_run": 1,
+      "max_tasks_per_run": 2,
       "lock_file": ".orchestrator/auto-integrator.lock",
       "merge_method": "merge",
       "smoke_commands": [
@@ -200,13 +200,20 @@ An isolated test may add `--no-lock`; production execution rejects
 ## Scheduled Runner
 
 `scripts/run-auto-integrator.sh` is the supervisor-owned cron wrapper. It
-defaults to `--execute --max-tasks 1`. The Python integrator derives canonical
+only forwards `--max-tasks` when `AUTO_INTEGRATOR_MAX_TASKS` is explicitly
+set in its environment; a bare invocation (no override) omits the flag and
+falls through to the settings-derived per-run limit -- the promoted live
+config's `auto_integrator.max_tasks_per_run`, or `Settings.max_tasks_per_run`
+(default `2`) when that key is absent. This is what makes the limit a
+persistent setting that survives runtime promotion instead of a bash-side
+default baked into the wrapper. The Python integrator derives canonical
 status/config/lock authority from that live config's watchdog command and the
 versioned command-runtime root; execute-mode CLI path overrides are rejected.
 Workers and PR helpers do not invoke this executing entry point.
 
 Use `AUTO_INTEGRATOR_DRY_RUN=1` for a non-mutating scheduled smoke and
-`AUTO_INTEGRATOR_MAX_TASKS=<n>` to override the default one-task limit.
+`AUTO_INTEGRATOR_MAX_TASKS=<n>` for an explicit per-invocation override of
+the persistent limit.
 
 Install the cron runner with:
 
@@ -217,8 +224,20 @@ python3 scripts/auto_integrator_install.py \
 ```
 
 The installed line is tagged `# pantheon-auto-integrator`, runs every five
-minutes by default, and writes logs to
-`$PANTHEON_STATUS_ROOT/.orchestrator/logs/auto-integrator-cron.log`.
+minutes by default, writes logs to
+`$PANTHEON_STATUS_ROOT/.orchestrator/logs/auto-integrator-cron.log`, and
+renders `AUTO_INTEGRATOR_MAX_TASKS=<n>` into the crontab entry itself from
+`auto_integrator_install.DEFAULT_MAX_TASKS` (`2`) or an explicit
+`--max-tasks` override -- the one declared source for the persisted limit, so
+it survives runtime promotion without depending on an interactive shell or
+ambient environment variable.
+
+Within one run, a second (or later) candidate is not merged from a stale
+snapshot: step 10 above reloads canonical state and refetches its live PR
+immediately before merge, so a candidate that went `BEHIND` because an
+earlier candidate in the same run already merged is reported `waiting` and
+skipped rather than force-merged. The owner refreshes it before the next
+pass.
 
 ## Non-goals
 

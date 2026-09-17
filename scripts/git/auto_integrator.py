@@ -112,7 +112,7 @@ class Settings:
     dev_branch: str = DEFAULT_DEV_BRANCH
     task_branch_prefix: str = DEFAULT_TASK_PREFIX
     lock_path: Path = ROOT / DEFAULT_LOCK
-    max_tasks_per_run: int = 1
+    max_tasks_per_run: int = 2
     smoke_commands: tuple[str, ...] = ()
     unblock_owner: str | None = None
     unblock_reviewer: str | None = None
@@ -437,7 +437,7 @@ def load_settings(path: Path | None = None, *, status_root: Path | None = None) 
         dev_branch=dev_branch,
         task_branch_prefix=task_prefix,
         lock_path=lock_path,
-        max_tasks_per_run=int(auto.get("max_tasks_per_run") or 1),
+        max_tasks_per_run=int(auto.get("max_tasks_per_run") or 2),
         smoke_commands=smoke_commands,
         unblock_owner=str(auto.get("unblock_owner") or "").strip() or None,
         unblock_reviewer=str(auto.get("unblock_reviewer") or "").strip() or None,
