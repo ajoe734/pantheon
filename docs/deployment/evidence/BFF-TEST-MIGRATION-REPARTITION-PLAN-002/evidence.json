@@ -1224,8 +1224,8 @@
               "affected_shared_fixtures": [
                 "services/control-plane/bff/tests/conftest.py",
                 "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
-                "services/control-plane/bff/support/evidence/MGMT-QLIB-001/dataset_manifest.json",
-                "services/control-plane/bff/support/evidence/MGMT-QLIB-002/strategy_spec_packet.json"
+                "support/evidence/MGMT-QLIB-001/dataset_manifest.json",
+                "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json"
               ],
               "affected_receiver_modules": [
                 "services/control-plane/bff/research/router.py",
@@ -1714,8 +1714,8 @@
       "shared_fixture_artifacts": [
         "services/control-plane/bff/tests/conftest.py",
         "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
-        "services/control-plane/bff/support/evidence/MGMT-QLIB-001/dataset_manifest.json",
-        "services/control-plane/bff/support/evidence/MGMT-QLIB-002/strategy_spec_packet.json"
+        "support/evidence/MGMT-QLIB-001/dataset_manifest.json",
+        "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json"
       ],
       "receiver_module_paths": [
         "services/control-plane/bff/research/router.py",
@@ -1737,8 +1737,8 @@
         "services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
         "services/control-plane/bff/tests/conftest.py",
         "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
-        "services/control-plane/bff/support/evidence/MGMT-QLIB-001/dataset_manifest.json",
-        "services/control-plane/bff/support/evidence/MGMT-QLIB-002/strategy_spec_packet.json",
+        "support/evidence/MGMT-QLIB-001/dataset_manifest.json",
+        "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json",
         "docs/deployment/evidence/BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001/evidence.json"
       ],
       "owner": "Antigravity",
