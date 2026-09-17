@@ -6,7 +6,7 @@ event (Interaction command outbox drain, Research run progress). Moved
 out of router.py so those callers import a public module instead of a
 router-private helper (ACG-06-002).
 
-_ws_publish() is called from sync route handlers; asyncio.Queue.put_nowait()
+ws_publish() is called from sync route handlers; asyncio.Queue.put_nowait()
 is thread-safe and requires no running event loop at the call site.
 """
 from __future__ import annotations
@@ -24,6 +24,14 @@ _WS_SSE_BUFFER_SIZE = 500  # max events per workshop kept for reconnect replay
 _workshop_sse_buffers: Dict[str, deque] = {}
 # workshop_id -> list[asyncio.Queue]
 _workshop_sse_subscribers: Dict[str, List[asyncio.Queue]] = {}
+
+
+__all__ = [
+    "ws_publish",
+    "ws_replay_after",
+    "_ws_publish",
+    "_ws_replay_after",
+]
 
 
 def _ws_utc_now() -> str:
@@ -59,7 +67,7 @@ def _ws_get_subscribers(workshop_id: str) -> List[asyncio.Queue]:
     return _workshop_sse_subscribers[workshop_id]
 
 
-def _ws_publish(
+def ws_publish(
     workshop_id: str,
     event_type: str,
     data: dict,
@@ -90,7 +98,10 @@ def _ws_publish(
     return event_id
 
 
-def _ws_replay_after(
+_ws_publish = ws_publish
+
+
+def ws_replay_after(
     workshop_id: str,
     last_event_id: str,
     store: Optional[Any] = None,
@@ -163,3 +174,6 @@ def _ws_replay_after(
         except Exception:
             pass
     return []
+
+
+_ws_replay_after = ws_replay_after

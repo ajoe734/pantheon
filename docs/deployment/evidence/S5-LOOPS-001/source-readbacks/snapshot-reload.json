@@ -1,0 +1,51 @@
+{
+  "body": {
+    "schema_version": "source_ingest_latest_market_snapshot.v1",
+    "snapshot_id": "mss-5fd4452dc6869e10c8e965b9",
+    "symbol": "SPY",
+    "event_time": "2026-09-15T03:20:08Z",
+    "observed_at": "2026-09-15T03:20:08Z",
+    "closes": [
+      520.876989,
+      520.876989,
+      520.876989,
+      520.876989,
+      520.876989
+    ],
+    "lineage": {
+      "source_ids": [
+        "src-dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e-spy-anchor",
+        "src-dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa-spy-anchor",
+        "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor",
+        "src-dev-product-20260915T031957Z-de7c2797378e4bea9d794736e3f838d6-spy-anchor",
+        "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
+      ],
+      "connector_ids": [
+        "conn-dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e",
+        "conn-dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa",
+        "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+        "conn-dev-product-20260915T031957Z-de7c2797378e4bea9d794736e3f838d6",
+        "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7"
+      ],
+      "content_refs": [
+        "simulation://dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e/SPY/anchor",
+        "simulation://dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa/SPY/anchor",
+        "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/anchor",
+        "simulation://dev-product-20260915T031957Z-de7c2797378e4bea9d794736e3f838d6/SPY/anchor",
+        "simulation://dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7/SPY/anchor"
+      ],
+      "ingest_run_ids": [
+        "ingest-3d71219942fd",
+        "ingest-4aacd33aff7a",
+        "ingest-65d1dd0d00d5",
+        "ingest-6e63b51bdfa1",
+        "ingest-e276cb8baffe"
+      ]
+    },
+    "source_ref": "source-ingest://snapshots/mss-5fd4452dc6869e10c8e965b9"
+  },
+  "http_status": 200,
+  "method": "GET",
+  "observed_at": "2026-09-15T03:20:09Z",
+  "route": "/api/source-ingest/snapshots/latest?symbol=SPY"
+}

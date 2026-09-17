@@ -1,0 +1,18 @@
+{
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+  "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+  "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+  "registry_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+  "trigger_event_ids": [
+    "6287a125-8d7d-4baa-8c5b-63638e40d199"
+  ],
+  "reconstruction_id": "recon-16dd2fe75fe9443a",
+  "hypothesis_consumed": true,
+  "grade": "trading_room_ready",
+  "confirmed_blocks_count": 12,
+  "blockers": [],
+  "draft_proposal_present": true,
+  "research_adapter_wiring": "AuthenticStageAdapter (PR #5829)",
+  "next_consumer_receipt_id": "himi-draft-prop-recon-16dd2fe75fe9443a",
+  "status": "accepted"
+}

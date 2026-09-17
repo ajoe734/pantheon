@@ -50,54 +50,50 @@ live store 提及 `PANTHEON-ARCH-CLEANUP` 0 次）。所有實作任務依賴
   9 個為 `not_implemented` 且無 `controller_name`，12 個契約全數仍含 `planned` 字樣。
   此項與 blocked 的 `S5-LOOPS-001`（Loop 4-12 未執行）為同一缺口。
 
-## 新的 P1：main.py 不再是路由 monolith
+## 新的 P1：修正版（2026-09-17）
 
-原 P1 假設「493 個 `@app` 裝飾器散落在 main.py」。該前提已消失。
-main.py 現在是 composition root（0 路由、36 個 `include_router`），
-但仍有 **20,093 行**，其中 **575 個頂層函式佔 17,937 行（89%）**，加上 **289 個頂層模組狀態**。
+> 本節取代 2026-09-16 初版中「依領域切分為 8 段有序 writer 鏈搬遷 575 個函式」的建議。
+> 該建議在 2026-09-17 以下列證據撤回；初版內容保留於 git 歷史，不再作為執行依據。
 
-原 `ACG-01-001` 的 gate 仍是正確判準：
+### 撤回理由
 
-> No domain route body, domain schema, mutable domain overlay, or domain SSE buffer remains.
+| 初版假設 | 查核結果 |
+|---|---|
+| main.py 擋住測試遷移批次 | 否。B02／B04／B11 各改 0 行 main.py 即完成（PR #5848、#5755、#5750），採「掛真 router 注入依賴」手法 |
+| main.py 充滿共享可變狀態 | 否。112 個模組級容器中僅 7 個在執行期被改寫，其餘為唯讀查表 |
+| main.py 是機隊產能瓶頸 | 否。2026-09 僅 11% 任務契約含 main.py；其 commit 頻率由 23／日（08-30）降至 3／日 |
+| 依領域切分可獨立執行 | 否。六個領域任務的產品消費端兩兩重疊（command 與每一領域重疊）；`personas/service.py`、`incidents/service.py`、`runtime/router.py` 各被 4 個任務同時需要 |
 
-對照現況：route body 已清空 ✅；但 mutable domain overlay（`_GOV_BFF_EVOLUTION_PROGRAM_OVERLAY`、
-`_GOV_BFF_EXPERIMENT_OVERLAY`）與 domain SSE buffer（`_sse_buffers`、`_sse_subscribers`）仍在 ❌。
+### ACG-01-001 gate 逐條實測（dev 732276cf8，main.py 18,702 行）
 
-### main.py 殘留內容依領域分布
+| 條款 | 實測 |
+|---|---|
+| domain route body | 0 ✅ |
+| domain schema | 0 個模型（5 個頂層 class 皆為例外或傳輸類）✅ |
+| mutable domain overlay | 見下表 |
+| domain SSE buffer | `_sse_buffers`、`_sse_subscribers` 2 個 ❌ |
 
-| 領域 | 函式數 | 函式行數 | 模組狀態數 |
-|---|---|---|---|
-| management | 201 | 6674 | 49 |
-| persona | 77 | 3835 | 25 |
-| (未分類) | 141 | 3078 | 114 |
-| command | 41 | 1534 | 17 |
-| incident/ops | 32 | 722 | 14 |
-| governance | 18 | 532 | 15 |
-| assistant | 13 | 418 | 3 |
-| loops | 11 | 373 | 7 |
-| evolution | 9 | 281 | 6 |
-| sse/event | 18 | 245 | 20 |
-| agora | 9 | 143 | 10 |
-| capital/strategy | 4 | 96 | 5 |
-| research | 1 | 6 | 4 |
+名稱含 OVERLAY／STORE／IDEMPOTENCY 的 18 個符號逐一分類（產品端改寫／讀取／賦值次數見 `data/main-mutated-containers-dev-732276cf8.json` 與附錄 D）：
 
-**management（201 函式／6,674 行／49 狀態）與 persona（77／3,835／25）合計佔函式行數的 59%。**
-這兩者是新 P1 的主體。
+| 分類 | 符號 | 判定依據 |
+|---|---|---|
+| 常數（誤抓） | `_SSE_RESYNC_ROUTES` | 路由表 `Dict[str, tuple[str, ...]]`，唯讀 |
+| 已注入的持有者 | `_PERSONA_PROVISIONING_STORE`、`_MGMT_NL_COMMAND_IDEMPOTENCY_STORE`、`_MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG`、`_MGMT_AI_CONVERSATION_STORE` | `Optional[...] = None`，於 composition 賦值一次；此即注入模式本身 |
+| 已交給 owner | `_FINAL_CONTRACT_IDEMPOTENCY`、`_AGORA_CORE_BFF_IDEMPOTENCY` | 產品端唯一讀取點為建構子關鍵字引數（L6654、L18630），寫入發生在 owner service 內 |
+| **死碼** | `_GOV_BFF_EXPERIMENT_OVERLAY`、`_GOV_BFF_EVOLUTION_PROGRAM_OVERLAY` | 產品端 0 改／0 讀／0 賦；僅 4 個測試檔戳它，全在 84 個 importer 內 |
+| **死碼** | `_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY`、`_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY` | 產品與測試皆 0 |
+| **死碼叢** | `_CAPITAL_BFF_IDEMPOTENCY`、`_capital_bff_action_command`、`_capital_bff_idempotency_store` | store 僅被 action command 呼叫；action command 全域零呼叫者 |
+| **活著的 CommandStore 旁路（U3 殘留）** | `_GOV_BFF_IDEMPOTENCY`／`_gov_bff_action_command` | runtime/router.py L55 以字串名 `service.dependency('_gov_bff_action_command')` 取得；服務 rollback 家族；未經 CommandAdapterService |
+| 同上 | `_STRATEGY_PERSONA_BFF_IDEMPOTENCY`／`_strategy_persona_action_command` | personas/routes/lifecycle.py 與 personas/service.py 呼叫 |
+| 同上 | `_EVOL_EXP_BFF_IDEMPOTENCY`／`_evol_exp_bff_action_command` | main.py L18098 以位置參數 lambda 綁定為 `submit_job_action`；與 governance submit_action 導致 500 的缺陷同一類 |
+| **產品疑問** | `_V5_INTERVENTIONS_STORE` | 產品端 3 處迭代（`_v5_intervention_records`、`_human_inbox_intervention_contributor`、`_human_inbox_surfaces`）但零寫入；真實 intervention 寫入在 `agora/performance/service.py:143` 的另一個 list。產品上此 list 恆為空。是已退役路徑或靜默失效，須由 human-inbox owner 裁定，本文件不斷言 |
+| 活著、延後 | `_sse_buffers`、`_sse_subscribers` | 產品端 16／15 次讀取；測試端 130 次讀取，為耦合最高符號；須排在測試重分割之後 |
 
-### 最大的 12 個函式
+### 修正後的結論
 
-- `_evaluate_persona_provisioning_status` — 571 行（persona）
-- `_bff_management_nl_ask_impl` — 487 行（management）
-- `_bff_management_nl_ask_stream_impl` — 383 行（management）
-- `_mgmt_nl_attempt_provider_answer` — 325 行（management）
-- `_mgmt_nl_collect_context` — 279 行（management）
-- `_mgmt_nl_handle_control_command` — 275 行（management）
-- `_pm12_performance_attribution_facts` — 265 行（management）
-- `_pm12_resolve_quarterly_recommendation_submit_params` — 231 行（management）
-- `_ops_read_model_entry_for_persona` — 225 行（persona）
-- `_project_persona_fleet_item` — 202 行（persona）
-- `_assistant_provider_usage_summary` — 201 行（assistant）
-- `_sem_final_generic_list_for_path` — 168 行（(未分類)）
+真正符合「已批准契約要求且證據成立」的殘留工作只有一項：**三條活著的 in-memory idempotency 旁路收斂到 CommandStore，並刪除確認的死碼**。這是 V2 U3 工作包（「單一 confirmation 狀態機… Replay 綁定 tenant + actor + namespace + key」）未交付的殘留，與 `BFF-AUDIT-ADMISSION-GOVERNANCE-SUBMIT-CORRECTIVE-001` 同種，任務 ID `BFF-AUDIT-ADMISSION-IDEMPOTENCY-BYPASS-CORRECTIVE-001`。
+
+其餘 17,000 餘行函式留在 composition root 並不違反任何已批准的 gate；在測試遷移與 gate 進 CI 完成前，沒有證據支持另立搬遷計畫。初版建議的 7 個 `ARCH-MAIN-*` 領域任務已撤銷。
 
 ## 修訂後的執行範圍
 
@@ -128,25 +124,7 @@ main.py 現在是 composition root（0 路由、36 個 `include_router`），
 
 ### 重寫（前提已變）
 
-`ACG-BFF-MAIN-CUTOVER-20260828`（原：sole `main.py` switch and deletion owner）的責任必須重寫。
-
-原責任假設是「把 493 個路由切換到新 router 後刪除舊 main.py」。路由已經移完，
-所以它現在的責任是**把 575 個函式與 289 個模組狀態遷出 composition root**。
-
-這個工作量不適合單一任務。建議依領域切分為有序的 writer 鏈：
-
-| 順位 | 範圍 | 規模 | 理由 |
-|---:|---|---|---|
-| 1 | management | 201 函式／6,674 行／49 狀態 | 最大宗；含最大的五個函式 |
-| 2 | persona | 77／3,835／25 | 第二大；與 `personas/service.py` 的 82 個重複實作重疊 |
-| 3 | command | 41／1,534／17 | 與 V2 U3 的 CommandAdapterService 收斂同向 |
-| 4 | incident/ops | 32／722／14 | |
-| 5 | governance | 18／532／15 | |
-| 6 | sse/event | 18／245／20 | 狀態密度最高；`_sse_buffers` 擋住多個測試批次 |
-| 7 | loops、assistant、evolution、agora、capital/strategy、research | 合計 47／1,317／35 | 可合併為一至二個任務 |
-| 8 | （未分類）141／3,078／114 | 需先分類再決定歸屬；含通用工具 |
-
-**所有子任務都改 main.py，必須序列執行（單一 active writer）。**
+`ACG-BFF-MAIN-CUTOVER-20260828` 的原責任（路由切換）已無對象；2026-09-16 初版將其改寫為 8 段領域 writer 鏈，2026-09-17 撤回（理由見「新的 P1：修正版」）。現行替代為單一 U3 殘留 corrective，範圍限於上表「活著的 CommandStore 旁路」與「死碼」兩類。
 
 ## 與現行計畫的關係
 
@@ -159,9 +137,11 @@ main.py 現在是 composition root（0 路由、36 個 `include_router`），
 
 ## 建議的下一步
 
-1. 依本文件重寫 `EXECUTION_TASK_CATALOG`，移除已達成的 lane，重寫 `ACG-BFF-MAIN-CUTOVER` 的責任。
-2. 先完成 P4 的十項查核 —— 那是唯一完全未查證的優先。
-3. plan-freeze 任務仍需要，但其審查對象是本重新基準版，不是 2026-08-28 的原目錄。
+1. `BFF-TEST-MIGRATION-GATE-CORRECTIVE-001`：把架構 gate 從 JSON 自報數字改為活 AST 掃描並接進 branch-ci（現行沒有任何 workflow 執行 bff tests 目錄；見附錄 C）。
+2. `BFF-TEST-MIGRATION-REPARTITION-PLAN-002`：以 gate 落地後的活掃描重新分割殘餘 84 個 importer。
+3. `BFF-AUDIT-ADMISSION-IDEMPOTENCY-BYPASS-CORRECTIVE-001`：三條 CommandStore 旁路收斂與死碼刪除。
+4. `_V5_INTERVENTIONS_STORE` 恆空問題提請 human-inbox owner 裁定。
+5. SSE buffer 遷移於第 2 項完成後再評估。
 
 ## 查核方法與誤差
 
@@ -232,3 +212,27 @@ main.py 現在是 composition root（0 路由、36 個 `include_router`），
 - `_openclaw_agent_reconcile_request` — 48 行
 
 這 31 個應在領域遷移**之前**判定歸屬，否則會被任意併入最先動到它的領域任務。
+
+## 附錄 C：測試耦合重新盤點（2026-09-17，dev 4d78e49fe）
+
+母任務 `BFF-TEST-FULL-MIGRATION-CORRECTIVE-001` 遭獨立審查駁回（anchor `5c8380d9c`）後，以 AST 獨立重算並與審查證據對照。原始資料：`data/test-coupling-scan-dev-4d78e49fe.json`、`data/reviewer-anchor-5c8380d9c-lists.json`。
+
+判定規則：`ast.Import` 名稱為 `main` 或以 `.main` 結尾；`ast.ImportFrom` 模組為 `main` 或以 `.main` 結尾；或 `from services.control_plane.bff import main`；排除 `services.research.main` 等非 BFF 的 main。第一版規則漏了絕對路徑 `from <pkg> import main` 形式（58 → 101），第二版多算了非 BFF main（91 → 84）。
+
+| 指標 | 本盤點 | 審查者 |
+|---|---|---|
+| 非白名單 BFF main importer | 84 | 88 |
+| 其中在 182 分割內 | 54 | 52 |
+| 改 sys.path | 126 | 119 |
+
+審查者四項結論全部成立。但其檔案清單已失真：52 個分割內 importer 只有 27 個仍成立，25 個檔案已不存在；另有 27 個分割內 importer 未列入，其中 23 個在審查基準時就已 import main。29 個被漏出分割的 PLANNED 檔中 24 個仍成立。分割外另有 13 個 importer 不在任何清單（4 個為 2026-05 舊檔、5 個為本週 V2 產生、4 個為 DEV-* 產生）。
+
+`tests/test_bff_test_architecture.py` 的 `test_total_main_importers_is_bounded_and_strictly_decreased` 只比較 inventory 內兩個自報數字，不掃原始碼；且沒有任何 workflow 執行 `services/control-plane/bff/tests`。這是 18 個批次完成後數字仍上升的原因。
+
+## 附錄 D：main.py 模組級狀態審計（2026-09-17，dev 732276cf8）
+
+方法：AST 取頂層 `Assign`／`AnnAssign`；容器型判定為 `Dict`／`List`／`Set` 字面或 `dict()`／`defaultdict()`／`deque()` 等呼叫；改寫判定為 `.append/.extend/.insert/.pop/.clear/.update/.setdefault/.add/.discard/.remove` 呼叫或下標賦值／刪除；讀取判定為 `Load` 語境的 `Name`／`Attribute`。對全部 bff 檔分「產品」與「測試」統計。
+
+限制：透過參數傳遞後在被呼叫端改寫的內層物件（例如 `_publish_event(_sse_buffers["audit"], ...)`）不會計入該名稱的改寫次數；`_sse_buffers` 的產品端「0 改寫」即屬此類，實際上是活的。
+
+

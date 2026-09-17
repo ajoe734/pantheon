@@ -269,6 +269,14 @@ jobs:
           # Keep these explicit: requirements.txt intentionally does not pull
           # product service dependencies into a tooling-only change.
           python3 -m pip install cryptography pyyaml "pydantic>=2" pytest
+          # BFF test architecture gate below collects services/control-plane/bff/tests/
+          # conftest.py, which imports httpx even though this job does not otherwise
+          # exercise BFF runtime deps.
+          python3 -m pip install httpx
+
+      - name: BFF test architecture gate
+        run: |
+          python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py
 
       - name: Verify workflow contract
         run: |

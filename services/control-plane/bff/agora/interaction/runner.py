@@ -37,7 +37,7 @@ def _outbox(kind: str, identity: str, payload: Dict[str, Any]) -> Dict[str, Any]
 
 def drain_interaction_outbox(store: InteractionLifecycleStore, workshop_store: Any) -> int:
     """Idempotently project durable interaction outbox rows to Workshop views."""
-    from services.control_plane.bff.agora.strategy_workshop.events import _ws_publish
+    from services.control_plane.bff.agora.strategy_workshop.events import ws_publish
 
     def dispatch(kind: str, payload: Dict[str, Any]) -> None:
         if kind == "workshop_event":
@@ -58,7 +58,7 @@ def drain_interaction_outbox(store: InteractionLifecycleStore, workshop_store: A
                 if any(existing.get(key) != payload.get(key) for key in comparable):
                     raise ValueError("workshop card projector identity reused with different content")
         elif kind == "workshop_sse":
-            _ws_publish(
+            ws_publish(
                 payload["workshop_id"], payload["event_type"], payload["data"],
                 event_id=str(payload["data"].get("event_id") or ""),
             )
@@ -221,7 +221,7 @@ def run_selected_persona_interaction(
     lease_owner: Optional[str] = None,
     lease_duration_seconds: int = 300,
 ) -> Dict[str, Any]:
-    from services.control_plane.bff.agora.strategy_workshop.events import _ws_publish
+    from services.control_plane.bff.agora.strategy_workshop.events import ws_publish
 
     frozen: List[tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = []
     if frozen_participants is not None:
@@ -338,7 +338,7 @@ def run_selected_persona_interaction(
         _best_effort_drain(lifecycle_store, workshop_store)
     else:
         workshop_store.create_event(requested_projection)
-        _ws_publish(workshop_id, "consultation.started", started_sse["data"])
+        ws_publish(workshop_id, "consultation.started", started_sse["data"])
 
     client = (client_factory or OpenClawOpsClient)()
     lease_owner = lease_owner or f"worker:{uuid.uuid4().hex}"
@@ -550,7 +550,7 @@ def run_selected_persona_interaction(
                         lifecycle_store.heartbeat_interaction(interaction_id, lease_owner=lease_owner)
             else:
                 workshop_store.create_event(failed_event)
-                _ws_publish(workshop_id, "workshop.openclaw.degraded", failed_sse["data"])
+                ws_publish(workshop_id, "workshop.openclaw.degraded", failed_sse["data"])
         invocations.append(invocation)
 
     if in_progress_persona_ids:
@@ -677,7 +677,7 @@ def run_selected_persona_interaction(
     else:
         workshop_store.create_event(closed_event)
         workshop_store.record_workshop_card(workshop_card)
-        _ws_publish(workshop_id, "consultation.completed", completed_sse["data"])
+        ws_publish(workshop_id, "consultation.completed", completed_sse["data"])
     return {
         "status": final_status,
         "opinions": opinions,

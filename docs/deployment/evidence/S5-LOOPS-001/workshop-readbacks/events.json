@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-13T05:22:32.070341+00:00",
+  "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/events",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "event_id": "6287a125-8d7d-4baa-8c5b-63638e40d199",
+        "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+        "sequence_no": 1,
+        "actor_type": "operator",
+        "event_type": "message",
+        "private_content_ref": "pcnt_01M2CKF4SDTPBN3Z9AWDG77VMT",
+        "redacted_summary": "Private workshop message",
+        "payload_refs_json": null,
+        "trace_id": null,
+        "created_at": "2026-09-13 05:22:31+00"
+      }
+    ],
+    "meta": {
+      "snapshot_at": "2026-09-13T05:22:32Z",
+      "capability": "agora.workshop.v1",
+      "audience": "tenant:tenant-dev:user:pantheon-dev-operator-a"
+    }
+  }
+}

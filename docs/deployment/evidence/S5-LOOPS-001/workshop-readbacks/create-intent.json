@@ -1,0 +1,8 @@
+{
+  "path": "/bff/agora/workshops",
+  "payload": {
+    "initial_message": "Explicitly simulated SPY two-point momentum for paper-only acceptance; QQQ is a simulated research comparison. Research hypothesis and universe: SPY, with QQQ as comparison. Use only the original SIMULATION dataset; is_real=false. Source receipt src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor. This is research only: no live orders, no capital allocation, no claim of real market evidence.",
+    "strategy_spec_ref": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b"
+  },
+  "idempotency_key": "cde96f19-f7d5-4682-8c4b-5adb8c1fe306"
+}
