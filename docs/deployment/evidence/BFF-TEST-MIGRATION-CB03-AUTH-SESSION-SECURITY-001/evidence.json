@@ -23,15 +23,14 @@
     "services/control-plane/bff/tests/conftest.py"
   ],
   "artifact_contract_note": {
-    "finding": "This task's enforced artifact contract (checked by ai-status.sh handoff) allows only the 8 named test files, tests/conftest.py, and this evidence.json. Two new shared-support module files originally added to avoid duplicating the app-builder code across the 6 auth/command test files (tests/auth_session_app_support.py, tests/command_security_app_support.py) were rejected by the handoff preflight as outside the declared scope and were folded into tests/conftest.py instead (conftest.py is on the allowed list and is imported the same way tests/test_bff_auth_facade.py already imports `asgi_request` from it).",
-    "consequence": "services/control-plane/bff/tests/bff_test_architecture_inventory.json is likewise outside the declared artifact contract for this task, so the `live_scan_non_whitelisted_main_importer_ceiling` lowering (86 -> 79) and the 7 corresponding PLANNED->DECOUPLED entries described in the task instructions were NOT committed in this delivery, even though the underlying migration work that would justify them is complete and green. As a direct result, `pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded` now fails against this branch (live scan finds 79 offenders; the inventory still records the pre-migration 86-entry list as `recorded`, so the staleness equality check trips; the `<= ceiling` bound itself is not exceeded).",
-    "recommended_follow_up": "Either (a) the task owner expands this task's artifact contract to include services/control-plane/bff/tests/bff_test_architecture_inventory.json and re-runs this same diff with that file's update re-applied (the exact JSON edit -- ceiling 86->79, and the 7 files' entries changed from {imports_main: true, disposition: PLANNED} to {imports_main: false, disposition: DECOUPLED} -- was verified locally and is trivial to reapply), or (b) a narrow fast-follow task is opened solely to update that inventory file once this PR merges, before it is relied on for CI gating."
+    "finding": "Two prior revisions were applied by Human/Ops to this task's enforced artifact contract. Revision 1 added services/control-plane/bff/tests/bff_test_architecture_inventory.json (it was omitted from PLAN-002's declared_artifacts and from the operator's batch creation at task-creation time, even though acceptance criterion 6 requires lowering the ceiling in it). Revision 2 removed services/control-plane/bff/tests/test_bff_path_dedupe.py from this task's contract after the operator independently verified it builds TestClient(bff_main.app) and walks the fully assembled route table, the same composition-root-testing class as tests/test_http_auth_composition_owner.py.",
+    "resolution": "With bff_test_architecture_inventory.json now in contract, this delivery re-derives the live-scanned non-whitelisted main-importer count at the rebased head (dev tip after BFF-TEST-MIGRATION-CB01-AGORA-PERFORMANCE-001 merged and lowered the prior ceiling from 86 to 80) and lowers the ceiling to that exact scanned count: 80 -> 73 (7 files migrated by this task; test_bff_path_dedupe.py excluded per revision 2, see left_unmigrated and composition_allowlist_follow_up_request below). The 7 migrated files' inventory entries were updated from {imports_main: true, disposition: PLANNED} to {imports_main: false, disposition: DECOUPLED}. test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded now passes against this branch (previously failed as documented in an earlier revision of this evidence file, before revision 1 widened the contract)."
   },
   "left_unmigrated": [
     {
       "file": "services/control-plane/bff/tests/test_bff_path_dedupe.py",
       "reason": "Its 3 tests (deprecated-alias 410 responses across ~10 distinct legacy URL families, canonical-vs-legacy path-template dedupe across ~10 domains, and singleton-route-registration checks) assert against the *fully assembled* application route table, not a bounded subset. Reproducing this would require re-mounting essentially every domain router main.py wires (mcp-servers, ranking-formulas, personas, capital-pools, deployments, rebalances, incidents, runtimes, skills, tools, strategies, command_adapters) plus the exact deprecated-alias response helper (_deprecated_bff_path_response, main.py:6420, not extracted). main.py exposes no factory function that assembles the full app independent of the module-level `app = build_bff_app(...)` singleton (main.py:323) -- there is no seam to build a fresh instance without `import main`. Per the task's guidance for this exact scenario, left un-migrated rather than weakening the assertions' meaning or reimplementing route-table business logic in the test.",
-      "recommended_follow_up": "Open a follow-up contract task to expose a `build_full_bff_app()`-style assembly function from main.py (or relocate `_deprecated_bff_path_response` into a shared module like core/http_security.py or a new core/deprecation.py) so this test's true intent -- auditing the whole composed route table -- can be reproduced without importing the main.py singleton."
+      "recommended_follow_up": "Primary: add this file to bff_test_architecture_inventory.json's composition_allowlist (see composition_allowlist_follow_up_request above), the same treatment already given to tests/test_http_auth_composition_owner.py, since both audit the composed route table itself. Alternative (not requested by the operator): expose a `build_full_bff_app()`-style assembly function from main.py so this test's intent could instead be reproduced without importing the main.py singleton."
     }
   ],
   "known_gaps_recorded_not_fixed": [
@@ -55,17 +54,17 @@
     "decoupled_main_importers_count": 7,
     "blocked_main_importers_count": 1,
     "live_scan_before": {
-      "ceiling": 86
+      "ceiling": 80
     },
     "live_scan_after_this_pr_merges_conceptually": {
       "command": "pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
-      "live_offenders_count": 79,
+      "live_offenders_count": 73,
       "delta": -7,
-      "note": "7 of the 8 target files are removed from the live-scanned non-whitelisted main-importer list by this PR's test-file changes (test_bff_path_dedupe.py remains, as recorded above). The inventory JSON's ceiling/list update that would make the architecture-invariant test green again could NOT be committed in this delivery -- see artifact_contract_note above for why and the exact follow-up needed.",
-      "architecture_invariant_check_exit_code_as_delivered": 1,
-      "architecture_invariant_check_passed_as_delivered": 7,
-      "architecture_invariant_check_failed_as_delivered": 1,
-      "architecture_invariant_check_failure_is_expected_and_documented": true
+      "note": "7 of the 8 originally-assigned files are removed from the live-scanned non-whitelisted main-importer list by this PR's test-file changes (test_bff_path_dedupe.py remains, per revision 2 of the contract -- see composition_allowlist_follow_up_request). bff_test_architecture_inventory.json's ceiling and the 7 files' PLANNED->DECOUPLED entries are committed in this delivery now that revision 1 added the inventory file to this task's enforced artifact contract.",
+      "architecture_invariant_check_exit_code_as_delivered": 0,
+      "architecture_invariant_check_passed_as_delivered": 8,
+      "architecture_invariant_check_failed_as_delivered": 0,
+      "architecture_invariant_check_failure_is_expected_and_documented": false
     }
   },
   "file_dispositions": {
@@ -138,7 +137,7 @@
       },
       {
         "cmd": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
-        "result": "7 passed, 1 failed (test_non_whitelisted_main_importers_is_live_scanned_and_bounded fails as expected/documented -- see artifact_contract_note; inventory JSON update was out of this task's enforced artifact-contract scope)"
+        "result": "8 passed, 0 failed"
       }
     ],
     "unrelated_pre_existing_collection_errors_observed": [
@@ -157,5 +156,13 @@
     "credential_or_authz_changes": false,
     "other_task_artifact_scopes_touched": false,
     "test_semantics_preserved": "All original assertions, business-semantics, and negative-path checks were preserved verbatim across the 7 migrated files; no skips, no fake-success fixtures substituted for real gaps."
+  },
+  "composition_allowlist_follow_up_request": {
+    "request": "Add services/control-plane/bff/tests/test_bff_path_dedupe.py to bff_test_architecture_inventory.json's composition_allowlist, alongside its sibling tests/test_http_auth_composition_owner.py.",
+    "reasoning": "Per Human/Ops's independently verified revision-2 scope decision (recorded in this task's ai-status.json contract_revision), test_bff_path_dedupe.py builds TestClient(bff_main.app) and walks the entire assembled route table to detect duplicate paths and deprecated-alias wiring, so it exercises the composition root itself, not a boundable single-router seam. It is the same class of test as tests/test_http_auth_composition_owner.py, which is already on the composition_allowlist. Leaving it recorded as PLANNED (or DECOUPLED without actually being migrated) would either misstate its status or cause the live AST scan to keep counting it as an outstanding unmigrated importer indefinitely, since no B05-style single-router technique can express what it asserts.",
+    "requested_by": "Claude (task owner)",
+    "requested_of": "Human/Ops",
+    "status": "not yet applied in this delivery -- raised here as the separate request the task brief directed; this task's own contract does not include the inventory's composition_allowlist edit for this file, only the ceiling/disposition updates for the 7 files it does own",
+    "consequence_if_deferred": "test_bff_path_dedupe.py remains counted as a live-scanned non-whitelisted main importer (contributing 1 to the 73-count reflected in this delivery) until a future task applies this allowlist addition."
   }
 }
