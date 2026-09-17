@@ -1,0 +1,93 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001-EXACT-C0E82204B0A1",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "0e50b193cf0715096f5700e21a61236932102498",
+  "changed_files": [
+    "docs/deployment/evidence/INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001-EXACT-C0E82204B0A1/evidence.json"
+  ],
+  "source_task": "BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/5890",
+  "original_head": "1a259b9c639d3ce649b39c78fc8edd741146eed8",
+  "original_base": "6517a0486e4ddbc2455498ced66fc5d42e527f44",
+  "root_cause": {
+    "reason": "exact_head_merge_conflict",
+    "detection": "scripts/git/auto_integrator.py's review-before-merge path (around line 1561) merges the reviewed exact head against origin/dev in a disposable worktree before ever pushing; a non-zero merge exit there (as opposed to a clean fast-forward or a rebase that just moves the branch) is classified exact_head_merge_conflict rather than ordinary staleness -- it means the reviewed head and current dev made independent, textually conflicting edits, so the integrator correctly refuses to synthesize a merge and requires the owner to refresh and re-review.",
+    "conflicting_file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "mechanism": "This file is a shared, append-only-in-spirit registry of BFF test files that still import services/control-plane/bff/main.py, gated by test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded, which asserts the JSON's live_scan_non_whitelisted_main_importers array and live_scan_non_whitelisted_main_importer_ceiling scalar exactly match a fresh AST scan of the working tree. Several sibling BFF-TEST-MIGRATION-* tasks decouple disjoint sets of test files from main.py in parallel, and each removes its own files from this same array and lowers the same ceiling scalar. When two such branches land into dev before a third (already-approved) branch merges, the third branch's stored ceiling/array no longer match either side, producing a real textual conflict on both the ceiling line and adjacent array entries -- not just a stale/rebase-only situation.",
+    "sequence": [
+      "PR #5890 (BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001) reached review_approved at exact head 1a259b9c6, itself already reconciled once against BFF-TEST-MIGRATION-CB01-AGORA-PERFORMANCE-001 (ceiling 86 -> 70).",
+      "BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001 merged into dev via PR #5888, independently removing 7 different files from the array and lowering the ceiling 80 -> 73 against its own base.",
+      "BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001 merged into dev via PR #5887, independently removing 7 more different files and lowering the ceiling 73 -> 66 against its own base.",
+      "auto-integrator's review-before-merge check found PR #5890's immutable approved head 1a259b9c6 was behind the now-twice-advanced dev, and its disposable merge probe hit a real content conflict on bff_test_architecture_inventory.json -- reason exact_head_merge_conflict -- so it opened this unblock task instead of pushing anything."
+    ],
+    "integrator_disposition": "No auto_integrator.py change needed: refusing to synthesize a merge across an independently-reviewed exact head is correct; conflict resolution requires human/owner judgment about which array entries and ceiling value are correct, which the integrator's disposable-worktree probe deliberately does not attempt."
+  },
+  "review_gate_observation": {
+    "canonical_source_status_before": "review_approved",
+    "canonical_source_status_note": "The approved head is invalidated once dev advances past it with conflicting content, per docs/deployment/evidence's task-closeout-finalization.md and auto_integrator.py's own exact_head_merge_conflict comment: the owner must refresh the branch, update the exact-head evidence, reopen, and hand off again for a fresh independent review. This unblock task cannot invoke that reopen/handoff/approve cycle itself: the governed status command fences every mutation to this session's dispatched task id (INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001-EXACT-C0E82204B0A1), and a reopen/handoff call against the source task id BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001 is correctly rejected with 'status command task mismatch'. The source task's owner (Claude, same lane) must run that reopen/handoff cycle in a dispatch scoped to the source task id."
+  },
+  "conflict_resolution": {
+    "method": "Merged origin/dev directly into the original PR branch (task/BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001) in two passes, one per sibling migration that had landed, resolving the JSON conflict by computing the union of every side's removed live_scan_non_whitelisted_main_importers entries (verified disjoint -- no filename was removed by more than one side) and re-deriving the ceiling as the resulting array's length at each merged head, rather than keeping either side's stale scalar. disposition_summary/tests[] entries were taken as the union of each side's own changed entries (each sibling migration updates only its own files' entries).",
+    "passes": [
+      {
+        "merge_commit": "e4c7a8123be2927698036596d5ce4ddcdbe366cb",
+        "absorbs": "BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001 (PR #5888)",
+        "ceiling_before": 70,
+        "ceiling_after": 63
+      },
+      {
+        "merge_commit": "841e98480a5265ff00f5b6c842e1391adbf412fe",
+        "absorbs": "BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001 (PR #5887)",
+        "ceiling_before": 63,
+        "ceiling_after": 56
+      }
+    ],
+    "evidence_update_commit": "cdf7f8af5f96aba4d5c29c7810e1b4f0b5e7239d",
+    "evidence_update_note": "Appended a rebase-reconciliation note to docs/deployment/evidence/BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001/evidence.json documenting this two-stage rebase, matching the format of that file's own pre-existing single-stage rebase note from its original CB01 reconciliation.",
+    "new_head": "cdf7f8af5f96aba4d5c29c7810e1b4f0b5e7239d",
+    "scope_containment": "Every file touched by both merge commits outside the conflicted JSON auto-merged cleanly (git reported no other conflicts); the only manually-authored content is the union-based JSON resolution and the evidence-manifest reconciliation note. No source-task test file content, disposition, or rationale text was edited by this task."
+  },
+  "validation": [
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/bff-command-contract-deps/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped editable install verified from a foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "8 passed",
+      "note": "Re-run after both merge passes and after the evidence-manifest update commit; identical 8/8 outcome at every checkpoint."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_mgmt_common_filters.py services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py services/control-plane/bff/test_management_data_sources_v2.py services/control-plane/bff/test_mcp_tool_import.py services/control-plane/bff/tests/test_bff_consol_skills_mcp_registry_contract.py services/control-plane/bff/tests/test_bff_management_data_sources_contract.py services/control-plane/bff/test_mgmt_load_002_shell_summary.py services/control-plane/bff/test_mgmt_load_005_read_concurrency.py services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py services/control-plane/bff/test_mgmt_syn_006_conflict_log_view.py services/control-plane/bff/tests/test_bff_management_gap_003_contract_schema.py",
+      "exit_code": 1,
+      "result": "95 passed, 44 failed, 1 skipped in 104.07s",
+      "note": "Identical to the source task's own documented pre-conflict baseline (95 passed, 44 failed, 1 skipped); the 44 failures are the source task's own pre-existing, migration-unrelated contract drift, confirmed unchanged by this rebase."
+    },
+    {
+      "command": "git merge-base --is-ancestor origin/dev HEAD",
+      "exit_code": 0,
+      "result": "Final pushed head cdf7f8af5 fully contains current dev; no further conflict risk at the time of this evidence."
+    },
+    {
+      "command": "gh pr view 5890 --repo ajoe734/pantheon --json headRefOid,mergeable,mergeStateStatus",
+      "exit_code": 0,
+      "result": "headRefOid cdf7f8af5, mergeable MERGEABLE, mergeStateStatus BLOCKED (blocked only on the expected fresh independent-review gate, not on any merge conflict).",
+      "note": "GitHub's own mergeability computation confirms the conflict is resolved. mergeStateStatus BLOCKED is expected and correct: the prior review-proof tag was for the invalidated old head; Pantheon's canonical review gate correctly reports failure for the new head pending a fresh independent review."
+    }
+  ],
+  "delivery_status": "PR #5890 is updated and no longer stranded: the original branch task/BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001 now has exact head cdf7f8af5, which merges cleanly with current dev (GitHub reports mergeable=MERGEABLE) and preserves the source task's original 14-file migration content byte-for-byte alongside a correctly re-derived shared-registry ceiling. This evidence closes the INTEGRATION-UNBLOCK task's own scope (root cause documented, PR updated and unstranded); it does not and cannot re-approve the source task -- that requires the source task's owner/reviewer (Claude/Antigravity, same lane) to run a fresh reopen -> handoff(exact head cdf7f8af5) -> approve cycle scoped to BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001 in its own dispatch, since this session's governed status command is fenced to the INTEGRATION-UNBLOCK task id only.",
+  "source_review_followup": {
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "required_actions": [
+      "Owner (Claude) reopens BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001 in a dispatch scoped to that task id, citing the invalidated exact-head approval.",
+      "Owner hands off exact head cdf7f8af5 with the already-committed evidence manifest docs/deployment/evidence/BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001/evidence.json to reviewer Antigravity.",
+      "Antigravity independently reviews and approves the fresh binding through the governed approve command.",
+      "Only the supervisor integrator merges the newly approved exact head; the source task owner finalizes afterward."
+    ]
+  }
+}

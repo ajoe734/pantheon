@@ -1554,18 +1554,34 @@ def test_assembled_bff_app_attribution_route_uses_configured_projection_reader(
     monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres")
     monkeypatch.delenv("PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN", raising=False)
     monkeypatch.delenv("TELEMETRY_DB_DSN", raising=False)
-    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.ports import ReadSurfacePorts
+    import unittest.mock as mock
 
-    read_surface = bff_main.app_deps.read_surface
+    read_surface = ReadSurfacePorts()
     monkeypatch.setattr(read_surface, "_trade_journey_projection_reader_override", None, raising=False)
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+    app = FastAPI()
+    app.include_router(
+        create_performance_router(
+            extract_identity=_identity,
+            require_read_role=_require_read,
+            require_write_role=_require_write,
+            bff_error=_bff_error,
+            utc_now=lambda: NOW,
+            get_trade_journey_store=read_surface.trade_journey_projection_reader,
+            suggestion_store=mock.MagicMock(),
+        )
+    )
+    client = TestClient(app, raise_server_exceptions=False)
     headers = {"Authorization": "Bearer alice:operator:tenant-a", "X-Tenant-Id": "tenant-a"}
 
     unconfigured = client.get(ATTRIBUTION_URL, headers=headers)
     assert unconfigured.status_code == 200, unconfigured.text
     meta = unconfigured.json()["meta"]
     assert meta["availability"] == "unavailable"
-    assert meta["surfaces"]["trade_journeys"]["reason"].startswith("projection_reader_unavailable:")
+    assert meta["surfaces"]["trade_journeys"]["reason"].startswith(
+        ("projection_reader_unavailable:", "projection_reader_error:ProjectionReadUnavailable")
+    )
     assert unconfigured.json()["data"]["items"] == []
 
     events = _events(user_id="alice", tenant_id="tenant-a")

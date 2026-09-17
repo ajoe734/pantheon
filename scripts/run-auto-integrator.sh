@@ -3,13 +3,19 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATUS_ROOT="${PANTHEON_STATUS_ROOT:-$ROOT_DIR}"
-MAX_TASKS="${AUTO_INTEGRATOR_MAX_TASKS:-1}"
 
 cd "$ROOT_DIR"
 
-ARGS=(
-  --max-tasks "$MAX_TASKS"
-)
+ARGS=()
+
+# AUTO_INTEGRATOR_MAX_TASKS is an explicit per-invocation override only. A
+# bare cron line (no env var set) must fall through to the persistent
+# max_tasks_per_run carried by the resolved settings/live config so the
+# per-run task limit survives runtime promotion instead of silently pinning
+# to a bash-side default of one.
+if [[ -n "${AUTO_INTEGRATOR_MAX_TASKS:-}" ]]; then
+  ARGS+=(--max-tasks "$AUTO_INTEGRATOR_MAX_TASKS")
+fi
 
 if [[ "${AUTO_INTEGRATOR_DRY_RUN:-0}" != "1" ]]; then
   ARGS=(--execute "${ARGS[@]}")
