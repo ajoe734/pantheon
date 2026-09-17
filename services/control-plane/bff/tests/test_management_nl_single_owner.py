@@ -27,17 +27,21 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
 from services.control_plane.bff.assistant.management_service import ManagementNlUseCase
-
-from test_management_nl_assistant_provider import (  # noqa: E402
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
+    clear_management_nl_sse_buffer,
+    get_management_nl_module,
+    get_management_nl_read_store,
+    set_management_nl_read_store,
+)
+from services.control_plane.bff.tests.test_management_nl_assistant_provider import (
     FakeProviderClient,
     OPERATOR_HEADERS,
     _clear_provider_env,
     _seeded_client,
 )
+
+bff_main = get_management_nl_module()
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -148,7 +152,7 @@ def test_ask_and_stream_share_one_canonical_command_route() -> None:
 
 
 def test_stream_replays_terminal_result_without_invoking_provider_twice(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -175,12 +179,12 @@ def test_stream_replays_terminal_result_without_invoking_provider_twice(tmp_path
         assert len(fake.calls) == 1
         assert '"replayed": true' in second.text
     finally:
-        bff_main.read_store = original_store
-        bff_main._sse_buffers["ask"].clear()
+        set_management_nl_read_store(original_store)
+        clear_management_nl_sse_buffer("ask")
 
 
 def test_stream_returns_409_on_same_key_different_payload(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -214,12 +218,12 @@ def test_stream_returns_409_on_same_key_different_payload(tmp_path, monkeypatch)
         assert body["error"]["details"]["precondition_failed"] == "idempotency_conflict"
         assert len(fake.calls) == 1
     finally:
-        bff_main.read_store = original_store
-        bff_main._sse_buffers["ask"].clear()
+        set_management_nl_read_store(original_store)
+        clear_management_nl_sse_buffer("ask")
 
 
 def test_stream_cross_tenant_requests_do_not_share_a_replay(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
+    original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     try:
         _clear_provider_env(monkeypatch)
@@ -252,5 +256,5 @@ def test_stream_cross_tenant_requests_do_not_share_a_replay(tmp_path, monkeypatc
         # durable command scope is actor+tenant+route+key, not just key.
         assert len(fake.calls) == 2
     finally:
-        bff_main.read_store = original_store
-        bff_main._sse_buffers["ask"].clear()
+        set_management_nl_read_store(original_store)
+        clear_management_nl_sse_buffer("ask")

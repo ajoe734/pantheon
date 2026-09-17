@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "task_id": "S5-REPORT-001",
+  "task_title": "Reconcile exact release, loops, journeys and rollback evidence",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "phase": "step-5-report",
+  "work_class": "hosted",
+  "timestamp": "2026-09-17T17:00:00Z",
+  "specification_reference": {
+    "step5_plan": "docs/04/pantheon-artifacts/dev-diagnostics-20260907/step5-execution-tasks.json",
+    "sa": "docs/04/pantheon-artifacts/dev-diagnostics-20260907/SA.md",
+    "sd": "docs/04/pantheon-artifacts/dev-diagnostics-20260907/SD.md",
+    "operator_current_delivery": "/tmp/pantheon-delivery-20260913.MnZdSN/CURRENT-DELIVERY.zh-TW.md",
+    "loops_1_12_evidence": "/tmp/pantheon-delivery-20260913.MnZdSN/LOOPS-1-12-EVIDENCE.zh-TW.md",
+    "remaining_product_gaps": "/tmp/pantheon-delivery-20260913.MnZdSN/REMAINING-PRODUCT-GAPS.zh-TW.md"
+  },
+  "acceptance_matrix": {
+    "acceptance_1_reconcile_checksums_and_identities": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "reconciled_tasks": [
+        "S5-PAIR-001",
+        "S5-LOOPS-001",
+        "S5-PROVENANCE-001",
+        "S5-JOURNEYS-001",
+        "S5-ROLLBACK-001"
+      ],
+      "total_evidence_artifacts_verified": 110,
+      "exact_release_identities_verified": true,
+      "served_identities_verified": true,
+      "details": "Reconciled all 110 checksums, release identities, OCI image digests, FE dist digests, served identities, and compatibility manifests across all 5 Step 5 dependency tasks."
+    },
+    "acceptance_2_separate_pass_fail_deferred_not_run": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "static_fixture_relabeled_as_hosted_success": false,
+      "old_id_relabeled_as_fresh": false,
+      "source_only_test_labelled_hosted_success": false,
+      "loops_accepted_count": 5,
+      "loops_deferred_count": 3,
+      "loops_unaccepted_count": 4,
+      "details": "Separated Pass, Fail-Closed Unaccepted, Deferred, and Not-Run strictly without synthetic fixtures, old IDs, or source-only test relabeling."
+    },
+    "acceptance_3_publish_durable_final_report_and_stop": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "durable_report_path": "docs/deployment/step5-acceptance-report.md",
+      "automatic_redeploy_triggered": false,
+      "stop_directive_enforced": true,
+      "details": "Published durable comprehensive final report at docs/deployment/step5-acceptance-report.md. Genuine functional gaps explicitly categorized; stopped cleanly without triggering automatic redeployment."
+    }
+  },
+  "audit_seal": {
+    "path": "docs/deployment/evidence/S5-REPORT-001/audit-seal.json",
+    "sealed_files_count": 7,
+    "sha256": "500c64facb5bbeccd8e00bbb9c8f172f59dfa909d08517554413ac00c311491d"
+  },
+  "delivered_files": {
+    "docs/deployment/evidence/S5-REPORT-001/README.md": "bac6b47813c7a5d4e68653233522306f326d7dcdadfd1998597f415a194cd1c4",
+    "docs/deployment/evidence/S5-REPORT-001/audit-seal.json": "500c64facb5bbeccd8e00bbb9c8f172f59dfa909d08517554413ac00c311491d",
+    "docs/deployment/evidence/S5-REPORT-001/reconciled-artifacts-manifest.json": "01e1fffc5d169542c1b2101e9363a1c09a0a386490fa9be5a46568ee3a38b8fb",
+    "docs/deployment/evidence/S5-REPORT-001/reconciled-journeys-summary.json": "44145f2e2371f770348f1726f02e410ea757b659dbdce662138847d9ffec7641",
+    "docs/deployment/evidence/S5-REPORT-001/reconciled-loops-summary.json": "2cc12a9b60da90f935648674be978d4d6d02caa28f0b465203afda6f328fca1c",
+    "docs/deployment/evidence/S5-REPORT-001/reconciled-release-identities.json": "99670b7d7fd72565b6314530f2b00e2506c899784d019f1cca39cae7da256854",
+    "docs/deployment/evidence/S5-REPORT-001/reconciled-rollback-drill-summary.json": "eb554af2f1519e5f9a20d7ae0a10680a9897a992cd52762708727d160e554789",
+    "docs/deployment/evidence/S5-REPORT-001/remaining-product-gaps-reconciliation.json": "f3ed9da8575e27b2010865fa7b512c46f4be9550aae87fcc60cf252df9e3e490",
+    "docs/deployment/step5-acceptance-report.md": "78f4282c62c4923b0fffd15b610220a04550b494836adee1267b94a9f795fac3"
+  },
+  "verification_commands": [
+    "/tmp/pantheon-worker-worktrees/pantheon/s5-report-001/.venv-pantheon/bin/python3 -m pytest -q scripts/test_agora_compat_manifest.py scripts/test_check_shared_deploy_workflow_disabled.py scripts/test_cross_repo_release_controller.py scripts/test_dev_release_artifacts.py (179 passed, 1 skipped in 74.50s)",
+    "curl -s https://api.dev.mvl-cap.tw/bff/version (HTTP 200, source_commit_sha: ae41705b4637110e665d2eed735afbd8307e28e6, image_digest: sha256:a9ceabe68af47623dbfeae554b01d64a5663be7fe0d6d4089f0d952c14dc0467)",
+    "curl -s https://app.dev.mvl-cap.tw/deployment.json (HTTP 200, deploymentState: accepted, commit: dbe737e0676640f1b9b2395b54fb3c0416099f8a, releaseName: 20260913T104814Z-dbe737e06766-gate-34751164876-34752443280-1-1351147)",
+    "python3 verification of all 110 artifact checksums and audit seals across S5-PAIR-001, S5-LOOPS-001, S5-PROVENANCE-001, S5-JOURNEYS-001, S5-ROLLBACK-001"
+  ],
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "task_branch": "task/S5-REPORT-001"
+  }
+}

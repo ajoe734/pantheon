@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "task_id": "S5-ROLLBACK-001",
+  "operation": "live bidirectional roundtrip rollback drill",
+  "environment": "pantheon-dev",
+  "execution_status": "passed",
+  "drill_id": "manual-I-E-I-rcst8yjo",
+  "remote_archive_directory": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts/manual-I-E-I-drill-mggfve5u",
+  "coordination_lease": {
+    "lease_id": "6e3c43d1-3b4e-406b-b576-1a664ab96b8b",
+    "repository": "ajoe734/execute-plans",
+    "branch": "environment-coordination",
+    "resource": "pantheon-dev-environment",
+    "owner": "manual:antigravity2:paired-I-E-I:20260917",
+    "acquired_at": "2026-09-17T15:44:37Z",
+    "heartbeat_verified_at": "2026-09-17T15:47:16Z",
+    "released_at": "2026-09-17T15:47:19Z",
+    "ttl_seconds": 300
+  },
+  "drill_path": "accepted_Release_I -> exact_prior_Pair_E -> SAME_accepted_Release_I_bytes",
+  "stages": {
+    "preflight_complete": {
+      "at": "2026-09-17T15:45:09Z",
+      "frontend_i_target": "/var/www/pantheon-dev-fe-releases/20260913T104814Z-dbe737e06766-gate-34751164876-34752443280-1-1351147-operator-live",
+      "frontend_i_dist_sha256": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
+      "frontend_i_manifest_sha256": "bf857d4af2a5829a1b4aa5fef474fbc84438121befe5b18d3dee547077304744",
+      "config_compatibility_verified": true
+    },
+    "exact_prior_e_restored": {
+      "at": "2026-09-17T15:46:11Z",
+      "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+      "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+      "frontend_target": "/var/www/pantheon-dev-fe-releases/20260913T074001Z-ba0b47f44551-gate-34744818811-34745406166-1-240646",
+      "frontend_manifest_sha256": "54d73cbfd331c04d0f0839ae8b141bdaaa84ba95ed39b6eb429648dcf5a7dfba",
+      "frontend_dist_sha256": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+      "restored_images": {
+        "operator-bff": "sha256:bef3371f6e0df6eec4d100905021b6c709cfbe454a6fa00057a3c00ba91228b7",
+        "agora-interaction-worker": "sha256:45847dcc4ab19673b743bcc7ff596e0cd99f90a197c9ab8402bd9578518bcbab",
+        "loop-run-projector-scheduler": "sha256:9d5ec8482a1c07d13a431b71def7e744c13ea5208d2a8dc8a3b785814b5084ad"
+      },
+      "public_served_readback": {
+        "source_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+        "fe_manifest_bytes_verified": true,
+        "strict_auth_denials_verified": true,
+        "auth_mode": "strict",
+        "auth_stub": false
+      },
+      "exact_phase_config_verified": true,
+      "protected_owners_unchanged": true
+    },
+    "accepted_i_returned": {
+      "at": "2026-09-17T15:47:15Z",
+      "backend_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+      "frontend_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+      "frontend_target": "/var/www/pantheon-dev-fe-releases/20260913T104814Z-dbe737e06766-gate-34751164876-34752443280-1-1351147-operator-live",
+      "frontend_manifest_sha256": "bf857d4af2a5829a1b4aa5fef474fbc84438121befe5b18d3dee547077304744",
+      "frontend_dist_sha256": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
+      "restored_images": {
+        "operator-bff": "sha256:a9ceabe68af47623dbfeae554b01d64a5663be7fe0d6d4089f0d952c14dc0467",
+        "agora-interaction-worker": "sha256:b01d9e2762b3120c9626bd3bd8e19d7b342a399334082e20c6be96bfc365cd58",
+        "loop-run-projector-scheduler": "sha256:5fd644bca12fdac5355f569fad7dfbc192f50f32a2543da44464f7fabc73190d"
+      },
+      "public_served_readback": {
+        "source_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+        "fe_manifest_bytes_verified": true,
+        "strict_auth_denials_verified": true,
+        "auth_mode": "strict",
+        "auth_stub": false
+      },
+      "exact_phase_config_verified": true,
+      "protected_owners_unchanged": true
+    },
+    "roundtrip_complete": {
+      "at": "2026-09-17T15:47:16Z",
+      "passed": true,
+      "final_state_identical_to_accepted_i": true
+    }
+  },
+  "tooling_and_safety_invariants": {
+    "cas_atomic_symlink_used": true,
+    "cas_helper": "scripts/atomic-symlink-cas.py",
+    "no_source_rebuild_enforced": true,
+    "no_database_rollback_performed": true,
+    "seven_business_owners_unmodified": true,
+    "paper_broker_settings_preserved": true,
+    "live_capital_untouched": true
+  }
+}
