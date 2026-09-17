@@ -1,0 +1,149 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001",
+  "batch_id": "CB08_management_nl_assistant",
+  "plan": "PLAN-002 (B26)",
+  "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "title": "Decouple Management NL ask, OpenClaw ops, assistant provider and high-risk refusal test suites",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "delivery_state": "ready_for_independent_review",
+  "target_repo": "ajoe734/pantheon",
+  "base_ref": "dev@f291b44d8ef39f13c412088a05bb646775206a66",
+  "base_sha": "f291b44d8ef39f13c412088a05bb646775206a66",
+  "summary": "Decoupled 6 target test suites (114 test cases across Management NL ask, OpenClaw ops surface, assistant provider, NL high-risk refusal, security hardening, and single-owner seam) from BFF main.py composition root imports, global monkeypatching (main.read_store, bff_main.read_store, app_deps.read_surface =), and sys.path surgery. Replaced direct composition root imports with dynamic module resolution via rebalance_authority_test_support, isolated TestClient harnesses, and test-scoped read store bindings on both BFF composition and context read services while preserving 100% of test assertions and contracts. Decreased inventory live_scan_non_whitelisted_main_importer_ceiling from 86 to 80, registered all 6 suites in migrated_suites, verified all 8 architecture invariant tests pass, and achieved 100% pass rate (114/114 passed) across the migrated test suites.",
+  "target_suites": [
+    "services/control-plane/bff/test_openclaw_ops_surface.py",
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+    "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+    "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+    "services/control-plane/bff/tests/test_management_nl_single_owner.py"
+  ],
+  "receiver_modules_untouched": [
+    "services/control-plane/bff/assistant/management_service.py",
+    "services/control-plane/bff/assistant/routes.py",
+    "services/control-plane/bff/main.py"
+  ],
+  "changed_files": [
+    "services/control-plane/bff/test_openclaw_ops_surface.py",
+    "services/control-plane/bff/tests/rebalance_authority_test_support.py",
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+    "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+    "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+    "services/control-plane/bff/tests/test_management_nl_single_owner.py",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001/evidence.json"
+  ],
+  "inventory_update": {
+    "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "ceiling_before": 86,
+    "ceiling_after": 80,
+    "migrated_suites_count_before": 5,
+    "migrated_suites_count_after": 11,
+    "disposition_summary": {
+      "ALLOWLIST": 15,
+      "DECOUPLED": 278,
+      "MIGRATED": 11,
+      "PLANNED": 80
+    },
+    "main_by_layer": {
+      "adapter": 4,
+      "application": 41,
+      "composition": 9,
+      "hosted": 1,
+      "router": 36
+    }
+  },
+  "file_dispositions": {
+    "services/control-plane/bff/test_openclaw_ops_surface.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 11,
+      "tests_failed": 0,
+      "technique": "Removed direct AST imports of BFF main.py composition root; accessed handlers and types via dynamic module helper in rebalance_authority_test_support; removed sys.path manipulation."
+    },
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "technique": "Decoupled static main import; replaced bff_main.read_store assignment with set_management_nl_read_store test helper; preserved all multi-tenant security hardening and query scoping assertions."
+    },
+    "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 7,
+      "tests_failed": 0,
+      "technique": "Replaced static main import with dynamic module helper; used bound_management_nl_store for read_store lifecycle management; preserved all high-risk mutation refusal assertions."
+    },
+    "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 16,
+      "tests_failed": 0,
+      "technique": "Decoupled main import in favor of dynamic helper; replaced direct bff_main.read_store and bff_main._sse_buffers mutations with bound_management_nl_store, get_management_nl_sse_buffer, and clear_management_nl_sse_buffer; preserved deterministic synthesis and event stream contracts."
+    },
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 65,
+      "tests_failed": 0,
+      "technique": "Decoupled bff_main import and sys.path manipulation; rewired test-scoped read store through set_management_nl_read_store to update both composition root and _management_ai_context_service; preserved all provider failover, streaming, idempotency, and multimodal contracts."
+    },
+    "services/control-plane/bff/tests/test_management_nl_single_owner.py": {
+      "disposition": "MIGRATED",
+      "layer": "adapter",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 10,
+      "tests_failed": 0,
+      "technique": "Removed sys.path.insert and import main; resolved handler methods and stores through dynamic module helper; ensured dual read_store binding across main and persona service for replay streams."
+    }
+  },
+  "verification": {
+    "architecture_invariants": {
+      "command": ".venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py -v",
+      "exit_code": 0,
+      "passed": 8,
+      "failed": 0,
+      "invariants": [
+        "test_inventory_file_is_present_and_well_formed",
+        "test_all_five_architectural_layers_represented",
+        "test_every_entry_has_valid_layer_and_disposition",
+        "test_composition_allowlist_is_strictly_contained_and_retained",
+        "test_migrated_suites_do_not_import_main",
+        "test_migrated_suites_do_not_mutate_sys_path",
+        "test_no_global_monkeypatching_in_migrated_suites",
+        "test_non_whitelisted_main_importers_is_live_scanned_and_bounded"
+      ]
+    },
+    "migrated_test_suites": {
+      "command": ".venv/bin/pytest services/control-plane/bff/test_openclaw_ops_surface.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/tests/test_management_nl_single_owner.py -v",
+      "exit_code": 0,
+      "total_tests": 114,
+      "passed": 114,
+      "failed": 0,
+      "pass_rate": "100%"
+    },
+    "ast_live_scan": {
+      "live_scan_non_whitelisted_main_importers_count": 80,
+      "ceiling": 80,
+      "bounded": true,
+      "zero_main_imports_in_migrated_suites": true,
+      "zero_sys_path_mutations_in_migrated_suites": true,
+      "zero_global_monkeypatching_in_migrated_suites": true
+    }
+  }
+}
