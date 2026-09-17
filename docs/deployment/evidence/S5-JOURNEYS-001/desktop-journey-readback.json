@@ -1,0 +1,63 @@
+{
+  "captured_at": "2026-09-17T04:39:12.198Z",
+  "task_id": "S5-JOURNEYS-001",
+  "operator_client_id": "pantheon-dev-operator-a-v1",
+  "served_identity": {
+    "fe_commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "bff_commit": "dc15751a9b20f8bc0931529d68af8898e691c898",
+    "image_digest": "sha256:39b53beefbf742b0ba263dd68a7c6e277945baca2b52f7bee1e693506abf269d",
+    "pair_id": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+    "deployment_profile": "operator-live",
+    "real_writes_enabled": "true",
+    "auth_posture": {
+      "auth_stub": false,
+      "auth_mode": "strict",
+      "dev_login_enabled": true,
+      "mfa_required": false,
+      "assistant_kernel_enabled": true,
+      "trade_journey_reader_backend": "postgres",
+      "trade_journey_projection_schema": "trade_journey_projection"
+    }
+  },
+  "session": {
+    "status": 200,
+    "cookie_domain": "api.dev.mvl-cap.tw",
+    "cookie_httponly": true,
+    "cookie_secure": true,
+    "cookie_samesite": "Lax"
+  },
+  "cockpit": {
+    "error": {
+      "code": "AUTH_REQUIRED",
+      "i18nKey": "errors.AUTH_REQUIRED",
+      "message": "Unauthorized: missing Bearer token",
+      "retryable": false,
+      "userActionable": true,
+      "details": {
+        "reason": "401",
+        "precondition_failed": null,
+        "suggestion": "Re-authenticate with a valid JWT bearer token"
+      }
+    },
+    "meta": {
+      "correlationId": "e20f091d-fcf9-4e0f-9422-b8773d66b1a9"
+    }
+  },
+  "shell_summary": {
+    "error": {
+      "code": "AUTH_REQUIRED",
+      "i18nKey": "errors.AUTH_REQUIRED",
+      "message": "Unauthorized: missing Bearer token",
+      "retryable": false,
+      "userActionable": true,
+      "details": {
+        "reason": "401",
+        "precondition_failed": null,
+        "suggestion": "Re-authenticate with a valid JWT bearer token"
+      }
+    },
+    "meta": {
+      "correlationId": "25c79a3a-deb5-48a7-bce9-ed841fa454c6"
+    }
+  }
+}

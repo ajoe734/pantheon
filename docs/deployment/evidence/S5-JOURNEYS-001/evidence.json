@@ -1,0 +1,124 @@
+{
+  "acceptance_matrix": {
+    "acceptance_1_management_desktop_journey": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "operator_client_id": "pantheon-dev-operator-a-v1",
+      "operator_user_id": "pantheon-dev-operator-a",
+      "tenant_id": "tenant-dev",
+      "cookie": {
+        "name": "pantheon_session",
+        "domain": "api.dev.mvl-cap.tw",
+        "path": "/",
+        "httpOnly": true,
+        "secure": true,
+        "sameSite": "Lax"
+      },
+      "served_identity_verified": true,
+      "independent_context_reload_verified": true,
+      "real_logout_verified": true,
+      "cockpit_cards_rendered": [
+        "Alerts",
+        "Incidents",
+        "Governance",
+        "Runtime",
+        "Health"
+      ],
+      "details": "Authenticated desktop Management Cockpit journey executed via Playwright against live dev deployment. Real session issued via POST /bff/auth/dev-login with browser_session=true. 5 health cards verified, /bff/me verified, independent context session reload verified, and real logout confirmed cookie clearance and login gate."
+    },
+    "acceptance_2_agora_workshop_trading_performance_journey": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "workshop_list_loaded": true,
+      "fresh_workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "reconstruction_card_verified": "recon-16dd2fe75fe9443a",
+      "trading_room_loaded": true,
+      "strategy_performance_loaded": true,
+      "fresh_strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+      "no_order_route_proof": "agora_performance_read_only",
+      "details": "Authenticated Agora Workshop to Trading Room to Strategy Performance navigation verified without 5xx errors. Fresh workshop reconstruction card verified. Fresh strategy performance attribution read back with no_order_route_proof=agora_performance_read_only."
+    },
+    "acceptance_3_management_ai_openclaw_posture": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "assistant_mode": "user",
+      "capabilities": {
+        "shell": false,
+        "repo": false,
+        "repo_write": false,
+        "live_capital": false,
+        "command_broker": false,
+        "secret_store": false,
+        "paper_only": true
+      },
+      "fake_tokens_synthesized": false,
+      "simulated_responses": false,
+      "live_adapter_status": "degraded (assistant_credential_mounts on dev VM, documented non-blocking per CURRENT-DELIVERY.zh-TW.md)",
+      "details": "Management AI OpenClaw posture verified via authenticated GET /bff/assistant/mode. Confirmed user mode with shell, repo_write, and live_capital strictly false. VM adapter mounts status reported truthfully without fake credentials or simulation."
+    },
+    "acceptance_4_prior_cases_sse_suggestions_and_fail_closed": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "focused_tests_passed": 9,
+      "focused_tests_total": 9,
+      "suites_verified": [
+        "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
+        "tests/bff/test_sse_replay.py",
+        "services/control-plane/bff/tests/test_openclaw_ops_stream.py"
+      ],
+      "cases": {
+        "workshop_suggestion_receipts": "passed (5 cases, isolated store routing, unack replay, SQLite resilience)",
+        "sse_cursor_reconnect": "passed (2 cases, Last-Event-ID replica failover, cursor fail-closed)",
+        "openclaw_stream_hygiene": "passed (2 cases, SSE event streaming, done stripping)"
+      },
+      "details": "Prior unique cases preserved and verified against focused pytest suites. Confirmed unacknowledged replay protection, isolated SQLite store resilience, replica failover without duplicate, fail-closed on unavailable cursor, and proper stream hygiene."
+    }
+  },
+  "audit_seal": {
+    "path": "docs/deployment/evidence/S5-JOURNEYS-001/audit-seal.json",
+    "sealed_files_count": 11,
+    "sha256": "1b00498deb9ba8864d0f3c00b8d89c21e641ae8fe8aa1cbe30af486e70599a53"
+  },
+  "delivered_files": {
+    "docs/deployment/evidence/S5-JOURNEYS-001/README.md": "4ca02d3371e8df1b15490ef80157717e59b3d1fdbdb47457337bc99c138b8686",
+    "docs/deployment/evidence/S5-JOURNEYS-001/agora-workshop-trading-performance.json": "2bef6941e62480d7bfe8fe030cedf07aee7aa069d85bfc67d47e149d17524d45",
+    "docs/deployment/evidence/S5-JOURNEYS-001/audit-seal.json": "1b00498deb9ba8864d0f3c00b8d89c21e641ae8fe8aa1cbe30af486e70599a53",
+    "docs/deployment/evidence/S5-JOURNEYS-001/desktop-journey-readback.json": "51ea2c7c792f3f111889eef8e69319eca3236792e9117bb2f0b27fdad60e2eeb",
+    "docs/deployment/evidence/S5-JOURNEYS-001/hosted-journey.json": "4aebdeaa6d76ffd2aa4b181ccf8759ddf6d32ba19dcee42547cc93149a041564",
+    "docs/deployment/evidence/S5-JOURNEYS-001/management-ai-openclaw-posture.json": "bfd82be823a7174c517591857b407e8c16ec2825defb6f9f7c27079606c4620f",
+    "docs/deployment/evidence/S5-JOURNEYS-001/page-agora-strategy-performance.png": "ed99635be6562b30f680022de1978e687f78095fbde75c3b2e4c50bb22edca69",
+    "docs/deployment/evidence/S5-JOURNEYS-001/page-agora-strategy-workshop.png": "252d1535847a56fa2f02aed2be6659e4d87ac51cf765411b5034cebf396c7ddb",
+    "docs/deployment/evidence/S5-JOURNEYS-001/page-agora-trading-room.png": "822490a742301df818342a60c112f973933792f963d60886157a143f7c5bdf39",
+    "docs/deployment/evidence/S5-JOURNEYS-001/page-management-cockpit.png": "a78825e5c1f39b653f4121eb513a7441383a60ce268705df307f208fc1174622",
+    "docs/deployment/evidence/S5-JOURNEYS-001/sse-cursor-reconnect-readback.json": "9cb017f4b3ea07a08508842f439ca9123327618743ffd28b4c46d1e51759dac8",
+    "docs/deployment/evidence/S5-JOURNEYS-001/workshop-suggestion-receipt.json": "a6853c609aa55991fdf14349ac40e039cf03068a7516895de610cc5fdb77931a"
+  },
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "task_branch": "task/S5-JOURNEYS-001"
+  },
+  "functional_gaps": [
+    {
+      "gap_id": "GAP-OPENCLAW-CREDENTIAL-MOUNTS",
+      "affected_surface": "bff_assistant_openclaw_adapter",
+      "description": "Dev VM adapter mount reports assistant_credential_mounts: degraded due to host filesystem ownership permissions (pantheon-assistant). Documented in CURRENT-DELIVERY.zh-TW.md as non-blocking for deployment.",
+      "functional_owner": "OpenClaw / Operations"
+    },
+    {
+      "gap_id": "GAP-AGORA-WORKSHOP-COMPLETENESS-PRODUCER",
+      "affected_surface": "agora_workshop_completeness",
+      "description": "GET /bff/agora/workshops/{id}/completeness returns null data because the natural completeness producer has not yet emitted a snapshot (highest_ready_gate: None). Documented in FRESH-AGORA-MAP.md.",
+      "functional_owner": "Agora / Research Adapter"
+    }
+  ],
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "phase": "step-5-journeys",
+  "schema_version": 1,
+  "specification_reference": {
+    "task_context": ".orchestrator/worker-runtime/task-context/s5-journeys-001.md",
+    "current_delivery": "/tmp/pantheon-delivery-20260913.MnZdSN/CURRENT-DELIVERY.zh-TW.md",
+    "baseline_journey_evidence": "/tmp/pantheon-hosted-I-20260913.yRDguW/hosted-journey.json"
+  }
+}

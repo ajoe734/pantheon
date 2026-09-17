@@ -1,0 +1,75 @@
+{
+  "captured_at": "2026-09-17T04:39:12.292Z",
+  "task_id": "S5-JOURNEYS-001",
+  "execution_posture": {
+    "mode": "user",
+    "capabilities": {
+      "shell": false,
+      "repo_write": false,
+      "live_capital": false,
+      "command_broker": false,
+      "secret_store": false,
+      "paper_only": true
+    },
+    "mode_response": {
+      "error": {
+        "code": "AUTH_REQUIRED",
+        "i18nKey": "errors.AUTH_REQUIRED",
+        "message": "Unauthorized: missing Bearer token",
+        "retryable": false,
+        "userActionable": true,
+        "details": {
+          "reason": "401",
+          "precondition_failed": null,
+          "suggestion": "Re-authenticate with a valid JWT bearer token"
+        }
+      },
+      "meta": {
+        "correlationId": "a109c886-43da-4e5a-9d14-8093abe0bcde"
+      }
+    }
+  },
+  "providers_posture": {
+    "providers": {
+      "error": {
+        "code": "AUTH_REQUIRED",
+        "i18nKey": "errors.AUTH_REQUIRED",
+        "message": "Unauthorized: missing Bearer token",
+        "retryable": false,
+        "userActionable": true,
+        "details": {
+          "reason": "401",
+          "precondition_failed": null,
+          "suggestion": "Re-authenticate with a valid JWT bearer token"
+        }
+      },
+      "meta": {
+        "correlationId": "1fba4e61-b939-419f-ae9b-bc90b0fedb6a"
+      }
+    },
+    "usage_summary": {
+      "error": {
+        "code": "AUTH_REQUIRED",
+        "i18nKey": "errors.AUTH_REQUIRED",
+        "message": "Unauthorized: missing Bearer token",
+        "retryable": false,
+        "userActionable": true,
+        "details": {
+          "reason": "401",
+          "precondition_failed": null,
+          "suggestion": "Re-authenticate with a valid JWT bearer token"
+        }
+      },
+      "meta": {
+        "correlationId": "26aceddf-eed8-4dff-88ab-113baec34264"
+      }
+    },
+    "live_adapter_status": {
+      "status": "degraded",
+      "reason": "assistant_credential_mounts degraded on dev VM (requires pantheon-assistant ownership per CURRENT-DELIVERY.zh-TW.md)",
+      "non_blocking": true,
+      "simulation_used": false,
+      "fake_tokens_created": false
+    }
+  }
+}

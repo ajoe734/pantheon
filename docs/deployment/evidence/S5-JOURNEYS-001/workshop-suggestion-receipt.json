@@ -1,0 +1,46 @@
+{
+  "captured_at": "2026-09-17T04:39:25.666Z",
+  "task_id": "S5-JOURNEYS-001",
+  "scope": "prior unique Workshop-to-suggestion case and isolated store transport verification",
+  "suite": "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
+  "verified_by": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest",
+  "passed": true,
+  "cases": [
+    {
+      "name": "test_unacknowledged_on_absent_subscribers_and_replay_on_installed_subscriber",
+      "status": "passed",
+      "contract": "AGORA-TRANSPORT-UNACK-REPLAY-001",
+      "description": "Preserves unacknowledged suggestions on absent subscribers and guarantees replay once subscriber is installed without message loss."
+    },
+    {
+      "name": "test_publisher_outage_fails_closed_and_recovers_on_restore",
+      "status": "passed",
+      "contract": "AGORA-TRANSPORT-FAILCLOSED-001",
+      "description": "Publisher outage fails closed and safely recovers upon connection restoration."
+    },
+    {
+      "name": "test_consumer_restart_resilience_from_sqlite",
+      "status": "passed",
+      "contract": "AGORA-STORE-SQLITE-RESILIENCE-001",
+      "description": "Consumer restart recovers state and offset reliably from isolated SQLite persistence store."
+    },
+    {
+      "name": "test_bff_store_routes_all_queries_and_actions_to_incidents_service",
+      "status": "passed",
+      "contract": "AGORA-INCIDENTS-ACTION-RECEIPT-001",
+      "description": "BFF store strictly routes all queries and suggestion/incident actions to incidents service with verified terminal receipts."
+    },
+    {
+      "name": "test_bff_store_emits_structured_warning_on_unhandled_action",
+      "status": "passed",
+      "contract": "AGORA-ACTION-RECEIPT-UNHANDLED-001",
+      "description": "Emits structured warning and fail-closed receipt on unhandled action types."
+    }
+  ],
+  "receipt_evidence": {
+    "action_receipt_type": "governed_suggestion_receipt",
+    "isolated_store_backend": "sqlite",
+    "fail_closed": true,
+    "paper_only": true
+  }
+}
