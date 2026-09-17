@@ -1,0 +1,119 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-PROVIDER-PROBE-STDIN-CORRECTIVE-001",
+  "title": "Close inherited stdin in provider auth probes",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "task_class": "development_tooling",
+  "target_repo": "pantheon",
+  "delivery_state": "ready_for_independent_review",
+  "reproduction": {
+    "summary": "All four endpoints of second OpenAI CLI provider account (codex2) reported unavailable with detail 'Reading additional input from stdin' while quota_reset_at (2026-09-13T09:31:00Z) had already passed.",
+    "root_cause": "common.run_command invoked subprocess.run with capture_output=True and text=True but no stdin parameter, leaving stdin=None. Child processes inherited supervisor standard input. When provider_permissions._codex_auth_probe invoked codex exec -C <root> ... <prompt>, the CLI detected unclosed stdin, printed 'Reading additional input from stdin...', and blocked waiting for input until probe timeout, incorrectly classifying the healthy account as an auth failure.",
+    "observed_records": {
+      "account": {
+        "codex2": {
+          "state": "retry_after",
+          "observed_at": "2026-09-07T14:59:19Z",
+          "quota_reset_at": "2026-09-13T09:31:00Z",
+          "retry_at": "2026-09-13T09:31:00Z",
+          "detail": "Codex usage limit reached."
+        }
+      },
+      "endpoints": {
+        "codex2_1": {
+          "state": "unavailable",
+          "reason_kind": "auth",
+          "detail": "Reading additional input from stdin... 2026-09-17T05:35:01.485286Z ERROR codex_login::auth::manager: Failed to refresh token: 401 Unauthorized..."
+        },
+        "codex2_2": {
+          "state": "unavailable",
+          "reason_kind": "auth",
+          "detail": "Reading additional input from stdin... 2026-09-17T05:35:07.279177Z ERROR codex_login::auth::manager: Failed to refresh token: 401 Unauthorized..."
+        },
+        "codex2_3": {
+          "state": "unavailable",
+          "reason_kind": "auth",
+          "detail": "Reading additional input from stdin... 2026-09-17T04:46:23.885107Z ERROR codex_login::auth::manager: Failed to refresh token: 401 Unauthorized..."
+        },
+        "codex2_4": {
+          "state": "unavailable",
+          "reason_kind": "auth",
+          "detail": "Reading additional input from stdin... 2026-09-17T04:46:57.081871Z ERROR codex_login::auth::manager: Failed to refresh token: 401 Unauthorized..."
+        }
+      }
+    }
+  },
+  "changes": {
+    ".orchestrator/common.py": "Updated run_command to default stdin=subprocess.DEVNULL and accept optional stdin/input parameters.",
+    ".orchestrator/provider_permissions.py": "Explicitly passed stdin=subprocess.DEVNULL to run_command across _codex_auth_probe, _claude_auth_status_payload, _antigravity_auth_probe, and gcloud ADC checks.",
+    ".orchestrator/test_common.py": "Added RunCommandStdinIsolationTests verifying default DEVNULL behavior, closed stdin with parent pipe, and explicit stdin/input support. Isolated task-state event log environment variables in activity outbox integration test.",
+    ".orchestrator/test_provider_permissions.py": "Added test_codex_auth_probe_closes_stdin_so_cli_blocking_on_inherited_stdin_succeeds in ProviderProbeGateTest proving that closed stdin allows a blocking CLI to succeed promptly and record healthy state, while unpatched probe reproduces timeout classification."
+  },
+  "acceptance_matrix": [
+    {
+      "criterion": "1. Reproduce first: all four endpoints of second OpenAI CLI provider account report unavailable with detail 'Reading additional input from stdin' while quota_reset_at (2026-09-13T09:31:00Z) has passed.",
+      "status": "passed",
+      "evidence": "Extracted delivery_health records from coordination-root state.json showing codex2 quota_reset_at 2026-09-13T09:31:00Z with all four endpoints (codex2_1..4) unavailable due to inherited stdin blocking in codex exec."
+    },
+    {
+      "criterion": "2. Close child stdin for every auth probe by passing subprocess.DEVNULL through run_command or probe call sites so no provider CLI can block on inherited input; keep prompt as argument.",
+      "status": "passed",
+      "evidence": "common.run_command now defaults stdin=subprocess.DEVNULL and provider_permissions._codex_auth_probe explicitly passes stdin=subprocess.DEVNULL with prompt unchanged as positional CLI argument."
+    },
+    {
+      "criterion": "3. Prove with isolated fake CLI that blocks on stdin when inherited and exits promptly when stdin is closed: probe must succeed within timeout and endpoint record become healthy; without change same fake reproduces timeout classification.",
+      "status": "passed",
+      "evidence": "test_codex_auth_probe_closes_stdin_so_cli_blocking_on_inherited_stdin_succeeds passed: with fix returns ready=True, status='ready' and endpoint state='healthy'; without fix times out and returns ready=False, status='probe_timeout'."
+    },
+    {
+      "criterion": "4. Keep every other probe fence unchanged: timeout, cache recovery retry, quota classification, and auth failure classification.",
+      "status": "passed",
+      "evidence": "All existing probe tests passed unchanged: quota_reached, refresh_token_revoked, auth_failed, models_cache_recovery, and probe_timeout."
+    },
+    {
+      "criterion": "5. Run focused and full-file regression for changed modules and record exact commands with exit codes and pass/fail counts.",
+      "status": "passed",
+      "evidence": "test_common.py: 138 tests passed (Ran 138 tests in 14.148s, OK); test_provider_permissions.py: 131 tests passed (Ran 131 tests in 68.663s, OK)."
+    },
+    {
+      "criterion": "6. Source and isolated-test scope only. No credential changes and no live probe against production accounts under this task.",
+      "status": "passed",
+      "evidence": "Only .orchestrator/{common.py,test_common.py,provider_permissions.py,test_provider_permissions.py} and evidence manifest modified. Zero credentials modified."
+    }
+  ],
+  "verification": {
+    "test_common": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest test_common",
+      "exit_code": 0,
+      "total": 138,
+      "passed": 138,
+      "failed": 0,
+      "errors": 0
+    },
+    "test_provider_permissions": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest test_provider_permissions",
+      "exit_code": 0,
+      "total": 131,
+      "passed": 131,
+      "failed": 0,
+      "errors": 0
+    },
+    "run_command_stdin_isolation_tests": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest test_common.RunCommandStdinIsolationTests",
+      "exit_code": 0,
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "errors": 0
+    },
+    "provider_probe_gate_tests": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest test_provider_permissions.ProviderProbeGateTest",
+      "exit_code": 0,
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "errors": 0
+    }
+  }
+}

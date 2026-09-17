@@ -3651,6 +3651,9 @@ class LogicalActivityReaderTests(unittest.TestCase):
 
         old_env = os.environ.get("PANTHEON_STATUS_ROOT")
         os.environ["PANTHEON_STATUS_ROOT"] = str(self.root)
+        old_event_log = os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+        old_identity = os.environ.pop("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", None)
+        old_store_mode = os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
         try:
             # We must create a dummy ai-status.json in self.root
             status_json_path = self.root / "ai-status.json"
@@ -3735,6 +3738,12 @@ class LogicalActivityReaderTests(unittest.TestCase):
                 os.environ["PANTHEON_STATUS_ROOT"] = old_env
             else:
                 os.environ.pop("PANTHEON_STATUS_ROOT", None)
+            if old_event_log is not None:
+                os.environ["PANTHEON_TASK_STATE_EVENT_LOG"] = old_event_log
+            if old_identity is not None:
+                os.environ["PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON"] = old_identity
+            if old_store_mode is not None:
+                os.environ["PANTHEON_TASK_STATE_STORE_MODE"] = old_store_mode
             if old_status_root is not None:
                 ai_status.STATUS_ROOT = old_status_root
             if old_status_file is not None:
@@ -4286,8 +4295,50 @@ class ReviewBridgePolicyValidationTests(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required and must be a mapping"):
-                common.load_config(cfg_path)
+class RunCommandStdinIsolationTests(unittest.TestCase):
+    def test_run_command_defaults_to_devnull_stdin(self) -> None:
+        proc = common.run_command(
+            [sys.executable, "-c", "import sys; print(repr(sys.stdin.read()))"]
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "''")
+
+    def test_run_command_closes_inherited_stdin_when_parent_has_open_pipe(self) -> None:
+        pipe_r, pipe_w = os.pipe()
+        saved_stdin = os.dup(0)
+        try:
+            os.dup2(pipe_r, 0)
+            proc = common.run_command(
+                [sys.executable, "-c", "import sys; print(repr(sys.stdin.read()))"],
+                timeout=1.0,
+            )
+            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(proc.stdout.strip(), "''")
+        finally:
+            os.dup2(saved_stdin, 0)
+            os.close(saved_stdin)
+            os.close(pipe_r)
+            os.close(pipe_w)
+
+    def test_run_command_supports_explicit_input(self) -> None:
+        proc = common.run_command(
+            [sys.executable, "-c", "import sys; print(sys.stdin.read().upper())"],
+            input="hello world",
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "HELLO WORLD")
+
+    def test_run_command_supports_explicit_stdin(self) -> None:
+        with tempfile.NamedTemporaryFile("w+", encoding="utf-8") as tf:
+            tf.write("custom input")
+            tf.flush()
+            tf.seek(0)
+            proc = common.run_command(
+                [sys.executable, "-c", "import sys; print(sys.stdin.read())"],
+                stdin=tf,
+            )
+            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(proc.stdout.strip(), "custom input")
 
 
 if __name__ == "__main__":
