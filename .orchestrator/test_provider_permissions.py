@@ -2744,6 +2744,97 @@ class ProviderProbeGateTest(unittest.TestCase):
         self.assertEqual(probe["source"], "live")
         self.assertTrue(probe["ready"])
 
+    def test_codex_auth_probe_closes_stdin_so_cli_blocking_on_inherited_stdin_succeeds(self) -> None:
+        """Prove that inherited stdin is closed with DEVNULL so CLI reading stdin succeeds and becomes healthy,
+        while inherited open stdin reproduces timeout."""
+        from rewrite import provider_health
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            codex_home = root / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "auth.json").write_text(
+                '{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}',
+                encoding="utf-8",
+            )
+            fake_cli = root / "fake_codex.py"
+            fake_cli.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "# Read from stdin; if stdin is DEVNULL, EOF is returned immediately.\n"
+                "# If stdin is an unclosed inherited pipe, read() blocks until timeout.\n"
+                "sys.stdin.read()\n"
+                "print('OK')\n",
+                encoding="utf-8",
+            )
+            fake_cli.chmod(0o755)
+
+            config = {
+                "paths": {"provider_capabilities": str(root / "provider-capabilities.json")},
+                "provider_auth": {
+                    "probe_interval_seconds": 900,
+                    "probe_timeout_seconds": 0.3,
+                },
+                "providers": {
+                    "codex2": {
+                        "delivery_mode": "codex",
+                        "codex": {"cli": str(fake_cli), "codex_home": str(codex_home)},
+                    }
+                },
+            }
+
+            pipe_r, pipe_w = os.pipe()
+            saved_stdin = os.dup(0)
+            try:
+                os.dup2(pipe_r, 0)
+
+                # 1. With fix: _codex_auth_probe closes child stdin (DEVNULL).
+                # Fake CLI does not block on inherited fd 0, outputs OK promptly.
+                probe = provider_permissions._codex_auth_probe(
+                    config, "codex2", str(fake_cli)
+                )
+                self.assertTrue(probe["ready"])
+                self.assertEqual(probe["status"], "ready")
+
+                # Verify endpoint health record becomes healthy
+                health = provider_health.apply_probe(
+                    provider_health.empty_delivery_health(),
+                    endpoint_id="codex2_1",
+                    account_id="codex2",
+                    probe=probe,
+                )
+                endpoint_entry = provider_health.endpoint_health_entry(health, "codex2_1")
+                self.assertEqual(endpoint_entry["state"], "healthy")
+
+                # 2. Without fix: simulate unpatched probe where run_command does NOT pass DEVNULL
+                # but inherits parent fd 0 (the unclosed pipe), causing fake CLI to block until timeout.
+                def unpatched_run_command(cmd, timeout=None, env=None, **kwargs):
+                    return subprocess.run(
+                        cmd,
+                        cwd=str(common.ROOT),
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                        env=env,
+                        stdin=None,
+                    )
+
+                with mock.patch.object(
+                    provider_permissions, "run_command", side_effect=unpatched_run_command
+                ):
+                    unpatched_probe = provider_permissions._codex_auth_probe(
+                        config, "codex2", str(fake_cli)
+                    )
+                self.assertFalse(unpatched_probe["ready"])
+                self.assertEqual(unpatched_probe["status"], "probe_timeout")
+                self.assertIn("timed out", unpatched_probe["error"])
+
+            finally:
+                os.dup2(saved_stdin, 0)
+                os.close(saved_stdin)
+                os.close(pipe_r)
+                os.close(pipe_w)
+
     def test_antigravity_aliases_sharing_a_token_share_one_probe(self) -> None:
         """Five aliases on one OAuth token are one quota account, not five lanes."""
         config = {

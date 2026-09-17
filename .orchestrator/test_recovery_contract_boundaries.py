@@ -160,3 +160,104 @@ def test_exact_event_identity_is_still_required_after_archive_resolution(tmp_pat
         assert sup.canonical_worker_terminal_status(config, worker, thin, activity_events=[altered], state=canonical) is None
     stale = {**worker, "task_generation": 2}
     assert sup.canonical_worker_terminal_status(config, stale, thin, activity_events=[event], state=canonical) is None
+
+
+def _fenced_worker(task_id, run_id, event_id, *, alive):
+    """Build a worker whose lease was fenced, over a real PID identity."""
+    proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE)
+    worker = fixtures.RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+    worker.update(
+        task_id=task_id, run_id=run_id, queue_event_id=event_id, pid=proc.pid,
+        pid_start_ticks=sup.worker_pid_start_ticks(proc.pid),
+        status="recovery_pending",
+        lost_lease_receipt_id="promotion-drain-" + "a" * 16,
+        lease_fenced_at="2026-09-17T02:02:57Z",
+        last_error="Worker lease was lost.",
+    )
+    worker["process_generation"] = sup.worker_process_generation_id(
+        task_id=task_id, worker_run_id=run_id, queue_event_id=event_id,
+        pid=worker["pid"], pid_start_ticks=worker["pid_start_ticks"])
+    if alive:
+        return worker, proc
+    proc.communicate(timeout=5)
+    assert not sup.pid_is_alive(worker["pid"])
+    return worker, None
+
+
+def _non_terminal_canonical(config, tmp_path):
+    """Canonical state whose task is mid-review: no terminal proof can exist."""
+    task = task_fixture("TASK-9", status="review", owner="Codex", reviewer="Claude")
+    task.update(generation=1)
+    state = {"tasks": [task], "agents": [], "handoffs": [], "blockers": [],
+             "terminal_facts": {}, "archive_receipts": {}}
+    save_status(config, state)
+    return state
+
+
+@pytest.mark.parametrize("alive", [False, True])
+def test_fenced_worker_queue_completion_commits_only_when_the_process_is_gone(tmp_path, alive):
+    """A lost-lease fence proves a queue completion; a live attempt never does.
+
+    Regression for the fleet-wide dispatch stall: every reconciler that retires
+    a fenced attempt's queue record asserted a transition the revalidation could
+    not accept, so the whole reserved maintenance phase -- delivery-health
+    observations included -- was discarded on every cycle until health evidence
+    expired and no lane could be dispatched at all.
+    """
+    root = tmp_path / "status"
+    (root / ".orchestrator").mkdir(parents=True)
+    config = config_fixture(root)
+    config["paths"]["approval_queue"] = str(root / ".orchestrator" / "approvals.json")
+    config["task_state_store"] = {"mode": "authoritative", "event_log": str(tmp_path / "tasks.jsonl")}
+    _non_terminal_canonical(config, tmp_path)
+
+    worker, proc = _fenced_worker("TASK-9", "run-9", "event-9", alive=alive)
+    runtime = runtime_state.default_state()
+    runtime["workers"][worker["run_id"]] = worker
+    runtime["queue"]["events"][worker["queue_event_id"]] = {
+        "status": "failed",
+        "intent": {"event_id": worker["queue_event_id"], "task_id": worker["task_id"]},
+    }
+    runtime_state.save_runtime_state(config, runtime)
+
+    thin = sup.task_index_from_status(config, sup.load_status(config))["TASK-9"]
+    assert sup.canonical_worker_terminal_status(
+        config, worker, thin, activity_events=[]) is None, "a fenced attempt has no exact completion event"
+
+    def retire_queue_record_and_observe(scratch):
+        # What reconcile_queue_records / reconcile_queue_intents legitimately do.
+        scratch["queue"]["events"][worker["queue_event_id"]]["status"] = "completed"
+        # An unrelated observation committed by the very same phase.
+        scratch.setdefault("delivery_health", {}).setdefault("endpoints", {})["lane-9"] = {
+            "state": "healthy", "observed_at": "2026-09-17T05:00:00Z"}
+        return True
+
+    try:
+        committed = sup._run_reserved_runtime_phase(
+            config, "test-fence-proof", retire_queue_record_and_observe)
+    finally:
+        if proc is not None:
+            proc.communicate(timeout=5)
+
+    final = runtime_state.load_runtime_state(config)
+    observed = (final.get("delivery_health", {}).get("endpoints", {}).get("lane-9") or {}).get("observed_at")
+    if alive:
+        assert committed is False
+        assert final["queue"]["events"]["event-9"]["status"] == "failed"
+        assert observed is None, "a live attempt must not be completed out from under itself"
+    else:
+        assert committed is True
+        assert final["queue"]["events"]["event-9"]["status"] == "completed"
+        assert observed == "2026-09-17T05:00:00Z", (
+            "the unrelated observation must survive with the accepted transition")
+
+
+def test_fence_proof_requires_receipt_fence_timestamp_and_a_dead_process(tmp_path):
+    """Every condition of the fence proof is load-bearing."""
+    worker, _ = _fenced_worker("TASK-9", "run-9", "event-9", alive=False)
+    assert sup.worker_fence_proves_queue_completion(worker) is True
+    assert sup.worker_fence_proves_queue_completion({**worker, "status": "running"}) is False
+    assert sup.worker_fence_proves_queue_completion({**worker, "lost_lease_receipt_id": ""}) is False
+    assert sup.worker_fence_proves_queue_completion({**worker, "lease_fenced_at": ""}) is False
+    assert sup.worker_fence_proves_queue_completion({**worker, "status": "superseded"}) is True
+    assert sup.worker_fence_proves_queue_completion(None) is False
