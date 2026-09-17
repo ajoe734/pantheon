@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-TWO-PROCESS-TEST-REAP-001",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "delivery_class": "test_reliability_fix",
+  "scope": {
+    "file_changed": ".orchestrator/test_supervisor.py",
+    "problem": "Six RealProcessReviewHandoffRecoveryFlowTests two-process tests spawned children inside a TemporaryDirectory and only called Process.join(timeout=5) before letting the with-block exit. join returns whether or not the child ended, so under CI load a still-running child writing into the temp worktree makes rmtree raise OSError [Errno 39] Directory not empty on cleanup. The failure lands on whichever branch happened to be running at that moment.",
+    "cited_failures": [
+      "task/OPS-ANTIGRAVITY-SHARED-ACCOUNT-001, GitHub Actions run 35182030826 (failed twice, including an explicit re-run)",
+      "task/OPS-ARCHIVE-RESURRECTION-ARCHIVE-REVIEWER-HOP-AMENDMENT-001, GitHub Actions run 35182800221"
+    ],
+    "fix": "Added RealProcessReviewHandoffRecoveryFlowTests._reap(*processes, timeout=5) which joins, then escalates to terminate() and finally kill() (each followed by a join) until every child is provably dead, and replaced the bare join(timeout=5) calls in the six affected tests' teardown with calls to _reap. No test assertion changed; only teardown changed. The one test that already checked is_alive was left alone.",
+    "new_test_added": "test_reap_terminates_a_child_that_outlives_its_join_timeout: spawns a child that sleeps 120s, calls _reap(process, timeout=1), and asserts the child is dead (is_alive() is False, exitcode is not None) after reaping."
+  },
+  "verified_behavior": [
+    "Process.join(timeout=...) alone does not prove a child has exited",
+    "_reap escalates join -> terminate+join -> kill+join until the child is confirmed dead",
+    "A child that ignores its join deadline is dead after _reap runs",
+    "The six affected two-process tests still pass their original assertions unchanged",
+    "The full .orchestrator/test_supervisor.py suite remains green after the teardown change"
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -k RealProcessReviewHandoffRecoveryFlowTests -q",
+      "result": "passed",
+      "tests": 17,
+      "subtests": 2
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -q",
+      "result": "passed",
+      "tests": 353,
+      "subtests": 81
+    }
+  ],
+  "promotion_boundary": "Source and isolated-test scope only. No hosted deployment and no live runtime state edit."
+}

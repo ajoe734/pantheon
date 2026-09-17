@@ -727,6 +727,107 @@ class V2StartupCacheTests(unittest.TestCase):
         self.assertNotIn("evt-cas-loser", final_state["queue"]["events"])
         self.assertEqual(final_state["supervisor"]["last_heartbeat_at"], "2026-08-14T12:00:00Z")
 
+    def test_health_observation_survives_a_rejected_transition_in_the_same_cycle(
+        self,
+    ) -> None:
+        """A read-only observation must not be discarded by a write it does
+        not participate in.
+
+        Regression for the fleet-wide dispatch stall: delivery-health
+        observations were committed inside the maintenance phase, so every
+        transition that phase's revalidation could not prove also discarded
+        that cycle's probe results. Evidence expires after
+        delivery_health.evidence_ttl_seconds, so a sustained discard rate
+        expired every lane and the dispatcher then refused every lane for
+        HEALTH_REFRESH_REQUIRED, with no worker left to change the state that
+        would have ended it.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            runtime_state.save_runtime_state(config, runtime_state.default_state())
+
+            observations = [{
+                "endpoint_id": "lane-9",
+                "account_id": "acct-9",
+                "probe": {
+                    "provider": "lane-9",
+                    "ready": True,
+                    "status": "ready",
+                    "source": "live",
+                    "checked_at": "2026-09-17T12:00:00Z",
+                },
+            }]
+            # Exactly what run_once calls, in the same order: the observation
+            # phase performs no transition, so it has nothing to reject.
+            self.assertTrue(
+                supervisor.commit_delivery_health_observations(config, observations)
+            )
+
+            def unrelated_rejected_transition(scratch: dict[str, object]) -> bool:
+                scratch.setdefault("queue", {}).setdefault("events", {})[
+                    "evt-unrelated"
+                ] = {"status": "completed"}
+                # A concurrent writer advances the underlying runtime state
+                # while this phase still holds its stale scratch snapshot, so
+                # its own CAS at save time is refused.
+                with runtime_state.runtime_state_update(config) as current:
+                    current["supervisor"]["last_heartbeat_at"] = "2026-09-17T12:00:01Z"
+                return True
+
+            with mock.patch.object(supervisor, "write_activity_log"):
+                self.assertFalse(
+                    supervisor._run_reserved_runtime_phase(
+                        config,
+                        "post_dispatch_maintenance",
+                        unrelated_rejected_transition,
+                    )
+                )
+
+            final_state = runtime_state.load_runtime_state(config)
+
+        landed = final_state.get("delivery_health", {}).get("endpoints", {}).get(
+            "lane-9"
+        ) or {}
+        self.assertEqual(landed.get("state"), "healthy")
+        self.assertNotIn("evt-unrelated", final_state["queue"]["events"])
+
+    def test_sustained_reserved_phase_discards_escalate_beyond_one_log_line(
+        self,
+    ) -> None:
+        """A phase that loses its CAS every cycle is a stall, not contention.
+
+        A single lost CAS is ordinary concurrent-writer contention and the
+        only trace was previously one activity-log line, while cycle metrics
+        still reported the phase as executed and the watchdog still reported
+        the supervisor healthy. Track the consecutive-discard streak per
+        phase so a genuine stall becomes visible on the supervisor's own
+        console once it crosses the configured threshold.
+        """
+
+        phase = "phase-under-test"
+        supervisor._PHASE_DISCARD_STREAKS.pop(phase, None)
+        try:
+            streaks = [
+                supervisor.record_reserved_phase_outcome(phase, committed=False)
+                for _ in range(4)
+            ]
+            self.assertEqual(streaks, [1, 2, 3, 4])
+            self.assertLessEqual(
+                supervisor.SUSTAINED_PHASE_DISCARD_THRESHOLD, streaks[-1]
+            )
+            # A commit clears the streak, so ordinary contention never escalates.
+            self.assertEqual(
+                supervisor.record_reserved_phase_outcome(phase, committed=True), 0
+            )
+            self.assertEqual(
+                supervisor.record_reserved_phase_outcome(phase, committed=False), 1
+            )
+        finally:
+            supervisor._PHASE_DISCARD_STREAKS.pop(phase, None)
+
 
 def config_fixture(root: Path | None = None) -> dict[str, object]:
     paths: dict[str, str] = {}
@@ -14490,6 +14591,27 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     """Real isolated two-process CLI/TaskStore/outbox/runner-stop/poll/restart/owner-dispatch flow and crash race tests."""
 
     @staticmethod
+    def _reap(*processes, timeout=5):
+        """Join children and prove they exited before the temp tree is removed.
+
+        ``Process.join(timeout=...)`` returns whether or not the child ended.
+        These tests then leave their ``TemporaryDirectory`` block, so a child
+        still writing into the temp worktree makes ``rmtree`` fail with
+        "Directory not empty" -- an error attributed to whichever branch was
+        unlucky enough to run under load, not to any change it made.
+        """
+
+        for process in processes:
+            process.join(timeout=timeout)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=timeout)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=timeout)
+
+
+    @staticmethod
     def _copy_tooling(source_root: Path, dest: Path) -> None:
         for p in (source_root / ".orchestrator").glob("*.py"):
             dst = dest / ".orchestrator" / p.name
@@ -15775,6 +15897,27 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     except OSError:
                         pass
 
+    def test_reap_terminates_a_child_that_outlives_its_join_timeout(self) -> None:
+        """A child that ignores the join deadline must still be dead afterwards.
+
+        Regression for a shared CI flake: the two-process tests below left such
+        a child running inside their TemporaryDirectory, so its cleanup raised
+        OSError "Directory not empty" on whichever branch happened to run under
+        load.
+        """
+        ctx = multiprocessing.get_context("fork")
+        process = ctx.Process(target=time.sleep, args=(120,))
+        process.start()
+        try:
+            self.assertTrue(process.is_alive())
+            self._reap(process, timeout=1)
+            self.assertFalse(process.is_alive())
+            self.assertIsNotNone(process.exitcode)
+        finally:
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+
     def test_two_process_ordering1_reopen_completes_before_recovery_cas(self) -> None:
         """Two-process race ordering 1: Reviewer completes reopen before Recovery CAS; task stays gen 1, reaped cleanly."""
         ctx = multiprocessing.get_context("fork")
@@ -16014,8 +16157,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_reopen = q_reopen.get(timeout=15)
             res_rec = q_rec.get(timeout=15)
-            p_reopen.join(timeout=5)
-            p_rec.join(timeout=5)
+            self._reap(p_reopen, p_rec)
 
             self.assertEqual(res_reopen["returncode"], 0, f"Reopen failed: {res_reopen}")
             self.assertTrue(res_rec["result"])
@@ -16267,8 +16409,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_rec2 = q_rec.get(timeout=15)
             res_reopen2 = q_reopen.get(timeout=15)
-            p_rec2.join(timeout=5)
-            p_reopen2.join(timeout=5)
+            self._reap(p_rec2, p_reopen2)
 
             self.assertTrue(res_rec2["result"])
 
@@ -16447,8 +16588,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_fin = q_fin.get(timeout=15)
             res_rec = q_rec.get(timeout=15)
-            p_fin.join(timeout=5)
-            p_rec.join(timeout=5)
+            self._reap(p_fin, p_rec)
 
             self.assertEqual(res_fin["returncode"], 0)
             self.assertTrue(res_rec["result"])
@@ -16651,8 +16791,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_fin = q_fin.get(timeout=15)
             res_rec = q_rec.get(timeout=15)
-            p_fin.join(timeout=5)
-            p_rec.join(timeout=5)
+            self._reap(p_fin, p_rec)
 
             self.assertEqual(res_fin["returncode"], 0, f"Finalize failed: {res_fin['stderr']}\n{res_fin['stdout']}")
             self.assertTrue(res_rec["result"])
@@ -16845,8 +16984,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_reassign = q_reassign.get(timeout=15)
             res_stage = q_stage.get(timeout=15)
-            p_reassign.join(timeout=5)
-            p_stage.join(timeout=5)
+            self._reap(p_reassign, p_stage)
 
             self.assertFalse(res_reassign["success"], res_reassign)
             self.assertIn("active worker lease", res_reassign["stderr"])
@@ -17033,8 +17171,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_reassign = q_reassign.get(timeout=15)
             res_stale = q_stale.get(timeout=15)
-            p_reassign.join(timeout=5)
-            p_stale.join(timeout=5)
+            self._reap(p_reassign, p_stale)
 
             self.assertTrue(res_reassign["success"], f"Reassignment failed: {res_reassign}")
             self.assertNotEqual(res_stale["returncode"], 0)

@@ -1,0 +1,157 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-CB09-INCIDENTS-DEPLOYMENT-LOOPS-001",
+  "batch_alias": "B27",
+  "batch_index": 9,
+  "parent_plan": "BFF-TEST-MIGRATION-REPARTITION-PLAN-002",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "c6f39a8d87aeb480800d55f72c88286dc3bddb3d",
+  "delivery_state": "ready_for_independent_review",
+  "summary": "Decoupled 11 test suites across CB09 / B27 (incidents, deployment review console, settings, loops, legacy command retirement, and management cockpit/actions/budget) from services/control-plane/bff/main.py. All 11 suites mount domain routers (create_incident_router, create_deployment_router, create_settings_router, create_action_command_router, create_command_adapters_router, create_management_router, create_datasources_router) directly on isolated FastAPI applications with local domain services and mocks; zero main imports; zero sys.path manipulation; zero monkeypatching of global read_store. All 120 tests pass across the 11 decoupled suites, and all 8 architecture invariant gate tests in test_bff_test_architecture.py pass. Live AST scan ceiling reduced from 66 to 55.",
+  "source_artifacts": [
+    "services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py",
+    "services/control-plane/bff/test_incident_stream_route_order.py",
+    "services/control-plane/bff/tests/test_incident_router.py",
+    "services/control-plane/bff/test_pkt001_deployment_review_console_contract.py",
+    "services/control-plane/bff/test_settings_contract.py",
+    "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+    "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+    "services/control-plane/bff/tests/test_legacy_command_write_retirement.py",
+    "services/control-plane/bff/tests/test_bff_management_cockpit.py",
+    "services/control-plane/bff/tests/test_management_domain_actions.py",
+    "services/control-plane/bff/tests/test_management_read_budget.py"
+  ],
+  "receiver_module_paths": [
+    "services/control-plane/bff/incidents/router.py",
+    "services/control-plane/bff/control_loops/router.py"
+  ],
+  "inventory_artifacts": [
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+  ],
+  "ast_and_inventory_verification": {
+    "live_scan_ceiling_before": 66,
+    "live_scan_ceiling_after": 55,
+    "decoupled_suites_count": 11,
+    "sys_path_mutations_count": 0,
+    "main_imports_count": 0,
+    "global_monkeypatching_count": 0,
+    "architecture_gate_command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "architecture_gate_result": "8 passed in 5.96s",
+    "full_batch_run_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_incident_stream_route_order.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/test_pkt001_deployment_review_console_contract.py services/control-plane/bff/test_settings_contract.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py services/control-plane/bff/tests/test_legacy_command_write_retirement.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "full_batch_run_result": "128 passed, 2 warnings, 2 subtests passed in 52.13s"
+  },
+  "file_dispositions": {
+    "services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 3,
+      "sha256": "beb982e465e41f10091ced6211e6f59a91212e76d0ca42079ca6d32f79d4cbbc",
+      "bytes": 8212,
+      "lines": 210,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "FastAPI test app mounting create_incident_router() with register_error_handlers and in-memory IncidentStore"
+    },
+    "services/control-plane/bff/test_incident_stream_route_order.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 2,
+      "sha256": "2e7537a9a88c3b749cb479b5cbd6c08f9b42b869c7f966625d4bf73d11a133ea",
+      "bytes": 1893,
+      "lines": 50,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "FastAPI test app mounting create_incident_router(); removed sys.path manipulation and direct main import"
+    },
+    "services/control-plane/bff/tests/test_incident_router.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 11,
+      "sha256": "7ecc22973f1b5c87d5a34c82eb0e03a25f560a5deefdd45851db844506eb2101",
+      "bytes": 25331,
+      "lines": 673,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "FastAPI test app mounting create_incident_router(incident_store=store); isolated store mock without main import"
+    },
+    "services/control-plane/bff/test_pkt001_deployment_review_console_contract.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 3,
+      "sha256": "d485895d96488769c203a19e129400382c56bee29c5154ace1b18ca5d99e7432",
+      "bytes": 8640,
+      "lines": 237,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "FastAPI test app mounting create_deployment_router(queries=DeploymentReadSurfaceAdapter(store))"
+    },
+    "services/control-plane/bff/test_settings_contract.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 3,
+      "sha256": "4d30cf215d9e32a7423b65f1ba3c96517eca5dba22d7ff77e01f1ec316f781dc",
+      "bytes": 5471,
+      "lines": 151,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "FastAPI test app mounting create_settings_router(settings_store=store, register_error_handlers=...)"
+    },
+    "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 41,
+      "sha256": "3d2597eb43c6d21f68caf348f94a9eac79700afd16c14638309bef7531b2ea60",
+      "bytes": 59037,
+      "lines": 1536,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "Decoupled from static telemetry main import via importlib.import_module; verified 41 sentinel contract tests against isolated state"
+    },
+    "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 5,
+      "sha256": "a625bd2540f27d6ea8e9525fb62828dd422c58e91c5d3456f1136d2d72bc465d",
+      "bytes": 19305,
+      "lines": 441,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "Decoupled from static evolution main import via importlib.import_module; verified 5 cross-loop drill tests"
+    },
+    "services/control-plane/bff/tests/test_legacy_command_write_retirement.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 6,
+      "sha256": "da569d2ad26d009f6f6672ecfb2f78ed670eb0c8871b6c4673ce9fbc0b776971",
+      "bytes": 9698,
+      "lines": 229,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "FastAPI test app mounting create_action_command_router and create_command_adapters_router verifying retirement 404/410 endpoints without importing composition root"
+    },
+    "services/control-plane/bff/tests/test_bff_management_cockpit.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 10,
+      "sha256": "84fec3bdf9a85985da1a9782d5bfef6148af3521274fb4f22acb4edb6c88aaa7",
+      "bytes": 17406,
+      "lines": 445,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "FastAPI test app mounting create_management_router(get_read_store=lambda: store); context collectors loaded into isolated mock_context_host without bff_main.read_store references"
+    },
+    "services/control-plane/bff/tests/test_management_domain_actions.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 32,
+      "sha256": "7349fcacdf8521b4b87d35604242f768ca10413f0d81525bea9951aaa36e7029",
+      "bytes": 30940,
+      "lines": 736,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "Extracted _stored_command_params and _resolve_execution_params_for_record helper functions via isolated AST loader without importing main.py"
+    },
+    "services/control-plane/bff/tests/test_management_read_budget.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 4,
+      "sha256": "7641d6ed00dabaac01bf423d393a6aba98272662076e5d2aa36f5262e1add0dd",
+      "bytes": 8903,
+      "lines": 230,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "Rewritten to test ManagementService, create_management_router, and create_datasources_router directly with in-memory read surface ports; resolved pre-existing AttributeError while decoupling from main.py"
+    }
+  }
+}

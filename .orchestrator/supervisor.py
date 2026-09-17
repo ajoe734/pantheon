@@ -7471,6 +7471,27 @@ def _safe_load_canonical_status(config: Mapping[str, Any]) -> dict[str, Any] | N
         return None
 
 
+# A reserved phase is allowed to lose its CAS: a concurrent writer wins and the
+# next cycle redoes the work.  A phase that loses it *every* cycle is a stall,
+# not contention -- and the only trace it leaves is one activity-log line, while
+# cycle metrics still report the phase as executed and the watchdog still reports
+# the supervisor healthy.  Track consecutive discards per phase so that case
+# becomes visible on the supervisor's own console.
+SUSTAINED_PHASE_DISCARD_THRESHOLD = 3
+_PHASE_DISCARD_STREAKS: dict[str, int] = {}
+
+
+def record_reserved_phase_outcome(phase_name: str, *, committed: bool) -> int:
+    """Return the consecutive-discard streak for one reserved phase."""
+
+    if committed:
+        _PHASE_DISCARD_STREAKS.pop(phase_name, None)
+        return 0
+    streak = _PHASE_DISCARD_STREAKS.get(phase_name, 0) + 1
+    _PHASE_DISCARD_STREAKS[phase_name] = streak
+    return streak
+
+
 def _run_reserved_runtime_phase(
     config: dict[str, Any],
     phase_name: str,
@@ -7736,7 +7757,9 @@ def _run_reserved_runtime_phase(
                                 fresh_task,
                                 activity_events=fresh_events,
                             )
-                            if fresh_terminal is None:
+                            if fresh_terminal is None and not worker_fence_proves_queue_completion(
+                                r_worker
+                            ):
                                 cas_matches = False
                                 break
 
@@ -7774,19 +7797,27 @@ def _run_reserved_runtime_phase(
             _terminate_processes_started_by_failed_phase(reserved, scratch)
         if phase_error is not None:
             raise phase_error
+        streak = record_reserved_phase_outcome(phase_name, committed=False)
         write_activity_log(
             config,
             {
                 "type": "runtime_phase_cas_conflict",
                 "phase": phase_name,
                 "reason_code": rejection_reason,
+                "consecutive_discards": streak,
                 "message": (
                     f"Discarded reserved runtime phase {phase_name}: {rejection_reason}."
                 ),
             },
         )
+        if streak >= SUSTAINED_PHASE_DISCARD_THRESHOLD:
+            console_log(
+                f"reserved phase '{phase_name}' discarded {streak} cycles in a row "
+                f"({rejection_reason}); its observations are not landing",
+            )
         return False
 
+    record_reserved_phase_outcome(phase_name, committed=True)
     side_effect_changed = _flush_deferred_runtime_side_effects(
         config,
         dispatch_status_syncs=deferred_dispatches,
@@ -7987,6 +8018,39 @@ def status_event_matches_worker_process(
     lease = command.get("worker_lease") if isinstance(command, Mapping) else None
     return isinstance(lease, Mapping) and all(
         lease.get(field) == value for field, value in identity.items()
+    )
+
+
+def worker_fence_proves_queue_completion(worker: Mapping[str, Any]) -> bool:
+    """Return True when a lease fence already proves this attempt is finished.
+
+    ``canonical_worker_terminal_status`` proves a queue completion from the
+    worker's own exact lifecycle event.  A worker that lost its lease never
+    produces one: it was fenced mid-flight, so its task row stays non-terminal
+    and no exact completion event exists.  Its durable recovery receipt is the
+    proof instead -- the same evidence the superseded branch above already
+    accepts -- and the process must additionally be gone, so a live attempt can
+    never be completed out from under itself.
+
+    Without this, every reconciler that legitimately retires the fenced
+    attempt's queue record (``reconcile_queue_records`` by worker status,
+    ``reconcile_queue_intents`` by stale-dispatch skip) asserts a transition
+    this guard can never accept.  The whole reserved maintenance phase is then
+    discarded every cycle, and the delivery-health observations committed by
+    that same phase die with it -- which expires every lane's health evidence
+    and stops the fleet dispatching anything at all.
+    """
+
+    if not isinstance(worker, Mapping):
+        return False
+    if str(worker.get("status") or "") not in {"recovery_pending", "superseded"}:
+        return False
+    if not str(worker.get("lost_lease_receipt_id") or "").strip():
+        return False
+    if not str(worker.get("lease_fenced_at") or "").strip():
+        return False
+    return not pid_is_alive(worker.get("pid")) or not worker_process_generation_is_current(
+        worker
     )
 
 
@@ -16035,6 +16099,40 @@ def publish_cycle_metrics_to_state(
     return snapshot
 
 
+DELIVERY_HEALTH_OBSERVATION_PHASE = "delivery_health_observations"
+
+
+def commit_delivery_health_observations(
+    config: dict[str, Any],
+    observations: Iterable[Mapping[str, Any]],
+) -> bool:
+    """Commit probe results in a transaction of their own.
+
+    Delivery health is read-only evidence about a provider endpoint: it takes
+    part in no worker or queue transition, so it must not be discarded by one.
+    Committing it inside the maintenance phase meant every transition that phase
+    could not prove -- a queue record the guard could not justify, a worker whose
+    exact completion event had not landed yet -- also threw away that cycle's
+    probe results.  Evidence expires after
+    ``delivery_health.evidence_ttl_seconds``, so a sustained discard rate expires
+    every lane, the dispatcher then refuses every lane for
+    ``HEALTH_REFRESH_REQUIRED``, and no worker is left to change the state that
+    would end it.
+
+    This phase performs no transition, so the canonical revalidation in
+    ``_run_reserved_runtime_phase`` has nothing to reject: it can only lose a
+    genuine concurrent-writer CAS race, which the next cycle redoes.
+    """
+
+    return bool(
+        _run_reserved_runtime_phase(
+            config,
+            DELIVERY_HEALTH_OBSERVATION_PHASE,
+            lambda state: apply_delivery_health_observations(config, state, observations),
+        )
+    )
+
+
 def apply_post_dispatch_maintenance(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -16359,6 +16457,27 @@ def run_once(
             maintenance_runtime_snapshot,
             quiet=quiet,
         )
+        # Delivery health is read-only evidence about a provider endpoint: it
+        # takes part in no worker or queue transition, so it must not be
+        # discarded by one.  Committing it in the maintenance phase meant every
+        # rejected transition there -- a queue record the guard could not prove,
+        # a worker whose exact completion event had not landed yet -- also threw
+        # away that cycle's probe results.  Evidence expires after
+        # delivery_health.evidence_ttl_seconds, so a sustained discard rate
+        # expires every lane and the dispatcher then refuses every lane for
+        # HEALTH_REFRESH_REQUIRED, with no worker left to change the state that
+        # would end it.  Commit the observations in their own short transaction
+        # first; the topology reconcile below still runs afterwards and still
+        # sees them, because that phase reloads runtime state.
+        health_changed = bool(
+            _safe_phase(
+                "apply_delivery_health_observations",
+                commit_delivery_health_observations,
+                config,
+                delivery_health_observations,
+            )
+        )
+        changed = health_changed or changed
         maintenance_changed = bool(
             _safe_phase(
                 "apply_post_dispatch_maintenance",
@@ -16368,7 +16487,8 @@ def run_once(
                 lambda state: apply_post_dispatch_maintenance(
                     config,
                     state,
-                    delivery_health_observations=delivery_health_observations,
+                    # Already committed above in its own transaction.
+                    delivery_health_observations=(),
                     task_state_projection_snapshot=task_state_projection_snapshot,
                     assistant_dev_bridge_snapshot=bridge_snapshot,
                     quiet=quiet,

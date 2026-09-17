@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import local
-from typing import Any, Mapping, Generator, Callable, Iterable
+from typing import Any, Mapping, Generator, Callable, Iterable, IO
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -1455,16 +1455,22 @@ def run_command(
     timeout: float | None = None,
     check: bool = False,
     env: dict[str, str] | None = None,
+    stdin: int | IO[Any] | None = subprocess.DEVNULL,
+    input: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=str(cwd or ROOT),
-        check=check,
-        timeout=timeout,
-        text=True,
-        capture_output=True,
-        env=env,
-    )
+    kwargs: dict[str, Any] = {
+        "cwd": str(cwd or ROOT),
+        "check": check,
+        "timeout": timeout,
+        "text": True,
+        "capture_output": True,
+        "env": env,
+    }
+    if input is not None:
+        kwargs["input"] = input
+    else:
+        kwargs["stdin"] = stdin
+    return subprocess.run(command, **kwargs)
 
 
 def claude_credentials_path(env: dict[str, str] | None = None) -> Path:
