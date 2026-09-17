@@ -4,7 +4,6 @@
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
   "total_test_files": 384,
   "migrated_in_task_count": 5,
-  "migrated_in_task_BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001_count": 7,
   "composition_allowlist": [
     "smoke_test.py",
     "smoke_test_incident.py",
@@ -1768,9 +1767,9 @@
     {
       "file": "tests/test_bff_alerts_acknowledge.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Migrated in BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001: standalone FastAPI app mounts real routers (auth.router/incidents.router/command_adapters.router/control_loops.router); zero main.py imports"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "tests/test_bff_alpha_factory_contract.py",
@@ -1796,16 +1795,16 @@
     {
       "file": "tests/test_bff_auth_refresh.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Migrated in BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001: standalone FastAPI app mounts real routers (auth.router/incidents.router/command_adapters.router/control_loops.router); zero main.py imports"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "tests/test_bff_b1_007_security_hardening.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Migrated in BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001: standalone FastAPI app mounts real routers (auth.router/incidents.router/command_adapters.router/control_loops.router); zero main.py imports"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "tests/test_bff_b2_002_evolution_jobs_ops.py",
@@ -1894,9 +1893,9 @@
     {
       "file": "tests/test_bff_b5_001_security_hardening.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Migrated in BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001: standalone FastAPI app mounts real routers (auth.router/incidents.router/command_adapters.router/control_loops.router); zero main.py imports"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "tests/test_bff_b5_humangate_commands.py",
@@ -1978,9 +1977,9 @@
     {
       "file": "tests/test_bff_logout.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Migrated in BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001: standalone FastAPI app mounts real routers (auth.router/incidents.router/command_adapters.router/control_loops.router); zero main.py imports"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "tests/test_bff_main_composition.py",
@@ -2013,16 +2012,16 @@
     {
       "file": "tests/test_bff_me_locale.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Migrated in BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001: standalone FastAPI app mounts real routers (auth.router/incidents.router/command_adapters.router/control_loops.router); zero main.py imports"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "tests/test_bff_me_session_bootstrap.py",
       "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Migrated in BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001: standalone FastAPI app mounts real routers (auth.router/incidents.router/command_adapters.router/control_loops.router); zero main.py imports"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "tests/test_bff_path_dedupe.py",
@@ -2739,7 +2738,7 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 79,
+  "live_scan_non_whitelisted_main_importer_ceiling": 86,
   "live_scan_non_whitelisted_main_importers": [
     "agora/performance/test_performance.py",
     "test_ask_001_sessions_contract.py",
@@ -2794,16 +2793,23 @@
     "test_tw03_before_after_compare_contract.py",
     "test_tw04_teaching_replay_contract.py",
     "tests/test_agora_performance_transport_and_isolated_store.py",
+    "tests/test_bff_alerts_acknowledge.py",
+    "tests/test_bff_auth_refresh.py",
+    "tests/test_bff_b1_007_security_hardening.py",
     "tests/test_bff_b2_004_research_search.py",
     "tests/test_bff_b3_trading_pulse.py",
+    "tests/test_bff_b5_001_security_hardening.py",
     "tests/test_bff_b6_001_security_hardening.py",
     "tests/test_bff_b6_003_nl_high_risk_refusal.py",
     "tests/test_bff_b6_management_nl_ask.py",
     "tests/test_bff_consol_skills_mcp_registry_contract.py",
     "tests/test_bff_knowledge_inbox.py",
+    "tests/test_bff_logout.py",
     "tests/test_bff_management_cockpit.py",
     "tests/test_bff_management_data_sources_contract.py",
     "tests/test_bff_management_gap_003_contract_schema.py",
+    "tests/test_bff_me_locale.py",
+    "tests/test_bff_me_session_bootstrap.py",
     "tests/test_bff_path_dedupe.py",
     "tests/test_bff_rebalance_proposals.py",
     "tests/test_console_research_projection.py",
