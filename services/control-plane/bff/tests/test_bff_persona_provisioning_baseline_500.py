@@ -42,6 +42,13 @@ from services.control_plane.bff.research.router import create_research_router
 from services.control_plane.bff.strategies.router import create_strategies_router
 from services.control_plane.bff.management_read_models.ranking_router import create_performance_attribution_router
 import services.control_plane.bff.strategies.routes.seeds as seeds_module
+from services.control_plane.bff.shared.cross_domain_utils import (
+    _management_as_float,
+    _management_first_float,
+    _management_nested_value,
+    _management_telemetry_rollup,
+    _resolve_param,
+)
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 VIEWER_TOKEN = "Bearer viewer-1:viewer"
@@ -70,20 +77,15 @@ def _compile_pm12_namespace(store):
     target_names = {
         "_management_avg",
         "_management_record_id",
-        "_management_as_float",
         "_management_first_non_empty",
         "_management_dict_value",
         "_management_nested_dict",
         "_management_position_records",
-        "_management_nested_value",
-        "_management_first_float",
         "_management_latest_timestamp",
-        "_management_telemetry_rollup",
         "_management_link",
         "_filter_by_common_identifiers",
         "_performance_ranking_source_surface",
         "_list_strategy_summaries",
-        "_resolve_param",
     }
     funcs = [
         n for n in tree.body
@@ -116,6 +118,11 @@ def _compile_pm12_namespace(store):
         "_page_slice": _page_slice,
         "_aggregate_group_surface": _aggregate_group_surface,
         "_snapshot_meta": lambda snapshot_at: {"snapshot_at": snapshot_at},
+        "_management_as_float": _management_as_float,
+        "_management_nested_value": _management_nested_value,
+        "_management_first_float": _management_first_float,
+        "_management_telemetry_rollup": _management_telemetry_rollup,
+        "_resolve_param": _resolve_param,
     })
     exec(compile(ast.Module(body=funcs, type_ignores=[]), "main_pm12.py", "exec"), ns)
     return ns
