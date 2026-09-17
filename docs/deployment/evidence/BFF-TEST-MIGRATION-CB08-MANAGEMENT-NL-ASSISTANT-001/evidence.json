@@ -9,9 +9,9 @@
   "reviewer": "Claude",
   "delivery_state": "ready_for_independent_review",
   "target_repo": "ajoe734/pantheon",
-  "base_ref": "dev@f15be762ef373cd24707b89e5b9b286650b9a097",
-  "base_sha": "f15be762ef373cd24707b89e5b9b286650b9a097",
-  "summary": "Decoupled 6 target test suites (114 test cases across Management NL ask, OpenClaw ops surface, assistant provider, NL high-risk refusal, security hardening, and single-owner seam) from BFF main.py composition root imports, global monkeypatching (main.read_store, bff_main.read_store, app_deps.read_surface =), and sys.path surgery. Replaced direct composition root imports with dynamic module resolution via rebalance_authority_test_support, isolated TestClient harnesses, and test-scoped read store bindings on both BFF composition and context read services while preserving 100% of test assertions and contracts. Decreased inventory live_scan_non_whitelisted_main_importer_ceiling from 80 to 74 on rebased dev, registered all 6 suites in migrated_suites (bringing total migrated suites to 17), verified all 8 architecture invariant tests pass, and achieved 100% pass rate (114/114 passed) across the migrated test suites.",
+  "base_ref": "dev@1d7e2a620cf626fc4e883daaa8a9726251c3bdf7",
+  "base_sha": "1d7e2a620cf626fc4e883daaa8a9726251c3bdf7",
+  "summary": "Decoupled 6 target test suites (114 test cases across Management NL ask, OpenClaw ops surface, assistant provider, NL high-risk refusal, security hardening, and single-owner seam) from BFF main.py composition root imports, global monkeypatching (main.read_store, bff_main.read_store, app_deps.read_surface =), and sys.path surgery. Replaced direct composition root imports with dynamic module resolution via rebalance_authority_test_support, isolated TestClient harnesses, and test-scoped read store bindings on both BFF composition and context read services while preserving 100% of test assertions and contracts. Decreased inventory live_scan_non_whitelisted_main_importer_ceiling from 66 to 60 on rebased dev, registered all 6 suites in migrated_suites (bringing total migrated suites to 17), verified all 8 architecture invariant tests pass, and achieved 100% pass rate (114/114 passed) across the migrated test suites.",
   "target_suites": [
     "services/control-plane/bff/test_openclaw_ops_surface.py",
     "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
@@ -38,15 +38,15 @@
   ],
   "inventory_update": {
     "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
-    "ceiling_before": 80,
-    "ceiling_after": 74,
+    "ceiling_before": 66,
+    "ceiling_after": 60,
     "migrated_suites_count_before": 11,
     "migrated_suites_count_after": 17,
     "disposition_summary": {
       "ALLOWLIST": 15,
-      "DECOUPLED": 278,
+      "DECOUPLED": 292,
       "MIGRATED": 17,
-      "PLANNED": 74
+      "PLANNED": 60
     },
     "main_by_layer": {
       "adapter": 3,
@@ -138,8 +138,8 @@
       "pass_rate": "100%"
     },
     "ast_live_scan": {
-      "live_scan_non_whitelisted_main_importers_count": 74,
-      "ceiling": 74,
+      "live_scan_non_whitelisted_main_importers_count": 60,
+      "ceiling": 60,
       "bounded": true,
       "zero_main_imports_in_migrated_suites": true,
       "zero_sys_path_mutations_in_migrated_suites": true,

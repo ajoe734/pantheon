@@ -3,15 +3,20 @@
 Verifies: role gate, decision routing (approve/reject/request_revision),
 field validation, 404 when unknown id, idempotency replay, and 202 envelope.
 
-These tests exercise the real composition root (``bff_main.app``), not a
-test-local shadow app. The governance router's ``submit_action`` binding
-used to be wired with a broken lambda whose positional parameter names did
-not match ``GovernanceService.submit_governance_action``'s keyword-arg call
-(and omitted ``command_type`` entirely), so every governance command route
-returned a real 500 through ``bff_main.app`` from 2026-09-01 onward. That
-binding now delegates to ``CommandAdapterService.submit_governance_action``,
-the single product owner of the action_kind/action_id -> ObjectType/
-CommandType mapping (see ``command_adapters/service.py``).
+These tests mount the real governance router factory
+(``create_governance_router``) on a standalone app, with its
+``submit_action`` bound to a real ``CommandAdapterService.submit_governance_action``
+instance -- the same production callable ``main.py``'s composition root
+binds (see ``command_adapters/service.py``). The governance router's
+``submit_action`` binding used to be wired with a broken lambda whose
+positional parameter names did not match
+``GovernanceService.submit_governance_action``'s keyword-arg call (and
+omitted ``command_type`` entirely), so every governance command route
+returned a real 500 from 2026-09-01 onward. That binding now delegates to
+``CommandAdapterService.submit_governance_action``, the single product owner
+of the action_kind/action_id -> ObjectType/CommandType mapping, which this
+suite exercises directly (not a test-local shadow implementation of that
+mapping).
 """
 from __future__ import annotations
 
@@ -23,14 +28,22 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 from unittest.mock import patch
 
-os.environ.setdefault("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
-os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
-os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
-os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
-
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from services.control_plane.bff import main as bff_main
+
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity_stub,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.command_adapters.service import (
+    CommandAdapterService,
+    _reject_body_idempotency_key,
+)
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 APPROVER_HEADERS = {"Authorization": "Bearer op-app001:approver"}
 ADMIN_HEADERS = {"Authorization": "Bearer op-app001-admin:admin"}
@@ -73,20 +86,20 @@ def _fixture_list_approval_decisions(**_kwargs: Any) -> list[dict[str, Any]]:
 
 @contextmanager
 def _client() -> Iterator[TestClient]:
-    """Real composition root, with a private on-disk CommandStore and a
-    fixture-backed approval-decisions read surface per test.
+    """Standalone app mounting the real governance router factory, with a
+    private on-disk CommandStore and a fixture-backed approval-decisions
+    read surface per test.
 
-    The governance router captures ``app_deps.read_surface`` once at import
-    time as a fixed object reference (not a re-resolved lookup), so the
-    approval-decision read methods are patched directly on that instance
-    rather than swapping the module-global ``bff_main.read_store`` (which the
-    governance router never re-reads). The command admission seam
-    (``CommandAdapterService.command_store``) does read the module-global
-    ``bff_main.command_store`` dynamically on every call, so swapping that
-    name isolates each test's command records without needing a second app.
+    ``submit_action`` is bound to a real ``CommandAdapterService`` instance's
+    ``submit_governance_action`` (the same production callable main.py's
+    composition root binds), so this exercises the real action_kind/
+    action_id -> ObjectType/CommandType mapping and admission pipeline, not a
+    test-local reimplementation of it. The returned ``TestClient`` also
+    exposes ``.command_store`` so tests can inspect admitted commands, and
+    ``.app`` so a test can build an additional client against the same
+    composition for concurrency checks.
     """
-    original_command_store = bff_main.command_store
-    read_surface = bff_main.app_deps.read_surface
+    read_surface = create_in_memory_read_surface_ports()
     original_dataset_source = read_surface.dataset_source
 
     def _fixture_dataset_source(dataset: str) -> str:
@@ -101,11 +114,31 @@ def _client() -> Iterator[TestClient]:
     ), patch.object(
         read_surface, "dataset_source", side_effect=_fixture_dataset_source
     ):
-        bff_main.command_store = CommandStore(os.path.join(command_dir, "commands.jsonl"))
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.command_store = original_command_store
+        command_store = CommandStore(os.path.join(command_dir, "commands.jsonl"))
+        command_adapter_service = CommandAdapterService(
+            command_store=lambda: command_store,
+            read_surface=lambda: read_surface,
+            extract_identity=extract_identity_stub,
+            require_operator_role=require_operator_role,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+        )
+        app = FastAPI()
+        app.include_router(
+            create_governance_router(
+                read_surface=read_surface,
+                extract_identity=extract_identity_stub,
+                require_read_role=require_read_role,
+                require_operator_role=require_operator_role,
+                bff_error=bff_error,
+                submit_action=command_adapter_service.submit_governance_action,
+                reject_body_idempotency_key=_reject_body_idempotency_key,
+            )
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        client.command_store = command_store
+        client.app = app
+        yield client
 
 
 def _idem() -> str:
@@ -198,7 +231,7 @@ def test_bff_approvals_decide_approve_returns_202_envelope() -> None:
 
 def test_bff_approvals_decide_second_operator_conflict_does_not_publish_sse() -> None:
     with _client() as client:
-        commands = bff_main.command_store
+        commands = client.command_store
 
         first = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
@@ -222,11 +255,11 @@ def test_bff_approvals_decide_second_operator_conflict_does_not_publish_sse() ->
 
 def test_bff_approvals_decide_concurrent_operators_admit_only_one_command() -> None:
     with _client() as client:
-        commands = bff_main.command_store
+        commands = client.command_store
 
         def decide(index_and_headers: tuple[int, dict[str, str]]):
             index, headers = index_and_headers
-            local_client = TestClient(bff_main.app, raise_server_exceptions=False)
+            local_client = TestClient(client.app, raise_server_exceptions=False)
             response = local_client.post(
                 f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
                 json={"decision": "approve"},
@@ -336,7 +369,7 @@ def test_bff_approvals_decide_request_revision_without_notes_returns_422() -> No
 
 def test_bff_approvals_batch_decide_accepts_list_and_records_commands() -> None:
     with _client() as client:
-        commands = bff_main.command_store
+        commands = client.command_store
 
         resp = client.post(
             "/bff/approvals/batch-decide",
@@ -370,7 +403,7 @@ def test_bff_approvals_batch_decide_accepts_list_and_records_commands() -> None:
 
 def test_bff_approvals_batch_decide_partial_failure_returns_per_item_status() -> None:
     with _client() as client:
-        commands = bff_main.command_store
+        commands = client.command_store
 
         resp = client.post(
             "/bff/approvals/batch-decide",
@@ -396,7 +429,7 @@ def test_bff_approvals_batch_decide_partial_failure_returns_per_item_status() ->
 
 def test_bff_approvals_batch_decide_rejects_body_idempotency_before_commands() -> None:
     with _client() as client:
-        commands = bff_main.command_store
+        commands = client.command_store
 
         resp = client.post(
             "/bff/approvals/batch-decide",

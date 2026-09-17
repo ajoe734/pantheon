@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-import os
-import sys
-
+import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.tests.conftest import build_auth_session_app
 
-import main as bff_main
+
+@pytest.fixture(autouse=True)
+def app(tmp_path):
+    store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
+    return build_auth_session_app(store)
 
 
-def test_bff_me_returns_session_bootstrap_payload(monkeypatch) -> None:
+def test_bff_me_returns_session_bootstrap_payload(app, monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-primary")
@@ -18,7 +21,7 @@ def test_bff_me_returns_session_bootstrap_payload(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_DEFAULT_LOCALE", "en-US")
     monkeypatch.setenv("PANTHEON_BFF_FEATURE_FLAGS", "plansLive=true,alpha=false")
 
-    response = TestClient(bff_main.app).get(
+    response = TestClient(app).get(
         "/bff/me?tenant_id=tenant-alt",
         headers={
             "Authorization": "Bearer op-bootstrap:operator,approver:mfa",
@@ -51,11 +54,11 @@ def test_bff_me_returns_session_bootstrap_payload(monkeypatch) -> None:
     assert body["meta"]["correlationId"] == "corr-bff-b1-003"
 
 
-def test_bff_me_anonymous_returns_typed_401_with_correlation(monkeypatch) -> None:
+def test_bff_me_anonymous_returns_typed_401_with_correlation(app, monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
 
-    response = TestClient(bff_main.app).get(
+    response = TestClient(app).get(
         "/bff/me",
         headers={"X-Correlation-Id": "corr-anonymous-bff-b1-003"},
     )
