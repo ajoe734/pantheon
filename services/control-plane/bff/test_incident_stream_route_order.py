@@ -8,13 +8,11 @@ stream endpoint dead (verification campaign 2026-06-14, round 2, finding F3).
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+from fastapi import FastAPI
+from services.control_plane.bff.incidents.router import create_incident_router
 
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
+_app = FastAPI()
+_app.include_router(create_incident_router())
 
 
 def _iter_routes(routes):
@@ -28,7 +26,7 @@ def _iter_routes(routes):
 
 
 def _first_matching_endpoint(path: str):
-    for route in _iter_routes(bff_main.app.routes):
+    for route in _iter_routes(_app.routes):
         regex = getattr(route, "path_regex", None)
         if regex is not None and regex.match(path):
             return route

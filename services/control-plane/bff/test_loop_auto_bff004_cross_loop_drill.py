@@ -40,7 +40,8 @@ from services.incident.incident import IncidentStore
 from services.incident.pg_store import build_incident_store
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
 from services.postmortems.consumer import ResolvedIncidentPostmortemDraftConsumer
-import services.evolution.main as evo_main
+import importlib
+evo_main = importlib.import_module("services.evolution.main")
 
 # ---- Constants ----
 _BFF_HEADERS = {"Authorization": "Bearer bff004-drill:operator,reviewer,admin:mfa::tenant-dev"}

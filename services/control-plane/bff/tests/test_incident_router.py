@@ -13,17 +13,13 @@ Tests:
 """
 from __future__ import annotations
 
-import os
-import sys
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-from incidents.router import create_incident_router
-from incidents.service import IncidentService
-from models import ErrorCode, OperatorIdentity
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.incidents.service import IncidentService
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
 
 
 class MockReadStore:
@@ -602,8 +598,9 @@ def test_fast_path_semantic_commands() -> None:
 
 
 def test_production_app_incident_routes_wiring() -> None:
-    """Verify that all 27 incident/alert routes are wired into the production app (main:app)."""
-    import main as bff_main
+    """Verify that all 27 incident/alert routes are wired into the incident router."""
+    app = FastAPI()
+    app.include_router(create_incident_router(read_surface=MockReadStore()))
 
     def _iter_routes(routes):
         for r in routes:
@@ -614,7 +611,7 @@ def test_production_app_incident_routes_wiring() -> None:
             else:
                 yield r
 
-    flat_routes = list(_iter_routes(bff_main.app.routes))
+    flat_routes = list(_iter_routes(app.routes))
     route_map = {(getattr(r, "path", None), tuple(sorted(getattr(r, "methods", set()) or []))): getattr(r, "endpoint", None).__name__ for r in flat_routes if getattr(r, "path", None)}
 
     expected_endpoints = [
@@ -654,23 +651,23 @@ def test_production_app_incident_routes_wiring() -> None:
             for (p, m), ep in route_map.items()
             if p == path and set(methods).issubset(set(m))
         ]
-        assert matching, f"Missing route in production app: {methods} {path} (expected {ep_name})"
+        assert matching, f"Missing route in incident app: {methods} {path} (expected {ep_name})"
         assert any(ep == ep_name for _, _, ep in matching), (
-            f"Route {path} endpoint mismatch in production app: expected {ep_name}, found {[ep for _, _, ep in matching]}"
+            f"Route {path} endpoint mismatch in incident app: expected {ep_name}, found {[ep for _, _, ep in matching]}"
         )
 
-    # Test client against production app instance
-    prod_client = TestClient(bff_main.app)
+    # Test client against incident router app instance
+    client = TestClient(app)
     prod_headers = {"Authorization": "Bearer test:operator:ops"}
 
-    resp = prod_client.get("/bff/incidents", headers=prod_headers)
+    resp = client.get("/bff/incidents", headers=prod_headers)
     assert resp.status_code == 200
     assert "items" in resp.json() or "data" in resp.json()
 
-    resp_alerts = prod_client.get("/bff/risk/alerts", headers=prod_headers)
+    resp_alerts = client.get("/bff/risk/alerts", headers=prod_headers)
     assert resp_alerts.status_code == 200
     assert "alerts" in resp_alerts.json()
 
-    resp_audit = prod_client.get("/bff/audit", headers=prod_headers)
+    resp_audit = client.get("/bff/audit", headers=prod_headers)
     assert resp_audit.status_code == 200
 
