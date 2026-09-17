@@ -1,0 +1,91 @@
+{
+  "schema_version": "pantheon.ops-auto-integrator-throughput.v1",
+  "task": {
+    "id": "OPS-AUTO-INTEGRATOR-THROUGHPUT-001",
+    "title": "Persistent auto-integrator per-run task limit of two",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-AUTO-INTEGRATOR-THROUGHPUT-001",
+    "review_decision": "ready_for_review",
+    "evidence_recorded_at": "2026-09-17T11:45:27Z"
+  },
+  "scope": {
+    "owned": [
+      "scripts/run-auto-integrator.sh",
+      "scripts/auto_integrator_install.py",
+      "scripts/test_run_auto_integrator.py",
+      "scripts/test_auto_integrator_install.py",
+      "scripts/git/auto_integrator.py",
+      "scripts/git/test_auto_integrator.py",
+      "scripts/git/auto_integrator_contract.md",
+      "docs/deployment/evidence/OPS-AUTO-INTEGRATOR-THROUGHPUT-001/evidence.json"
+    ],
+    "not_changing": [
+      "review-before-merge gate authority (task_review_merge_gate.py)",
+      "required checks / smoke command policy resolution",
+      "live execute authority binding to the promoted watchdog root (resolve_execute_authority)",
+      "integration lock handling",
+      "the live crontab -- this task does not edit it; the operator re-runs the installer after this merges"
+    ]
+  },
+  "acceptance_1_reproduction": {
+    "root_cause": "run-auto-integrator.sh always forwarded `--max-tasks \"$MAX_TASKS\"` with MAX_TASKS defaulting to bash-side `${AUTO_INTEGRATOR_MAX_TASKS:-1}`, and main() in auto_integrator.py unconditionally overrides Settings.max_tasks_per_run whenever --max-tasks is present on argv. A bare cron line (no AUTO_INTEGRATOR_MAX_TASKS env var set) therefore always pinned the run to exactly one task per pass regardless of any config-file `auto_integrator.max_tasks_per_run` value.",
+    "installed_cron_check": "no `# pantheon-auto-integrator` crontab entry is present in this task worktree's execution environment (the live cron lives on the promoted watchdog host, not the worker sandbox); the code-path root cause above was confirmed by reading scripts/run-auto-integrator.sh and scripts/git/auto_integrator.py directly.",
+    "observed_backlog_at_reproduction": {
+      "observed_at": "2026-09-17T11:29:00Z",
+      "source": "canonical ai-status.json via governed $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show / direct read of the canonical status file",
+      "review_approved_count": 3,
+      "review_approved_oldest_age_minutes": 81.1,
+      "review_approved_oldest_task_id": "BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001",
+      "todo_count": 22,
+      "note": "counts move continuously as the fleet integrates; these are a live snapshot proving multiple review_approved tasks were already queued behind the one-per-run cap at the time of this task's reproduction, consistent with the task brief's original report of a 9-deep/86-minute backlog recorded earlier in the same incident."
+    }
+  },
+  "acceptance_2_persistent_setting": {
+    "change_summary": [
+      "auto_integrator.py: Settings.max_tasks_per_run default raised from 1 to 2; load_settings() falls back to 2 (not 1) when auto_integrator.max_tasks_per_run is absent from the resolved config.",
+      "run-auto-integrator.sh: --max-tasks is now only forwarded when AUTO_INTEGRATOR_MAX_TASKS is explicitly set in the environment; a bare cron line omits the flag entirely so the settings-derived value (config file, else the raised default of 2) takes effect.",
+      "auto_integrator_install.py: adds DEFAULT_MAX_TASKS = 2 as the single declared source, a --max-tasks CLI override, and renders AUTO_INTEGRATOR_MAX_TASKS=<n> directly into the crontab entry so the limit is baked into the installed cron line and survives runtime promotion without depending on an interactive shell or ambient env var."
+    ],
+    "bare_cron_line_default_safety": "verified by scripts/test_run_auto_integrator.py::test_execute_mode_without_max_tasks_env_omits_the_flag: with AUTO_INTEGRATOR_MAX_TASKS unset, the wrapper's rendered argv is exactly [\"--execute\"] (no --max-tasks), so auto_integrator.py's own Settings default (2) governs.",
+    "installer_render_proof": "scripts/test_auto_integrator_install.py::test_render_cron_line_defaults_max_tasks_to_two and ::test_install_cron_cli_default_persists_max_tasks_into_crontab assert the rendered/installed line contains AUTO_INTEGRATOR_MAX_TASKS=2 from DEFAULT_MAX_TASKS with no override supplied; ::test_render_cron_line_renders_explicit_max_tasks_override and ::test_render_cron_line_rejects_non_positive_max_tasks cover the explicit-override and invalid-value paths."
+  },
+  "acceptance_3_refresh_against_first_merge": {
+    "claim": "a second (or later) candidate merged in the same run is re-evaluated against the live dev head an earlier candidate's merge in that same run just produced; a candidate that has gone BEHIND as a result is skipped and reported (action=waiting), never force-merged.",
+    "mechanism": "unchanged existing fences prove this by construction: fetch_refs() re-fetches origin/<target-branch> per candidate; revalidate_before_merge() re-reads canonical state and re-fetches the exact live PR immediately before the synchronous REST merge call and rejects any mergeStateStatus outside {CLEAN, HAS_HOOKS, UNSTABLE, UNKNOWN} (fresh_merge_state not in ALLOWED_DIRECT_MERGE_STATES) with a `waiting` FinalMergeRevalidationError, never issuing the merge PUT.",
+    "new_test": "scripts/git/test_auto_integrator.py::MultiTaskPerRunOrderingTests::test_second_candidate_is_revalidated_against_dev_head_first_merge_produced -- calls integrate_candidate() for two review_approved candidates sharing one runner/gate exactly as main()'s per-run loop would; the fake runner marks every other still-open task's cached PR mergeStateStatus=BEHIND the moment the first candidate's merge PUT lands (mirroring GitHub after dev has advanced). Asserts: first candidate action=merged; second candidate action=waiting with detail containing mergeStateStatus=BEHIND; no merge PUT command was ever issued for the second PR.",
+    "coverage_gap_closed": "no prior test exercised the final-merge-state-not-direct / BEHIND path at all; this is new coverage, not a behavior change to the merge/authority code."
+  },
+  "acceptance_4_fences_unchanged": {
+    "unchanged_modules": [
+      "task_review_merge_gate.py (exact-head review binding)",
+      "required checks / statusCheckRollup evaluation",
+      "smoke command execution",
+      "resolve_execute_authority() live watchdog-root binding",
+      "lock_file() integration lock"
+    ],
+    "authority_binding_refusal_proof": "scripts/git/test_auto_integrator.py tests selected with `-k \"authority or Authority\"` (7 tests, 3 subtests) pass unchanged, including the command-root-vs-watchdog-root mismatch refusal in resolve_execute_authority."
+  },
+  "verification": {
+    "base_sha": "f15be762ef373cd24707b89e5b9b286650b9a097",
+    "python_interpreter": ".venv-pantheon/bin/python3 (provisioned via scripts/dev/provision_python_distribution.py with PANTHEON_DEPENDENCY_PYTHON pointed at the main checkout's .venv)",
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py scripts/test_run_auto_integrator.py scripts/test_auto_integrator_install.py",
+        "result": "162 passed, 25 subtests passed",
+        "exit_code": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py -k \"authority or Authority\"",
+        "result": "7 passed, 144 deselected, 3 subtests passed",
+        "exit_code": 0
+      }
+    ],
+    "collection_and_counts": {
+      "scripts/test_auto_integrator_install.py": "7 collected, 7 passed",
+      "scripts/test_run_auto_integrator.py": "4 collected, 4 passed",
+      "scripts/git/test_auto_integrator.py": "151 collected, 151 passed"
+    }
+  }
+}

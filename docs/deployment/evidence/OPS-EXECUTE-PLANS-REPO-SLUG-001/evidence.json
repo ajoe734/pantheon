@@ -1,0 +1,125 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-EXECUTE-PLANS-REPO-SLUG-001",
+  "title": "Declare execute-plans GitHub slug in orchestrator config",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "f15be762ef373cd24707b89e5b9b286650b9a097",
+  "base_sha_note": "base_sha is dev tip f15be762ef373cd24707b89e5b9b286650b9a097, the exact parent this task branch (task/OPS-EXECUTE-PLANS-REPO-SLUG-001) was opened from; the worker worktree HEAD matched this SHA before any task commit.",
+  "diagnosis": {
+    "problem": "coordination.repositories.execute_plans in the committed .orchestrator/config.json declares only local_path; unlike the pantheon entry (which declares repo explicitly) and unlike .orchestrator/config.example.json (which declares repo explicitly for both repositories), execute_plans' GitHub slug is left implicit.",
+    "reproduce_first": "multi_repo_registry.repository_slug(config, 'execute_plans') already returned 'ajoe734/execute-plans' before this change, because DEFAULT_REPOSITORIES in .orchestrator/multi_repo_registry.py has carried repo='ajoe734/execute-plans' as a Python-side fallback since commit d69ba996f (2026-05-14, FE-INT-GATE-A10) and repositories() merges the committed override onto that default without erasing keys the override omits. Reading the raw committed dict entry directly (coordination.repositories.execute_plans.get('repo'), bypassing the registry merge) returns None -- this is the literal fact the task's dispatch evidence observed. Any code path that reads the raw config JSON instead of going through repository_slug()/resolve_repository(), or a future change to DEFAULT_REPOSITORIES, would silently lose this slug with no compile-time or config-level signal.",
+    "correction": "Declare the slug explicitly in the committed config so the source of truth for execute_plans.repo lives in coordination policy (.orchestrator/config.json), matching the existing pantheon entry and .orchestrator/config.example.json, rather than solely in a Python module default. This removes the implicit dependency without changing repository_slug()'s resolution behavior, which already returned the correct slug."
+  },
+  "scope": {
+    "owned": [
+      ".orchestrator/config.json: added \"repo\": \"ajoe734/execute-plans\" to coordination.repositories.execute_plans, alongside the existing local_path.",
+      ".orchestrator/test_multi_repo_registry.py: added test_committed_config_declares_execute_plans_github_slug (loads the committed .orchestrator/config.json and asserts repository_slug resolves both ajoe734/pantheon and ajoe734/execute-plans) and test_repository_slug_is_none_for_unknown_repository (asserts an unregistered repo id, None, and empty string all resolve to None -- nothing is invented for unknown repositories).",
+      "scripts/test_provision_live_supervisor_config.py: extended test_build_live_config_projects_explicit_repository_source_roots and test_build_live_config_projects_clean_standalone_integration_roots with assertions that the rendered coordination.repositories[*].repo field for both pantheon and execute_plans survives unchanged when the renderer rewrites only local_path/integration_path.",
+      "docs/deployment/evidence/OPS-EXECUTE-PLANS-REPO-SLUG-001/evidence.json: this file."
+    ],
+    "not_changing": [
+      ".orchestrator/config.example.json already declared repo explicitly for both repositories; no change needed there.",
+      ".orchestrator/multi_repo_registry.py: no change. repository_slug()/resolve_repository()/repositories() already resolve execute_plans' slug correctly via DEFAULT_REPOSITORIES; this task only makes the committed config match that resolved value explicitly.",
+      "scripts/provision_live_supervisor_config.py: no change. apply_repository_source_roots and apply_repository_integration_roots already do repository_config.setdefault(normalized_id, {}) and only set local_path/integration_path on the existing entry, so they were already repo-field-preserving; the new tests make that behavior an explicit, checked contract instead of an unverified assumption.",
+      "review-tag publishing logic, admission, or authorization rules -- untouched. The only behavioral surface this task affects is that the raw committed config now carries the same slug repository_slug() already returned, so any future caller that reads coordination.repositories.execute_plans.repo directly (bypassing the registry merge) also finds it."
+    ],
+    "composes_with": [
+      "scripts/ai_status.py review_evidence_file_committed / cross-repository review-evidence checks, which call repository_slug() and were already unaffected by this gap in practice but are now defended against a raw-config read or a DEFAULT_REPOSITORIES regression.",
+      "The live supervisor config rendered by scripts/provision_live_supervisor_config.py, which mirrors the committed config.json's coordination.repositories.execute_plans.repo through unchanged on the next promotion; no live/runtime config edit is made by this task."
+    ]
+  },
+  "config_diff": {
+    "file": ".orchestrator/config.json",
+    "path": "coordination.repositories.execute_plans.repo",
+    "before": "(key absent)",
+    "after": "ajoe734/execute-plans",
+    "diff": "--- a/.orchestrator/config.json\n+++ b/.orchestrator/config.json\n@@ -103,6 +103,7 @@\n       \"execute_plans\": {\n+        \"repo\": \"ajoe734/execute-plans\",\n         \"local_path\": \"../code/execute-plans\"\n       }\n"
+  },
+  "repository_slug_before_after": [
+    {
+      "repo_id": "pantheon",
+      "before_raw_config_field": "ajoe734/pantheon",
+      "before_repository_slug_call": "ajoe734/pantheon",
+      "after_raw_config_field": "ajoe734/pantheon",
+      "after_repository_slug_call": "ajoe734/pantheon",
+      "note": "unchanged by this task; already explicit."
+    },
+    {
+      "repo_id": "execute_plans",
+      "before_raw_config_field": null,
+      "before_repository_slug_call": "ajoe734/execute-plans",
+      "after_raw_config_field": "ajoe734/execute-plans",
+      "after_repository_slug_call": "ajoe734/execute-plans",
+      "note": "repository_slug() call result is unchanged (it always resolved via DEFAULT_REPOSITORIES); the raw committed config field is now explicit."
+    },
+    {
+      "repo_id": "not_a_registered_repo",
+      "before_raw_config_field": "n/a (unregistered id)",
+      "before_repository_slug_call": null,
+      "after_raw_config_field": "n/a (unregistered id)",
+      "after_repository_slug_call": null,
+      "note": "unregistered repository ids resolve to None both before and after; nothing is invented for unknown repositories."
+    }
+  ],
+  "acceptance_mapping": [
+    {
+      "acceptance": "Reproduce first: repository_slug returns None for execute_plans because coordination.repositories.execute_plans declares only local_path.",
+      "evidence": "See diagnosis.reproduce_first above. The precise reproducible fact is that the raw committed dict entry lacks a repo key; repository_slug() itself already resolved 'ajoe734/execute-plans' through the DEFAULT_REPOSITORIES fallback in .orchestrator/multi_repo_registry.py (present since commit d69ba996f, 2026-05-14). This distinction is recorded explicitly rather than overclaiming that repository_slug() was broken."
+    },
+    {
+      "acceptance": "Declare the GitHub slug for execute_plans in the committed orchestrator config so repository_slug resolves it; the live config renderer must pass the repo field through unchanged.",
+      "evidence": "coordination.repositories.execute_plans.repo = \"ajoe734/execute-plans\" added to .orchestrator/config.json. test_build_live_config_projects_explicit_repository_source_roots and test_build_live_config_projects_clean_standalone_integration_roots in scripts/test_provision_live_supervisor_config.py now assert repositories['pantheon']['repo'] and repositories['execute_plans']['repo'] survive build_live_config() unchanged when apply_repository_source_roots/apply_repository_integration_roots rewrite local_path/integration_path."
+    },
+    {
+      "acceptance": "Prove with isolated tests that repository_slug resolves both repositories from the committed config and that an entry without repo still resolves to None for unknown repositories.",
+      "evidence": "test_committed_config_declares_execute_plans_github_slug loads the committed .orchestrator/config.json and asserts repository_slug(config, 'pantheon') == 'ajoe734/pantheon' and repository_slug(config, 'execute_plans') == 'ajoe734/execute-plans'. test_repository_slug_is_none_for_unknown_repository asserts repository_slug(config, 'not_a_registered_repo'), repository_slug(config, None), and repository_slug(config, '') are all None."
+    },
+    {
+      "acceptance": "Do not change review-tag publishing logic or any admission/authorization rule; the only behavioral change is that cross-repository review evidence checks now find a slug for execute_plans; record before/after outputs.",
+      "evidence": "No change to scripts/ai_status.py, scripts/git/auto_integrator.py, or any admission/authorization module. See repository_slug_before_after above for exact before/after values for pantheon, execute_plans, and an unregistered repo id."
+    },
+    {
+      "acceptance": "Run focused and full-file regression for the changed modules and record exact commands with exit codes and pass/fail/skip counts.",
+      "evidence": "See local_verification below."
+    },
+    {
+      "acceptance": "Source and isolated-test scope only; no edit to the live supervisor config or crontab.",
+      "evidence": "Only .orchestrator/config.json (committed source config), the two test files listed in scope.owned, and this evidence file were touched. No file under a deployed/live config path, docker-compose, or crontab was edited."
+    }
+  ],
+  "local_verification": [
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+      "result": "provisioned interpreter .venv-pantheon/bin/python3 (services/scripts/integrations import paths verified from a foreign cwd; pytest importable)",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_multi_repo_registry.py",
+      "result": "23 passed (21 pre-existing + 2 new: test_committed_config_declares_execute_plans_github_slug, test_repository_slug_is_none_for_unknown_repository)",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_provision_live_supervisor_config.py",
+      "result": "58 passed (56 pre-existing + 2 extended assertions in test_build_live_config_projects_explicit_repository_source_roots and test_build_live_config_projects_clean_standalone_integration_roots; no new test functions added, existing tests extended with repo-field-preservation assertions)",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -c \"import json; json.load(open('.orchestrator/config.json'))\"",
+      "result": "valid json",
+      "exit_code": 0
+    },
+    {
+      "command": "grep -rn \"execute_plans\" scripts/test_ai_status.py scripts/test_auto_integrator_install.py scripts/test_run_auto_integrator.py scripts/test_status_command_runtime_pin.py scripts/test_supervisor.py scripts/test_promote_supervisor_runtime.py scripts/git/test_index_safety.py",
+      "result": "all matches construct their own synthetic config dicts ({} or explicit fixtures), none read or assert against the committed .orchestrator/config.json's execute_plans entry lacking a repo key; adding the field does not affect them",
+      "exit_code": 0,
+      "note": "manual code-scope check, not a test run; recorded to justify not re-running the full, slower test_ai_status.py/test_supervisor.py suites (2+ minute timeout observed) for a change confined to declaring one config field and two focused test files."
+    }
+  ],
+  "review_decision": {
+    "status": "pending"
+  }
+}

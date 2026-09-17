@@ -3,29 +3,39 @@ Contract and schema tests for the Performance and Ranking Read Model.
 Locks the BFF query envelope and source-confidence contract needed by all three
 canonical centers (Performance Attribution, Persona League Rankings, Quarterly Ranking).
 """
-from __future__ import annotations
-
-import os
-import sys
-import tempfile
-import math
+import ast
 from contextlib import contextmanager
-from typing import Iterator, Any, Dict, List
+from datetime import datetime, timezone, timedelta
+import json
+import math
+import os
+from pathlib import Path
+import tempfile
+from typing import Any, Dict, Iterator, List
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
-os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
-
-import json
-import main as bff_main
-from ports import ReadSurfacePorts
-from operations_read_model import (
+from services.control_plane.bff.capital.router import create_capital_router
+from services.control_plane.bff.management_read_models.ranking_router import (
+    create_performance_attribution_router,
+    create_ranking_formulas_router,
+)
+from services.control_plane.bff.operations_read_model import (
     DataConfidence,
     SourceState,
     sanitize_metric,
+)
+from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.personas.router import create_personas_router
+from services.control_plane.bff.personas.service import PersonaService
+from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.shared.cross_domain_utils import (
+    _management_as_float,
+    _management_first_float,
+    _management_nested_value,
+    _management_telemetry_rollup,
+    _resolve_param,
 )
 
 HEADERS = {"Authorization": "Bearer op-perf-ranking:reader,operator,admin:mfa"}
@@ -36,7 +46,18 @@ def _load_fallback_data() -> dict[str, Any]:
     if os.path.exists(fallback_path):
         try:
             with open(fallback_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict) and "personas" in data:
+                    personas = data["personas"]
+                    if isinstance(personas, dict):
+                        for p in personas.values():
+                            if isinstance(p, dict) and not p.get("tenant_id"):
+                                p["tenant_id"] = "pantheon-dev"
+                    elif isinstance(personas, list):
+                        for p in personas:
+                            if isinstance(p, dict) and not p.get("tenant_id"):
+                                p["tenant_id"] = "pantheon-dev"
+                return data
         except Exception:
             pass
     return {}
@@ -77,6 +98,7 @@ class PerformanceRankingReadModelTestReadPorts(ReadSurfacePorts):
             "persona_id": persona_id,
             "name": kwargs.get("name") or persona_id,
             "lifecycle_state": kwargs.get("lifecycle_state") or "active",
+            "tenant_id": kwargs.get("tenant_id") or "pantheon-dev",
             "metadata": kwargs.get("metadata") or {},
         }
         ds = self._data.setdefault("personas", {})
@@ -146,14 +168,103 @@ class PerformanceRankingReadModelTestReadPorts(ReadSurfacePorts):
         return next((s for s in ds if s.get("id") == snapshot_id or s.get("ranking_snapshot_id") == snapshot_id), None)
 
 
+_PM12_FUNCS = None
+
+
+def _compile_pm12_namespace(store: Any) -> dict[str, Any]:
+    global _PM12_FUNCS
+    if _PM12_FUNCS is None:
+        main_path = Path(__file__).resolve().parent / "main.py"
+        tree = ast.parse(main_path.read_text(encoding="utf-8"))
+        target_names = {
+            "_management_record_id",
+            "_management_first_non_empty",
+            "_management_dict_value",
+            "_management_nested_dict",
+            "_management_position_records",
+            "_management_latest_timestamp",
+            "_management_link",
+            "_filter_by_common_identifiers",
+            "_extract_ids_from_item",
+            "_performance_ranking_source_surface",
+            "_list_strategy_summaries",
+        }
+        _PM12_FUNCS = [
+            n for n in tree.body
+            if isinstance(n, ast.FunctionDef)
+            and (
+                n.name.startswith("_pm12_")
+                or (n.name.startswith("_management_") and not n.name.startswith("_management_ai_"))
+                or n.name in target_names
+            )
+        ]
+
+    def _page_slice(items: Any, page_token: Any, page_size: int) -> tuple[Any, Any]:
+        start = int(page_token) if page_token else 0
+        end = start + page_size
+        next_page_token = str(end) if end < len(items) else None
+        return items[start:end], next_page_token
+
+    ns = dict(__import__("typing").__dict__)
+    ns.update({
+        "datetime": datetime,
+        "date": datetime.date,
+        "timezone": timezone,
+        "timedelta": timedelta,
+        "read_store": store,
+        "_list_persona_records": personas_service._list_persona_records,
+        "utc_now": lambda: datetime.now(timezone.utc).isoformat(),
+        "_dataset_surface_status": lambda *a, **kw: {"status": "ok"},
+        "_PM12_ATTRIBUTION_DIMENSIONS": ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+        "ops_read_model_sanitize_metric": lambda v: v,
+        "_page_slice": _page_slice,
+        "_aggregate_group_surface": lambda surface_key, source_surfaces, *, snapshot_at, unavailable_message, degraded_message: {"status": "ok", "snapshot_at": snapshot_at, "source": "bff_composed", "available": True},
+        "_snapshot_meta": lambda snapshot_at: {"snapshot_at": snapshot_at},
+        "_management_as_float": _management_as_float,
+        "_management_nested_value": _management_nested_value,
+        "_management_first_float": _management_first_float,
+        "_management_telemetry_rollup": _management_telemetry_rollup,
+        "_resolve_param": _resolve_param,
+    })
+    exec(compile(ast.Module(body=_PM12_FUNCS, type_ignores=[]), "main_pm12.py", "exec"), ns)
+    return ns
+
+
+class _FakeCommandStore:
+    def append_command(self, record: Any) -> None:
+        pass
+
+    def _get_all_commands(self) -> list[Any]:
+        return []
+
+    def list_commands(self, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+
 @contextmanager
 def _client_with_store(store: PerformanceRankingReadModelTestReadPorts) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    bff_main.read_store = store
+    service = PersonaService(
+        read_store=store,
+        write_owner=store,
+        ranking_write_owner=store,
+        command_store=_FakeCommandStore(),
+    )
+    token = personas_service._current_persona_service.set(service)
     try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
+        app = FastAPI()
+        app.include_router(create_personas_router(service=service))
+        app.include_router(create_ranking_formulas_router(read_surface=store, get_read_store=lambda: store))
+        app.include_router(create_capital_router(read_surface=store, get_read_store=lambda: store))
+        pm12_ns = _compile_pm12_namespace(store)
+        app.include_router(
+            create_performance_attribution_router(
+                bff_me_tenant_payload=lambda ident, requested_tenant=None: {"id": "pantheon-dev"},
+                pm12_performance_attribution_response=pm12_ns["_pm12_performance_attribution_response"],
+            )
+        )
+        yield TestClient(app, raise_server_exceptions=False)
     finally:
-        bff_main.read_store = original_store
+        personas_service._current_persona_service.reset(token)
 
 
 def _fresh_store(*, allow_local_snapshot_fallback: bool) -> PerformanceRankingReadModelTestReadPorts:
