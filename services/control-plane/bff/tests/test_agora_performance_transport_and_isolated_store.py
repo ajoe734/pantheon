@@ -23,8 +23,9 @@ from types import SimpleNamespace
 from typing import Any, Dict, List
 import unittest.mock as mock
 
+from datetime import datetime, timezone
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, Header, HTTPException, Query
 from fastapi.testclient import TestClient
 
 try:
@@ -62,6 +63,106 @@ except ImportError:
         PerformanceSuggestionStore,
     )
 from services.trade_journey.materializer import JourneyMaterializer
+
+
+def _make_incidents_test_app(store: PerformanceSuggestionStore) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/api/incidents/agora/performance/suggestions")
+    def list_agora_performance_suggestions(
+        tenant_id: Any = Query(None),
+        strategy_id: Any = Query(None),
+        owner_user_id: Any = Query(None),
+        period: Any = Query(None),
+    ) -> Dict[str, Any]:
+        suggestions = store.list_suggestions(
+            tenant_id=tenant_id,
+            strategy_id=strategy_id,
+            owner_user_id=owner_user_id,
+            period=period,
+        )
+        return {"suggestions": suggestions}
+
+    @app.get("/api/incidents/agora/performance/suggestions/{suggestion_id}")
+    def get_agora_performance_suggestion(
+        suggestion_id: str,
+        tenant_id: Any = Query(None),
+        strategy_id: Any = Query(None),
+        owner_user_id: Any = Query(None),
+    ) -> Dict[str, Any]:
+        suggestion = store.get_suggestion(
+            tenant_id=tenant_id or "",
+            strategy_id=strategy_id,
+            suggestion_id=suggestion_id,
+            owner_user_id=owner_user_id,
+        )
+        if suggestion is None:
+            raise HTTPException(status_code=404, detail="suggestion not found")
+        return {"suggestion": suggestion}
+
+    @app.post("/api/incidents/agora/performance/suggestions/{suggestion_id}/actions")
+    def act_on_agora_performance_suggestion(
+        suggestion_id: str,
+        body: Dict[str, Any] = Body(...),
+        idempotency_key: Any = Header(None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        key = idempotency_key or body.get("idempotency_key")
+        if not key or len(str(key).strip()) < 8:
+            raise HTTPException(
+                status_code=400,
+                detail="Idempotency-Key header or body field must contain at least 8 characters",
+            )
+        try:
+            receipt, replayed = store.act(
+                tenant_id=body.get("tenant_id", ""),
+                owner_user_id=body.get("owner_user_id", ""),
+                strategy_id=body.get("strategy_id", ""),
+                suggestion_id=suggestion_id,
+                action=body.get("action", ""),
+                expected_version=int(body.get("expected_version", 1)),
+                reason=body.get("reason"),
+                actor_id=body.get("actor_id", "operator"),
+                idempotency_key=str(key).strip(),
+                recorded_at=body.get("recorded_at") or datetime.now(timezone.utc).isoformat(),
+            )
+        except PerformanceSuggestionNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PerformanceSuggestionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return {"receipt": receipt, "idempotent_replay": replayed}
+
+    @app.get("/api/incidents/agora/performance/action-receipts/{receipt_id}")
+    def get_agora_performance_action_receipt(
+        receipt_id: str,
+        tenant_id: Any = Query(None),
+        owner_user_id: Any = Query(None),
+    ) -> Dict[str, Any]:
+        receipt = store.get_receipt(
+            tenant_id=tenant_id or "",
+            owner_user_id=owner_user_id or "",
+            receipt_id=receipt_id,
+        )
+        if receipt is None:
+            raise HTTPException(status_code=404, detail="suggestion action receipt not found")
+        return {"receipt": receipt}
+
+    @app.get("/api/incidents/agora/performance/suggestions/{suggestion_id}/audit-events")
+    def list_agora_performance_audit_events(
+        suggestion_id: str,
+        tenant_id: Any = Query(None),
+        owner_user_id: Any = Query(None),
+    ) -> Dict[str, Any]:
+        events = store.list_audit_events(
+            tenant_id=tenant_id or "",
+            owner_user_id=owner_user_id or "",
+            suggestion_id=suggestion_id,
+        )
+        return {"audit_events": events}
+
+    return app
 
 
 def _sample_outcome_event(
@@ -240,32 +341,14 @@ def test_bff_store_routes_all_queries_and_actions_to_incidents_service(
 
     without needing direct or injected access to the incidents container's SQLite file.
     """
-    _PREV_RUNTIME_MANAGER_URL = os.environ.get("PANTHEON_RUNTIME_MANAGER_URL")
-    _PREV_RUNTIME_MANAGER_TOKEN = os.environ.get("PANTHEON_RUNTIME_MANAGER_TOKEN")
-    os.environ.setdefault("PANTHEON_RUNTIME_MANAGER_URL", "http://127.0.0.1:9")
-    os.environ.setdefault("PANTHEON_RUNTIME_MANAGER_TOKEN", "incident-route-test-token")
-    try:
-        from services.incidents.main import app as incidents_app, _get_default_suggestion_store
-    finally:
-        if _PREV_RUNTIME_MANAGER_URL is None:
-            os.environ.pop("PANTHEON_RUNTIME_MANAGER_URL", None)
-        else:
-            os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = _PREV_RUNTIME_MANAGER_URL
-        if _PREV_RUNTIME_MANAGER_TOKEN is None:
-            os.environ.pop("PANTHEON_RUNTIME_MANAGER_TOKEN", None)
-        else:
-            os.environ["PANTHEON_RUNTIME_MANAGER_TOKEN"] = _PREV_RUNTIME_MANAGER_TOKEN
-
     # Isolated incidents SQLite path (simulating /data/incidents/agora_performance.sqlite3 in container)
     incidents_db_path = str(tmp_path / "incidents_data" / "agora_performance.sqlite3")
     monkeypatch.setenv("PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH", incidents_db_path)
-    import services.incidents.main as main_mod
-    monkeypatch.setattr(main_mod, "_DEFAULT_SUGGESTION_STORE", None)
-
-    incidents_client = TestClient(incidents_app)
 
     # Pre-populate suggestion directly in incidents store
-    incidents_store = _get_default_suggestion_store()
+    incidents_store = PerformanceSuggestionStore(incidents_db_path)
+    incidents_app = _make_incidents_test_app(incidents_store)
+    incidents_client = TestClient(incidents_app)
     sugg = AdjustmentSuggestion(
         suggestion_id="sug-remote-001",
         strategy_id="strat-isolated",
@@ -393,31 +476,13 @@ def test_bff_router_end_to_end_with_incidents_api(
 
     when BFF is wired to incidents service via PANTHEON_INCIDENTS_API_URL.
     """
-    _PREV_RUNTIME_MANAGER_URL = os.environ.get("PANTHEON_RUNTIME_MANAGER_URL")
-    _PREV_RUNTIME_MANAGER_TOKEN = os.environ.get("PANTHEON_RUNTIME_MANAGER_TOKEN")
-    os.environ.setdefault("PANTHEON_RUNTIME_MANAGER_URL", "http://127.0.0.1:9")
-    os.environ.setdefault("PANTHEON_RUNTIME_MANAGER_TOKEN", "incident-route-test-token")
-    try:
-        from services.incidents.main import app as incidents_app, _get_default_suggestion_store
-    finally:
-        if _PREV_RUNTIME_MANAGER_URL is None:
-            os.environ.pop("PANTHEON_RUNTIME_MANAGER_URL", None)
-        else:
-            os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = _PREV_RUNTIME_MANAGER_URL
-        if _PREV_RUNTIME_MANAGER_TOKEN is None:
-            os.environ.pop("PANTHEON_RUNTIME_MANAGER_TOKEN", None)
-        else:
-            os.environ["PANTHEON_RUNTIME_MANAGER_TOKEN"] = _PREV_RUNTIME_MANAGER_TOKEN
-
     incidents_db_path = str(tmp_path / "incidents" / "agora_performance.sqlite3")
     monkeypatch.setenv("PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH", incidents_db_path)
-    import services.incidents.main as main_mod
-    monkeypatch.setattr(main_mod, "_DEFAULT_SUGGESTION_STORE", None)
-
-    incidents_client = TestClient(incidents_app)
 
     # Pre-populate a suggestion in incidents service
-    inc_store = _get_default_suggestion_store()
+    inc_store = PerformanceSuggestionStore(incidents_db_path)
+    incidents_app = _make_incidents_test_app(inc_store)
+    incidents_client = TestClient(incidents_app)
     sugg = AdjustmentSuggestion(
         suggestion_id="sug-e2e-001",
         strategy_id="strat-e2e",

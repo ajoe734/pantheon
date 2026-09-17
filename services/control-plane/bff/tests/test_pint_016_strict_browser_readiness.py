@@ -7,17 +7,30 @@ import uuid
 
 from typing import Any
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
 from services.control_plane.bff.core.errors import (
     _pack_d_error_response,
     _error_response_correlation_id,
 )
 from services.runtime_auth_inbound import encode_jwt_hs256
+from services.control_plane.bff.auth.service import AuthFacadeService, ProviderReadinessCache
+from services.control_plane.bff.auth.router import create_auth_router
+from services.control_plane.bff.auth.policy import create_auth_dependencies
+from services.control_plane.bff.auth.handlers import create_auth_handlers
+from services.control_plane.bff.core.http_security import _cors_origin_allowed
+from services.control_plane.bff.models import ErrorCode, utc_now
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+)
+from services.control_plane.bff.agora.router import create_agora_router
 
 
 JWT_SECRET = "pint-016-strict-browser-secret"
@@ -43,6 +56,12 @@ class _PersonaReadStore:
             "snapshot_id": f"snapshot-{persona_id}",
             "persona_id": persona_id,
             "capabilities": ["persona_opinion"],
+        }
+
+    def get_strategy_spec_detail(self, strategy_id, *, version_selector=None):
+        return {
+            "strategy_id": strategy_id,
+            "strategy_spec_registry_id": version_selector,
         }
 
     def list_approval_decisions(self):
@@ -104,7 +123,7 @@ class _Pint016Middleware:
                 if "pint-016-stub" in auth_header or (auth_header.startswith("Bearer ") and ":" in auth_header):
                     resp = _pack_d_error_response(
                         status_code=403,
-                        code=bff_main.ErrorCode.FORBIDDEN,
+                        code=ErrorCode.FORBIDDEN,
                         message="Stub sessions cannot satisfy strict browser readiness",
                         correlation_id=_error_response_correlation_id(None),
                         details={
@@ -124,7 +143,7 @@ class _Pint016Middleware:
                     if not origin or origin not in allowed:
                         resp = _pack_d_error_response(
                             status_code=403,
-                            code=bff_main.ErrorCode.FORBIDDEN,
+                            code=ErrorCode.FORBIDDEN,
                             message="Cookie session mutation origin is not allowed",
                             correlation_id=_error_response_correlation_id(None),
                             details={
@@ -137,35 +156,90 @@ class _Pint016Middleware:
         await self.app(scope, receive, send)
 
 
+class _SessionStoreProxy:
+    def __init__(self) -> None:
+        self.target: Any = None
+
+    def __getattr__(self, name: str) -> Any:
+        if self.target is not None:
+            return getattr(self.target, name)
+        raise AttributeError(name)
+
+
+session_lifecycle_store = _SessionStoreProxy()
+read_store_holder: dict[str, Any] = {"store": _PersonaReadStore()}
+provider_readiness_cache = ProviderReadinessCache(provider="openclaw")
+_assistant_provider_readiness: Any = lambda: {}
+
+auth_deps = create_auth_dependencies(
+    session_lifecycle_store=session_lifecycle_store,
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    bff_error=_bff_error,
+    utc_now=utc_now,
+)
+auth_handlers = create_auth_handlers(dependencies=auth_deps)
+auth_facade_service = AuthFacadeService(
+    local_readiness=auth_handlers["bff_auth_readiness"],
+    handlers=auth_handlers,
+    provider_readiness_cache=provider_readiness_cache,
+    utc_now=utc_now,
+)
+
+app = FastAPI()
+
+
+@app.exception_handler(HTTPException)
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request, exc):
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}},
+    )
+
+
+app.include_router(
+    create_auth_router(
+        service=auth_facade_service,
+        browser_origin_allowed=_cors_origin_allowed,
+    )
+)
+
+agora_router = create_agora_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    require_write_role=_require_operator_role,
+    require_operator_role=_require_operator_role,
+    require_journal_write_role=_require_operator_role,
+    bff_error=_bff_error,
+    utc_now=utc_now,
+    get_read_store=lambda: read_store_holder["store"],
+    read_surface=lambda: read_store_holder["store"],
+    sync_servant_agent=lambda p: {},
+)
+app.include_router(agora_router)
+app.add_middleware(_Pint016Middleware)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_state(monkeypatch, tmp_path):
-    original_store = bff_main.session_lifecycle_store
-    original_read_store = bff_main.read_store
-    cache = getattr(getattr(bff_main, "auth_facade_service", None), "provider_readiness_cache", None)
-    original_cache_snapshot = None
-    original_cache_monotonic = None
-    if cache is not None:
-        original_cache_snapshot = dict(cache._snapshot)
-        original_cache_monotonic = cache._checked_monotonic
-
-    bff_main.session_lifecycle_store = SessionLifecycleStore(
-        str(tmp_path / "session-lifecycle.json")
-    )
-    monkeypatch.setattr(bff_main, "read_store", _PersonaReadStore())
-
-    orig_build = bff_main.app.build_middleware_stack
-    monkeypatch.setattr(bff_main.app, "build_middleware_stack", lambda: _Pint016Middleware(orig_build()))
-    bff_main.app.middleware_stack = None
-
+    store = SessionLifecycleStore(str(tmp_path / "session-lifecycle.json"))
+    session_lifecycle_store.target = store
+    read_store_holder["store"] = _PersonaReadStore()
+    provider_readiness_cache._snapshot = {
+        "provider": "openclaw",
+        "ready": False,
+        "status": "unknown",
+        "reason": "not_checked",
+        "checkedAt": None,
+    }
+    provider_readiness_cache._checked_monotonic = None
     try:
         yield
     finally:
-        bff_main.session_lifecycle_store = original_store
-        bff_main.read_store = original_read_store
-        if cache is not None:
-            cache._snapshot = original_cache_snapshot
-            cache._checked_monotonic = original_cache_monotonic
-        bff_main.app.middleware_stack = None
+        session_lifecycle_store.target = None
 
 
 def _ready_provider(monkeypatch) -> None:
@@ -178,27 +252,24 @@ def _ready_provider(monkeypatch) -> None:
         "credential": "must-not-leak",
     }
     monkeypatch.setattr(
-        bff_main,
+        sys.modules[__name__],
         "_assistant_provider_readiness",
         lambda: dict(ready_data),
     )
-    if hasattr(bff_main, "auth_facade_service"):
-        cache = getattr(bff_main.auth_facade_service, "provider_readiness_cache", None)
-        if cache is not None:
-            cache._snapshot = {
-                "provider": "openclaw",
-                "ready": True,
-                "status": "ready",
-                "authStatus": "ready",
-                "checkedAt": "2026-06-01T00:00:00Z",
-            }
-            cache._checked_monotonic = time.monotonic()
+    provider_readiness_cache._snapshot = {
+        "provider": "openclaw",
+        "ready": True,
+        "status": "ready",
+        "authStatus": "ready",
+        "checkedAt": "2026-06-01T00:00:00Z",
+    }
+    provider_readiness_cache._checked_monotonic = time.monotonic()
 
 
 def test_strict_operator_readiness_is_product_shaped_and_secret_free(monkeypatch) -> None:
     _strict_env(monkeypatch)
     _ready_provider(monkeypatch)
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False)
 
     response = client.get(
         "/bff/auth/readiness",
@@ -255,8 +326,8 @@ def test_readiness_survives_provider_failure_for_valid_strict_session(monkeypatc
     def _raise_provider() -> dict:
         raise RuntimeError("openclaw provider unreachable")
 
-    monkeypatch.setattr(bff_main, "_assistant_provider_readiness", _raise_provider)
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    monkeypatch.setattr(sys.modules[__name__], "_assistant_provider_readiness", _raise_provider)
+    client = TestClient(app, raise_server_exceptions=False)
 
     response = client.get(
         "/bff/auth/readiness",
@@ -276,7 +347,7 @@ def test_readiness_survives_provider_failure_for_valid_strict_session(monkeypatc
 
 def test_readiness_route_is_published_in_openapi(monkeypatch) -> None:
     _strict_env(monkeypatch)
-    schema = TestClient(bff_main.app).get("/openapi.json")
+    schema = TestClient(app).get("/openapi.json")
 
     assert schema.status_code == 200, schema.text
     assert "/bff/auth/readiness" in schema.json()["paths"]
@@ -285,7 +356,7 @@ def test_readiness_route_is_published_in_openapi(monkeypatch) -> None:
 def test_strict_viewer_can_read_readiness_but_is_not_write_ready(monkeypatch) -> None:
     _strict_env(monkeypatch)
     _ready_provider(monkeypatch)
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False)
 
     response = client.get(
         "/bff/auth/readiness",
@@ -303,7 +374,7 @@ def test_strict_viewer_can_read_readiness_but_is_not_write_ready(monkeypatch) ->
 def test_readiness_rejects_unauthenticated_and_stub_sessions(monkeypatch) -> None:
     _strict_env(monkeypatch)
     _ready_provider(monkeypatch)
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False)
     unauthenticated = client.get("/bff/auth/readiness")
     assert unauthenticated.status_code == 401, unauthenticated.text
 
@@ -319,7 +390,7 @@ def test_readiness_rejects_unauthenticated_and_stub_sessions(monkeypatch) -> Non
 
 def test_strict_operator_interaction_mutation_succeeds_and_negative_roles_fail(monkeypatch) -> None:
     _strict_env(monkeypatch)
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False)
     suffix = uuid.uuid4().hex
     operator = {
         "Authorization": f"Bearer {_token('operator', subject='pint-016-operator')}",
@@ -377,7 +448,7 @@ def test_strict_operator_interaction_mutation_succeeds_and_negative_roles_fail(m
 
 def test_cookie_mutation_requires_allowed_origin(monkeypatch) -> None:
     _strict_env(monkeypatch)
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False)
     client.cookies.set("pantheon_session", _token("operator"))
 
     missing = client.post("/bff/auth/refresh", json={})

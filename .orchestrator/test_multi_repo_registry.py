@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -9,6 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import multi_repo_registry
+
+_COMMITTED_CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 
 class MultiRepoRegistryTests(unittest.TestCase):
@@ -323,6 +326,25 @@ class MultiRepoRegistryTests(unittest.TestCase):
             ),
             ("custom/execute-plans-fork", "dev-custom"),
         )
+
+    def test_committed_config_declares_execute_plans_github_slug(self) -> None:
+        config = json.loads(_COMMITTED_CONFIG_PATH.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            multi_repo_registry.repository_slug(config, "pantheon"),
+            "ajoe734/pantheon",
+        )
+        self.assertEqual(
+            multi_repo_registry.repository_slug(config, "execute_plans"),
+            "ajoe734/execute-plans",
+        )
+
+    def test_repository_slug_is_none_for_unknown_repository(self) -> None:
+        config = json.loads(_COMMITTED_CONFIG_PATH.read_text(encoding="utf-8"))
+
+        self.assertIsNone(multi_repo_registry.repository_slug(config, "not_a_registered_repo"))
+        self.assertIsNone(multi_repo_registry.repository_slug(config, None))
+        self.assertIsNone(multi_repo_registry.repository_slug(config, ""))
 
 
 if __name__ == "__main__":

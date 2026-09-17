@@ -7,9 +7,9 @@
   "owner": "Antigravity",
   "reviewer": "Claude",
   "target_repo": "ajoe734/pantheon",
-  "base_sha": "8778521b4726e22c05a1aebe19a971e0f9dca5e7",
+  "base_sha": "c6f39a8d87aeb480800d55f72c88286dc3bddb3d",
   "delivery_state": "ready_for_independent_review",
-  "summary": "Decoupled 11 test suites across CB09 / B27 (incidents, deployment review console, settings, loops, legacy command retirement, and management cockpit/actions/budget) from services/control-plane/bff/main.py. All 11 suites mount domain routers (create_incident_router, create_deployment_router, create_settings_router, create_action_command_router, create_command_adapters_router, create_management_router, create_datasources_router) directly on isolated FastAPI applications with local domain services and mocks; zero main imports; zero sys.path manipulation; zero monkeypatching of global read_store. All 120 tests pass across the 11 decoupled suites, and all 8 architecture invariant gate tests in test_bff_test_architecture.py pass. Live AST scan ceiling reduced from 86 to 75.",
+  "summary": "Decoupled 11 test suites across CB09 / B27 (incidents, deployment review console, settings, loops, legacy command retirement, and management cockpit/actions/budget) from services/control-plane/bff/main.py. All 11 suites mount domain routers (create_incident_router, create_deployment_router, create_settings_router, create_action_command_router, create_command_adapters_router, create_management_router, create_datasources_router) directly on isolated FastAPI applications with local domain services and mocks; zero main imports; zero sys.path manipulation; zero monkeypatching of global read_store. All 120 tests pass across the 11 decoupled suites, and all 8 architecture invariant gate tests in test_bff_test_architecture.py pass. Live AST scan ceiling reduced from 66 to 55.",
   "source_artifacts": [
     "services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py",
     "services/control-plane/bff/test_incident_stream_route_order.py",
@@ -31,8 +31,8 @@
     "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
   ],
   "ast_and_inventory_verification": {
-    "live_scan_ceiling_before": 86,
-    "live_scan_ceiling_after": 75,
+    "live_scan_ceiling_before": 66,
+    "live_scan_ceiling_after": 55,
     "decoupled_suites_count": 11,
     "sys_path_mutations_count": 0,
     "main_imports_count": 0,

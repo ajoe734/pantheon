@@ -1,0 +1,84 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001-EXACT-HEAD-685448C72040",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "repository": "ajoe734/pantheon",
+  "source_task": "BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/5892",
+  "unblock_request": {
+    "command_runtime_sha": "f15be762ef373cd24707b89e5b9b286650b9a097",
+    "pr": 5892,
+    "original_head": "ab5cb3298f654c5258af93eb32381d01f8351f15",
+    "auto_integrator_finding": "exact_head_merge_conflict",
+    "finding_site": "scripts/git/auto_integrator.py:1559-1561 (review-before-merge exact-head path merges origin/dev into a disposable worktree of the exact reviewed head to distinguish staleness from a real conflict; the merge failed non-zero here)"
+  },
+  "root_cause": {
+    "mechanism": "PR #5892's reviewed head (ab5cb3298) was cut from dev base f15be762e. Between approval and integration, PR #5887 (BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001) merged into dev and reclassified 14 test files from PLANNED to DECOUPLED in the same generated file, services/control-plane/bff/tests/bff_test_architecture_inventory.json, that PR #5892 also edits (it moves test_bff_b3_trading_pulse.py from PLANNED to MIGRATED). Both PRs touched the same aggregate summary fields (disposition_summary counts, live_scan_non_whitelisted_main_importer_ceiling, and the sorted live_scan_non_whitelisted_main_importers list) in overlapping JSON regions, producing a real text conflict, not ordinary staleness.",
+    "conflict_scope": "Exactly 3 line ranges conflicted: disposition_summary (DECOUPLED/MIGRATED/PLANNED counts), live_scan_non_whitelisted_main_importer_ceiling, and one position in the sorted live_scan_non_whitelisted_main_importers array. Every per-file entry in the tests[] array, composition_allowlist, and migrated_suites merged cleanly with git's line-based merge because the two PRs touched disjoint file entries there.",
+    "integrator_disposition": "No auto_integrator.py change needed. The exact-head review-before-merge path correctly distinguished a genuine merge conflict from staleness (scripts/git/auto_integrator.py:1548-1561) and correctly refused to push or queue the candidate. This is the designed fail-closed behavior, not a bug."
+  },
+  "remediation": {
+    "method": "Merged origin/dev into the reviewed PR branch, resolved the 3-region conflict by recomputing the generated aggregate fields from the merged tests[] array plus a live AST re-scan (services/control-plane/bff/tests/test_bff_test_architecture.py::_live_scan_non_whitelisted_main_importers), rather than guessing merged counts by hand. Pushed the resulting merge commit directly to task/BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001 (fast-forward from the old head; no force push).",
+    "resolution_detail": {
+      "disposition_summary_before_conflict_sides": {
+        "dev_side": {"ALLOWLIST": 15, "DECOUPLED": 285, "MIGRATED": 11, "PLANNED": 73},
+        "pr_side": {"ALLOWLIST": 15, "DECOUPLED": 278, "MIGRATED": 12, "PLANNED": 79}
+      },
+      "disposition_summary_merged": {"ALLOWLIST": 15, "DECOUPLED": 292, "MIGRATED": 12, "PLANNED": 65},
+      "merge_method": "3-way merge of the tests[] array keyed by \"file\": for every one of the 384 entries, at most one side differed from the common ancestor (no true per-entry conflicts existed); disposition_summary was then recomputed as a fresh count over the merged 384 entries and matches ALLOWLIST(15)+DECOUPLED(292)+MIGRATED(12)+PLANNED(65)=384=total_test_files.",
+      "ceiling_before": {"dev_side": 66, "pr_side": 79},
+      "ceiling_merged": 65,
+      "ceiling_method": "Ran the exact live-AST-scan helper from test_bff_test_architecture.py against the merged worktree's on-disk test files and the merged composition_allowlist; live scan found 65 non-whitelisted main importers (dev's 66 minus test_bff_b3_trading_pulse.py, which PR #5892 migrates off main). live_scan_non_whitelisted_main_importers was set to exactly that live-scanned, sorted list; ceiling set to 65, which is lower than both parent ceilings, honoring the gate's never-raise rule."
+    },
+    "new_head": "dd47bfd2c760a4bf74066389ddaf008952590bcc",
+    "new_head_parents": [
+      "ab5cb3298f654c5258af93eb32381d01f8351f15",
+      "1d7e2a620cf626fc4e883daaa8a9726251c3bdf7"
+    ],
+    "push_command": "git push origin HEAD:refs/heads/task/BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001",
+    "push_result": "ab5cb3298..dd47bfd2c HEAD -> task/BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001 (fast-forward, non-force)"
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "8 passed",
+      "note": "All architecture-gate assertions (inventory well-formed, 5 layers represented, valid layer/disposition per entry, allowlist strictly contained, migrated suites clean, live-scanned importer list/ceiling consistent) pass against the merged, recomputed inventory."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "exit_code": 0,
+      "result": "5 passed",
+      "note": "Matches the original PR #5892 review evidence exactly; the merge did not alter this suite's behavior."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+      "exit_code": 1,
+      "result": "2 passed, 25 failed",
+      "note": "Matches the original PR #5892 reviewed baseline (documented pre-existing RETAINED_COMPOSITION gap, not introduced by this merge or by the migration)."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_emergency_containment.py",
+      "exit_code": 1,
+      "result": "31 passed, 3 failed",
+      "note": "Matches the original PR #5892 reviewed shared-harness baseline exactly; confirms the rebalance_authority_test_support.py edits carried by the merge are collateral-regression-free."
+    },
+    {
+      "command": "git merge-base --is-ancestor ab5cb3298f654c5258af93eb32381d01f8351f15 dd47bfd2c760a4bf74066389ddaf008952590bcc",
+      "exit_code": 0,
+      "result": "Old reviewed head is an ancestor of the new head (fast-forward merge, no history rewrite)."
+    },
+    {
+      "command": "gh pr view 5892 --repo ajoe734/pantheon --json mergeable,mergeStateStatus",
+      "result": "mergeable=MERGEABLE (was UNKNOWN/conflicting before the fix); mergeStateStatus=BLOCKED pending the normal review-before-merge gate, not a conflict."
+    }
+  ],
+  "review_gate_observation": {
+    "canonical_source_status_at_time_of_fix": "review_approved",
+    "review_binding_head_at_time_of_fix": "ab5cb3298f654c5258af93eb32381d01f8351f15",
+    "note": "This unblock task's worker lease is fenced to INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001-EXACT-HEAD-685448C72040 only; `ai-status.sh` refuses cross-task mutation of BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001 from this dispatch (status command task mismatch guard). This unblock task therefore does not and cannot reopen or re-approve the source task's canonical row.",
+    "independent_fail_closed_confirmation": "scripts/git/task_review_merge_gate.py's approval_head_mismatch check already fails closed on its own: the frozen review_binding.head_sha (ab5cb3298) no longer equals the PR's current head (dd47bfd2c), so the merge gate will refuse to admit this PR even though the canonical row still reads review_approved. No unsafe auto-merge is possible from this state.",
+    "required_followup": "The source task's owner (Claude) must run the governed `reopen` command against BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001 under that task's own dispatch/lease to invalidate the stale approval, then hand off again to reviewer Antigravity2 with REVIEW_PR=5892, REVIEW_HEAD_SHA=dd47bfd2c760a4bf74066389ddaf008952590bcc, and the existing REVIEW_FILE=docs/deployment/evidence/BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001/evidence.json (byte-identical to the reviewed head; carried through untouched by this merge). Antigravity2 must independently review the new head before the supervisor integrator may merge PR #5892."
+  },
+  "delivery_status": "Original PR #5892 is no longer stranded: the real merge conflict against dev is resolved, the PR reports MERGEABLE, and every previously reviewed test suite reproduces its exact reviewed baseline at the new head. This evidence file documents root cause and fix only; it does not reopen, re-approve, or close the source task, which remains a separate governed lifecycle action for the source task's own dispatch."
+}
