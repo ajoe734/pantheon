@@ -39,6 +39,7 @@ VM_HOME = Path("/home/chloe_ong_dev_cctech_support_com")
 ARTIFACT_ROOT = VM_HOME / "pantheon-ci-deploy/release-artifacts"
 FIELDS = ("candidate_id", "run_id", "attempt", "controller_sha", "candidate_backend_sha",
           "candidate_frontend_sha", "previous_backend_sha", "previous_frontend_sha")
+DRIFT_FIELDS = ("baseline_source", "observed_live_bff_sha")
 IMPLEMENTATIONS = ("dev_release_artifact_driver.py", "dev_release_artifacts.py")
 
 
@@ -210,6 +211,10 @@ def remote_script(identity: dict[str, str], implementations: dict[str, bytes],
             "--fe-live-link", "/var/www/pantheon-dev-fe"]
     for name, value in identity.items():
         args.extend(("--" + name.replace("_", "-"), value))
+    for name in DRIFT_FIELDS:
+        value = env.get("PANTHEON_DEV_ARTIFACT_" + name.upper(), "")
+        if value:
+            args.extend(("--" + name.replace("_", "-"), value))
     lines = ["set -euo pipefail", "umask 077",
              ': "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD:?remote watchdog channel required}"']
     lines.extend("export " + key + "=" + shlex.quote(value) for key, value in exports.items())

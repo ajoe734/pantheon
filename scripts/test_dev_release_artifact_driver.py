@@ -896,6 +896,22 @@ def test_drift_reproduction_run_35120908258_without_drift_recovery_fails_closed(
     assert not list(d.ROOT.rglob("manifest.json"))
 
 
+def test_drift_reproduction_run_35174807588_omitted_forwarding_fails_closed(case):
+    # Run 35174807588 reproduction: the workflow environment had drift recovery
+    # classified, but capture_dev_artifact_baseline.py omitted forwarding
+    # --baseline-source and --observed-live-bff-sha to the remote driver, so
+    # the driver received empty baseline_source and failed at line 363 with
+    # "public BFF source readback mismatch".
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    case.http.source = drift_sha
+    case.args.baseline_source = ""
+    case.args.observed_live_bff_sha = ""
+    with pytest.raises(d.a.ArtifactError, match="public BFF source readback mismatch"):
+        execute(case)
+    no_replacement(case)
+    assert not list(d.ROOT.rglob("manifest.json"))
+
+
 def test_drift_recovery_honours_drift_baseline_in_capture_seal_verify_and_restore(case):
     drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
     ledger_sha = case.args.previous_backend_sha
