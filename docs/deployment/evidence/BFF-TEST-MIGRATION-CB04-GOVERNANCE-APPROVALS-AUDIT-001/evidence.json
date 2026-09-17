@@ -1,11 +1,11 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001",
-  "owner": "Claude",
+  "owner": "Antigravity",
   "reviewer": "Antigravity2",
   "status": "partially_decoupled_contract_discrepancy",
   "implementation_complete": false,
-  "source_base_sha": "f291b44d8ef39f13c412088a05bb646775206a66",
+  "source_base_sha": "fdcd8dea34bbf335805e26b1d1bc84ef9b4bfef8",
   "source_head_note": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py; this evidence manifest does not claim a commit can contain its own SHA.",
   "branch": "task/BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001",
   "changed_files": [
@@ -30,28 +30,36 @@
     "decoupled_this_task": [
       {
         "file": "services/control-plane/bff/test_pkt001_governance_review_queue_contract.py",
-        "router_factories_mounted": ["services.control_plane.bff.governance.router.create_governance_router"],
+        "router_factories_mounted": [
+          "services.control_plane.bff.governance.router.create_governance_router"
+        ],
         "test_count": 3,
         "passing": 3,
         "failing": 0
       },
       {
         "file": "services/control-plane/bff/test_pkt006_approval_queue_contract.py",
-        "router_factories_mounted": ["services.control_plane.bff.governance.router.create_governance_router"],
+        "router_factories_mounted": [
+          "services.control_plane.bff.governance.router.create_governance_router"
+        ],
         "test_count": 2,
         "passing": 2,
         "failing": 0
       },
       {
         "file": "services/control-plane/bff/test_audit_timestamp_filter_no_500.py",
-        "router_factories_mounted": ["services.control_plane.bff.incidents.router.create_incident_router"],
+        "router_factories_mounted": [
+          "services.control_plane.bff.incidents.router.create_incident_router"
+        ],
         "test_count": 9,
         "passing": 9,
         "failing": 0
       },
       {
         "file": "services/control-plane/bff/test_bff_audit_contract.py",
-        "router_factories_mounted": ["services.control_plane.bff.incidents.router.create_incident_router"],
+        "router_factories_mounted": [
+          "services.control_plane.bff.incidents.router.create_incident_router"
+        ],
         "test_count": 11,
         "passing": 11,
         "failing": 0
@@ -68,7 +76,9 @@
       },
       {
         "file": "services/control-plane/bff/test_bff_approvals_decide_contract.py",
-        "router_factories_mounted": ["services.control_plane.bff.governance.router.create_governance_router"],
+        "router_factories_mounted": [
+          "services.control_plane.bff.governance.router.create_governance_router"
+        ],
         "test_count": 23,
         "passing": 23,
         "failing": 0,
@@ -110,21 +120,21 @@
   },
   "ceiling_update": {
     "field": "live_scan_non_whitelisted_main_importer_ceiling",
-    "previous": 86,
-    "new": 79,
+    "previous": 73,
+    "new": 66,
     "delta": -7,
-    "note": "Lowered by exactly the 7 files decoupled in this delivery; test_bff_promotion_review_governance.py remains a recorded live-scan offender per blocked_not_decoupled above."
+    "note": "Lowered by exactly the 7 files decoupled in this delivery (from 73 to 66); test_bff_promotion_review_governance.py remains a recorded live-scan offender per blocked_not_decoupled above."
   },
   "validation": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/test_bff_promotion_review_governance.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_pkt001_governance_review_queue_contract.py services/control-plane/bff/test_pkt006_approval_queue_contract.py services/control-plane/bff/test_audit_timestamp_filter_no_500.py services/control-plane/bff/test_bff_audit_contract.py services/control-plane/bff/test_consultation_surfaces.py -W ignore::DeprecationWarning",
       "exit_code": 1,
-      "result": "75 passed, 25 failed in 71.89s. All 25 failures are the pre-existing, unrelated regression in test_bff_promotion_review_governance.py (see blocked_not_decoupled); 0 regressions caused by the 7 files decoupled in this delivery, and their individual per-file test counts are unchanged from the pre-migration baseline."
+      "result": "75 passed, 25 failed. All 25 failures are the pre-existing, unrelated regression in test_bff_promotion_review_governance.py (see blocked_not_decoupled); 0 regressions caused by the 7 files decoupled in this delivery, and their individual per-file test counts are unchanged from the pre-migration baseline."
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
       "exit_code": 0,
-      "result": "8 passed. Live AST scan confirms the 7 decoupled files have zero main imports and zero sys.path mutations; inventory's live_scan_non_whitelisted_main_importers and the ceiling (86 -> 79) are updated to match the live scan exactly."
+      "result": "8 passed. Live AST scan confirms the 7 decoupled files have zero main imports and zero sys.path mutations; inventory's live_scan_non_whitelisted_main_importers and the ceiling (73 -> 66) are updated to match the live scan exactly."
     },
     {
       "method": "python ast.parse/ast.walk on the 7 decoupled files after all edits; inspect imports and sys.path mutations.",

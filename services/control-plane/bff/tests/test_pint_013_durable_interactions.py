@@ -11,8 +11,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-import main as bff_main
+from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -23,6 +22,14 @@ from services.control_plane.bff.agora.interaction.router import SubmitInteractio
 from services.control_plane.bff.agora.interaction.store import InteractionLifecycleStore
 from services.control_plane.bff.agora.interaction.worker import AgoraInteractionWorker
 from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.agora.interaction.context_resolver import resolve_agora_interaction_context_ref
+from services.control_plane.bff.personas.service import (
+    _get_persona_directory_snapshot,
+    _persona_record_tenant_id,
+)
+import services.control_plane.bff.personas.service as personas_service
+from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
+import services.control_plane.bff.models as bff_models
 from test_agora_persona_interactions import (
     AUTH,
     FakeReadStore,
@@ -38,6 +45,23 @@ def _now_fn() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 read_store = FakeReadStore()
+
+
+def _resolve_agora_interaction_context_ref_bound(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    return resolve_agora_interaction_context_ref(
+        *args,
+        read_store=read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        persona_directory_snapshot_fn=_get_persona_directory_snapshot,
+        persona_record_tenant_id_fn=_persona_record_tenant_id,
+        trade_journal_allowed_fn=_trade_journal_allowed,
+        utc_now=_now_fn,
+        **kwargs,
+    )
+
+
 router = create_agora_router(
     extract_identity=_extract_identity,
     require_read_role=_require_read_role,
@@ -51,7 +75,7 @@ router = create_agora_router(
     get_read_store=lambda: read_store,
     read_surface=lambda: read_store,
     sync_servant_agent=lambda p: {},
-    canonical_context_ref_resolver=bff_main._resolve_agora_interaction_context_ref,
+    canonical_context_ref_resolver=_resolve_agora_interaction_context_ref_bound,
 )
 interaction_lifecycle = router.interaction_lifecycle
 workshop_store = router.workshop_store
@@ -73,7 +97,7 @@ def client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     global read_store
     read_store = FakeReadStore()
-    bff_main.read_store = read_store
+    personas_service.read_store = read_store
     if interaction_lifecycle.backend == "memory":
         with interaction_lifecycle._lock:
             interaction_lifecycle._requests.clear()
@@ -329,8 +353,6 @@ def test_same_key_double_resolve_replays_exact_receipt_then_submits(monkeypatch)
 
 def test_replay_persists_only_returned_receipt_and_eligibility_uses_it(monkeypatch):
     """A replay candidate from a later clock tick must never become canonical."""
-    import main as bff_main
-
     c = client(monkeypatch)
     real_datetime = datetime
 
@@ -349,7 +371,8 @@ def test_replay_persists_only_returned_receipt_and_eligibility_uses_it(monkeypat
     # wall-clock timing.
     import test_agora_persona_interactions
     monkeypatch.setattr(test_agora_persona_interactions, "datetime", TickingDateTime)
-    monkeypatch.setitem(bff_main.utc_now.__globals__, "datetime", TickingDateTime)
+    monkeypatch.setattr(sys.modules[__name__], "datetime", TickingDateTime)
+    monkeypatch.setitem(bff_models.utc_now.__globals__, "datetime", TickingDateTime)
 
     original_save = InteractionLifecycleStore.save_context_binding
     saves = []
@@ -450,8 +473,6 @@ def test_future_human_time_is_rejected_before_provider_timestamps(monkeypatch):
 
 
 def test_retry_uses_frozen_persona_snapshot_and_new_invocation_identity(monkeypatch):
-    import main as bff_main
-
     c = client(monkeypatch)
     submitted = _submit(c, _v19_request(c, monkeypatch)).json()["data"]
     assert submitted["status"] == "queued"

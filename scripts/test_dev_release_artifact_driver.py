@@ -921,13 +921,17 @@ def test_drift_recovery_honours_drift_baseline_in_capture_seal_verify_and_restor
 
     drift_image_id = "sha256:" + "8" * 64
     case.docker.images[drift_image_id] = {"id": drift_image_id, "revision": drift_sha, "repo_digests": None}
-    case.docker.containers["operator-bff"]["image_id"] = drift_image_id
+    for service in d.a.SERVICES:
+        case.docker.containers[service]["image_id"] = drift_image_id
 
     captured = seal(case)
     manifest = captured["manifest"]
     assert manifest["identity"]["previous_backend_sha"] == ledger_sha
     assert manifest["identity"]["controller_sha"] == case.args.controller_sha
+    assert manifest["image_bundle"]["source_sha"] == drift_sha
     assert manifest["image_bundle"]["services"]["operator-bff"]["image_id"] == drift_image_id
+    assert manifest["frontend"]["backend_sha"] == ledger_sha
+    assert manifest["frontend"]["frontend_sha"] == case.args.previous_frontend_sha
 
     verify_result = execute(case, "verify")
     assert verify_result["public"]["source_sha"] == drift_sha
