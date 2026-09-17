@@ -21,7 +21,7 @@
   },
   "fix_description": {
     "deploy_nonprod_vm_sh": "Forwarded PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE and PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA in ssh_bash command_prefix; validated 40-hex format for observed_live_bff_sha when baseline_source ends with +live_bff_drift_recovery in both validate_artifact_restore_request and run_dev_artifact_driver; forwarded --baseline-source and --observed-live-bff-sha in run_dev_artifact_driver to dev_release_artifact_driver.py; documented drift variables in environment overrides help.",
-    "test_coverage": "In test_deploy_nonprod_artifact_restore.py, added test_actual_ssh_command_forwards_drift_metadata, test_all_driver_call_points_forward_drift_inputs testing all 5 call sites (seal-candidate, rollback-verify, rollback-restore, external-verify, external-restore), test_driver_call_omits_drift_flags_when_drift_absent, test_run_dev_artifact_driver_rejects_invalid_observed_drift_sha, test_validate_artifact_restore_request_rejects_invalid_observed_drift_sha, and test_drifted_fixture_full_chain_reproduces_run_35206610883_without_forwarding_and_succeeds_with_forwarding exercising the full chain with the same drifted fixture; in test_deploy_nonprod_vm.py, added test_deploy_nonprod_vm_includes_drift_artifact_environment_variables."
+    "test_coverage": "In test_deploy_nonprod_vm.py, added test_deploy_nonprod_vm_includes_drift_artifact_environment_variables, test_actual_ssh_command_forwards_drift_metadata, test_all_driver_call_points_forward_drift_inputs testing all 5 call sites (seal-candidate, rollback-verify, rollback-restore, external-verify, external-restore), test_driver_call_omits_drift_flags_when_drift_absent, test_run_dev_artifact_driver_rejects_invalid_observed_drift_sha, test_validate_artifact_restore_request_rejects_invalid_observed_drift_sha, and test_drifted_fixture_full_chain_reproduces_run_35206610883_without_forwarding_and_succeeds_with_forwarding exercising the full chain with the same drifted fixture."
   },
   "driver_call_points": [
     {
@@ -57,7 +57,7 @@
     "isolation": "Pure source and isolated test scope only; no hosted deployments, redeploys, or capital changes performed."
   },
   "validation": {
-    "pytest_command": "uv run --no-project --with pytest,pyyaml pytest scripts/test_deploy_nonprod_artifact_restore.py scripts/test_deploy_nonprod_vm.py scripts/test_capture_dev_artifact_baseline.py scripts/test_dev_release_artifact_driver.py scripts/test_dev_release_artifacts.py",
+    "pytest_command": "uv run --no-project --with pytest,pyyaml pytest scripts/test_deploy_nonprod_vm.py scripts/test_deploy_nonprod_artifact_restore.py scripts/test_capture_dev_artifact_baseline.py scripts/test_dev_release_artifact_driver.py scripts/test_dev_release_artifacts.py",
     "passed": 570,
     "skipped": 3,
     "failed": 0,
@@ -65,12 +65,9 @@
     "exit_code": 0
   },
   "scope_definition": {
-    "total_artifacts": 4,
+    "total_artifacts": 3,
     "artifacts": {
       "scripts/deploy_nonprod_vm.sh": {
-        "disposition": "MODIFIED"
-      },
-      "scripts/test_deploy_nonprod_artifact_restore.py": {
         "disposition": "MODIFIED"
       },
       "scripts/test_deploy_nonprod_vm.py": {

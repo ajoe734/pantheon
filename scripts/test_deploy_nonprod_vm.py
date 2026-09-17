@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import subprocess
@@ -843,4 +845,270 @@ def test_deploy_nonprod_vm_includes_drift_artifact_environment_variables() -> No
     assert 'drift_args+=(--baseline-source "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE}")' in driver_func
     assert 'drift_args+=(--observed-live-bff-sha "${PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA}")' in driver_func
     assert '"${drift_args[@]}"' in driver_func
+
+
+from test_deploy_nonprod_artifact_restore import (
+    DRIVER,
+    PRIOR,
+    SHA,
+    _events,
+    _function,
+    _remote,
+    _run,
+    fixture,
+)
+
+DRIFT_SHA = "dc15751a9b20f8bc0931529d68af8898e691c898"
+DRIFT_SOURCE = "standby_frontend_pair_manifest+live_bff_drift_recovery"
+
+
+def test_actual_ssh_command_forwards_drift_metadata(fixture, tmp_path):
+    fixture_env, *_ = fixture
+    artifact_env = {key: value for key, value in fixture_env.items() if key.startswith("PANTHEON_DEV_ARTIFACT_")}
+    artifact_env["PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE"] = DRIFT_SOURCE
+    artifact_env["PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA"] = DRIFT_SHA
+    env, args_file, stdin_file = _setup_stubbed_dev_environment(tmp_path, sha=PRIOR, extra_env=artifact_env)
+    env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"] = fixture_env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
+    state_file = Path(env["PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE"])
+    state = json.loads(state_file.read_text())
+    state["leaseId"] = env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
+    state_file.write_text(json.dumps(state))
+    (tmp_path / "bin/ssh").write_text(
+        "#!/usr/bin/python3\nimport pathlib,sys\n"
+        f"pathlib.Path({str(args_file)!r}).write_text('\\n'.join(sys.argv[1:]))\n"
+        f"pathlib.Path({str(stdin_file)!r}).write_bytes(b''.join(sys.stdin.buffer.readline() for _ in range(3)))\n")
+    result = subprocess.run([str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "bff",
+                             "--sha", PRIOR, "--artifact-restore", "--artifact-readback-out", str(tmp_path / "readback.json"),
+                             "--deadline-seconds", "10"],
+                            env={**env, "PANTHEON_DEV_ARTIFACT_EVIDENCE_PROVENANCE": "runner-local"},
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode != 0
+    assert args_file.exists(), (result.returncode, result.stdout, result.stderr)
+    frames = stdin_file.read_bytes().splitlines()
+    payload = base64.b64decode(json.loads(frames[1])["script"]).decode()
+    exports = payload.splitlines()[2]
+    assert f"PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE={DRIFT_SOURCE}" in exports
+    assert f"PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA={DRIFT_SHA}" in exports
+
+
+@pytest.mark.parametrize("call_point", [
+    "seal-candidate",
+    "rollback-verify",
+    "rollback-restore",
+    "external-verify",
+    "external-restore",
+])
+def test_all_driver_call_points_forward_drift_inputs(fixture, call_point):
+    env, recorder, *_ = fixture
+    env["PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE"] = DRIFT_SOURCE
+    env["PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA"] = DRIFT_SHA
+
+    if call_point == "seal-candidate":
+        functions = ("with_dev_bff_runtime_env", "run_dev_artifact_driver", "validate_dev_candidate_override",
+                     "await_dev_candidate_receipt_ack", "seal_dev_candidate_images")
+        payload = "set -euo pipefail\ninfo() { echo \"$*\"; }\nerror() { exit 75; }\n"
+        payload += "\n".join(_function(name) for name in functions)
+        payload += "\nseal_dev_candidate_images\n"
+        ack = (env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256"] + "\n").encode()
+        result = _run(payload, {**env, "PANTHEON_DEPLOY_SHA": SHA}, ack=ack)
+        assert result.returncode == 0, result.stderr
+        expected_op = "seal-candidate"
+    elif call_point == "rollback-verify":
+        env.update({"PANTHEON_DEPLOY_SHA": PRIOR, "PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA": PRIOR,
+                    "PANTHEON_DEPLOY_COMPONENT": "root", "DEV_CANDIDATE_RECEIPT_ACKED": "false"})
+        payload = "set -euo pipefail\ninfo() { :; }\nerror() { exit 1; }\n"
+        payload += "dump_dev_root_failure_diagnostics() { :; }\n"
+        payload += "\n".join(_function(name) for name in
+                             ("with_dev_bff_runtime_env", "run_dev_artifact_driver", "rollback_dev_bff_on_failure"))
+        payload += '\nrollback_dev_bff_on_failure fixture_gate\n'
+        result = _run(payload, env)
+        assert result.returncode == 1
+        expected_op = "verify"
+    elif call_point == "rollback-restore":
+        env.update({"PANTHEON_DEPLOY_SHA": PRIOR, "PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA": PRIOR,
+                    "PANTHEON_DEPLOY_COMPONENT": "root", "DEV_CANDIDATE_RECEIPT_ACKED": "true"})
+        payload = "set -euo pipefail\ninfo() { :; }\nerror() { exit 1; }\n"
+        payload += "dump_dev_root_failure_diagnostics() { :; }\n"
+        payload += "\n".join(_function(name) for name in
+                             ("with_dev_bff_runtime_env", "run_dev_artifact_driver", "rollback_dev_bff_on_failure"))
+        payload += '\nrollback_dev_bff_on_failure fixture_gate\n'
+        result = _run(payload, env)
+        assert result.returncode == 1
+        expected_op = "restore"
+    elif call_point == "external-verify":
+        env["PANTHEON_DEV_ARTIFACT_RESTORE"] = "false"
+        env["PANTHEON_DEV_ARTIFACT_VERIFY"] = "true"
+        result = _run(_remote(), env)
+        assert result.returncode == 0, result.stderr
+        expected_op = "verify"
+    elif call_point == "external-restore":
+        env["PANTHEON_DEV_ARTIFACT_RESTORE"] = "true"
+        env["PANTHEON_DEV_ARTIFACT_VERIFY"] = "false"
+        result = _run(_remote(), env)
+        assert result.returncode == 0, result.stderr
+        expected_op = "restore"
+
+    events = _events(recorder)
+    assert len(events) == 1
+    event = events[0]
+    assert event["operation"] == expected_op
+    args = event["args"]
+    assert args["--baseline-source"] == DRIFT_SOURCE
+    assert args["--observed-live-bff-sha"] == DRIFT_SHA
+
+
+def test_driver_call_omits_drift_flags_when_drift_absent(fixture):
+    env, recorder, *_ = fixture
+    env.pop("PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE", None)
+    env.pop("PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA", None)
+    result = _run(_remote(), env)
+    assert result.returncode == 0, result.stderr
+    events = _events(recorder)
+    assert len(events) == 1
+    args = events[0]["args"]
+    assert "--baseline-source" not in args
+    assert "--observed-live-bff-sha" not in args
+
+
+@pytest.mark.parametrize("invalid_sha", ["", "dc15751", "g" * 40, "1" * 39, "1" * 41])
+def test_run_dev_artifact_driver_rejects_invalid_observed_drift_sha(fixture, invalid_sha):
+    env, recorder, *_ = fixture
+    env["PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE"] = DRIFT_SOURCE
+    env["PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA"] = invalid_sha
+    payload = "set -euo pipefail\ninfo() { :; }\nerror() { echo \"$*\" >&2; exit 75; }\n"
+    payload += "\n".join(_function(name) for name in ("with_dev_bff_runtime_env", "run_dev_artifact_driver"))
+    payload += '\nrun_dev_artifact_driver verify\n'
+    result = _run(payload, env)
+    assert result.returncode != 0
+    assert "PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA" in result.stderr
+    assert _events(recorder) == []
+
+
+@pytest.mark.parametrize("invalid_sha", ["", "dc15751", "g" * 40, "1" * 39, "1" * 41])
+def test_validate_artifact_restore_request_rejects_invalid_observed_drift_sha(fixture, invalid_sha):
+    env, recorder, *_ = fixture
+    env.update({
+        "DEPLOY_ENV": "dev", "COMPONENT": "bff", "DEPLOY_SHA": PRIOR, "ALLOW_DIRTY": "false",
+        "ARTIFACT_RESTORE": "true",
+        "PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE": DRIFT_SOURCE,
+        "PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA": invalid_sha,
+    })
+    payload = "set -euo pipefail\nerror() { echo \"$*\" >&2; exit 1; }\n"
+    payload += _function("validate_artifact_restore_request")
+    payload += '\nvalidate_artifact_restore_request\n'
+    result = _run(payload, env, guard=False)
+    assert result.returncode != 0
+    assert "PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA" in result.stderr
+
+
+def test_drifted_fixture_full_chain_reproduces_run_35206610883_without_forwarding_and_succeeds_with_forwarding(fixture):
+    env, recorder, driver, library = fixture
+    # Synthetic driver validates bundle source_sha against expected_source_sha,
+    # precisely matching dev_release_artifacts.py:324.
+    drift_driver = DRIVER.replace(
+        'manifest = pathlib.Path(args["--manifest"])',
+        '''manifest = pathlib.Path(args["--manifest"])
+data = json.loads(manifest.read_text())
+bundle = data.get("image_bundle", {})
+drift_source = args.get("--baseline-source", "")
+drift_sha = args.get("--observed-live-bff-sha", "")
+expected_source = drift_sha if drift_source.endswith("+live_bff_drift_recovery") else args["--previous-backend-sha"]
+if bundle.get("source_sha") != expected_source:
+    sys.stderr.write(f"dev_release_artifacts.py:324: bundle schema/source mismatch: {bundle.get('source_sha')} != {expected_source}\\n")
+    raise SystemExit(75)
+'''
+    )
+    driver.chmod(0o600)
+    driver.write_text(drift_driver.replace(
+        'print(json.dumps({"operation": operation, "fixture_only": True}))',
+        'print(os.environ["FIXTURE_SEAL_OUTPUT"] if operation == "seal-candidate" else '
+        'json.dumps({"operation": operation, "fixture_only": True}))'
+    ))
+    driver.chmod(0o400)
+    env["PANTHEON_DEV_ARTIFACT_DRIVER_SHA256"] = hashlib.sha256(driver.read_bytes()).hexdigest()
+
+    # The drifted manifest sealed during capture:
+    # bundle source_sha is DRIFT_SHA, while identity previous_backend_sha is PRIOR (ledger SHA).
+    manifest_path = Path(env["PANTHEON_DEV_ARTIFACT_MANIFEST_PATH"])
+    drifted_manifest = {
+        "schema_version": "pantheon.dev-artifact-manifest.v1",
+        "identity": {
+            "previous_backend_sha": PRIOR,
+            "previous_frontend_sha": env["PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA"],
+            "controller_sha": env["PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA"],
+        },
+        "image_bundle": {
+            "schema_version": "pantheon.dev-bff-image-bundle.v1",
+            "source_sha": DRIFT_SHA,
+            "services": {"operator-bff": {"oci_revision": DRIFT_SHA}},
+            "archives": {},
+        }
+    }
+    manifest_raw = (json.dumps(drifted_manifest, sort_keys=True) + "\n").encode()
+    manifest_path.write_bytes(manifest_raw)
+    env["PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256"] = hashlib.sha256(manifest_raw).hexdigest()
+
+    call_points = [
+        ("seal-candidate", {"PANTHEON_DEPLOY_SHA": SHA}),
+        ("rollback-verify", {"PANTHEON_DEPLOY_SHA": PRIOR, "PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA": PRIOR,
+                             "PANTHEON_DEPLOY_COMPONENT": "root", "DEV_CANDIDATE_RECEIPT_ACKED": "false"}),
+        ("rollback-restore", {"PANTHEON_DEPLOY_SHA": PRIOR, "PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA": PRIOR,
+                              "PANTHEON_DEPLOY_COMPONENT": "root", "DEV_CANDIDATE_RECEIPT_ACKED": "true"}),
+        ("external-verify", {"PANTHEON_DEV_ARTIFACT_RESTORE": "false", "PANTHEON_DEV_ARTIFACT_VERIFY": "true"}),
+        ("external-restore", {"PANTHEON_DEV_ARTIFACT_RESTORE": "true", "PANTHEON_DEV_ARTIFACT_VERIFY": "false"}),
+    ]
+
+    def build_payload(cp):
+        if cp == "seal-candidate":
+            functions = ("with_dev_bff_runtime_env", "run_dev_artifact_driver", "validate_dev_candidate_override",
+                         "await_dev_candidate_receipt_ack", "seal_dev_candidate_images")
+            payload = "set -euo pipefail\ninfo() { echo \"$*\"; }\nerror() { exit 75; }\n"
+            payload += "\n".join(_function(name) for name in functions)
+            return payload + "\nseal_dev_candidate_images\n"
+        elif cp in ("rollback-verify", "rollback-restore"):
+            payload = "set -euo pipefail\ninfo() { :; }\nerror() { exit 1; }\n"
+            payload += "dump_dev_root_failure_diagnostics() { :; }\n"
+            payload += "\n".join(_function(name) for name in
+                                 ("with_dev_bff_runtime_env", "run_dev_artifact_driver", "rollback_dev_bff_on_failure"))
+            return payload + '\nrollback_dev_bff_on_failure fixture_gate\n'
+        else:
+            return _remote()
+
+    ack = (env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256"] + "\n").encode()
+
+    # PHASE 1: WITHOUT drift inputs forwarded (exact reproduction of run 35206610883)
+    # The driver expects PRIOR, but manifest has DRIFT_SHA -> fails closed at line 324 across all points!
+    for cp, extra in call_points:
+        test_env = {**env, **extra}
+        test_env.pop("PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE", None)
+        test_env.pop("PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA", None)
+        recorder.unlink(missing_ok=True)
+        res = _run(build_payload(cp), test_env, ack=ack if cp == "seal-candidate" else None)
+        if cp in ("rollback-verify", "rollback-restore"):
+            assert res.returncode == 1  # rollback_dev_bff_on_failure exits 1 on failure
+        else:
+            assert res.returncode == 75
+        assert "bundle schema/source mismatch" in res.stderr
+
+    # PHASE 2: WITH drift inputs forwarded (corrective fix)
+    # The driver resolves drift_sha and expects DRIFT_SHA -> all 5 call points succeed across the full chain!
+    for cp, extra in call_points:
+        test_env = {**env, **extra}
+        test_env["PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE"] = DRIFT_SOURCE
+        test_env["PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA"] = DRIFT_SHA
+        recorder.unlink(missing_ok=True)
+        res = _run(build_payload(cp), test_env, ack=ack if cp == "seal-candidate" else None)
+        if cp in ("rollback-verify", "rollback-restore"):
+            assert res.returncode == 1  # rollback_dev_bff_on_failure finishes compensation and exits 1
+            events = _events(recorder)
+            assert len(events) == 1
+            assert events[0]["args"]["--baseline-source"] == DRIFT_SOURCE
+            assert events[0]["args"]["--observed-live-bff-sha"] == DRIFT_SHA
+        else:
+            assert res.returncode == 0, res.stderr
+            events = _events(recorder)
+            assert len(events) == 1
+            assert events[0]["args"]["--baseline-source"] == DRIFT_SOURCE
+            assert events[0]["args"]["--observed-live-bff-sha"] == DRIFT_SHA
+
 
