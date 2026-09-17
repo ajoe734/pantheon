@@ -1,0 +1,79 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-DEV-RELEASE-CAPTURE-DRIFT-SEAL-CORRECTIVE-001",
+  "worker": "Antigravity2",
+  "reviewer": "Codex",
+  "title": "Seal drifted prior stack identity in dev release capture",
+  "status": "completed",
+  "reproduction": {
+    "failing_run_id": "35193009030",
+    "failing_stage": "seal-result",
+    "exit_code": 75,
+    "error_code": "DEV_ARTIFACT_OPERATION_FAILED",
+    "failure_location": "capture_dev_artifact_baseline.py:283",
+    "observed_live_bff_sha": "dc15751a9b20f8bc0931529d68af8898e691c898",
+    "previous_backend_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "incident_description": "Deployment run 35193009030 successfully forwarded baseline_source (accepted_frontend_pair_manifest+live_bff_drift_recovery) and observed_live_bff_sha (dc15751a9b20f8bc0931529d68af8898e691c898) to the remote driver, which captured the live services whose oci_revision was dc15751a9. On the runner, capture_dev_artifact_baseline.py stage seal-result failed at line 283 with 'capture image revision differs from prior' because DRIFT_FIELDS were only forwarded in remote_script() at line 214 and never consulted during wrapper seal validation at lines 262 to 296, which only accepted previous_backend_sha (ae41705b4). Additionally, the driver previously labelled bundle source_sha with previous_backend_sha instead of the observed live sha."
+  },
+  "root_cause": {
+    "wrapper_seal_omitted_drift_validation": "capture_dev_artifact_baseline.py:seal_result() only checked bundle source_sha and service oci_revisions against identity['previous_backend_sha'] without consulting baseline_source or observed_live_bff_sha.",
+    "driver_bundle_source_sha_labelling": "dev_release_artifact_driver.py labelled the captured image bundle source_sha with previous_backend_sha rather than the observed live SHA under drift recovery."
+  },
+  "fix_description": {
+    "dev_release_artifact_driver_py": "Unified drift identity model: when baseline_source ends with +live_bff_drift_recovery, capture, seal-candidate, verify, and restore use expected_source_sha equal to drift_sha, making the captured image bundle identity the observed live sha for source_sha and oci_revision while preserving previous_backend_sha and previous_frontend_sha for the compose file, rollback authority, and frontend pair checks.",
+    "capture_dev_artifact_baseline_py": "Added _drift_recovery_source(baseline_source, observed_live_bff_sha) helper and plumbed drift inputs into seal_result() and main(). When drift recovery is active, validates bundle source_sha and service oci_revisions against observed_live_bff_sha; records both the accepted pair (previous_backend_sha, previous_frontend_sha) and observed_live_bff_sha in outputs and manifest; and fails closed on invalid sha format or revision mismatches.",
+    "test_coverage": "Added reproduction test and comprehensive drift seal test suite in test_capture_dev_artifact_baseline.py covering success, absence of drift inputs, invalid 40-hex SHA format, revision mismatch, and real wrapper seal path with fake transport; updated test_dev_release_artifact_driver.py to assert bundle source_sha is drift_sha and verify capture/seal/verify/restore; added test_dev_release_artifacts.py test verifying primitive capture/validate/restore under drift recovery source identity."
+  },
+  "invariants_enforced": {
+    "rollback_authority_preserved": "The accepted pair (previous_backend_sha, previous_frontend_sha) and its compose file remain the sole rollback authority; the frontend manifest strictly compares against the accepted pair.",
+    "drift_identity_model": "Under drift recovery, the captured prior image bundle identity is the observed live sha for source_sha and oci_revision.",
+    "fail_closed_security": "Without drift inputs, drifted manifests fail existing checks; non-40-hex observed sha or revision mismatch strictly fails closed.",
+    "isolation": "Pure source and isolated test scope only; no hosted deployments, redeploys, or capital changes performed."
+  },
+  "validation": {
+    "pytest_command": "PYTHONPATH=/tmp/pytest-lib:. /tmp/pytest-lib/bin/pytest scripts/test_capture_dev_artifact_baseline.py scripts/test_dev_release_artifact_driver.py scripts/test_dev_release_artifacts.py",
+    "passed": 482,
+    "skipped": 1,
+    "failed": 0,
+    "duration_seconds": 73.66,
+    "exit_code": 0
+  },
+  "scope_definition": {
+    "total_artifacts": 6,
+    "artifacts": {
+      "scripts/capture_dev_artifact_baseline.py": {
+        "sha256": "e8a05a0512f03c9270104c0b387db3d1e842ae1fc7ed483476e540736aa11a89",
+        "lines": 416,
+        "bytes": 22560,
+        "disposition": "MODIFIED"
+      },
+      "scripts/test_capture_dev_artifact_baseline.py": {
+        "sha256": "aa259d038482fa7d38700746b40b3dd765a92918045d09119be8ca3d6989a326",
+        "lines": 643,
+        "bytes": 33498,
+        "disposition": "MODIFIED"
+      },
+      "scripts/dev_release_artifact_driver.py": {
+        "sha256": "c418f9f82791d05cea09302793607cabd14f9f6cd1464c941f3d5f8b9b0cad83",
+        "lines": 797,
+        "bytes": 46312,
+        "disposition": "MODIFIED"
+      },
+      "scripts/test_dev_release_artifact_driver.py": {
+        "sha256": "c1db915e84009f3ee47f89fd10b93f294eaa8fffa4ebaeef9392fc914046f6a9",
+        "lines": 1003,
+        "bytes": 53022,
+        "disposition": "MODIFIED"
+      },
+      "scripts/test_dev_release_artifacts.py": {
+        "sha256": "d05eadba7081335d85403e46a7ac960d29bd6de499122ba8ed3848ec89c384d1",
+        "lines": 451,
+        "bytes": 22597,
+        "disposition": "MODIFIED"
+      },
+      "docs/deployment/evidence/OPS-DEV-RELEASE-CAPTURE-DRIFT-SEAL-CORRECTIVE-001/evidence.json": {
+        "disposition": "CREATED"
+      }
+    }
+  }
+}
