@@ -113,6 +113,37 @@
     "active_tasks_inspected_count": 37,
     "active_tasks": [
       {
+        "task_id": "MGMT-GAP-001",
+        "status": "done",
+        "owner": "Codex2",
+        "artifacts": [
+          "frontend-checkout:src/App.tsx",
+          "frontend-checkout:src/management/ManagementLayout.tsx",
+          "frontend-checkout:e2e",
+          "docs/04/pantheon_management_console_gap_2026-06-30"
+        ]
+      },
+      {
+        "task_id": "MGMT-GAP-003",
+        "status": "done",
+        "owner": "Claude2",
+        "artifacts": [
+          "services/control-plane/bff",
+          "docs/04/pantheon_management_console_gap_2026-06-30"
+        ]
+      },
+      {
+        "task_id": "MGMT-GAP-002",
+        "status": "done",
+        "owner": "Claude",
+        "artifacts": [
+          "frontend-checkout:src/lib/bff-v1",
+          "frontend-checkout:src/management",
+          "frontend-checkout:e2e",
+          "docs/04/pantheon_management_console_gap_2026-06-30"
+        ]
+      },
+      {
         "task_id": "PPL-ALLOC-007",
         "status": "blocked",
         "owner": "Antigravity",
@@ -192,9 +223,6 @@
           "services/control-plane/bff/command_executor.py",
           "services/control-plane/bff/command_queue.py",
           "services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md",
-          "services/control-plane/bff/test_*.py",
-          "services/control-plane/bff/tests/**",
-          "services/control-plane/bff/*/test*.py",
           "services/control-plane/bff/command_adapters/__init__.py",
           "services/control-plane/bff/command_adapters/base.py",
           "services/control-plane/bff/command_adapters/registry.py",
@@ -273,7 +301,7 @@
       {
         "task_id": "SIMPLIFY-BFF-RESIDUAL-001",
         "status": "todo",
-        "owner": "Antigravity",
+        "owner": "Antigravity2",
         "artifacts": [
           "services/control-plane/bff/main.py",
           "services/control-plane/bff/personas/service.py",
@@ -306,7 +334,7 @@
       {
         "task_id": "OSS-CORE-BASELINE-001",
         "status": "todo",
-        "owner": "Antigravity",
+        "owner": "Antigravity2",
         "artifacts": [
           "Dockerfile.smoke",
           "dependencies/constraints-core.txt",
@@ -427,7 +455,7 @@
       {
         "task_id": "SIMPLIFY-EXTRACTION-001",
         "status": "todo",
-        "owner": "Antigravity",
+        "owner": "Antigravity2",
         "artifacts": [
           "services/source_ingestion/interaction_intent_classifier.py",
           "services/source_ingestion/strategy_seed_builder.py",
@@ -454,7 +482,7 @@
       {
         "task_id": "OSS-RESEARCH-FOOTPRINT-001",
         "status": "todo",
-        "owner": "Antigravity",
+        "owner": "Antigravity2",
         "artifacts": [
           "docs/deployment/evidence/OSS-RESEARCH-FOOTPRINT-001/evidence.json",
           "docs/operations/research-framework-disposition.md",
@@ -564,7 +592,7 @@
       {
         "task_id": "OSS-EXECUTION-BASELINE-001",
         "status": "todo",
-        "owner": "Antigravity",
+        "owner": "Antigravity2",
         "artifacts": [
           ".gitmodules",
           "dependencies/locks/services-broker-sinopac.txt",
@@ -602,7 +630,7 @@
       {
         "task_id": "FE-QUERY-CACHE-001",
         "status": "todo",
-        "owner": "Antigravity",
+        "owner": "Antigravity2",
         "artifacts": [
           "src/management/pages/centers/GovernanceDecisionQueue.tsx",
           "src/management/pages/centers/GovernanceDecisionsPage.test.tsx",
@@ -681,7 +709,7 @@
       {
         "task_id": "FE-TOOLCHAIN-BASELINE-001",
         "status": "todo",
-        "owner": "Antigravity",
+        "owner": "Antigravity2",
         "artifacts": [
           "docs/deployment/evidence/FE-TOOLCHAIN-BASELINE-001/evidence.json",
           "eslint.config.js",
@@ -723,7 +751,7 @@
       {
         "task_id": "OSS-INFRA-PROFILES-001",
         "status": "todo",
-        "owner": "Antigravity",
+        "owner": "Antigravity2",
         "artifacts": [
           "docker-compose.control.yml",
           "docker-compose.exec.yml",
@@ -766,16 +794,8 @@
         ]
       },
       {
-        "task_id": "S5-LOOPS-001",
-        "status": "review_approved",
-        "owner": "Antigravity2",
-        "artifacts": [
-          "docs/deployment/evidence/S5-LOOPS-001/"
-        ]
-      },
-      {
         "task_id": "S5-PROVENANCE-001",
-        "status": "in_progress",
+        "status": "review",
         "owner": "Antigravity2",
         "artifacts": [
           "docs/deployment/evidence/S5-PROVENANCE-001/"
@@ -784,7 +804,7 @@
       {
         "task_id": "S5-JOURNEYS-001",
         "status": "in_progress",
-        "owner": "Antigravity2",
+        "owner": "Antigravity",
         "artifacts": [
           "docs/deployment/evidence/S5-JOURNEYS-001/"
         ]
@@ -792,7 +812,7 @@
       {
         "task_id": "S5-ROLLBACK-001",
         "status": "in_progress",
-        "owner": "Antigravity2",
+        "owner": "Antigravity",
         "artifacts": [
           "docs/deployment/evidence/S5-ROLLBACK-001/"
         ]
@@ -800,7 +820,7 @@
       {
         "task_id": "S5-REPORT-001",
         "status": "in_progress",
-        "owner": "Antigravity2",
+        "owner": "Antigravity",
         "artifacts": [
           "docs/deployment/evidence/S5-REPORT-001/",
           "docs/deployment/step5-acceptance-report.md"
@@ -889,7 +909,7 @@
       },
       {
         "task_id": "FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001",
-        "status": "review",
+        "status": "review_approved",
         "owner": "Antigravity",
         "artifacts": [
           "e2e/helpers/pplAlloc009Recommendation.ts",
@@ -992,84 +1012,13 @@
           "services/control-plane/bff/auth/policy.py",
           "docs/deployment/evidence/ARCH-MAIN-SHARED-UTILITIES-001/evidence.json",
           "services/control-plane/bff/promotion_review/service.py",
-          "services/control-plane/bff/shared/cross_domain_utils.py"
-        ]
-      },
-      {
-        "task_id": "ARCH-MAIN-MANAGEMENT-001",
-        "status": "todo",
-        "owner": "Claude",
-        "artifacts": [
-          "services/control-plane/bff/main.py",
-          "services/control-plane/bff/management_read_models/service.py",
-          "services/control-plane/bff/assistant/management_service.py",
-          "docs/deployment/evidence/ARCH-MAIN-MANAGEMENT-001/evidence.json"
-        ]
-      },
-      {
-        "task_id": "ARCH-MAIN-PERSONA-DOMAIN-001",
-        "status": "todo",
-        "owner": "Antigravity",
-        "artifacts": [
-          "services/control-plane/bff/main.py",
-          "services/control-plane/bff/personas/service.py",
-          "docs/deployment/evidence/ARCH-MAIN-PERSONA-DOMAIN-001/evidence.json"
-        ]
-      },
-      {
-        "task_id": "ARCH-MAIN-COMMAND-001",
-        "status": "todo",
-        "owner": "Claude",
-        "artifacts": [
-          "services/control-plane/bff/main.py",
-          "services/control-plane/bff/command_adapters/service.py",
-          "services/control-plane/bff/command_queue.py",
-          "docs/deployment/evidence/ARCH-MAIN-COMMAND-001/evidence.json"
-        ]
-      },
-      {
-        "task_id": "ARCH-MAIN-INCIDENT-OPS-001",
-        "status": "todo",
-        "owner": "Antigravity",
-        "artifacts": [
-          "services/control-plane/bff/main.py",
-          "services/control-plane/bff/incidents/router.py",
-          "services/control-plane/bff/downstream_health_monitor.py",
-          "docs/deployment/evidence/ARCH-MAIN-INCIDENT-OPS-001/evidence.json"
-        ]
-      },
-      {
-        "task_id": "ARCH-MAIN-GOVERNANCE-001",
-        "status": "todo",
-        "owner": "Antigravity",
-        "artifacts": [
-          "services/control-plane/bff/main.py",
-          "services/control-plane/bff/governance/service.py",
-          "services/control-plane/bff/governance/router.py",
-          "docs/deployment/evidence/ARCH-MAIN-GOVERNANCE-001/evidence.json"
-        ]
-      },
-      {
-        "task_id": "ARCH-MAIN-SSE-EVENT-001",
-        "status": "todo",
-        "owner": "Claude",
-        "artifacts": [
-          "services/control-plane/bff/main.py",
-          "services/control-plane/bff/events",
-          "docs/deployment/evidence/ARCH-MAIN-SSE-EVENT-001/evidence.json"
-        ]
-      },
-      {
-        "task_id": "ARCH-MAIN-REMAINING-DOMAINS-001",
-        "status": "todo",
-        "owner": "Antigravity",
-        "artifacts": [
-          "services/control-plane/bff/main.py",
-          "services/control-plane/bff/control_loops/service.py",
-          "services/control-plane/bff/assistant/routes.py",
-          "services/control-plane/bff/evolution/service.py",
-          "services/control-plane/bff/agora/service.py",
-          "docs/deployment/evidence/ARCH-MAIN-REMAINING-DOMAINS-001/evidence.json"
+          "services/control-plane/bff/shared/cross_domain_utils.py",
+          "services/control-plane/bff/shared/__init__.py",
+          "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+          "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+          "services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+          "services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py",
+          "services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py"
         ]
       },
       {
@@ -1080,20 +1029,438 @@
           "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
           "docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-002/evidence.json"
         ]
+      },
+      {
+        "task_id": "OPS-ARCHIVE-RESURRECTION-ARCHIVE-REVIEWER-HOP-AMENDMENT-001",
+        "status": "todo",
+        "owner": "Antigravity",
+        "artifacts": [
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/OPS-ARCHIVE-RESURRECTION-ARCHIVE-REVIEWER-HOP-AMENDMENT-001/evidence.json"
+        ]
+      },
+      {
+        "task_id": "OPS-DEV-RELEASE-CAPTURE-DRIFT-FORWARDING-CORRECTIVE-001",
+        "status": "todo",
+        "owner": "Antigravity",
+        "artifacts": [
+          "scripts/capture_dev_artifact_baseline.py",
+          "scripts/test_capture_dev_artifact_baseline.py",
+          "scripts/test_dev_release_artifact_driver.py",
+          "docs/deployment/evidence/OPS-DEV-RELEASE-CAPTURE-DRIFT-FORWARDING-CORRECTIVE-001/evidence.json"
+        ]
+      },
+      {
+        "task_id": "OPS-ARCHIVE-LOCK-THRASH-001",
+        "status": "in_progress",
+        "owner": "Claude",
+        "artifacts": [
+          ".orchestrator/rewrite/status_projection.py",
+          "docs/deployment/evidence/OPS-ARCHIVE-LOCK-THRASH-001/evidence.json"
+        ]
+      },
+      {
+        "task_id": "OPS-ANTIGRAVITY-SHARED-ACCOUNT-001",
+        "status": "todo",
+        "owner": "Claude",
+        "artifacts": [
+          ".orchestrator/config.json",
+          ".orchestrator/test_provider_permissions.py",
+          "docs/deployment/evidence/OPS-ANTIGRAVITY-SHARED-ACCOUNT-001/evidence.json"
+        ]
+      },
+      {
+        "task_id": "OPS-WORKER-BINDING-REVOCATION-REASON-001",
+        "status": "todo",
+        "owner": "Antigravity",
+        "artifacts": [
+          ".orchestrator/worker_runner.py",
+          ".orchestrator/test_worker_runner_heartbeat.py",
+          "docs/deployment/evidence/OPS-WORKER-BINDING-REVOCATION-REASON-001/evidence.json"
+        ]
       }
     ],
     "overlap_with_child_batches_found": true,
     "overlap_details": [
       {
+        "task_id": "STRUCT-RETIRE-001",
+        "status": "todo",
+        "owner": "Antigravity2",
+        "nature_of_contract": "Cross-tree structural retirement declaring wildcard services/control-plane/bff/** to decommission legacy BFF endpoints, global dependencies, and deprecated composition root references.",
+        "unmet_dependencies_count": 5,
+        "unmet_dependencies": [
+          "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+          "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001",
+          "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+          "LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001",
+          "FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001"
+        ],
+        "affected_files_summary": {
+          "total_affected_source_test_files": 86,
+          "total_affected_batches": 10,
+          "details_per_batch": [
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB01-AGORA-PERFORMANCE-001",
+              "batch_alias": "B19",
+              "affected_source_test_files": [
+                "services/control-plane/bff/agora/performance/test_performance.py",
+                "services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py",
+                "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
+                "services/control-plane/bff/tests/test_pint_003_durable_opinions.py",
+                "services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
+                "services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/conftest.py"
+              ],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/agora/router.py",
+                "services/control-plane/bff/agora/service.py"
+              ]
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB02-ASK-TEACHING-WORKSHOP-001",
+              "batch_alias": "B20",
+              "affected_source_test_files": [
+                "services/control-plane/bff/test_ask_001_sessions_contract.py",
+                "services/control-plane/bff/test_ask_003_committee_lifecycle.py",
+                "services/control-plane/bff/test_ask_004_memo_publish_contract.py",
+                "services/control-plane/bff/test_trn002_trainer_session_contract.py",
+                "services/control-plane/bff/test_trn003_rapid_eval_contract.py",
+                "services/control-plane/bff/test_tw01_teaching_dialog_contract.py",
+                "services/control-plane/bff/test_tw02_parameter_controls_contract.py",
+                "services/control-plane/bff/test_tw03_before_after_compare_contract.py",
+                "services/control-plane/bff/test_tw04_teaching_replay_contract.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/conftest.py"
+              ],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/assistant/routes.py",
+                "services/control-plane/bff/agora/strategy_workshop/router.py"
+              ]
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001",
+              "batch_alias": "B21",
+              "affected_source_test_files": [
+                "services/control-plane/bff/tests/test_bff_auth_refresh.py",
+                "services/control-plane/bff/tests/test_bff_logout.py",
+                "services/control-plane/bff/tests/test_bff_me_locale.py",
+                "services/control-plane/bff/tests/test_bff_me_session_bootstrap.py",
+                "services/control-plane/bff/tests/test_bff_alerts_acknowledge.py",
+                "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py",
+                "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py",
+                "services/control-plane/bff/tests/test_bff_path_dedupe.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/conftest.py"
+              ],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/auth/router.py",
+                "services/control-plane/bff/auth/service.py"
+              ]
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001",
+              "batch_alias": "B22",
+              "affected_source_test_files": [
+                "services/control-plane/bff/test_bff_approvals_decide_contract.py",
+                "services/control-plane/bff/test_bff_promotion_review_governance.py",
+                "services/control-plane/bff/test_governance_command_submission.py",
+                "services/control-plane/bff/test_pkt001_governance_review_queue_contract.py",
+                "services/control-plane/bff/test_pkt006_approval_queue_contract.py",
+                "services/control-plane/bff/test_audit_timestamp_filter_no_500.py",
+                "services/control-plane/bff/test_bff_audit_contract.py",
+                "services/control-plane/bff/test_consultation_surfaces.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/conftest.py"
+              ],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/governance/router.py",
+                "services/control-plane/bff/governance/service.py"
+              ]
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001",
+              "batch_alias": "B23",
+              "affected_source_test_files": [
+                "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+                "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+                "services/control-plane/bff/tests/test_bff_rebalance_proposals.py",
+                "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py",
+                "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+                "services/control-plane/bff/tests/test_overlay_retirement.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/conftest.py",
+                "services/control-plane/bff/tests/rebalance_authority_test_support.py"
+              ],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/strategies/router.py",
+                "services/control-plane/bff/capital/router.py"
+              ]
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
+              "batch_alias": "B24",
+              "affected_source_test_files": [
+                "services/control-plane/bff/test_exp002_bff_research_experiments_contract.py",
+                "services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py",
+                "services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py",
+                "services/control-plane/bff/test_research_oss_preactivation_contract.py",
+                "services/control-plane/bff/test_rw01_research_ticket_contract.py",
+                "services/control-plane/bff/test_rw02_search_contract.py",
+                "services/control-plane/bff/test_rw03_analyze_contract.py",
+                "services/control-plane/bff/test_rw04_experiment_launch_contract.py",
+                "services/control-plane/bff/test_rw05_artifact_compare_contract.py",
+                "services/control-plane/bff/tests/test_bff_b2_004_research_search.py",
+                "services/control-plane/bff/tests/test_bff_knowledge_inbox.py",
+                "services/control-plane/bff/tests/test_console_research_projection.py",
+                "services/control-plane/bff/tests/test_jobs_source_owner_contract.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/conftest.py",
+                "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
+                "services/control-plane/bff/support/evidence/MGMT-QLIB-001/dataset_manifest.json",
+                "services/control-plane/bff/support/evidence/MGMT-QLIB-002/strategy_spec_packet.json"
+              ],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/research/router.py",
+                "services/control-plane/bff/knowledge/router.py"
+              ]
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001",
+              "batch_alias": "B25",
+              "affected_source_test_files": [
+                "services/control-plane/bff/test_bff_management_delta_routes.py",
+                "services/control-plane/bff/test_bff_mgmt_common_filters.py",
+                "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py",
+                "services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py",
+                "services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py",
+                "services/control-plane/bff/test_management_data_sources_v2.py",
+                "services/control-plane/bff/test_mcp_tool_import.py",
+                "services/control-plane/bff/tests/test_bff_consol_skills_mcp_registry_contract.py",
+                "services/control-plane/bff/tests/test_bff_management_data_sources_contract.py",
+                "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
+                "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+                "services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py",
+                "services/control-plane/bff/test_mgmt_syn_006_conflict_log_view.py",
+                "services/control-plane/bff/tests/test_bff_management_gap_003_contract_schema.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/conftest.py",
+                "services/control-plane/bff/tests/management_projection_test_doubles.py"
+              ],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/management_read_models/router.py",
+                "services/control-plane/bff/management_read_models/service.py"
+              ]
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001",
+              "batch_alias": "B26",
+              "affected_source_test_files": [
+                "services/control-plane/bff/test_openclaw_ops_surface.py",
+                "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+                "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+                "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+                "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+                "services/control-plane/bff/tests/test_management_nl_single_owner.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/conftest.py",
+                "services/control-plane/bff/tests/rebalance_authority_test_support.py"
+              ],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/assistant/management_service.py",
+                "services/control-plane/bff/assistant/routes.py"
+              ]
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB09-INCIDENTS-DEPLOYMENT-LOOPS-001",
+              "batch_alias": "B27",
+              "affected_source_test_files": [
+                "services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py",
+                "services/control-plane/bff/test_incident_stream_route_order.py",
+                "services/control-plane/bff/tests/test_incident_router.py",
+                "services/control-plane/bff/test_pkt001_deployment_review_console_contract.py",
+                "services/control-plane/bff/test_settings_contract.py",
+                "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+                "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+                "services/control-plane/bff/tests/test_legacy_command_write_retirement.py",
+                "services/control-plane/bff/tests/test_bff_management_cockpit.py",
+                "services/control-plane/bff/tests/test_management_domain_actions.py",
+                "services/control-plane/bff/tests/test_management_read_budget.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/conftest.py",
+                "services/control-plane/bff/tests/rebalance_authority_test_support.py"
+              ],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/incidents/router.py",
+                "services/control-plane/bff/control_loops/router.py"
+              ]
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB10-CROSS-CUTTING-CONSOLIDATION-001",
+              "batch_alias": "B28",
+              "affected_source_test_files": [
+                "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py",
+                "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py",
+                "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
+                "services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py",
+                "services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/data/fixtures_pack_a.json",
+                "services/control-plane/bff/data/fixtures_pack_b.json",
+                "services/control-plane/bff/data/fixtures_pack_c.json",
+                "services/control-plane/bff/tests/conftest.py"
+              ],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/shared/cross_domain_utils.py"
+              ]
+            }
+          ]
+        },
+        "proposed_ordering": "STRUCT-RETIRE-001 is sequenced strictly AFTER child batches CB01-CB10 and after the final delivery of parent task BFF-TEST-FULL-MIGRATION-CORRECTIVE-001. STRUCT-RETIRE-001 has 5 unmet dependencies (DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001, JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001, BFF-READ-OWNER-WIRING-CORRECTIVE-001, LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001, and FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001), all of which sit downstream of test suite decoupling. Child batches CB01-CB10 must first decouple all 86 test suites from main.py and establish standalone router test harnesses before structural retirement of legacy BFF routes and globals can safely proceed without breaking test coverage. This sequencing guarantees zero concurrent execution or lock contention."
+      },
+      {
+        "task_id": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "status": "todo",
+        "owner": "Antigravity2",
+        "nature_of_contract": "Domain writers durability corrective declaring services/control-plane/bff/management_read_models/** as its own domain, along with domain writer modules and specific router/service paths. Note: The operator explicitly removed the three catch-all test globs (services/control-plane/bff/tests/**, services/control-plane/bff/test_*.py, and services/control-plane/bff/*/test*.py) that previously claimed every BFF test file.",
+        "unmet_dependencies_count": 2,
+        "unmet_dependencies": [
+          "BFF-ROUTER-USECASE-CORRECTIVE-001",
+          "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+        ],
+        "affected_files_summary": {
+          "total_affected_source_test_files": 0,
+          "total_affected_receiver_modules": 6,
+          "affected_domain_paths": [
+            "services/control-plane/bff/governance/**",
+            "services/control-plane/bff/capital/**",
+            "services/control-plane/bff/research/**",
+            "services/control-plane/bff/management_read_models/**"
+          ],
+          "details_per_batch": [
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001",
+              "batch_alias": "B22",
+              "affected_source_test_files": [],
+              "affected_shared_fixtures": [],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/governance/router.py",
+                "services/control-plane/bff/governance/service.py"
+              ],
+              "domain_boundary_note": "Receiver router/service paths lie under services/control-plane/bff/governance/**"
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001",
+              "batch_alias": "B23",
+              "affected_source_test_files": [],
+              "affected_shared_fixtures": [],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/capital/router.py"
+              ],
+              "domain_boundary_note": "Receiver router path lies under services/control-plane/bff/capital/**"
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
+              "batch_alias": "B24",
+              "affected_source_test_files": [],
+              "affected_shared_fixtures": [],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/research/router.py"
+              ],
+              "domain_boundary_note": "Receiver router path lies under services/control-plane/bff/research/**"
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001",
+              "batch_alias": "B25",
+              "affected_source_test_files": [],
+              "affected_shared_fixtures": [],
+              "affected_receiver_modules": [
+                "services/control-plane/bff/management_read_models/router.py",
+                "services/control-plane/bff/management_read_models/service.py"
+              ],
+              "domain_boundary_note": "Receiver router and service modules lie under services/control-plane/bff/management_read_models/** declared by DOMAIN-WRITERS as its own domain. None of the 14 CB07 source test files reside in management_read_models/**."
+            }
+          ]
+        },
+        "proposed_ordering": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 is sequenced strictly AFTER child batches CB01-CB10. DOMAIN-WRITERS has 2 unmet dependencies: BFF-ROUTER-USECASE-CORRECTIVE-001 and JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001. Crucially, BFF-ROUTER-USECASE-CORRECTIVE-001 explicitly declares a direct dependency on BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 (the parent task under which CB01-CB10 execute). Therefore, all child batches CB01-CB10 must finish, decouple their suites, and merge to dev before the parent task can close out, which in turn unblocks BFF-ROUTER-USECASE-CORRECTIVE-001, and only subsequently unblocks DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001. Furthermore, zero of the 86 source test files reside in management_read_models/** or match any DOMAIN-WRITERS artifact; overlap is limited to receiver module paths. This dependency ordering ensures zero concurrent write conflict during child batch execution."
+      },
+      {
         "task_id": "OSS-CORE-BASELINE-001",
-        "overlapping_artifacts": [
-          "services/control-plane/bff/tests/rebalance_authority_test_support.py",
-          "services/control-plane/bff/tests/test_bff_auth_refresh.py",
-          "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py"
-        ]
+        "status": "todo",
+        "owner": "Antigravity2",
+        "nature_of_contract": "Baseline test suite and dependency lockfile consolidation declaring specific test suites and shared fixtures across services.",
+        "unmet_dependencies_count": 5,
+        "unmet_dependencies": [
+          "OSS-COVERAGE-PLAN-001",
+          "SIMPLIFY-BFF-RESIDUAL-001",
+          "SIMPLIFY-OPENCLAW-001",
+          "SIMPLIFY-RETRIEVAL-MEMORY-001",
+          "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001"
+        ],
+        "affected_files_summary": {
+          "total_affected_source_test_files": 2,
+          "total_affected_shared_fixtures": 1,
+          "affected_files": [
+            "services/control-plane/bff/tests/test_bff_auth_refresh.py",
+            "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py",
+            "services/control-plane/bff/tests/rebalance_authority_test_support.py"
+          ],
+          "details_per_batch": [
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001",
+              "batch_alias": "B21",
+              "affected_source_test_files": [
+                "services/control-plane/bff/tests/test_bff_auth_refresh.py"
+              ],
+              "affected_shared_fixtures": [],
+              "affected_receiver_modules": []
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001",
+              "batch_alias": "B23",
+              "affected_source_test_files": [
+                "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py"
+              ],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/rebalance_authority_test_support.py"
+              ],
+              "affected_receiver_modules": []
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001",
+              "batch_alias": "B26",
+              "affected_source_test_files": [],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/rebalance_authority_test_support.py"
+              ],
+              "affected_receiver_modules": []
+            },
+            {
+              "batch_task_id": "BFF-TEST-MIGRATION-CB09-INCIDENTS-DEPLOYMENT-LOOPS-001",
+              "batch_alias": "B27",
+              "affected_source_test_files": [],
+              "affected_shared_fixtures": [
+                "services/control-plane/bff/tests/rebalance_authority_test_support.py"
+              ],
+              "affected_receiver_modules": []
+            }
+          ]
+        },
+        "proposed_ordering": "OSS-CORE-BASELINE-001 is sequenced AFTER child batches CB01-CB10. OSS-CORE-BASELINE-001 depends on SIMPLIFY-BFF-RESIDUAL-001, which itself depends on STRUCT-RETIRE-001. As STRUCT-RETIRE-001 already sits downstream of CB01-CB10, OSS-CORE-BASELINE-001 is sequenced multiple stages behind the child batches. Child batches CB03, CB05, CB08, and CB09 will decouple test_bff_auth_refresh.py, test_ppl_alloc_009_assertion_semantics.py, and stabilize rebalance_authority_test_support.py first, ensuring that when OSS-CORE-BASELINE-001 executes, all baseline BFF test suites are already decoupled from main.py and isolated."
       }
     ],
-    "isolation_analysis": "Active ARCH-MAIN-* tasks modify production service modules (main.py, service.py, router.py). The 10 child migration batches operate exclusively on test files, test fixtures, and new test helper modules under services/control-plane/bff/tests/. None of the 86 test files or child batch declared artifacts collide with any active task. Child batches adopt the B05 pattern: mounting real routers on standalone FastAPI apps without waiting for main.py symbol relocations."
+    "isolation_analysis": "Artifact overlap check identified 3 active tasks whose declared contracts overlap with child batch artifacts: STRUCT-RETIRE-001 (cross-tree wildcard services/control-plane/bff/** covering all 86 test suites, fixtures, and receivers), DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 (domain wildcard services/control-plane/bff/management_read_models/** and domain receiver modules), and OSS-CORE-BASELINE-001 (two test suites test_bff_auth_refresh.py and test_ppl_alloc_009_assertion_semantics.py, plus shared fixture rebalance_authority_test_support.py). This overlap is legitimate and fully disclosed by name with proposed dependency ordering: (1) STRUCT-RETIRE-001 has 5 unmet dependencies and is sequenced strictly after CB01-CB10 and parent task closeout; test suites must be decoupled from main.py before structural retirement proceeds. (2) DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 has 2 unmet dependencies, including BFF-ROUTER-USECASE-CORRECTIVE-001 which directly depends on parent task BFF-TEST-FULL-MIGRATION-CORRECTIVE-001; thus DOMAIN-WRITERS is strictly sequenced downstream of CB01-CB10, and zero of the 86 test suites reside under management_read_models/** following the operator's removal of catch-all test globs. (3) OSS-CORE-BASELINE-001 has 5 unmet dependencies (including SIMPLIFY-BFF-RESIDUAL-001 which depends on STRUCT-RETIRE-001) and executes long after CB01-CB10 has stabilized and decoupled the baseline test suites. Child batches CB01-CB10 operate via the B05 pattern: mounting real domain routers on standalone FastAPI app harnesses with injected dependencies, without waiting for main.py symbol relocations. Because all overlapping tasks sit downstream in the dependency DAG, zero concurrent execution or write collision will occur during child batch execution."
   },
   "partition_properties": {
     "total_importers_covered": 86,
@@ -3493,7 +3860,7 @@
         "command": "active task artifact overlap verification",
         "exit_code": 0,
         "result": "passed",
-        "summary": "zero artifact collision with active ARCH-MAIN-* or frontend tasks"
+        "summary": "overlap with active tasks (STRUCT-RETIRE-001, DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001, OSS-CORE-BASELINE-001) fully disclosed with safe dependency ordering; zero concurrent collision with active workers"
       }
     ]
   }
