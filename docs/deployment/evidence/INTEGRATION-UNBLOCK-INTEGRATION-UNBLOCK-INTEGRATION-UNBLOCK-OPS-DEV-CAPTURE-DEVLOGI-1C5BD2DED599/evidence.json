@@ -1,0 +1,74 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-OPS-DEV-CAPTURE-DEVLOGI-1C5BD2DED599",
+  "recorded_at": "2026-09-18T05:02:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "scope": "Document root cause for missing-dedicated-integration-path blocker on INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001-MISSIN-24C18443B747 and confirm the original PR is no longer stranded.",
+  "repository": "ajoe734/pantheon",
+  "command_runtime_sha": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
+  "unblock_request": {
+    "source_task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001-MISSIN-24C18443B747",
+    "source_task_generation": 1,
+    "pr": 5913,
+    "head_sha": "577147d70cbe20aa7a1ba9751e6fda8154a2f6be",
+    "reason": "missing-dedicated-integration-path",
+    "repository_slug": "ajoe734/pantheon",
+    "request_sha256": "273bdf676fb1dd549514193295c2c6543dc9117e88d4704f9a5b6818373f6cb5"
+  },
+  "root_cause": {
+    "check_implicated": "scripts/git/auto_integrator.py:2319-2324 in merge_task_candidate() evaluates `dedicated_integration_path = bool(resolved_repo.get('integration_path'))`. When live execution (`--execute`) is enabled and `require_dedicated_integration_path=True`, the integrator fails closed with IntegrationExecutionError(code='missing-dedicated-integration-path').",
+    "runtime_configuration": "The live supervisor runtime config (/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json) specifies `coordination.repositories.pantheon` as `{\"repo\": \"ajoe734/pantheon\"}` without an explicit `integration_path` property.",
+    "promotion_provenance": "The missing configuration field originated in supervisor runtime promotion record `promotion-20260918T010014Z.json`, where `promote_supervisor_runtime.py` was executed with empty `repository_integration_roots: {}` (omitting `--repository-integration-root pantheon=...`).",
+    "safety_evaluation": "The fail-closed behavior in auto_integrator.py is intentional and correct. Allowing live `--execute` merges into an unisolated shared coordination-root or worker worktree would compromise git state isolation and lead to uncontained concurrent mutation. No code change in auto_integrator.py is warranted.",
+    "evidence_commands": [
+      "python3 scripts/git/check_config_drift.py --config /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "pytest -q scripts/git/test_auto_integrator.py",
+      "gh pr view 5913 --repo ajoe734/pantheon --json number,title,state,headRefName,headRefOid,baseRefName,mergeable,statusCheckRollup",
+      "git merge-base b435986b13d5c323c533225f5ea3f6481d79a1be 577147d70cbe20aa7a1ba9751e6fda8154a2f6be"
+    ]
+  },
+  "original_pr_validation": {
+    "pr": 5913,
+    "url": "https://github.com/ajoe734/pantheon/pull/5913",
+    "title": "INTEGRATION-UNBLOCK-INTEGRATION-UNB: root cause & unstranded PR",
+    "state": "OPEN",
+    "mergeable": "MERGEABLE",
+    "base_ref": "dev",
+    "head_ref": "task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001-MISSIN-24C18443B747",
+    "head_sha": "577147d70cbe20aa7a1ba9751e6fda8154a2f6be",
+    "commits_behind_dev": 0,
+    "merge_base": "b435986b13d5c323c533225f5ea3f6481d79a1be",
+    "head_is_ancestor_of_origin_dev": false,
+    "dev_is_ancestor_of_head": true,
+    "checks_status": {
+      "Commit trailers": "SUCCESS",
+      "Runtime mirror guard": "SUCCESS",
+      "Python packaging provision": "SUCCESS",
+      "Smoke acceptance": "SUCCESS"
+    },
+    "is_stranded": false,
+    "upstream_lineage": {
+      "pr_5910": {
+        "number": 5910,
+        "state": "OPEN",
+        "mergeable": "MERGEABLE",
+        "head_sha": "83ba051206ada6569ab1f31b701b29304037b641"
+      },
+      "pr_5908": {
+        "number": 5908,
+        "state": "OPEN",
+        "mergeable": "MERGEABLE",
+        "head_sha": "b9966ad380384752114f49ce9b2493fd5304b4c7"
+      }
+    }
+  },
+  "resolution": {
+    "integrator_code_changed": false,
+    "reason_no_code_change": "auto_integrator.py is operating as designed by enforcing strict repository isolation during live execution. Live merges require a dedicated integration path rather than mutating shared checkouts. The root cause is live runtime supervisor configuration, not a defect in auto_integrator.py.",
+    "action_taken": "Documented full root cause trace and verified original PR #5913 is healthy, open, mergeable, 0 commits behind dev, passing all required CI checks, and not stranded."
+  },
+  "acceptance": {
+    "root_cause_documented": true,
+    "original_pr_updated_or_superseded_and_not_stranded": true
+  }
+}
