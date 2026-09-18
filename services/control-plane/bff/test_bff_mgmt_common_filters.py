@@ -7,6 +7,37 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+# RETAINED_COMPOSITION (see task BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001):
+# Portfolio Book (`/bff/management/portfolio-book*`) is already extracted into
+# `capital/router.py::create_capital_router`, and main.py mounts that same
+# real router (no duplicate route). Performance Attribution
+# (`/bff/management/performance-attribution*`) is already extracted into
+# `management_read_models/ranking_router.py::create_performance_attribution_router`,
+# which takes `pm12_performance_attribution_response` as an injected
+# dependency; main.py supplies its own `_pm12_performance_attribution_response`
+# closure for that dependency, and no equivalent standalone implementation of
+# the sources/facts/grouping pipeline it wraps
+# (`_pm12_performance_attribution_sources` / `_facts` / `_page_entries` /
+# `_rows`) exists outside main.py. Building a B05-style standalone app for
+# this file would therefore require either reimplementing that pipeline in
+# the test (forbidden by the migration's rule against copying production
+# logic into tests) or fabricating a fake response builder that no longer
+# exercises the pipeline this suite is meant to cover, so this file keeps a
+# package-qualified `from services.control_plane.bff import main as bff_main`
+# import rather than a `sys.path` hack.
+#
+# Separately, this session's investigation of the file found that the real
+# `capital/router.py` portfolio-book handlers do not read any of the
+# `pool`/`strategyId`/`personaId`/`runtimeId` query filters this suite
+# exercises (`CapitalService.portfolio_rows()` takes no filter arguments),
+# so `test_portfolio_book_common_filters`,
+# `test_portfolio_book_pools_common_filters`, and
+# `test_portfolio_book_exposure_common_filters` already fail against the real
+# production app on `dev`, independent of this migration. That is a
+# pre-existing product/test gap in `capital/router.py`, which is outside this
+# task's declared artifacts and receiver-module scope; it is left unchanged
+# here to avoid silently weakening the suite's assertions or touching a file
+# this task does not own.
 from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.ports import ReadSurfacePorts
 

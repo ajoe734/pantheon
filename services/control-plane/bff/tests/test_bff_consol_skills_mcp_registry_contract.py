@@ -10,17 +10,22 @@ Acceptance criteria:
 """
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any, Dict, Iterator, List
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
-from services.control_plane.bff.ports import create_in_memory_read_surface_ports, create_read_surface_ports
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.models import utc_now
+from services.control_plane.bff.tools_integrations.router import create_integrations_router
+from services.control_plane.bff.tools_integrations.service import IntegrationsService
 
 OPERATOR_AUTH = "Bearer consol-skills-op:operator"
 HEADERS = {"Authorization": OPERATOR_AUTH}
@@ -81,24 +86,35 @@ _MCP_TOOLS_FIXTURE: Dict[str, Any] = {
 }
 
 
-class _ConsolSkillsTestStore:
-    def __init__(self, skills: Dict[str, Any], tools: Dict[str, Any], mcp_servers: Dict[str, Any], mcp_tools: Dict[str, Any]) -> None:
-        self.ports = create_in_memory_read_surface_ports(
-            operations_consultation_kwargs={
-                "skills": list(skills.values()) if isinstance(skills, dict) else list(skills),
-                "tools": list(tools.values()) if isinstance(tools, dict) else list(tools),
-                "mcp_servers": list(mcp_servers.values()) if isinstance(mcp_servers, dict) else list(mcp_servers),
-                "mcp_tools": list(mcp_tools.values()) if isinstance(mcp_tools, dict) else list(mcp_tools),
-            }
-        )
+class _ConsolSkillsReadStore:
+    """Minimal read-store double exposing the four list_* methods that the
+    real, extracted Tools & Integrations service (tools_integrations/service.py)
+    reads from (see IntegrationsService.tool_fixture_records / skill_fixture_records
+    / mcp_server_fixture_records / mcp_tool_fixture_records)."""
 
-    def dataset_source(self, dataset: str) -> str:
-        if dataset in ("skills", "tools", "mcp_servers", "mcp_tools"):
-            return "typed_store"
-        return self.ports.dataset_source(dataset)
+    def __init__(
+        self,
+        skills: Dict[str, Any],
+        tools: Dict[str, Any],
+        mcp_servers: Dict[str, Any],
+        mcp_tools: Dict[str, Any],
+    ) -> None:
+        self._skills = list(skills.values()) if isinstance(skills, dict) else list(skills)
+        self._tools = list(tools.values()) if isinstance(tools, dict) else list(tools)
+        self._mcp_servers = list(mcp_servers.values()) if isinstance(mcp_servers, dict) else list(mcp_servers)
+        self._mcp_tools = list(mcp_tools.values()) if isinstance(mcp_tools, dict) else list(mcp_tools)
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.ports, name)
+    def list_skills(self) -> List[Dict[str, Any]]:
+        return list(self._skills)
+
+    def list_tools(self) -> List[Dict[str, Any]]:
+        return list(self._tools)
+
+    def list_mcp_servers(self) -> List[Dict[str, Any]]:
+        return list(self._mcp_servers)
+
+    def list_mcp_tools(self) -> List[Dict[str, Any]]:
+        return list(self._mcp_tools)
 
 
 @contextmanager
@@ -109,58 +125,31 @@ def _bff_with_stores(
     mcp_servers: Dict[str, Any],
     mcp_tools: Dict[str, Any],
 ) -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        skills_path = os.path.join(td, "skills.json")
-        tools_path = os.path.join(td, "tools.json")
-        mcp_servers_path = os.path.join(td, "mcp_servers.json")
-        mcp_tools_path = os.path.join(td, "mcp_tools.json")
+    """Mount the real, extracted Tools & Integrations router (production
+    wiring: services.control_plane.bff.tools_integrations.router) on a fresh
+    standalone FastAPI app, backed by an in-memory read-store double.
 
-        with open(skills_path, "w") as f:
-            json.dump(skills, f)
-        with open(tools_path, "w") as f:
-            json.dump(tools, f)
-        with open(mcp_servers_path, "w") as f:
-            json.dump(mcp_servers, f)
-        with open(mcp_tools_path, "w") as f:
-            json.dump(mcp_tools, f)
-
-        original_store = bff_main.read_store
-        original_mcp_registry = dict(bff_main._MCP_SERVER_REGISTRY)
-        original_tool_registry = dict(bff_main._TOOL_REGISTRY)
-        original_skill_registry = dict(bff_main._SKILL_REGISTRY)
-        original_mcp_tool_registry = dict(bff_main._MCP_TOOL_REGISTRY)
-        env_backup = {}
-        env_vars = {
-            "PANTHEON_BFF_SKILLS_STORE": skills_path,
-            "PANTHEON_BFF_TOOLS_STORE": tools_path,
-            "PANTHEON_BFF_MCP_SERVERS_STORE": mcp_servers_path,
-            "PANTHEON_BFF_MCP_TOOLS_STORE": mcp_tools_path,
-        }
-        for k, v in env_vars.items():
-            env_backup[k] = os.environ.get(k)
-            os.environ[k] = v
-        try:
-            bff_main.read_store = _ConsolSkillsTestStore(skills, tools, mcp_servers, mcp_tools)
-            bff_main._MCP_SERVER_REGISTRY.clear()
-            bff_main._TOOL_REGISTRY.clear()
-            bff_main._SKILL_REGISTRY.clear()
-            bff_main._MCP_TOOL_REGISTRY.clear()
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
-            bff_main._MCP_SERVER_REGISTRY.clear()
-            bff_main._MCP_SERVER_REGISTRY.update(original_mcp_registry)
-            bff_main._TOOL_REGISTRY.clear()
-            bff_main._TOOL_REGISTRY.update(original_tool_registry)
-            bff_main._SKILL_REGISTRY.clear()
-            bff_main._SKILL_REGISTRY.update(original_skill_registry)
-            bff_main._MCP_TOOL_REGISTRY.clear()
-            bff_main._MCP_TOOL_REGISTRY.update(original_mcp_tool_registry)
-            for k, v in env_backup.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+    A fresh IntegrationsService is built per call, so its mcp_server_registry /
+    tool_registry / skill_registry / mcp_tool_registry all start empty --
+    replacing the old bff_main global-registry backup/clear/restore dance.
+    """
+    read_store = _ConsolSkillsReadStore(skills, tools, mcp_servers, mcp_tools)
+    service = IntegrationsService(read_store=read_store, bff_error_fn=bff_error, utc_now_fn=utc_now)
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(
+        create_integrations_router(
+            service=service,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            require_mcp_tool_write_role=require_operator_role,
+            require_openclaw_command_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now_fn=utc_now,
+        )
+    )
+    yield TestClient(app)
 
 
 # ---------------------------------------------------------------------------
