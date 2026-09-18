@@ -10,14 +10,106 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from command_queue import CommandStore
-from rebalance_authority_test_support import (
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.auth.policy import (
+    OperatorIdentity,
+    extract_identity,
+)
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import CommandType, ObjectType, TargetObject
+from services.control_plane.bff.personas import service as persona_service_module
+from services.control_plane.bff.personas.service import (
+    _current_persona_service,
+    _pm12_attach_ranking_snapshot,
+    _pm12_binding_runtime_context,
+    _pm12_runtime_session_resolution,
+)
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
     CapitalBffAuthorityHarness,
     PplProjectionTestDouble,
+    PplRankingProjectionHarness,
+    _pm12_allocation_line_digest,
 )
+
+
+class _ActiveProjectionApp:
+    """Module-scoped handle on the currently mounted isolated BFF app.
+
+    Replaces the composition root's process globals (its read-surface,
+    command-store and final-contract idempotency module attributes) with the
+    per-test harness instance the routers were mounted against.
+    """
+
+    harness: PplRankingProjectionHarness | None = None
+
+    @property
+    def read_surface(self) -> Any:
+        return self.harness.read_surface if self.harness is not None else None
+
+    @read_surface.setter
+    def read_surface(self, value: Any) -> None:
+        if self.harness is not None and value is not None:
+            self.harness.set_read_surface(value)
+
+    @property
+    def command_store(self) -> Any:
+        return self.harness.command_store if self.harness is not None else None
+
+    @command_store.setter
+    def command_store(self, value: Any) -> None:
+        if self.harness is not None and value is not None:
+            self.harness.command_store = value
+
+    @property
+    def final_idempotency(self) -> dict:
+        return self.harness.final_idempotency if self.harness is not None else {}
+
+
+_active = _ActiveProjectionApp()
+
+
+def _restart_client() -> TestClient:
+    """Rebuild process-local BFF state over the same durable command file."""
+    assert _active.harness is not None
+    _active.harness = _active.harness.restart(read_surface=_active.harness.read_surface)
+    return _active.harness.client()
+
+
+def _ranking_snapshot_id(
+    items: list[dict[str, Any]], *, surface: str, period: str
+) -> str:
+    """Compute one ranking snapshot id through the real production projector.
+
+    ``_pm12_attach_ranking_snapshot`` is the extracted owner of the snapshot
+    identity formula; it resolves its ranking write owner from the active
+    PersonaService, so the call is scoped to a disposable isolated harness.
+    """
+    harness = PplRankingProjectionHarness()
+    token = _current_persona_service.set(harness.persona_service)
+    try:
+        _, snapshot_id = _pm12_attach_ranking_snapshot(
+            items, surface=surface, period=period
+        )
+    finally:
+        _current_persona_service.reset(token)
+    return snapshot_id
+
+
+# RETAINED_COMPOSITION (seam gap): ``_pm12_allocation_line_assertion_hash`` is
+# referenced only by test_allocation_line_assertion_hash_is_numeric_semantic_
+# and_fail_closed below. No module in the BFF tree defines that symbol any
+# more -- neither main.py nor personas/service.py nor capital/ -- so there is
+# no real implementation to import and reimplementing the canonicalizer inside
+# the test would duplicate product logic. The reference is kept pointing at the
+# composition root (where it used to live) rather than being faked or skipped,
+# so the failure stays visible until the symbol is restored/extracted.
+def _bff_main_module():
+    bff_dir = os.path.dirname(os.path.dirname(__file__))
+    if bff_dir not in sys.path:
+        sys.path.insert(0, bff_dir)
+    import main as bff_main  # noqa: E402
+
+    return bff_main
 
 
 HEADERS = {"Authorization": "Bearer codex2-ppl-alloc:operator,reviewer"}
@@ -46,10 +138,16 @@ def _browser_json_number_round_trip(value: Any) -> Any:
 
 
 def _client(td: str, *, fallback: bool = True) -> TestClient:
-    del td, fallback
-    bff_main.read_store = PplProjectionTestDouble()
-    bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    """Mount a fresh isolated BFF app over a fresh PPL projection double.
+
+    Each call builds new router instances, so the capital-command idempotency
+    store the composition root keeps in ``main._CAPITAL_BFF_IDEMPOTENCY``
+    starts empty exactly as the previous explicit ``.clear()`` guaranteed.
+    """
+    _active.harness = PplRankingProjectionHarness(
+        command_path=os.path.join(td, "bff-commands.jsonl")
+    )
+    return _active.harness.client()
 
 
 def _write_live_binding(store: PplProjectionTestDouble, *, current_weight: float) -> None:
@@ -231,12 +329,12 @@ def _strict_test_identity(
     authorization: str | None,
     mfa_token: str | None = None,
     session_cookie: str | None = None,
-) -> bff_main.OperatorIdentity:
+) -> OperatorIdentity:
     del session_cookie
     assert authorization and authorization.startswith("Bearer ")
     parts = authorization.removeprefix("Bearer ").split(":")
     roles = parts[1].split(",") if len(parts) > 1 else ["viewer"]
-    return bff_main.OperatorIdentity(
+    return OperatorIdentity(
         operator_id=parts[0],
         roles=roles,
         mfa_verified=bool(mfa_token) or "mfa" in parts[2:],
@@ -297,12 +395,12 @@ def test_snapshot_id_is_stable_across_semantically_equivalent_item_ordering() ->
         for item in reversed(items)
     ]
 
-    snapshot_id = bff_main._pm12_ranking_snapshot_id(
+    snapshot_id = _ranking_snapshot_id(
         items,
         surface="quarterly",
         period="2026-Q3",
     )
-    permuted_snapshot_id = bff_main._pm12_ranking_snapshot_id(
+    permuted_snapshot_id = _ranking_snapshot_id(
         permuted_items,
         surface="quarterly",
         period="2026-Q3",
@@ -368,7 +466,7 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
         assert activated.status_code == 200, activated.text
         assert activated.json()["status"] == "active"
 
-        store = bff_main.read_store
+        store = _active.read_surface
         assert isinstance(store, PplProjectionTestDouble)
         store.add_authoritative_binding(activated.json())
         store.create_persona(
@@ -431,7 +529,7 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
         monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
         monkeypatch.setenv("PANTHEON_LIVE_BROKER_ENABLED", "false")
         monkeypatch.setenv("PANTHEON_CANARY_EXECUTION_ENABLED", "false")
-        monkeypatch.setattr(bff_main, "_extract_identity", _strict_test_identity)
+        monkeypatch.setattr(auth_policy, "extract_identity", _strict_test_identity)
         operator_headers = {
             "Authorization": "Bearer paper-operator:operator:mfa",
         }
@@ -661,7 +759,7 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
         assert result["allocation_readback"][0]["current_weight"] == 1.0
         assert result["allocation_readback"][0]["binding_id"] == PAPER_BINDING_ID
 
-        stored = bff_main.command_store.get_command(apply_command_id)
+        stored = _active.command_store.get_command(apply_command_id)
         assert stored is not None
         preconditions = stored["audit"]["precondition_evidence"]
         assert preconditions["approval_decision_id"] == approval_id
@@ -672,6 +770,7 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
 
 
 def test_allocation_line_assertion_hash_is_numeric_semantic_and_fail_closed() -> None:
+    bff_main = _bff_main_module()
     admitted = {
         "current_weight": 0.0,
         "target_weight": 1.0,
@@ -707,15 +806,15 @@ def test_allocation_line_assertion_hash_is_numeric_semantic_and_fail_closed() ->
 
 def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
+        original_store = _active.read_surface
+        original_command_store = _active.command_store
         harness: CapitalBffAuthorityHarness | None = None
         try:
             harness = CapitalBffAuthorityHarness(Path(td))
             harness.__enter__()
             assert harness.client is not None
             client = harness.client
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             owner_binding = client.post(
                 "/api/v1/bindings",
@@ -971,7 +1070,7 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
                 forged_line = {**line, field: forged_value}
                 if recompute_digest:
                     forged_line.pop("allocation_line_digest", None)
-                    forged_line["allocation_line_digest"] = bff_main._pm12_allocation_line_digest(
+                    forged_line["allocation_line_digest"] = _pm12_allocation_line_digest(
                         forged_line
                     )
                 tampered = client.post(
@@ -1082,17 +1181,17 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
         finally:
             if harness is not None:
                 harness.__exit__(None, None, None)
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
+            _active.read_surface = original_store
+            _active.command_store = original_command_store
 
 
 def test_durable_lineage_integrity_fails_closed_after_same_id_store_tamper() -> None:
     for tamper_target in ("ranking_snapshot", "allocation_evaluation"):
         with tempfile.TemporaryDirectory() as td:
-            original_store = bff_main.read_store
+            original_store = _active.read_surface
             try:
                 client = _client(td, fallback=False)
-                store = bff_main.read_store
+                store = _active.read_surface
                 assert isinstance(store, PplProjectionTestDouble)
                 _seed_live_persona(store)
                 ranking = client.get(
@@ -1129,8 +1228,8 @@ def test_durable_lineage_integrity_fails_closed_after_same_id_store_tamper() -> 
                         "target_weight",
                         0.99,
                     )
-                bff_main.read_store = store.clone_for_restart()
-                store = bff_main.read_store
+                _active.read_surface = store.clone_for_restart()
+                store = _active.read_surface
 
                 if tamper_target == "ranking_snapshot":
                     rejected = client.post(
@@ -1166,15 +1265,15 @@ def test_durable_lineage_integrity_fails_closed_after_same_id_store_tamper() -> 
                 assert rejected.status_code == 422, rejected.text
                 assert "integrity" in rejected.text.lower()
             finally:
-                bff_main.read_store = original_store
+                _active.read_surface = original_store
 
 
 def test_binding_weight_mutation_changes_snapshot_and_quarterly_surfaces_converge() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
@@ -1241,15 +1340,15 @@ def test_binding_weight_mutation_changes_snapshot_and_quarterly_surfaces_converg
                 for item in recommendation_body["data"]["items"]
             } == {0.07}
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_binding_evidence_is_persona_scoped_and_rbac_keeps_snapshot_stable() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
             store.create_persona(
@@ -1340,15 +1439,15 @@ def test_binding_evidence_is_persona_scoped_and_rbac_keeps_snapshot_stable() -> 
             assert admin_live_by_id[live_ref_id]["redacted"] is False
             assert operator_live["evidence_ref_ids"] == admin_live["evidence_ref_ids"]
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_recommendations_preserve_archetype_filter_projection() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
@@ -1385,15 +1484,15 @@ def test_recommendations_preserve_archetype_filter_projection() -> None:
             assert sum(filtered_action_counts.values()) == body["page_info"]["total"]
             assert body["data"]["summary"]["recommendation_count"] == body["page_info"]["total"]
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_live_runtime_without_active_persona_binding_fails_closed() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td, fallback=False)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             persona_id = "persona-ppl-alloc-012-runtime-only"
             runtime_id = "runtime-ppl-alloc-012-runtime-only"
@@ -1437,15 +1536,15 @@ def test_live_runtime_without_active_persona_binding_fails_closed() -> None:
             assert row["eligible"] is False
             assert "missing_capital_binding" in row["exclusion_codes"]
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_runtime_binding_mode_is_actual_stage_not_binding_ceiling() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td, fallback=False)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             persona_id = "persona-ppl-alloc-012-paper-under-live-ceiling"
             binding_id = "binding-ppl-alloc-012-paper-under-live-ceiling"
@@ -1502,15 +1601,15 @@ def test_runtime_binding_mode_is_actual_stage_not_binding_ceiling() -> None:
             assert row["current_weight_source"] == "not_applicable_paper_ledger"
             assert row["eligible"] is True
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_paper_runtime_session_requires_runtime_manager_monitoring_owner() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             _client(td, fallback=False)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             store.get_sessions_for_persona = lambda _persona_id: [  # type: ignore[method-assign]
                 {
@@ -1522,7 +1621,7 @@ def test_paper_runtime_session_requires_runtime_manager_monitoring_owner() -> No
             store.list_authoritative_paper_runtime_monitoring_sessions = (  # type: ignore[method-assign]
                 lambda: [None]
             )
-            session, resolution = bff_main._pm12_runtime_session_resolution(
+            session, resolution = _pm12_runtime_session_resolution(
                 PAPER_PERSONA_ID,
                 {
                     "runtime_id": PAPER_RUNTIME_ID,
@@ -1533,15 +1632,15 @@ def test_paper_runtime_session_requires_runtime_manager_monitoring_owner() -> No
             assert session is None
             assert resolution == "missing"
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_missing_runtime_fails_closed_even_with_live_binding_and_observations() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td, fallback=False)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             persona_id = "persona-ppl-alloc-012-missing-runtime"
             runtime_id = "runtime-ppl-alloc-012-phantom"
@@ -1584,7 +1683,7 @@ def test_missing_runtime_fails_closed_even_with_live_binding_and_observations() 
             assert row["eligible"] is False
             assert "missing_runtime" in row["exclusion_codes"]
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_runtime_binding_requires_fresh_explicit_deployment_mode() -> None:
@@ -1593,10 +1692,10 @@ def test_runtime_binding_requires_fresh_explicit_deployment_mode() -> None:
         ({"stale": True}, set(), "stale", "stale_runtime"),
     ):
         with tempfile.TemporaryDirectory() as td:
-            original_store = bff_main.read_store
+            original_store = _active.read_surface
             try:
                 client = _client(td, fallback=False)
-                store = bff_main.read_store
+                store = _active.read_surface
                 assert isinstance(store, PplProjectionTestDouble)
                 _seed_live_persona(store)
                 original_runtimes = store.list_runtime_bindings
@@ -1629,7 +1728,7 @@ def test_runtime_binding_requires_fresh_explicit_deployment_mode() -> None:
                 assert row["eligible"] is False
                 assert expected_code in row["exclusion_codes"]
             finally:
-                bff_main.read_store = original_store
+                _active.read_surface = original_store
 
 
 def test_ended_or_stale_runtime_session_fails_closed() -> None:
@@ -1642,10 +1741,10 @@ def test_ended_or_stale_runtime_session_fails_closed() -> None:
         ),
     ):
         with tempfile.TemporaryDirectory() as td:
-            original_store = bff_main.read_store
+            original_store = _active.read_surface
             try:
                 client = _client(td, fallback=False)
-                store = bff_main.read_store
+                store = _active.read_surface
                 assert isinstance(store, PplProjectionTestDouble)
                 _seed_live_persona(store)
                 original_sessions = store.get_sessions_for_persona
@@ -1674,7 +1773,7 @@ def test_ended_or_stale_runtime_session_fails_closed() -> None:
                 assert row["eligible"] is False
                 assert expected_code in row["exclusion_codes"]
             finally:
-                bff_main.read_store = original_store
+                _active.read_surface = original_store
 
 
 def test_stale_or_mismatched_telemetry_cannot_supply_ranking_coverage() -> None:
@@ -1685,10 +1784,10 @@ def test_stale_or_mismatched_telemetry_cannot_supply_ranking_coverage() -> None:
         ({"runtime_id": "runtime-ppl-alloc-012-other"}, "identity_mismatch"),
     ):
         with tempfile.TemporaryDirectory() as td:
-            original_store = bff_main.read_store
+            original_store = _active.read_surface
             try:
                 client = _client(td, fallback=False)
-                store = bff_main.read_store
+                store = _active.read_surface
                 assert isinstance(store, PplProjectionTestDouble)
                 _seed_live_persona(store)
                 original_telemetry = store.get_telemetry_summary
@@ -1726,7 +1825,7 @@ def test_stale_or_mismatched_telemetry_cannot_supply_ranking_coverage() -> None:
                 }[expected_resolution]
                 assert expected_code in row["exclusion_codes"]
             finally:
-                bff_main.read_store = original_store
+                _active.read_surface = original_store
 
 
 def test_declared_stopped_runtime_cannot_be_authoritative_despite_active_status() -> None:
@@ -1750,7 +1849,7 @@ def test_declared_stopped_runtime_cannot_be_authoritative_despite_active_status(
         "state": "stopped",
         "runtime_kind": "live",
     }
-    selected_binding, selected_runtime, resolution = bff_main._pm12_binding_runtime_context(
+    selected_binding, selected_runtime, resolution = _pm12_binding_runtime_context(
         persona_id=persona_id,
         item={"binding_id": binding_id, "runtime_ids": [runtime_id]},
         bindings=[binding],
@@ -1761,10 +1860,10 @@ def test_declared_stopped_runtime_cannot_be_authoritative_despite_active_status(
     assert "inactive" in resolution
 
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td, fallback=False)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             store.create_persona(
                 persona_id=persona_id,
@@ -1831,15 +1930,15 @@ def test_declared_stopped_runtime_cannot_be_authoritative_despite_active_status(
             assert row["eligible"] is False
             assert "inactive_runtime" in row["exclusion_codes"]
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_invalid_binding_weights_never_serialize_or_become_eligible() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td, fallback=False)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             invalid_weights = {
                 "nan": float("nan"),
@@ -1909,15 +2008,15 @@ def test_invalid_binding_weights_never_serialize_or_become_eligible() -> None:
                 assert row["eligible"] is False
                 assert "missing_current_weight" in row["exclusion_codes"]
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_paper_ledger_without_persona_binding_remains_ranking_eligible() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td, fallback=False)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             persona_id = "persona-ppl-alloc-012-paper-unbound"
             runtime_id = "runtime-ppl-alloc-012-paper-unbound"
@@ -1967,19 +2066,19 @@ def test_paper_ledger_without_persona_binding_remains_ranking_eligible() -> None
             assert row["eligible"] is True
             assert "missing_capital_binding" not in row["exclusion_codes"]
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_stable_promotion_submit_replays_original_snapshot_after_ranking_mutation() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        original_store = _active.read_surface
+        original_command_store = _active.command_store
+        original_final_idempotency = dict(_active.final_idempotency)
         try:
             client = _client(td)
-            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            store = bff_main.read_store
+            _active.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            _active.final_idempotency.clear()
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
@@ -2010,7 +2109,7 @@ def test_stable_promotion_submit_replays_original_snapshot_after_ranking_mutatio
             original_review_id = submit.json()["data"]["review_id"]
             assert original_review_id != recommendation_id
             assert submit.json()["data"]["ranking_snapshot_id"] == original_snapshot_id
-            assert bff_main.command_store._get_all_commands()[0]["params"][
+            assert _active.command_store._get_all_commands()[0]["params"][
                 "ranking_snapshot_id"
             ] == original_snapshot_id
             original_decision = client.post(
@@ -2130,8 +2229,8 @@ def test_stable_promotion_submit_replays_original_snapshot_after_ranking_mutatio
             assert replay_body["data"]["ranking_snapshot_id"] == original_snapshot_id
             assert replay_body["meta"]["ranking_snapshot_id"] == original_snapshot_id
             assert replay_body["data"]["review"]["ranking_snapshot_id"] == original_snapshot_id
-            assert len(bff_main.command_store._get_all_commands()) == 2
-            assert bff_main.command_store._get_all_commands()[0]["params"][
+            assert len(_active.command_store._get_all_commands()) == 2
+            assert _active.command_store._get_all_commands()[0]["params"][
                 "ranking_snapshot_id"
             ] == original_snapshot_id
 
@@ -2157,7 +2256,7 @@ def test_stable_promotion_submit_replays_original_snapshot_after_ranking_mutatio
             assert superseding_body["data"]["status"] == "pending_human_gate"
             assert superseding_body["data"]["review"]["decision_status"] == "pending"
             superseding_review_id = superseding_body["data"]["review_id"]
-            assert len(bff_main.command_store._get_all_commands()) == 3
+            assert len(_active.command_store._get_all_commands()) == 3
             inbox = client.get(
                 "/bff/management/human-inbox",
                 headers=HEADERS,
@@ -2193,34 +2292,34 @@ def test_stable_promotion_submit_replays_original_snapshot_after_ranking_mutatio
             assert superseding_decision.json()["data"]["review_id"] == (
                 superseding_review_id
             )
-            assert len(bff_main.command_store._get_all_commands()) == 4
+            assert len(_active.command_store._get_all_commands()) == 4
         finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+            _active.read_surface = original_store
+            _active.command_store = original_command_store
+            _active.final_idempotency.clear()
+            _active.final_idempotency.update(original_final_idempotency)
 
 
 def test_stable_promotion_submit_uses_each_admitted_snapshot_after_mutation_and_restart(
     monkeypatch,
 ) -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        original_store = _active.read_surface
+        original_command_store = _active.command_store
+        original_final_idempotency = dict(_active.final_idempotency)
         client: TestClient | None = None
         try:
             clock = {"now": datetime(2026, 7, 24, 23, 0, tzinfo=timezone.utc)}
             monkeypatch.setattr(
-                bff_main,
+                persona_service_module,
                 "utc_now",
                 lambda: clock["now"].isoformat().replace("+00:00", "Z"),
             )
             client = _client(td)
             command_path = os.path.join(td, "commands.jsonl")
-            bff_main.command_store = CommandStore(command_path)
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            store = bff_main.read_store
+            _active.command_store = CommandStore(command_path)
+            _active.final_idempotency.clear()
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
@@ -2261,10 +2360,10 @@ def test_stable_promotion_submit_uses_each_admitted_snapshot_after_mutation_and_
 
             client.close()
             client = None
-            bff_main.read_store = store.clone_for_restart()
-            store = bff_main.read_store
-            bff_main.command_store = CommandStore(command_path)
-            client = TestClient(bff_main.app, raise_server_exceptions=False)
+            _active.read_surface = store.clone_for_restart()
+            store = _active.read_surface
+            _active.command_store = CommandStore(command_path)
+            client = _restart_client()
 
             restarted_response = client.get(
                 "/bff/management/quarterly-ranking/recommendations",
@@ -2300,7 +2399,7 @@ def test_stable_promotion_submit_uses_each_admitted_snapshot_after_mutation_and_
             assert historical_exact_submit.status_code == 409, (
                 historical_exact_submit.text
             )
-            assert bff_main.command_store._get_all_commands() == []
+            assert _active.command_store._get_all_commands() == []
 
             original_submit = client.post(
                 f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
@@ -2348,7 +2447,7 @@ def test_stable_promotion_submit_uses_each_admitted_snapshot_after_mutation_and_
             restarted_review_id = body["data"]["review_id"]
             assert restarted_review_id != original_review_id
             assert body["meta"]["live_capital_mutation"] is False
-            commands = bff_main.command_store._get_all_commands()
+            commands = _active.command_store._get_all_commands()
             assert len(commands) == 2
             original_params = commands[0]["params"]
             restarted_params = commands[1]["params"]
@@ -2416,29 +2515,29 @@ def test_stable_promotion_submit_uses_each_admitted_snapshot_after_mutation_and_
         finally:
             if client is not None:
                 client.close()
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+            _active.read_surface = original_store
+            _active.command_store = original_command_store
+            _active.final_idempotency.clear()
+            _active.final_idempotency.update(original_final_idempotency)
 
 
 def test_promotion_first_submit_rejects_expired_snapshot(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        original_store = _active.read_surface
+        original_command_store = _active.command_store
+        original_final_idempotency = dict(_active.final_idempotency)
         try:
             clock = {"now": datetime(2026, 7, 24, 23, 0, tzinfo=timezone.utc)}
             monkeypatch.setattr(
-                bff_main,
+                persona_service_module,
                 "utc_now",
                 lambda: clock["now"].isoformat().replace("+00:00", "Z"),
             )
             monkeypatch.setenv("PANTHEON_PM12_RANKING_SNAPSHOT_TTL_SECONDS", "60")
             client = _client(td)
-            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            store = bff_main.read_store
+            _active.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            _active.final_idempotency.clear()
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
@@ -2473,24 +2572,24 @@ def test_promotion_first_submit_rejects_expired_snapshot(monkeypatch) -> None:
             assert submit.json()["error"]["details"]["precondition_failed"] == (
                 "ranking_snapshot_id"
             )
-            assert bff_main.command_store._get_all_commands() == []
+            assert _active.command_store._get_all_commands() == []
         finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+            _active.read_surface = original_store
+            _active.command_store = original_command_store
+            _active.final_idempotency.clear()
+            _active.final_idempotency.update(original_final_idempotency)
 
 
 def test_promotion_first_submit_rejects_unknown_forged_or_mutated_snapshot_tuple() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        original_store = _active.read_surface
+        original_command_store = _active.command_store
+        original_final_idempotency = dict(_active.final_idempotency)
         try:
             client = _client(td)
-            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            store = bff_main.read_store
+            _active.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            _active.final_idempotency.clear()
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
@@ -2563,24 +2662,24 @@ def test_promotion_first_submit_rejects_unknown_forged_or_mutated_snapshot_tuple
             assert mutated.json()["error"]["details"]["precondition_failed"] == (
                 "ranking_snapshot_id"
             )
-            assert bff_main.command_store._get_all_commands() == []
+            assert _active.command_store._get_all_commands() == []
         finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+            _active.read_surface = original_store
+            _active.command_store = original_command_store
+            _active.final_idempotency.clear()
+            _active.final_idempotency.update(original_final_idempotency)
 
 
 def test_legacy_promotion_submit_remains_read_only_when_current_revision_is_submitted() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        original_store = _active.read_surface
+        original_command_store = _active.command_store
+        original_final_idempotency = dict(_active.final_idempotency)
         try:
             client = _client(td)
-            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            store = bff_main.read_store
+            _active.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            _active.final_idempotency.clear()
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
@@ -2605,11 +2704,11 @@ def test_legacy_promotion_submit_remains_read_only_when_current_revision_is_subm
                 "persona_id": LIVE_PERSONA_ID,
                 "live_capital_mutation": False,
             }
-            bff_main.command_store.submit_command(
+            _active.command_store.submit_command(
                 command_id="cmd-ppl-alloc-012-legacy-submit",
-                command_type=bff_main.CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
-                target=bff_main.TargetObject(
-                    type=bff_main.ObjectType.RANKING,
+                command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+                target=TargetObject(
+                    type=ObjectType.RANKING,
                     id=recommendation_id,
                 ),
                 submitted_at="2026-07-10T00:00:00Z",
@@ -2620,7 +2719,7 @@ def test_legacy_promotion_submit_remains_read_only_when_current_revision_is_subm
                     "timestamp": "2026-07-10T00:00:00Z",
                 },
             )
-            commands_before = bff_main.command_store._get_all_commands()
+            commands_before = _active.command_store._get_all_commands()
             assert len(commands_before) == 1
             assert "ranking_snapshot_id" not in commands_before[0]["params"]
             assert "source_type" not in commands_before[0]["params"]
@@ -2667,7 +2766,7 @@ def test_legacy_promotion_submit_remains_read_only_when_current_revision_is_subm
             new_review_id = submit.json()["data"]["review_id"]
             assert new_review_id != recommendation_id
 
-            commands_after = bff_main.command_store._get_all_commands()
+            commands_after = _active.command_store._get_all_commands()
             assert len(commands_after) == 2
             assert "ranking_snapshot_id" not in commands_after[0]["params"]
             assert "source_type" not in commands_after[0]["params"]
@@ -2681,22 +2780,22 @@ def test_legacy_promotion_submit_remains_read_only_when_current_revision_is_subm
                 new_review_id
             )
         finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+            _active.read_surface = original_store
+            _active.command_store = original_command_store
+            _active.final_idempotency.clear()
+            _active.final_idempotency.update(original_final_idempotency)
 
 
 def test_promotion_submit_cross_role_replay_redacts_admin_only_evidence() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        original_store = _active.read_surface
+        original_command_store = _active.command_store
+        original_final_idempotency = dict(_active.final_idempotency)
         try:
             client = _client(td)
-            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            store = bff_main.read_store
+            _active.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            _active.final_idempotency.clear()
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
             restricted_ref_id = "evidence-ppl-alloc-012-admin-only-binding"
@@ -2780,7 +2879,7 @@ def test_promotion_submit_cross_role_replay_redacts_admin_only_evidence() -> Non
             assert replay_body["meta"]["idempotency"]["replayed"] is True
             assert replay_body["data"]["ranking_snapshot_id"] == stored_snapshot_id
             assert replay_body["meta"]["ranking_snapshot_id"] == stored_snapshot_id
-            assert len(bff_main.command_store._get_all_commands()) == 1
+            assert len(_active.command_store._get_all_commands()) == 1
 
             operator_review = replay_body["data"]["review"]
             operator_review_evidence = {
@@ -2818,18 +2917,18 @@ def test_promotion_submit_cross_role_replay_redacts_admin_only_evidence() -> Non
             assert contains_source_document(operator_review) is False
             assert contains_source_document(source_recommendation) is False
         finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+            _active.read_surface = original_store
+            _active.command_store = original_command_store
+            _active.final_idempotency.clear()
+            _active.final_idempotency.update(original_final_idempotency)
 
 
 def test_multiple_active_bindings_fail_closed_without_seed_weight() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td, fallback=False)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             persona_id = "persona-ppl-alloc-012-ambiguous"
             store.create_persona(
@@ -2889,7 +2988,7 @@ def test_multiple_active_bindings_fail_closed_without_seed_weight() -> None:
                 "missing_capital_binding",
             }.issubset(set(row["exclusion_codes"]))
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
@@ -2908,7 +3007,7 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
         "state": "running",
         "runtime_kind": "paper",
     }
-    selected_binding, selected_runtime, resolution = bff_main._pm12_binding_runtime_context(
+    selected_binding, selected_runtime, resolution = _pm12_binding_runtime_context(
         persona_id="persona-mismatch",
         item={
             "binding_id": "binding-current-live",
@@ -2938,7 +3037,7 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
         "state": "stopped",
         "runtime_kind": "live",
     }
-    selected_binding, selected_runtime, resolution = bff_main._pm12_binding_runtime_context(
+    selected_binding, selected_runtime, resolution = _pm12_binding_runtime_context(
         persona_id="persona-conflicting-lifecycle",
         item={
             "binding_id": "binding-expired-despite-status",
@@ -2965,7 +3064,7 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
         "validity": "active",
         "metadata": {"capital_mode": "live", "current_weight": 0.05},
     }
-    selected_binding, selected_runtime, resolution = bff_main._pm12_binding_runtime_context(
+    selected_binding, selected_runtime, resolution = _pm12_binding_runtime_context(
         persona_id="persona-stale-declaration",
         item={"binding_id": "binding-b-expired"},
         bindings=[unrelated_active_binding, declared_expired_binding],
@@ -2976,10 +3075,10 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
     assert resolution == "inactive"
 
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _active.read_surface
         try:
             client = _client(td, fallback=False)
-            store = bff_main.read_store
+            store = _active.read_surface
             assert isinstance(store, PplProjectionTestDouble)
             store.create_persona(
                 persona_id="persona-stage-mismatch",
@@ -3032,7 +3131,7 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
             assert inactive["binding_resolution"] == "inactive"
             assert inactive["eligible"] is False
         finally:
-            bff_main.read_store = original_store
+            _active.read_surface = original_store
 
 
 def test_pm12_quarterly_rows_allocation_policy_compatibility() -> None:
