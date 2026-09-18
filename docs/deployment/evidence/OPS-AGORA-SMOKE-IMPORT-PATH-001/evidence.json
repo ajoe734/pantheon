@@ -1,0 +1,81 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-AGORA-SMOKE-IMPORT-PATH-001",
+  "title": "Agora restart persistence probe cannot import services since 2026-09-15",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "target_repo": "pantheon",
+  "task_class": "development_tooling",
+  "timestamp": "2026-09-18T12:21:00Z",
+  "regression_resolved": {
+    "issue": "OPS-AGORA-SMOKE-IMPORT-PATH-001",
+    "description": "Deployment step 'Dev Agora restart persistence smoke under lease' failed deterministically since 2026-09-15: smoke script runs inside the container by absolute path with cleared PYTHONPATH, having only scripts/ and BFF_ROOT on sys.path. Commit 7b8f8ad3f added imports from services.research to agora.strategy_workshop.reconstruction, causing ModuleNotFoundError: No module named 'services'. Furthermore, existing test test_standalone_cli_imports_without_repository_pythonpath was never executed by Branch CI Gate.",
+    "resolution": "Configured scripts/agora_workshop_restart_persistence_smoke.py to prepend both BFF_ROOT and ROOT to sys.path with BFF_ROOT having precedence so agora resolves to the deployed container modules and services resolves to repository services. Added scripts/test_agora_workshop_restart_persistence_smoke.py to Branch CI Gate under 'Run delivery diagnostics and exit-status regressions' alongside the other deploy helpers. Added explicit regression tests proving standalone CLI execution with cleared PYTHONPATH, resolution of agora to deployed container modules, and execution in Branch CI."
+  },
+  "scope": {
+    "owned": [
+      "scripts/agora_workshop_restart_persistence_smoke.py: configure sys.path with BFF_ROOT at index 0 and ROOT at index 1",
+      "scripts/test_agora_workshop_restart_persistence_smoke.py: regression tests for standalone execution without PYTHONPATH, deployed container agora resolution, and branch-ci execution",
+      ".github/workflows/branch-ci.yml: include scripts/test_agora_workshop_restart_persistence_smoke.py in delivery diagnostics gate",
+      "docs/deployment/evidence/OPS-AGORA-SMOKE-IMPORT-PATH-001/evidence.json: review evidence manifest"
+    ],
+    "not_changing": [
+      "No production imports or modules in services/ were widened or modified",
+      "No change to deployed container Dockerfiles or compose contracts",
+      "No change to auto-integrator or governance state machine"
+    ]
+  },
+  "source_artifacts": {
+    "scripts/agora_workshop_restart_persistence_smoke.py": "a3d9fcd2fc98cc6d15e8db829f22d36bda72d66bece3ce3769abadff37dccd25",
+    "scripts/test_agora_workshop_restart_persistence_smoke.py": "a30b70c6bb0d444ec8f378442d4d3718ed2e0902be3be088787135250c0ede9d",
+    ".github/workflows/branch-ci.yml": "0712ebc465abedbcc7ae8872909729d19c0bc203c9c8a1a013186e3ea6fd9365"
+  },
+  "acceptance_verification": {
+    "criterion_1": {
+      "statement": "the probe imports and runs when executed by absolute path with PYTHONPATH cleared and the working directory outside the repository",
+      "status": "PASSED",
+      "evidence": "Verified by test_standalone_cli_imports_without_repository_pythonpath and manual execution from /tmp with PYTHONPATH cleared: python /path/to/scripts/agora_workshop_restart_persistence_smoke.py --help exits 0 with usage output."
+    },
+    "criterion_2": {
+      "statement": "the agora package still resolves to the modules the deployed container serves rather than any other copy",
+      "status": "PASSED",
+      "evidence": "Verified by test_agora_package_resolves_to_deployed_bff_modules: agora.__file__ resolves strictly to services/control-plane/bff/agora/__init__.py and not services/agora."
+    },
+    "criterion_3": {
+      "statement": "the existing standalone import regression test passes and is executed by the branch gate that already guards the other deploy helpers",
+      "status": "PASSED",
+      "evidence": "Verified by test_branch_ci_gate_executes_persistence_smoke_test and branch-ci.yml: scripts/test_agora_workshop_restart_persistence_smoke.py is included in 'Run delivery diagnostics and exit-status regressions' which guards the other deploy helpers when delivery is touched."
+    },
+    "criterion_4": {
+      "statement": "no production import is widened beyond what the probe itself needs",
+      "status": "PASSED",
+      "evidence": "No files in services/ were modified; sys.path adjustment is confined strictly to the standalone CLI probe helper scripts/agora_workshop_restart_persistence_smoke.py."
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -v scripts/test_agora_workshop_restart_persistence_smoke.py",
+      "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m unittest scripts.test_branch_ci_gate_selection",
+      "cd /tmp && env -i /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python /tmp/pantheon-worker-worktrees/pantheon/ops-agora-smoke-import-path-001/scripts/agora_workshop_restart_persistence_smoke.py --help",
+      "python3 -m py_compile scripts/agora_workshop_restart_persistence_smoke.py scripts/test_agora_workshop_restart_persistence_smoke.py",
+      "git diff --check"
+    ],
+    "results": [
+      "8 passed, 2 warnings in 4.07s in scripts/test_agora_workshop_restart_persistence_smoke.py",
+      "9 passed in scripts.test_branch_ci_gate_selection",
+      "Standalone CLI invocation from /tmp with PYTHONPATH cleared exited 0 with usage output",
+      "py_compile succeeded with zero errors on all modified python scripts",
+      "git diff --check reported clean diff with no whitespace errors"
+    ]
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review_after_commit",
+    "required_checks": [
+      "Verify scripts/agora_workshop_restart_persistence_smoke.py correctly inserts BFF_ROOT and ROOT to sys.path",
+      "Verify scripts/test_agora_workshop_restart_persistence_smoke.py passes all 8 tests",
+      "Verify .github/workflows/branch-ci.yml includes scripts/test_agora_workshop_restart_persistence_smoke.py in delivery diagnostics gate",
+      "Verify no production files or imports in services/ were modified"
+    ]
+  }
+}

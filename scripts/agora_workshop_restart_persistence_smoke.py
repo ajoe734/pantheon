@@ -17,8 +17,12 @@ from typing import Any, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 BFF_ROOT = ROOT / "services" / "control-plane" / "bff"
-if str(BFF_ROOT) not in sys.path:
-    sys.path.insert(0, str(BFF_ROOT))
+if str(ROOT) in sys.path:
+    sys.path.remove(str(ROOT))
+if str(BFF_ROOT) in sys.path:
+    sys.path.remove(str(BFF_ROOT))
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(BFF_ROOT))
 
 from agora.governance.store import (  # noqa: E402
     BACKEND_ENV as GOVERNANCE_BACKEND_ENV,
