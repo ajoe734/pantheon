@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -43,8 +45,59 @@ def _run(**overrides):
 
 
 def test_baseline_reservation_version_tracks_operator_a_semantics() -> None:
-    assert bootstrap.DEFAULT_NAME == "Pantheon Dev Paper Baseline 3"
-    assert bootstrap.DEFAULT_IDEMPOTENCY_KEY == "dev-paper-bootstrap-20260720-operator-a-v3"
+    assert bootstrap.DEFAULT_NAME == "Pantheon Dev Paper Baseline 4"
+    assert bootstrap.DEFAULT_IDEMPOTENCY_KEY == "dev-paper-bootstrap-20260918-operator-a-v4"
+
+
+def test_baseline_requests_the_taiwan_universe_the_bounded_refresh_can_feed() -> None:
+    """The baseline must ask for market data dev is actually allowed to fetch.
+
+    Dev denies provider egress by default and every US daily-bar connector is
+    either DISABLED_BY_BUILD or needs a paid vendor key, so a US baseline can
+    only be fed by a simulation:// snapshot that goes stale and pauses the
+    binding.  tw-twse-tpex-official-market is the one connector the bounded
+    refresh profile admits, and admit_market_snapshot routes a ``.TW`` symbol
+    through the Taiwan branch that requires official TWSE/TPEx lineage.
+    """
+
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "succeeded",
+                    "provisioning_step": "authoritative_readback_complete",
+                    "runtime_id": "rt-1",
+                    "runtime_binding_id": "rb-1",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+    ]
+
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ) as post:
+        _run()
+
+    create_payload = post.call_args_list[1].args[1]
+    assert create_payload["market"] == "TW"
+    symbols = create_payload["symbols"]
+    assert symbols == ["0050.TW"]
+
+    # resolve_bounded_source_refresh_active_symbols in deploy_nonprod_vm.sh only
+    # promotes a binding symbol matching its own regex into the bounded refresh
+    # priority list, and drops anything else silently.  Read that regex out of
+    # the deploy script rather than copying it: a literal copy would keep
+    # passing here while the real gate started discarding the baseline symbol.
+    deploy = (
+        Path(__file__).resolve().parent / "deploy_nonprod_vm.sh"
+    ).read_text(encoding="utf-8")
+    match = re.search(r"re\.fullmatch\(r\"([^\"]+)\", symbol\)", deploy)
+    assert match, "deploy_nonprod_vm.sh no longer filters symbols with re.fullmatch"
+    assert all(re.fullmatch(match.group(1), symbol) for symbol in symbols)
 
 
 def test_login_credentials_prefer_dedicated_mfa_operator() -> None:
