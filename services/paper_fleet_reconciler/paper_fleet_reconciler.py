@@ -518,6 +518,7 @@ class PaperFleetReconciler:
         reconciler_id: Optional[str] = None,
         store: Optional[Any] = None,
         extra_env: Optional[Dict[str, str]] = None,
+        market_input_bootstrap_grace_seconds: Optional[float] = None,
     ) -> None:
         self._store = store
         self._url = (
@@ -574,6 +575,17 @@ class PaperFleetReconciler:
             )
         )
         self._performance_mark_max_age_seconds = max(int(mark_max_age), 1)
+        is_dev = str(os.getenv("PANTHEON_ENV", "")).strip().lower() == "dev"
+        default_grace = 120.0 if is_dev else 0.0
+        grace_seconds = (
+            market_input_bootstrap_grace_seconds
+            if market_input_bootstrap_grace_seconds is not None
+            else _as_float(
+                os.getenv("PANTHEON_MARKET_INPUT_BOOTSTRAP_GRACE_SECONDS"),
+                default_grace,
+            )
+        )
+        self._market_input_bootstrap_grace_seconds = max(float(grace_seconds), 0.0)
         self._performance_state_root = Path(
             performance_state_root
             or os.getenv("PANTHEON_PERFORMANCE_STATE_ROOT", "")
@@ -773,11 +785,43 @@ class PaperFleetReconciler:
                     )
 
             if bindings is not None:
+                unadmitted_grace_binding_ids: set[str] = set()
                 # 1. Admission defense on active bindings (SD-PAPER-01 §7.2)
                 for binding in list(bindings):
                     binding_id = str(binding.get("binding_id") or "")
                     decision = self._check_market_admission(binding)
                     if decision is not None and not decision.admitted:
+                        is_within_grace = False
+                        effective_at_str = (
+                            binding.get("effective_at")
+                            or (binding.get("metadata") or {}).get("effective_at")
+                            or binding.get("created_at")
+                        )
+                        if self._market_input_bootstrap_grace_seconds > 0 and effective_at_str:
+                            eff_dt, eff_err = _admission_parse_rfc3339(effective_at_str, field_name="effective_at")
+                            if not eff_err and eff_dt is not None:
+                                now_dt = datetime.now(timezone.utc)
+                                age_since_effective = (now_dt - eff_dt).total_seconds()
+                                if 0 <= age_since_effective < self._market_input_bootstrap_grace_seconds:
+                                    is_within_grace = True
+
+                        if is_within_grace:
+                            log.info(
+                                "deferring pause for binding %s: within market bootstrap grace period (%.1fs < %.1fs) for %s (%s)",
+                                binding_id,
+                                age_since_effective,
+                                self._market_input_bootstrap_grace_seconds,
+                                decision.reason_code,
+                                decision.detail,
+                            )
+                            unadmitted_grace_binding_ids.add(binding_id)
+                            if binding_id in self._workers:
+                                self._terminate_worker(
+                                    binding_id,
+                                    reason=f"worker deferred pending market admission: {decision.reason_code}",
+                                )
+                            continue
+
                         log.warning(
                             "pausing active binding %s due to market admission rejection (%s: %s)",
                             binding_id,
@@ -864,6 +908,8 @@ class PaperFleetReconciler:
 
                 # Start workers for new or dead-but-desired active bindings
                 for binding_id, binding in desired.items():
+                    if binding_id in unadmitted_grace_binding_ids:
+                        continue
                     if binding_id not in self._workers:
                         if not self._start_worker(binding):
                             self._demote_and_stop_workers()
