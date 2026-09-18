@@ -272,7 +272,7 @@ jobs:
           # BFF test architecture gate below collects services/control-plane/bff/tests/
           # conftest.py, which imports httpx even though this job does not otherwise
           # exercise BFF runtime deps.
-          python3 -m pip install httpx
+          python3 -m pip install httpx fastapi
 
       - name: BFF test architecture gate
         run: |

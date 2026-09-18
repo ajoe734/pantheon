@@ -2,33 +2,37 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "OPS-AGORA-SMOKE-IMPORT-PATH-001",
   "title": "Agora restart persistence probe cannot import services since 2026-09-15",
-  "owner": "Antigravity",
-  "reviewer": "Antigravity2",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
   "target_repo": "pantheon",
   "task_class": "development_tooling",
-  "timestamp": "2026-09-18T12:21:00Z",
+  "timestamp": "2026-09-18T13:23:00Z",
   "regression_resolved": {
     "issue": "OPS-AGORA-SMOKE-IMPORT-PATH-001",
-    "description": "Deployment step 'Dev Agora restart persistence smoke under lease' failed deterministically since 2026-09-15: smoke script runs inside the container by absolute path with cleared PYTHONPATH, having only scripts/ and BFF_ROOT on sys.path. Commit 7b8f8ad3f added imports from services.research to agora.strategy_workshop.reconstruction, causing ModuleNotFoundError: No module named 'services'. Furthermore, existing test test_standalone_cli_imports_without_repository_pythonpath was never executed by Branch CI Gate.",
-    "resolution": "Configured scripts/agora_workshop_restart_persistence_smoke.py to prepend both BFF_ROOT and ROOT to sys.path with BFF_ROOT having precedence so agora resolves to the deployed container modules and services resolves to repository services. Added scripts/test_agora_workshop_restart_persistence_smoke.py to Branch CI Gate under 'Run delivery diagnostics and exit-status regressions' alongside the other deploy helpers. Added explicit regression tests proving standalone CLI execution with cleared PYTHONPATH, resolution of agora to deployed container modules, and execution in Branch CI."
+    "description": "Deployment step 'Dev Agora restart persistence smoke under lease' failed deterministically since 2026-09-15: smoke script runs inside the container by absolute path with cleared PYTHONPATH, having only scripts/ and BFF_ROOT on sys.path. Commit 7b8f8ad3f added imports from services.research to agora.strategy_workshop.reconstruction, causing ModuleNotFoundError: No module named 'services'. In addition, in PR #5924 Branch CI Gate run 35344342707, importing agora.governance.store eagerly triggered router.py in agora.governance.__init__.py requiring fastapi, which was missing in the CI runner.",
+    "resolution": "Configured scripts/agora_workshop_restart_persistence_smoke.py to prepend both BFF_ROOT and ROOT to sys.path with BFF_ROOT having precedence so agora resolves to the deployed container modules and services resolves to repository services. Made create_governance_router and run_reconstruction_worker lazy imported via __getattr__ in agora.governance.__init__.py and agora.strategy_workshop.__init__.py so importing durable stores does not trigger eager router/fastapi dependencies. Added fastapi to branch-ci.yml smoke job dependencies. Added scripts/test_agora_workshop_restart_persistence_smoke.py to Branch CI Gate under 'Run delivery diagnostics and exit-status regressions' alongside the other deploy helpers with explicit regression tests for standalone execution without PYTHONPATH, resolution of agora to deployed container modules, importing without fastapi, and CI execution."
   },
   "scope": {
     "owned": [
       "scripts/agora_workshop_restart_persistence_smoke.py: configure sys.path with BFF_ROOT at index 0 and ROOT at index 1",
-      "scripts/test_agora_workshop_restart_persistence_smoke.py: regression tests for standalone execution without PYTHONPATH, deployed container agora resolution, and branch-ci execution",
-      ".github/workflows/branch-ci.yml: include scripts/test_agora_workshop_restart_persistence_smoke.py in delivery diagnostics gate",
+      "scripts/test_agora_workshop_restart_persistence_smoke.py: regression tests for standalone execution without PYTHONPATH, deployed container agora resolution, importing without fastapi, and branch-ci execution",
+      ".github/workflows/branch-ci.yml: include scripts/test_agora_workshop_restart_persistence_smoke.py in delivery diagnostics gate and add fastapi to smoke job dependencies",
+      "services/control-plane/bff/agora/governance/__init__.py: lazy import create_governance_router to prevent eager router/fastapi loading when importing store",
+      "services/control-plane/bff/agora/strategy_workshop/__init__.py: lazy import run_reconstruction_worker to prevent eager runner/operations/fastapi loading when importing store",
       "docs/deployment/evidence/OPS-AGORA-SMOKE-IMPORT-PATH-001/evidence.json: review evidence manifest"
     ],
     "not_changing": [
-      "No production imports or modules in services/ were widened or modified",
+      "No production router behavior or API contracts were modified",
       "No change to deployed container Dockerfiles or compose contracts",
       "No change to auto-integrator or governance state machine"
     ]
   },
   "source_artifacts": {
     "scripts/agora_workshop_restart_persistence_smoke.py": "a3d9fcd2fc98cc6d15e8db829f22d36bda72d66bece3ce3769abadff37dccd25",
-    "scripts/test_agora_workshop_restart_persistence_smoke.py": "a30b70c6bb0d444ec8f378442d4d3718ed2e0902be3be088787135250c0ede9d",
-    ".github/workflows/branch-ci.yml": "0712ebc465abedbcc7ae8872909729d19c0bc203c9c8a1a013186e3ea6fd9365"
+    "scripts/test_agora_workshop_restart_persistence_smoke.py": "6c036ce62469e7ed014fa5c9471cba2f23879103f5d9307bff14b482d7454c28",
+    ".github/workflows/branch-ci.yml": "c338ef6fa87cb22dfb37b9cc949ede17a3b17d84a607d1d0738be7d90af174ae",
+    "services/control-plane/bff/agora/governance/__init__.py": "9dcfb32ae11817117099f87e11a734a228a83d6f47339eb06c3f48955489b4cf",
+    "services/control-plane/bff/agora/strategy_workshop/__init__.py": "2bd9eeb46c1520748fa2159eb53917997671d9f7bc9bd88b55a12db8517e5f31"
   },
   "acceptance_verification": {
     "criterion_1": {
@@ -44,12 +48,12 @@
     "criterion_3": {
       "statement": "the existing standalone import regression test passes and is executed by the branch gate that already guards the other deploy helpers",
       "status": "PASSED",
-      "evidence": "Verified by test_branch_ci_gate_executes_persistence_smoke_test and branch-ci.yml: scripts/test_agora_workshop_restart_persistence_smoke.py is included in 'Run delivery diagnostics and exit-status regressions' which guards the other deploy helpers when delivery is touched."
+      "evidence": "Verified by test_branch_ci_gate_executes_persistence_smoke_test, test_smoke_helper_and_governance_store_import_without_fastapi, test_branch_ci_gate_installs_fastapi_for_smoke_job, and branch-ci.yml: scripts/test_agora_workshop_restart_persistence_smoke.py is included in 'Run delivery diagnostics and exit-status regressions' and passes 10/10 tests."
     },
     "criterion_4": {
       "statement": "no production import is widened beyond what the probe itself needs",
       "status": "PASSED",
-      "evidence": "No files in services/ were modified; sys.path adjustment is confined strictly to the standalone CLI probe helper scripts/agora_workshop_restart_persistence_smoke.py."
+      "evidence": "Production imports were not widened; lazy imports in agora.governance and agora.strategy_workshop narrow import footprints when only store modules are imported."
     }
   },
   "verification": {
@@ -58,11 +62,11 @@
       "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -v scripts/test_agora_workshop_restart_persistence_smoke.py",
       "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m unittest scripts.test_branch_ci_gate_selection",
       "cd /tmp && env -i /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python /tmp/pantheon-worker-worktrees/pantheon/ops-agora-smoke-import-path-001/scripts/agora_workshop_restart_persistence_smoke.py --help",
-      "python3 -m py_compile scripts/agora_workshop_restart_persistence_smoke.py scripts/test_agora_workshop_restart_persistence_smoke.py",
+      "python3 -m py_compile scripts/agora_workshop_restart_persistence_smoke.py scripts/test_agora_workshop_restart_persistence_smoke.py services/control-plane/bff/agora/governance/__init__.py services/control-plane/bff/agora/strategy_workshop/__init__.py",
       "git diff --check"
     ],
     "results": [
-      "8 passed, 2 warnings in 4.07s in scripts/test_agora_workshop_restart_persistence_smoke.py",
+      "10 passed, 2 warnings in 5.81s in scripts/test_agora_workshop_restart_persistence_smoke.py",
       "9 passed in scripts.test_branch_ci_gate_selection",
       "Standalone CLI invocation from /tmp with PYTHONPATH cleared exited 0 with usage output",
       "py_compile succeeded with zero errors on all modified python scripts",
@@ -73,9 +77,9 @@
     "status": "ready_for_independent_review_after_commit",
     "required_checks": [
       "Verify scripts/agora_workshop_restart_persistence_smoke.py correctly inserts BFF_ROOT and ROOT to sys.path",
-      "Verify scripts/test_agora_workshop_restart_persistence_smoke.py passes all 8 tests",
-      "Verify .github/workflows/branch-ci.yml includes scripts/test_agora_workshop_restart_persistence_smoke.py in delivery diagnostics gate",
-      "Verify no production files or imports in services/ were modified"
+      "Verify services/control-plane/bff/agora/governance/__init__.py and agora/strategy_workshop/__init__.py use lazy exports",
+      "Verify scripts/test_agora_workshop_restart_persistence_smoke.py passes all 10 tests",
+      "Verify .github/workflows/branch-ci.yml includes scripts/test_agora_workshop_restart_persistence_smoke.py and installs fastapi"
     ]
   }
 }

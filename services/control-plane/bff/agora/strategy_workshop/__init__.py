@@ -30,6 +30,12 @@ from .reconstruction import (  # noqa: F401
     StrategyReconstructionResult,
     reconstruct_strategy_from_events,
 )
-from .runner import run_reconstruction_worker  # noqa: F401
+def __getattr__(name: str):
+    if name == "run_reconstruction_worker":
+        from .runner import run_reconstruction_worker
+
+        return run_reconstruction_worker
+    raise AttributeError(name)
+
 
 VERSION = "1.0"
