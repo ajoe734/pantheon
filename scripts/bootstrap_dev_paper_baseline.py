@@ -21,8 +21,15 @@ from typing import Any
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8001"
-DEFAULT_NAME = "Pantheon Dev Paper Baseline 3"
-DEFAULT_IDEMPOTENCY_KEY = "dev-paper-bootstrap-20260720-operator-a-v3"
+# Baseline 4 moves the dev paper universe from SPY to 0050.TW.  Both the name
+# and the key move because ProvisioningStore raises ProvisioningConflict when
+# either one is reused with a different request hash, so a v3 identity could
+# only replay the retired US bundle.  These two defaults bind manual
+# `docker exec` runs only: run_dev_paper_baseline_with_diagnostics.sh always
+# overrides --name/--idempotency-key with release-scoped values on the official
+# deploy path.  The market/symbols change below has no such override.
+DEFAULT_NAME = "Pantheon Dev Paper Baseline 4"
+DEFAULT_IDEMPOTENCY_KEY = "dev-paper-bootstrap-20260918-operator-a-v4"
 
 # The BFF only resolves a Persona's reconcile lifecycle to a terminal state
 # (paper_running, or provisioning_failed with a named provisioning_failure_reason)
@@ -253,7 +260,20 @@ def ensure_paper_baseline(
         "archetype": "momentum",
         "risk": "low",
         "mandate": "Paper-only lifecycle verification in dev",
-        "market": "US",
+        # Dev has no authorized source of real US daily bars: every US OHLCV
+        # connector is either DISABLED_BY_BUILD (Stooq, Alpha Vantage) or
+        # needs a paid vendor key (Polygon, FMP), which is why the SPY baseline
+        # could only ever be fed by a simulation:// snapshot that goes stale.
+        # tw-twse-tpex-official-market is SUPPORTED, key-free and official, and
+        # it is the one connector validate_source_refresh_profile knows how to
+        # admit, so the baseline follows the data that dev is allowed to have.
+        "market": "TW",
+        # 0050.TW is the Taiwan broad-market tracker, the closest instrument to
+        # the SPY universe this replaces.  It is also reachable within the
+        # bounded refresh: STOCK_DAY_ALL is ordered by code, so 0050 lands well
+        # inside SOURCE_INGEST_MAX_RECORDS while 2330 sits past record 500 and
+        # would need a priority slot that only an already-active binding grants.
+        "symbols": ["0050.TW"],
         "strategy_family": "dev_paper_baseline",
     }
     effective_timeout_seconds = effective_poll_timeout_seconds(timeout_seconds, environ=environ)

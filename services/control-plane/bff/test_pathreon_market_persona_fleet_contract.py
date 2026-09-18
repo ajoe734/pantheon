@@ -2038,3 +2038,37 @@ def test_canonical_binding_precedence_and_mixed_topology(
 
     assert ranking_rows[persona_test]["eligible"] is True
     assert ranking_rows[persona_test]["source_confidence"] == "formal"
+
+
+def test_tw_price_daily_prefers_the_key_free_official_connector() -> None:
+    """The declared candidate order must not strand a key-less dev environment.
+
+    PersonaSourceReconciler._select_connector_id walks connector_candidates in
+    order and returns the first one _provider_supports accepts.  That check
+    matches on market and dataset only -- it never asks whether a credential
+    exists -- so whichever connector is listed first is the one dev gets.  Both
+    tw-finmind-datasets and tw-twse-tpex-official-market serve tw_price_daily,
+    but only the official one is key-free, so listing FinMind first silently
+    binds the requirement to a connector whose secret_ref_id is unset wherever
+    no FinMind key is configured.  The reconciler's own _default_candidates
+    fallback already prefers the official connector; this pins the BFF's
+    declared list to the same preference.
+    """
+    from services.source_ingestion.persona_source_reconciler import (
+        TW_OFFICIAL_CONNECTOR_ID,
+    )
+
+    required = personas_service._market_persona_required_data_sources({"market": "TW"})
+    price_daily = next(
+        item for item in required if item["dataset"] == "tw_price_daily"
+    )
+    candidates = price_daily["connector_candidates"]
+
+    assert TW_OFFICIAL_CONNECTOR_ID in candidates
+    assert "tw-finmind-datasets" in candidates
+    assert candidates.index(TW_OFFICIAL_CONNECTOR_ID) < candidates.index(
+        "tw-finmind-datasets"
+    ), (
+        "tw_price_daily must offer the key-free official exchange connector "
+        "before the credential-gated vendor"
+    )
