@@ -210,6 +210,39 @@ class ConnectorDefinition:
             metadata=dict(data.get("metadata") or {}),
         )
 
+    @property
+    def is_egress_free(self) -> bool:
+        return is_egress_free_connector_definition(self)
+
+
+def is_egress_free_connector_definition(
+    definition: ConnectorDefinition | Mapping[str, Any] | None,
+) -> bool:
+    """Return True if connector definition declares no network egress and no auth credentials.
+
+    A connector is egress-free when:
+    - allowed_host_patterns is empty
+    - auth_modes has only 'none' (or is empty)
+    - secret_fields is empty
+    """
+    if definition is None:
+        return False
+    if isinstance(definition, ConnectorDefinition):
+        allowed_hosts = definition.allowed_host_patterns
+        auth_modes = definition.auth_modes
+        secret_fields = definition.secret_fields
+    elif isinstance(definition, Mapping):
+        allowed_hosts = tuple(definition.get("allowed_host_patterns") or ())
+        auth_modes = tuple(definition.get("auth_modes") or ())
+        secret_fields = tuple(definition.get("secret_fields") or ())
+    else:
+        return False
+    return (
+        len(allowed_hosts) == 0
+        and set(auth_modes).issubset({"none"})
+        and len(secret_fields) == 0
+    )
+
 
 def calculate_source_allowed_actions(
     definition: ConnectorDefinition | Mapping[str, Any],
