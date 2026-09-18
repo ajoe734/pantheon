@@ -545,23 +545,6 @@ def evaluate_task_delivery_admission(
             task_reason=decision.task_reason,
             logical_lane_id=decision.logical_lane_id,
         )
-    if (
-        decision.task_reason is rewrite_task_machine.DispatchReason.REVIEW_READY
-        and rewrite_task_machine.review_dispatch_pr_conflict_hold_reason(task) is not None
-    ):
-        # Same admission-time hold as task_execution_dispatch_candidate in
-        # supervisor.py (OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001): a reviewer
-        # must never be dispatched against a PR already known to be
-        # DIRTY/CONFLICTING/conflict-BLOCKED against its base. This module
-        # runs the actual live planning loop (dispatch_ready_tasks ->
-        # evaluate_dispatch_candidate -> here); supervisor.py's copy is the
-        # diagnostics/lease-revalidation ladder. Both must agree.
-        return rewrite_dispatch_admission.DispatchDecision(
-            eligible=False,
-            reason=rewrite_dispatch_admission.DispatchBlockReason.TASK_NOT_DISPATCHABLE,
-            task_reason=decision.task_reason,
-            logical_lane_id=decision.logical_lane_id,
-        )
     return decision
 
 

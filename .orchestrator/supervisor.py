@@ -14565,40 +14565,6 @@ def current_dispatch_event_key(
     )
 
 
-# Bounded in-memory "why did we skip dispatch" diagnostic. It is
-# deliberately not a status/task-row mutation: task_execution_dispatch_candidate
-# is a pure, IO-free query re-evaluated for every task on every planning tick
-# (see its docstring) and from several non-planning call sites (worker lease
-# revalidation, recovery-replacement reservation), so it must not write to
-# the canonical status file itself. This registry gives operators/tests a
-# concrete, inspectable record of the hold instead of a silent repeated
-# no-op; a durable canonical ``blocked``/``waiting_for`` row for the same
-# condition is filed out-of-band by the reviewer's own governed ``ai-status.sh
-# blocker`` call once it observes the same DIRTY PR (see
-# RESPONSIBILITY_TRANSFER_EVENT_TYPES / canonical_worker_terminal_status).
-_REVIEW_DISPATCH_HOLD_DIAGNOSTICS: dict[str, dict[str, str]] = {}
-
-
-def record_review_dispatch_hold_diagnostic(task: Mapping[str, Any], *, reason: str) -> None:
-    task_id = str(task.get("id") or "").strip()
-    if not task_id:
-        return
-    _REVIEW_DISPATCH_HOLD_DIAGNOSTICS[task_id] = {
-        "reason": reason,
-        "recorded_at": utc_now(),
-    }
-
-
-def review_dispatch_hold_diagnostic(task_id: str) -> dict[str, str] | None:
-    """Return the last recorded reviewer-dispatch hold for ``task_id``, if any."""
-
-    return _REVIEW_DISPATCH_HOLD_DIAGNOSTICS.get(str(task_id or "").strip())
-
-
-def clear_review_dispatch_hold_diagnostic(task_id: str) -> None:
-    _REVIEW_DISPATCH_HOLD_DIAGNOSTICS.pop(str(task_id or "").strip(), None)
-
-
 def task_execution_dispatch_candidate(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -14698,24 +14664,6 @@ def task_execution_dispatch_candidate(
         # binding is a canonical recovery problem, not a reason to start a
         # worker that cannot complete the review.
         return None
-    if decision is rewrite_task_machine.DispatchReason.REVIEW_READY:
-        pr_conflict_hold_reason = (
-            rewrite_task_machine.review_dispatch_pr_conflict_hold_reason(task)
-        )
-        if pr_conflict_hold_reason is not None:
-            # The bound PR is known (from the last observed prober fact) to
-            # be DIRTY/CONFLICTING/conflict-BLOCKED against its base. Sending
-            # a reviewer here only reproduces OPS-REVIEW-DISPATCH-DIRTY-PR-
-            # HOLD-001: the reviewer cannot approve a merge-conflicted PR, so
-            # it either loops forever or exits, and an unrecognized exit is
-            # exactly what turns into a lost-lease redispatch storm. Record
-            # why the cycle skipped this task so this hold is diagnosable
-            # instead of an invisible no-op repeated every planning tick.
-            record_review_dispatch_hold_diagnostic(
-                task,
-                reason=pr_conflict_hold_reason,
-            )
-            return None
     reasons = {
         rewrite_task_machine.DispatchReason.REVIEW_READY: REASON_REVIEW_READY,
         rewrite_task_machine.DispatchReason.OWNED_FINALIZE: REASON_OWNED_FINALIZE,

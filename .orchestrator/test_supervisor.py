@@ -3012,69 +3012,6 @@ class SharedPlannerContractTests(unittest.TestCase):
         accepted = planner_decision(self.config, task, target="Codex2")
         self.assertTrue(accepted["eligible"])
 
-    def test_dirty_pr_merge_state_holds_review_dispatch_admission(self) -> None:
-        """OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a reviewer must not be
-        dispatched against a PR already observed to be DIRTY, CONFLICTING,
-        or conflict-BLOCKED. Both the diagnostics/lease-revalidation ladder
-        (task_execution_dispatch_candidate) and the live planner ladder
-        (evaluate_dispatch_candidate) must agree.
-        """
-        for blocking_state in ("DIRTY", "CONFLICTING", "BLOCKED_CONFLICT"):
-            task = task_fixture(status="review", reviewer="Codex2")
-            binding = review_admission_binding()
-            binding["pr_merge_state"] = blocking_state
-            task["delivery_binding"] = binding
-
-            self.assertIsNone(
-                supervisor.task_execution_dispatch_candidate(
-                    self.config,
-                    task,
-                    "Codex2",
-                    {"TASK-1": task},
-                ),
-                msg=f"merge state {blocking_state} must veto candidate()",
-            )
-            rejected = planner_decision(self.config, task, target="Codex2")
-            self.assertFalse(
-                rejected["eligible"],
-                msg=f"merge state {blocking_state} must veto the live planner",
-            )
-
-            diagnostic = supervisor.review_dispatch_hold_diagnostic(task["id"])
-            self.assertIsNotNone(diagnostic)
-            self.assertEqual(
-                diagnostic["reason"], f"pr_merge_state:{blocking_state.lower()}"
-            )
-            supervisor.clear_review_dispatch_hold_diagnostic(task["id"])
-
-    def test_mergeable_or_unknown_pr_merge_state_still_dispatches_reviewer(self) -> None:
-        """Unchanged-behavior regression: an absent/unknown merge-state
-        observation must fail OPEN (dispatch proceeds) rather than silently
-        freezing every review task before any prober exists to populate the
-        field, and an explicit MERGEABLE observation must also dispatch.
-        """
-        for merge_state in (None, "MERGEABLE", "UNKNOWN", "", "BEHIND"):
-            task = task_fixture(status="review", reviewer="Codex2")
-            binding = review_admission_binding()
-            if merge_state is not None:
-                binding["pr_merge_state"] = merge_state
-            task["delivery_binding"] = binding
-
-            candidate = supervisor.task_execution_dispatch_candidate(
-                self.config,
-                task,
-                "Codex2",
-                {"TASK-1": task},
-            )
-            self.assertIsNotNone(candidate, msg=f"merge state {merge_state!r} must not veto")
-            self.assertEqual(candidate[0], supervisor.REASON_REVIEW_READY)
-
-            accepted = planner_decision(self.config, task, target="Codex2")
-            self.assertTrue(
-                accepted["eligible"], msg=f"merge state {merge_state!r} must not veto planner"
-            )
-            self.assertIsNone(supervisor.review_dispatch_hold_diagnostic(task["id"]))
-
     def test_operator_exact_head_acceptance_never_dispatches_owner_finalize(self) -> None:
         task = task_fixture(status="review_approved")
         delivery = review_admission_binding()

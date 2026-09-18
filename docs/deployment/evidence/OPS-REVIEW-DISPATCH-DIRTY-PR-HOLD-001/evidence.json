@@ -8,7 +8,7 @@
   "task_class": "development_tooling",
   "delivery_state": "ready_for_independent_review",
   "base_sha": "b435986b13d5c323c533225f5ea3f6481d79a1be",
-  "note_on_history": "This delivery combines two generations of work on the same task branch. A prior worker generation (fence_generation 2) landed a fail-open static-fact hold (task_machine.py's review_dispatch_pr_conflict_hold_reason, gated on delivery_binding.pr_merge_state, which no prober populates yet) plus recognizing a governed `blocker` as a valid worker responsibility-transfer event. That generation's lease was reaped and this task was redispatched (replacement_generation 3, this delivery), which layers a live GitHub mergeStateStatus check on top so the hold actually activates today, not only once a future prober exists. The two layers are complementary and do not conflict: the static-fact veto in dispatch_policy.py/task_machine.py stays fail-open dead weight until a prober exists; the live check added here (supervisor.py's process_queue and worker_runner.py's reviewer-role binding-recheck loop) is what makes the acceptance criteria pass today.",
+  "note_on_history": "This delivery reconciles two worker generations on the same task branch. A prior worker generation (fence_generation 2, PR #5906's original push) landed a fail-open static-fact hold (task_machine.py's review_dispatch_pr_conflict_hold_reason, gated on delivery_binding.pr_merge_state -- a field no prober populates) plus a dispatch_policy.py veto and an in-memory diagnostic registry, alongside recognizing a governed `blocker` as a valid worker responsibility-transfer event. That generation's lease was reaped and this task was redispatched (replacement_generation 3, this delivery). This delivery's live GitHub mergeStateStatus check (supervisor.py + worker_runner.py) is what makes the acceptance criteria pass today, independent of any future prober. Because task_machine.py is outside this task's declared artifact contract (.orchestrator/supervisor.py, dispatch_policy.py, test_supervisor.py, worker_runner.py, test_worker_runner.py, this evidence file), the governed handoff gate correctly rejected a delivery that touched it: the prior generation's task_machine.py addition, its matching dispatch_policy.py veto, and the in-memory diagnostic registry (all fail-open dead code pending a prober that does not exist) were reverted before handoff. The prior generation's independent, in-scope fix -- recognizing a governed `blocker` as a valid RESPONSIBILITY_TRANSFER_EVENT_TYPES entry in supervisor.py -- was kept, since it is unrelated to task_machine.py and is a genuine complementary improvement.",
   "incident": {
     "date": "2026-09-17",
     "affected_tasks": ["CB02", "CB05", "CB07"],
@@ -21,12 +21,13 @@
       "update_worker_runtime_markers propagation, poll_workers/reconcile_runtime_on_boot reason_kind wiring, and the recover_lost_worker_lease `held` extension for a reviewer's governed dirty-PR exit, in .orchestrator/supervisor.py",
       "_live_review_pr_merge_state_for_task / _review_pr_merge_state_is_conflicted / _record_review_pr_dirty_hold and the reviewer-role live check in .orchestrator/worker_runner.py's binding-recheck loop",
       "regression coverage in .orchestrator/test_supervisor.py and the new .orchestrator/test_worker_runner.py",
-      "(inherited from the prior generation, unmodified by this delivery) review_dispatch_pr_conflict_hold_reason / REVIEW_BLOCKING_PR_MERGE_STATES in .orchestrator/rewrite/task_machine.py, the matching veto in task_execution_dispatch_candidate (supervisor.py) and evaluate_task_delivery_admission (dispatch_policy.py), the in-memory review-dispatch hold diagnostic registry, and RESPONSIBILITY_TRANSFER_EVENT_TYPES/canonical_worker_terminal_status recognizing a governed blocker as a valid end-of-responsibility event"
+      "(kept from the prior generation, unmodified) RESPONSIBILITY_TRANSFER_EVENT_TYPES/canonical_worker_terminal_status recognizing a governed blocker as a valid end-of-responsibility event in .orchestrator/supervisor.py"
     ],
     "not_changing": [
       "PLAN-002 (the underlying shared-file bff_test_architecture_inventory.json contention that produces DIRTY PRs in the first place) -- explicitly out of scope per the task brief",
       "the existing review/approve/reopen DIRTY-PR rejection in scripts/git/github_review_bridge.py -- unchanged; this task only stops the wasted dispatch/review cycle that happens before that rejection would otherwise be reached",
-      "rewrite/dispatch_admission.py -- stays pure/no-I/O; the live GitHub check lives entirely in supervisor.py and worker_runner.py, never in the hermetic admission predicate"
+      "rewrite/dispatch_admission.py -- stays pure/no-I/O; the live GitHub check lives entirely in supervisor.py and worker_runner.py, never in the hermetic admission predicate",
+      ".orchestrator/rewrite/task_machine.py -- reverted to its pre-task state; it is outside this task's declared artifact contract, and the prior generation's addition there was fail-open dead code pending a prober that does not exist (see note_on_history)"
     ]
   },
   "bug_reproduction": {
@@ -55,29 +56,26 @@
         "the existing `held` receipt-status tolerance recover_lost_worker_lease already grants a `blocked` task"
       ]
     },
-    "part_c_inherited_static_hold": {
-      "description": "Retained unmodified from the prior worker generation on this same task branch: review_dispatch_pr_conflict_hold_reason(task) in .orchestrator/rewrite/task_machine.py reads task['delivery_binding']['pr_merge_state'] (uppercased) and, if DIRTY/CONFLICTING/BLOCKED_CONFLICT, vetoes a REVIEW_READY decision in both task_execution_dispatch_candidate (supervisor.py diagnostics/lease-revalidation ladder) and evaluate_task_delivery_admission (dispatch_policy.py's live planning ladder). This is fail-open by design today because no prober populates delivery_binding.pr_merge_state; it composes with Part A/B above (which do the live check) and activates automatically without further planner change if a future prober starts writing that field. Also retained: RESPONSIBILITY_TRANSFER_EVENT_TYPES gaining \"blocker\" as a recognized end-of-responsibility event, so a worker of either role that files a governed `ai-status.sh blocker` before exiting is never misclassified as worker_process_missing."
-    },
     "files_changed": [
       {
         "path": ".orchestrator/supervisor.py",
-        "change": "Part A/B (this delivery) + Part C (inherited, unmodified): live PR-mergeability check and process_queue call site; update_worker_runtime_markers/poll_workers/reconcile_runtime_on_boot/recover_lost_worker_lease wiring for the reviewer's governed exit; plus the inherited static hold veto, diagnostic registry, and blocker-as-terminal-event recognition."
+        "change": "This delivery: live PR-mergeability check (review_bound_pr_reference/live_review_pr_merge_state/review_pr_merge_state_is_conflicted) and the process_queue call site; update_worker_runtime_markers/poll_workers/reconcile_runtime_on_boot/recover_lost_worker_lease wiring for the reviewer's governed exit. Kept from the prior generation: RESPONSIBILITY_TRANSFER_EVENT_TYPES gaining \"blocker\" and canonical_worker_terminal_status recognizing it, so a worker of either role that files a governed `ai-status.sh blocker` before exiting is never misclassified as worker_process_missing. Reverted from the prior generation (out of declared artifact scope, fail-open dead code): task_execution_dispatch_candidate's veto against rewrite_task_machine.review_dispatch_pr_conflict_hold_reason, and the in-memory review-dispatch hold diagnostic registry."
       },
       {
         "path": ".orchestrator/worker_runner.py",
-        "change": "Part B (this delivery): _live_review_pr_merge_state_for_task/_review_pr_merge_state_is_conflicted/_record_review_pr_dirty_hold helpers, the new reviewer-role live check in the binding-recheck loop, `governed_hold_reason` threaded into the two termination-path publish() calls, and scripts/git resolution fixed to be relative to worker_runner.py's own checkout (THIS_DIR.parent) rather than PANTHEON_STATUS_ROOT."
+        "change": "This delivery: _live_review_pr_merge_state_for_task/_review_pr_merge_state_is_conflicted/_record_review_pr_dirty_hold helpers, the new reviewer-role live check in the binding-recheck loop, `governed_hold_reason` threaded into the two termination-path publish() calls, and scripts/git resolution fixed to be relative to worker_runner.py's own checkout (THIS_DIR.parent) rather than PANTHEON_STATUS_ROOT."
       },
       {
         "path": ".orchestrator/dispatch_policy.py",
-        "change": "Unmodified by this delivery; retains the prior generation's static-fact veto in evaluate_task_delivery_admission (fail-open, see part_c_inherited_static_hold)."
+        "change": "Reverted to its pre-task state: the prior generation's veto in evaluate_task_delivery_admission depended on rewrite_task_machine.review_dispatch_pr_conflict_hold_reason, which is outside the declared artifact contract (see .orchestrator/rewrite/task_machine.py below) and was fail-open dead code pending a prober that does not exist. No replacement change was needed here since the live check lives entirely in supervisor.py's process_queue."
       },
       {
         "path": ".orchestrator/rewrite/task_machine.py",
-        "change": "Unmodified by this delivery; retains the prior generation's review_dispatch_pr_conflict_hold_reason and REVIEW_BLOCKING_PR_MERGE_STATES."
+        "change": "Reverted to its pre-task (dev tip) state; not in this task's declared artifact contract. The prior generation's review_dispatch_pr_conflict_hold_reason/REVIEW_BLOCKING_PR_MERGE_STATES addition here is removed (see note_on_history)."
       },
       {
         "path": ".orchestrator/test_supervisor.py",
-        "change": "Adds DurableQueueContractTests coverage for the live-check hold/resume (test_review_ready_dispatch_withheld_when_bound_pr_is_dirty, test_review_ready_dispatch_resumes_once_pr_is_mergeable_again, test_live_review_pr_merge_state_fails_open_without_binding, test_review_pr_merge_state_is_conflicted_only_for_dirty) on top of the prior generation's inherited coverage for the static hold and blocker-as-terminal-event recognition."
+        "change": "Adds DurableQueueContractTests coverage for the live-check hold/resume (test_review_ready_dispatch_withheld_when_bound_pr_is_dirty, test_review_ready_dispatch_resumes_once_pr_is_mergeable_again, test_live_review_pr_merge_state_fails_open_without_binding, test_review_pr_merge_state_is_conflicted_only_for_dirty), plus the prior generation's kept blocker-as-terminal-event tests (test_canonical_worker_terminal_status_recognizes_reviewer_blocker, test_canonical_worker_terminal_status_recognizes_owner_blocker, test_missing_process_without_blocker_is_still_lost_lease). The prior generation's now-orphaned task_machine.py-dependent tests (test_dirty_pr_merge_state_holds_review_dispatch_admission, test_mergeable_or_unknown_pr_merge_state_still_dispatches_reviewer) were removed along with the reverted source."
       },
       {
         "path": ".orchestrator/test_worker_runner.py",
@@ -90,8 +88,8 @@
       "Part A's wait reason is recorded on the queue-event record (`last_wait_reason`, the same field/idiom already used for health-refresh and dirty-worktree holds in process_queue), not as a task-level `waiting_for`/blocked transition -- this avoids inventing a new state file and avoids requiring a separate `unblock` transition.",
       "Part B's supervisor-side wiring reuses the existing `held` receipt-status tolerance (already granted to a `blocked` task in recover_lost_worker_lease) rather than inventing a new receipt state, since `held` already has the exact required semantics (fenced, counted separately, no reassignment/generation bump).",
       "worker_runner.py resolves scripts/git (for GhJsonRunner) relative to its own checkout (THIS_DIR.parent) rather than PANTHEON_STATUS_ROOT, matching how supervisor.py resolves the same tooling and correctly handling the command-root/status-root split this repository's worker architecture allows.",
-      "The prior generation's static-fact hold (task_machine.py/dispatch_policy.py) was kept rather than removed: it is harmless (fail-open, currently dead weight since no prober populates delivery_binding.pr_merge_state) and forward-compatible with a future prober, and removing already-reviewed-shape code that composes cleanly with this delivery would be pure churn.",
-      "This delivery reconciles two worker generations on the same task branch (fence_generation 2's prior push, PR #5906, merged via rebase with this generation's commit) rather than force-overwriting the prior generation's work, since the two mechanisms are complementary, not conflicting."
+      "The prior generation's task_machine.py/dispatch_policy.py static-fact hold was reverted, not kept: it touched a file (rewrite/task_machine.py) outside this task's declared artifact contract, and the governed handoff gate correctly refused a delivery that included it. It was also fail-open dead code (no prober populates delivery_binding.pr_merge_state), so reverting it changes no observable behavior.",
+      "This delivery reconciles two worker generations on the same task branch (fence_generation 2's prior push, PR #5906, merged via rebase with this generation's commit) rather than force-overwriting the prior generation's work; the in-scope, independent parts of that generation's work (blocker-as-terminal-event recognition) were kept, and the out-of-scope/dead-code parts were reverted."
     ]
   },
   "validation": [
@@ -121,8 +119,18 @@
       "exit_code": 0
     },
     {
-      "command": "\"$PANTHEON_PY\" -m pytest -q .orchestrator/rewrite/test_task_machine.py .orchestrator/rewrite/test_dispatch_admission.py",
-      "result": "inherited Part C coverage re-verified clean after the rebase merge",
+      "command": "\"$PANTHEON_PY\" -m pytest -q .orchestrator/rewrite/test_dispatch_admission.py",
+      "result": "passed, no regression from the reverted dispatch_policy.py veto",
+      "exit_code": 0
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m pytest -q .orchestrator/rewrite/test_task_machine.py",
+      "result": "1 pre-existing failure unrelated to this task (AssignmentAuditSourceContractTests.test_runtime_writers_and_readers_use_only_canonical_assignment_api asserts scripts/ai_status.py, a file this task never touches, lacks certain forbidden string fragments; it already contains them on an unmodified checkout of this branch's base commit b435986b1); 33 passed, 21 subtests passed otherwise",
+      "exit_code": 1
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m pytest -q .orchestrator/test_supervisor.py (final, after reverting task_machine.py/dispatch_policy.py and removing the two orphaned tests)",
+      "result": "362 passed, 88 subtests passed in 102.44s",
       "exit_code": 0
     }
   ],
