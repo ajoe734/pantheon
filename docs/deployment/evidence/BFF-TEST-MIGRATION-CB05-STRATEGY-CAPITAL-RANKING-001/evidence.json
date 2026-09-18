@@ -2,11 +2,11 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001",
   "group": "B23_strategy_capital_ranking",
-  "owner": "Claude",
+  "owner": "Antigravity",
   "reviewer": "Antigravity2",
   "target_repo": "ajoe734/pantheon",
   "base_sha": "27e49d598",
-  "head_sha": "856ebb23d7d908ff2fea07ebe7ceda4f749a05a0",
+  "head_sha": "30d8d2d4a13d74c43eeeb5ca6c0c20ce84b423d6",
   "delivery_state": "ready_for_independent_review",
   "reconciliation_addendum": [
     {
@@ -47,6 +47,32 @@
         {
           "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_emergency_containment.py",
           "result": "34 passed, 0 failed (improved from the documented 31 passed/3 failed baseline; the 3 pre-existing failures were fixed by unrelated work already merged into dev, not by this task)"
+        }
+      ]
+    },
+    {
+      "reason": "PR #5892 base refreshed after dev advanced with PR #5920 (8057d47d8 -> f67ee443e). Merged cleanly without conflicts; updated owner to Antigravity per canonical task reassignment.",
+      "merge_commit": "30d8d2d4a13d74c43eeeb5ca6c0c20ce84b423d6",
+      "merged_dev_tip": "f67ee443e601b1b5ffba68d52103d73d899e62e9",
+      "conflict_resolution": [
+        "Clean merge, no conflicts encountered."
+      ],
+      "post_merge_reverification": [
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+          "result": "8 passed (unchanged)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+          "result": "5 passed (unchanged)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+          "result": "2 passed, 25 failed (unchanged; matches documented baseline)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_emergency_containment.py",
+          "result": "34 passed, 0 failed (unchanged)"
         }
       ]
     }
