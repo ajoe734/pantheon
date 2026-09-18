@@ -85,7 +85,7 @@ def case(tmp_path, monkeypatch):
              "owners": {service: {"container_id": "1" * 64, "image_id": "sha256:" + "2" * 64,
                                    "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0} for service in e.OWNERS},
              "public": {"source_sha": "a" * 40, "fe_manifest_bytes_verified": True, "strict_auth_denials_verified": True,
-                        "authenticated_viewer_readback_verified": True}}
+                        "dev_login_enabled": True, "authenticated_viewer_readback_verified": True}}
     value["owners"]["dev-paper-principal-issuer"] = None
     return dict(env=env, identity=identity, baseline=baseline, receipt=receipt, value=value,
                 baseline_path=baseline_path, receipt_path=receipt_path, retained=retained)
@@ -214,7 +214,9 @@ def test_readback_framing_is_exactly_one_record(case, mutation):
 
 
 @pytest.mark.parametrize("mutation", ["source_only", "image", "image_missing", "fe_target", "fe_dist", "fe_manifest",
-                                      "public_source", "auth_missing", "auth_integer", "owner_missing", "owner_secret",
+                                      "public_source", "auth_missing", "auth_integer", "dev_login_missing",
+                                      "dev_login_integer", "login_claimed_without_registry", "login_absent_with_registry",
+                                      "owner_missing", "owner_secret",
                                       "owner_restart_boolean", "config", "guard", "identity", "seal", "operation",
                                       "empty_observations", "invalid_observations", "duplicate_observations", "extra_field"])
 def test_complete_readback_is_required(case, mutation):
@@ -226,6 +228,10 @@ def test_complete_readback_is_required(case, mutation):
     elif mutation == "public_source": value["public"]["source_sha"] = "e" * 40
     elif mutation == "auth_missing": value["public"].pop("authenticated_viewer_readback_verified")
     elif mutation == "auth_integer": value["public"]["strict_auth_denials_verified"] = 1
+    elif mutation == "dev_login_missing": value["public"].pop("dev_login_enabled")
+    elif mutation == "dev_login_integer": value["public"]["dev_login_enabled"] = 0
+    elif mutation == "login_claimed_without_registry": value["public"]["dev_login_enabled"] = False
+    elif mutation == "login_absent_with_registry": value["public"]["authenticated_viewer_readback_verified"] = False
     elif mutation == "owner_missing": value["owners"].pop("capital")
     elif mutation == "owner_secret": value["owners"]["capital"]["unexpected_env"] = "fixture-secret"
     elif mutation == "owner_restart_boolean": value["owners"]["capital"]["restart_count"] = True
@@ -240,6 +246,16 @@ def test_complete_readback_is_required(case, mutation):
     else: value["unknown"] = "fixture-secret"
     with pytest.raises(e.capture.CaptureError):
         e.validate_readback(value, e.load_evidence(case["env"], "runner-local"), "restore")
+
+
+def test_predecessor_without_dev_login_registry_is_a_complete_readback(case):
+    # Both literal falses together are the image's own declaration that no
+    # dedicated identity exists to log in with; every other pairing above is
+    # still rejected, and the strict-auth denials remain proven.
+    value = case["value"]
+    value["public"]["dev_login_enabled"] = False
+    value["public"]["authenticated_viewer_readback_verified"] = False
+    assert e.validate_readback(value, e.load_evidence(case["env"], "runner-local"), "restore") == value
 
 
 def test_validated_readback_is_exclusive_private_and_preserves_all_evidence(case):
