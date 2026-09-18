@@ -1,0 +1,70 @@
+{
+  "schema_version": "pantheon.integration_unblock_evidence.v1",
+  "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001-MISSI-12C1B46D950A",
+  "source_task_id": "INTEGRATION-UNBLOCK-OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001-MISSING-DEDICATED-INTEGRA-8FA29C6659BA",
+  "blocker_reason": "missing-dedicated-integration-path",
+  "target_repo": "pantheon",
+  "root_cause": {
+    "summary": "auto-integrator failed closed with 'missing-dedicated-integration-path' on PR #5912 (the delivery for INTEGRATION-UNBLOCK-OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001-MISSING-DEDICATED-INTEGRA-8FA29C6659BA, head e7fdfaf04a1d3c11e46af324ec39e44111fea7c1, command_runtime_sha e7db147f6a31f4af5754de7943d6edc4e08d3e4b) because `coordination.repositories.pantheon.integration_path` was absent from the promoted live supervisor config at the time the cron evaluated the candidate.",
+    "check_implicated": "scripts/git/auto_integrator.py:2319-2324 (if require_dedicated_integration_path and not candidate.dedicated_integration_path), fed by the candidate assembly at lines 588-648 which reads coordination.repositories.<id>.integration_path from the resolved live config.",
+    "configuration_source": "The promotion recorded in /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/.orchestrator/logs/promotion-20260918T010014Z.json at command_runtime_sha e7db147f6a31f4af5754de7943d6edc4e08d3e4b was invoked with repository_integration_roots: {}, omitting --repository-integration-root pantheon=<path>, so live_config coordination.repositories.pantheon carried no integration_path key. This is the same root cause already documented for the sibling tasks INTEGRATION-UNBLOCK-OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001-MISSING-DEDICATED-INTEGRAT-551FEC4A6051 and INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001-MISSIN-24C18443B747, an operational/promotion-pipeline gap under host state (pantheon-ci-deploy/), never committed to ajoe734/pantheon.",
+    "integrator_behavior": "scripts/git/auto_integrator.py operated exactly as intended (SUP-AUTO-INTEGRATOR-DEDICATED-ROOT-20260828 hardening): it refused to merge PR #5912 through an unvalidated/shared checkout rather than risk a destructive merge against the worker/source local_path, and opened this recursive unblock task instead.",
+    "remediation_status": "A later runtime promotion populated coordination.repositories.pantheon.integration_path with /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/integration-runtimes/pantheon/b435986b13d5c323c533225f5ea3f6481d79a1be (current command_runtime_sha, matching this task's dispatch environment). That directory is a clean dedicated clone (`git status --porcelain --untracked-files=all` empty, HEAD == b435986b13d5c323c533225f5ea3f6481d79a1be). Once the path was restored, auto-integrator's normal cron retried and merged PR #5912.",
+    "not_an_integrator_defect": true
+  },
+  "original_pr_status": {
+    "original_pr_number": 5912,
+    "original_pr_url": "https://github.com/ajoe734/pantheon/pull/5912",
+    "base_branch": "dev",
+    "head_branch": "task/INTEGRATION-UNBLOCK-OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001-MISSING-DEDICATED-INTEGRA-8FA29C6659BA",
+    "head_sha": "e7fdfaf04a1d3c11e46af324ec39e44111fea7c1",
+    "state": "MERGED",
+    "merged_at": "2026-09-18T05:26:43Z",
+    "merge_commit_sha": "6ee08ad464ae31f51e9b41eb678e153ab3d8b500",
+    "merge_commit_is_ancestor_of_dev": true,
+    "required_checks_status": "All required branch protection checks (Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance) passed. The non-required informational status context 'Pantheon canonical review gate' posted FAILURE (stale pre-approval status); it is excluded from required checks and does not block merge.",
+    "auto_integrator_cron_record": "auto-integrator-cron.log line 6603: 'INTEGRATION-UNBLOCK-OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001-MISSING-DEDICATED-INTEGRA-8FA29C6659BA: merged PR #5912 - Merged the reviewer-approved head e7fdfaf04a1d3c11e46af324ec39e44111fea7c1 of PR #5912 into dev; left INTEGRATION-UNBLOCK-OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001-MISSING-DEDICATED-INTEGRA-8FA29C6659BA in review_approved for owner finalization. Ignored explicitly non-required diagnostics: Pantheon canonical review gate.'",
+    "source_task_current_status": "review_approved, owner Claude, reviewer Antigravity2 - awaiting the source task owner's separate finalization; out of this task's own scope (this task only covers the auto-integrator unblock, not the source task's own closeout).",
+    "stranded": false
+  },
+  "validation": [
+    {
+      "command": "gh pr view 5912 --repo ajoe734/pantheon --json number,title,state,headRefName,headRefOid,baseRefName,mergeable,mergedAt,mergeCommit",
+      "exit_code": 0,
+      "result": "state: MERGED, headRefOid: e7fdfaf04a1d3c11e46af324ec39e44111fea7c1, baseRefName: dev, mergedAt: 2026-09-18T05:26:43Z, mergeCommit.oid: 6ee08ad464ae31f51e9b41eb678e153ab3d8b500"
+    },
+    {
+      "command": "git merge-base --is-ancestor 6ee08ad464ae31f51e9b41eb678e153ab3d8b500 origin/dev",
+      "exit_code": 0,
+      "result": "true (merge commit is an ancestor of origin/dev)"
+    },
+    {
+      "command": "python3 -c \"import json; c = json.load(open('/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json')); print(c['coordination']['repositories']['pantheon']['integration_path'])\"",
+      "exit_code": 0,
+      "result": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/integration-runtimes/pantheon/b435986b13d5c323c533225f5ea3f6481d79a1be (present; restored)"
+    },
+    {
+      "command": "git -C /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/integration-runtimes/pantheon/b435986b13d5c323c533225f5ea3f6481d79a1be rev-parse HEAD && git -C <same> status --porcelain --untracked-files=all",
+      "exit_code": 0,
+      "result": "HEAD == b435986b13d5c323c533225f5ea3f6481d79a1be; status empty (clean dedicated checkout matching the active command_runtime_sha)"
+    },
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py && .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py",
+      "exit_code": 0,
+      "result": "151 passed, 25 subtests passed in 34.69s (no auto_integrator.py code change; confirms gate behavior is unchanged and intact)"
+    }
+  ],
+  "resolution": {
+    "integrator_code_changed": false,
+    "reason_no_code_change": "scripts/git/auto_integrator.py's require_dedicated_integration_path gate is intentional, tested hardening (SUP-AUTO-INTEGRATOR-DEDICATED-ROOT-20260828) that refuses to merge through an unvalidated/shared checkout. The gap was purely an external host-state promotion omission (coordination.repositories.pantheon.integration_path missing from the live config at the time), already resolved by a subsequent promotion before this task was dispatched.",
+    "action_taken": "Investigated and documented the root cause with reproducing evidence (live config inspection, dedicated integration-runtime checkout audit, GitHub PR/merge state, ancestry check, and a clean pytest re-run of scripts/git/test_auto_integrator.py). Confirmed PR #5912 is MERGED into dev, its merge commit is an ancestor of origin/dev, and it is not stranded. No code or config mutation was needed from this task worktree.",
+    "original_pr_number": 5912,
+    "original_pr_head_sha": "e7fdfaf04a1d3c11e46af324ec39e44111fea7c1",
+    "original_pr_merged": true,
+    "original_pr_stranded": false
+  },
+  "acceptance": {
+    "root_cause_documented": true,
+    "original_pr_updated_or_superseded_and_no_longer_stranded": true
+  }
+}

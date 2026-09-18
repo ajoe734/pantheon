@@ -17,7 +17,29 @@ from services.control_plane.bff.assistant_conversation_store import (
     AssistantConversationStore,
     PostgresAssistantConversationStore,
 )
+from services.control_plane.bff.management_ai_store import ManagementAiAttachmentStore
 from services.control_plane.bff.ports import ReadSurfacePorts
+
+# RETAINED_COMPOSITION (see task BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001):
+# The route handlers this file drives through the live app --
+# `bff_management_ai_conversations`/`bff_management_ai_conversation`/
+# `bff_management_ai_attachment` (mounted via
+# `create_assistant_management_router(_core_handlers)`) and
+# `bff_management_nl_ask` -- are `async def` functions defined directly in
+# main.py (see `def bff_management_ai_conversation` / `def bff_management_nl_ask`
+# in main.py), not extracted into a router/service module. The module-level
+# state they read/write (`_MGMT_AI_CONVERSATION_STORE`, `_MGMT_AI_AUDIT_EVENTS`,
+# `_sse_buffers`, `_mgmt_nl_command_idempotency_store`) is likewise only
+# reachable through main.py's composition graph. There is no
+# `management_ai/router.py` or `management_ai/service.py` to mount a
+# standalone app against without re-implementing that business logic here
+# (forbidden by the migration's rule against copying production logic into
+# tests), so this file keeps a package-qualified
+# `from services.control_plane.bff import main as bff_main` import rather than
+# a `sys.path` hack. The store classes themselves (`ManagementAiConversationStore`,
+# `ManagementAiAttachmentStore`) already live in the standalone
+# `management_ai_store.py` module and are imported directly above/below where
+# a test does not need the live app.
 from services.control_plane.bff import main as bff_main
 
 
@@ -67,7 +89,7 @@ def test_management_ai_attachment_store_uses_gcs_bucket_metadata(monkeypatch) ->
         def blob(self, name: str) -> FakeBlob:
             return FakeBlob(name)
 
-    store = bff_main.ManagementAiAttachmentStore(
+    store = ManagementAiAttachmentStore(
         storage_path="off",
         bucket_name="pantheon-test-attachments",
     )

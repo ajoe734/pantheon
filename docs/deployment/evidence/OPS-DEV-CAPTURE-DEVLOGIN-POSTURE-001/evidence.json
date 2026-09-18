@@ -1,0 +1,146 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001",
+  "title": "Capture must record a predecessor that declares no dev-login identities",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "base_sha": "b435986b13d5c323c533225f5ea3f6481d79a1be",
+  "recorded_at": "2026-09-18T03:08:00Z",
+  "scope": {
+    "declared_artifacts": [
+      "scripts/dev_release_artifact_driver.py",
+      "scripts/dev_artifact_compensation_evidence.py",
+      "scripts/test_dev_release_artifact_driver.py",
+      "scripts/test_dev_artifact_compensation_evidence.py",
+      "scripts/test_dev_paper_diagnostics_failure_path.py",
+      "docs/deployment/evidence/OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001/",
+      "docs/deployment/evidence/OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001/evidence.json"
+    ],
+    "changed_artifacts": [
+      "scripts/dev_release_artifact_driver.py",
+      "scripts/dev_artifact_compensation_evidence.py",
+      "scripts/test_dev_release_artifact_driver.py",
+      "scripts/test_dev_artifact_compensation_evidence.py",
+      "scripts/test_dev_paper_diagnostics_failure_path.py",
+      "docs/deployment/evidence/OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001/evidence.json"
+    ],
+    "evidence_manifest": "docs/deployment/evidence/OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001/evidence.json"
+  },
+  "prior_task_context": {
+    "rollback_drill_receipt": "docs/deployment/evidence/S5-ROLLBACK-001/accepted-I-returned.json recorded the 2026-09-17 15:47Z rollback drill state where hosted dev was restored to source commit ae41705b4637110e665d2eed735afbd8307e28e6 with config_posture.dev_login_enabled=false and authenticated_viewer_readback_verified=false.",
+    "deploy_blocker_run": "GitHub Actions run 35296324562 failed at dev_release_artifact_driver.py:381 because capture demanded a dedicated viewer client_credentials login probe against a predecessor image that had no dev-login secrets provisioned."
+  },
+  "root_cause_analysis": {
+    "failure_summary": "Hosted dev predecessor reports config_posture.dev_login_enabled=false when brought up without dedicated dev-login secrets. Capture unconditionally required a viewer client_credentials probe against that predecessor at dev_release_artifact_driver.py:381, causing all subsequent nonprod-deploy runs to fail with no self-healing path.",
+    "reproduction": {
+      "reproduced": true,
+      "method": "Live read-only probe against https://api.dev.mvl-cap.tw/bff/version confirmed that the hosted dev BFF currently serves source ae41705b4637110e665d2eed735afbd8307e28e6 with config_posture.dev_login_enabled=false and config_posture.auth_mode='strict'. S5-ROLLBACK-001 drill receipt confirmed that this predecessor state genuinely lacks dedicated dev-login credentials.",
+      "code_level_evidence": [
+        "scripts/dev_release_artifact_driver.py:370 _public() previously only verified strict auth negative probes and then immediately proceeded to read PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID / PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET and invoke /bff/auth/dev-login, unconditionally failing when dev_login is disabled on the served predecessor.",
+        "scripts/dev_artifact_compensation_evidence.py:208 validate_readback() previously hardcoded expected_public with authenticated_viewer_readback_verified=True, rejecting any readback where authenticated_viewer_readback_verified is False even if dev-login was disabled."
+      ]
+    },
+    "determination": "The served image itself is the canonical authority on whether a dedicated dev-login identity registry exists. A literal False in config_posture.dev_login_enabled indicates no dedicated identities exist, making viewer login impossible. Capture should record both dev_login_enabled and authenticated_viewer_readback_verified as literal false, while retaining all strict auth, health, and frontend verification checks."
+  },
+  "correction": {
+    "description": "Updated scripts/dev_release_artifact_driver.py to check posture.get('dev_login_enabled') is False in _public(). If literal false, it skips the dev-login probe and returns both dev_login_enabled=False and authenticated_viewer_readback_verified=False. Any other value (None, string, int) continues to demand the full viewer round trip. Updated scripts/dev_artifact_compensation_evidence.py validate_readback() to accept public.dev_login_enabled as boolean and require authenticated_viewer_readback_verified to equal dev_login_enabled, rejecting mismatched claims.",
+    "no_fabricated_readiness": "Nothing is fabricated: when dev-login is disabled, authenticated_viewer_readback_verified is explicitly recorded as false rather than claiming a successful login. Strict auth negative probes, exact SHA match, and frontend manifest byte verification remain mandatory on every path.",
+    "files_changed": [
+      "scripts/dev_release_artifact_driver.py",
+      "scripts/dev_artifact_compensation_evidence.py",
+      "scripts/test_dev_release_artifact_driver.py",
+      "scripts/test_dev_artifact_compensation_evidence.py",
+      "scripts/test_dev_paper_diagnostics_failure_path.py",
+      "docs/deployment/evidence/OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001/evidence.json"
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "ac1_capture_and_verify_succeed_with_dev_login_disabled": {
+      "status": "satisfied",
+      "proof": "test_predecessor_without_dev_login_registry_is_recorded_not_claimed in scripts/test_dev_release_artifact_driver.py verifies capture/verify against dev_login_enabled=False succeeds without invoking /bff/auth/dev-login."
+    },
+    "ac2_skipped_viewer_probe_recorded_as_literal_false": {
+      "status": "satisfied",
+      "proof": "dev_release_artifact_driver.py returns dev_login_enabled=False and authenticated_viewer_readback_verified=False. Verified in test_predecessor_without_dev_login_registry_is_recorded_not_claimed."
+    },
+    "ac3_missing_or_non_boolean_demands_full_round_trip": {
+      "status": "satisfied",
+      "proof": "test_only_a_literal_false_skips_the_viewer_probe parametrized with [None, 'false', 0, 'no'] confirms that non-literal-boolean values still require the full viewer round trip."
+    },
+    "ac4_strict_auth_and_health_remain_mandatory": {
+      "status": "satisfied",
+      "proof": "test_declared_dev_login_absence_never_relaxes_strict_denials verifies that negative probes are still strictly enforced even when dev_login_enabled is false."
+    },
+    "ac5_compensation_validator_admits_only_matching_pair": {
+      "status": "satisfied",
+      "proof": "test_predecessor_without_dev_login_registry_is_a_complete_readback and test_complete_readback_is_required (with mutations login_claimed_without_registry and login_absent_with_registry) in scripts/test_dev_artifact_compensation_evidence.py prove only matching boolean pairs are accepted."
+    },
+    "ac6_regression_tests_and_five_suites_green": {
+      "status": "satisfied",
+      "proof": "All 5 artifact test suites passed with 577 passed and 1 skipped total across the suites."
+    }
+  },
+  "source_files_proof": {
+    "scripts/dev_release_artifact_driver.py": {
+      "bytes": 47218,
+      "lines": 810,
+      "sha256": "34c59ac3d38b7e2d6a04449ddad2d087068d73f91e3a197eebe3e246fdd8af1f"
+    },
+    "scripts/dev_artifact_compensation_evidence.py": {
+      "bytes": 17600,
+      "lines": 292,
+      "sha256": "e98429e3088f75477e1e1c9cdd28fcaf4a669624c29fa0b95fcf8e05e1ffe518"
+    },
+    "scripts/test_dev_release_artifact_driver.py": {
+      "bytes": 55000,
+      "lines": 1046,
+      "sha256": "29c8f6740fa4f00d7e0049c79f95b59efba8108e9bcc56a5cbb2f7fba998d3b2"
+    },
+    "scripts/test_dev_artifact_compensation_evidence.py": {
+      "bytes": 19567,
+      "lines": 297,
+      "sha256": "044551f5cb84dd83dbac13e55877a7450aaac5ca52baf988224e4619975d5163"
+    },
+    "scripts/test_dev_paper_diagnostics_failure_path.py": {
+      "bytes": 164295,
+      "lines": 3743,
+      "sha256": "094cf8de4207beef6940e404e04b089d15f20792c308323fe4b2713dc06305f2"
+    }
+  },
+  "test_executions": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_release_artifact_driver.py scripts/test_dev_artifact_compensation_evidence.py scripts/test_dev_paper_diagnostics_failure_path.py",
+      "exit_code": 0,
+      "collected": 315,
+      "passed": 315,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_capture_dev_artifact_baseline.py scripts/test_dev_release_artifacts.py",
+      "exit_code": 0,
+      "collected": 263,
+      "passed": 262,
+      "failed": 0,
+      "skipped": 1
+    }
+  ],
+  "live_read_only_probe_log": {
+    "endpoint": "https://api.dev.mvl-cap.tw",
+    "commands": [
+      "curl -sS -m 10 https://api.dev.mvl-cap.tw/readyz",
+      "curl -sS -m 10 https://api.dev.mvl-cap.tw/bff/version"
+    ],
+    "observed": {
+      "readyz_status": "ok",
+      "bff_version_source_commit_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+      "bff_version_environment": "dev",
+      "bff_version_auth_mode": "strict",
+      "bff_version_dev_login_enabled": false,
+      "readyz_dependencies_all_ok": true,
+      "lifecycle_projector_backlog": 0
+    },
+    "no_production_or_capital_affecting_mutation_performed": true
+  }
+}
