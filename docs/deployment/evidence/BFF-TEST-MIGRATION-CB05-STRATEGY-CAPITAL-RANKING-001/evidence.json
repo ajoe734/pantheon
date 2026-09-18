@@ -6,27 +6,51 @@
   "reviewer": "Antigravity2",
   "target_repo": "ajoe734/pantheon",
   "base_sha": "27e49d598",
-  "head_sha": "362281962f53278e9de004d33d506ec4b92cae7a",
+  "head_sha": "856ebb23d7d908ff2fea07ebe7ceda4f749a05a0",
   "delivery_state": "ready_for_independent_review",
-  "reconciliation_addendum": {
-    "reason": "PR #5892 went DIRTY against dev (bff_test_architecture_inventory.json and rebalance_authority_test_support.py conflicted with unrelated tasks merged into dev in the interim). Reopened by Human/Ops for owner reconciliation; no implementation or verification redone.",
-    "merge_commit": "362281962f53278e9de004d33d506ec4b92cae7a",
-    "merged_dev_tip": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
-    "conflict_resolution": [
-      "rebalance_authority_test_support.py: kept both sides' imports (tempfile and contextlib.contextmanager), both are used elsewhere in the file.",
-      "bff_test_architecture_inventory.json: merged migrated_suites list (union of this task's test_bff_b3_trading_pulse.py entry and unrelated dev-side entries); recomputed layer_summary/main_by_layer/disposition_summary from the already-merged (non-conflicting) tests array; recomputed live_scan_non_whitelisted_main_importers and the ceiling via a fresh live AST scan (test_bff_test_architecture.py::_live_scan_non_whitelisted_main_importers), giving 48 offenders and ceiling=48 (never raised; prior dev-side value was 49)."
-    ],
-    "post_merge_reverification": [
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
-        "result": "13 passed (unchanged from prior approval)"
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
-        "result": "2 passed, 25 failed (unchanged from prior approval; matches documented pre-existing baseline)"
-      }
-    ]
-  },
+  "reconciliation_addendum": [
+    {
+      "reason": "PR #5892 went DIRTY against dev (bff_test_architecture_inventory.json and rebalance_authority_test_support.py conflicted with unrelated tasks merged into dev in the interim). Reopened by Human/Ops for owner reconciliation; no implementation or verification redone.",
+      "merge_commit": "362281962f53278e9de004d33d506ec4b92cae7a",
+      "merged_dev_tip": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
+      "conflict_resolution": [
+        "rebalance_authority_test_support.py: kept both sides' imports (tempfile and contextlib.contextmanager), both are used elsewhere in the file.",
+        "bff_test_architecture_inventory.json: merged migrated_suites list (union of this task's test_bff_b3_trading_pulse.py entry and unrelated dev-side entries); recomputed layer_summary/main_by_layer/disposition_summary from the already-merged (non-conflicting) tests array; recomputed live_scan_non_whitelisted_main_importers and the ceiling via a fresh live AST scan (test_bff_test_architecture.py::_live_scan_non_whitelisted_main_importers), giving 48 offenders and ceiling=48 (never raised; prior dev-side value was 49)."
+      ],
+      "post_merge_reverification": [
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+          "result": "13 passed (unchanged from prior approval)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+          "result": "2 passed, 25 failed (unchanged from prior approval; matches documented pre-existing baseline)"
+        }
+      ]
+    },
+    {
+      "reason": "PR #5892 went DIRTY again after dev advanced further past the first reconciliation's merge base (dev tip e7db147f6a -> 8057d47d8). Only bff_test_architecture_inventory.json conflicted this time; rebalance_authority_test_support.py merged cleanly.",
+      "merge_commit": "856ebb23d7d908ff2fea07ebe7ceda4f749a05a0",
+      "merged_dev_tip": "8057d47d86d3b14547b3398f73c635eac0751d32",
+      "conflict_resolution": [
+        "bff_test_architecture_inventory.json: took dev's side for migrated_in_task_count (20, reflecting suites other tasks landed on dev since); recomputed disposition_summary/layer_summary/main_by_layer from the already-merged (non-conflicting) tests array; recomputed live_scan_non_whitelisted_main_importers and the ceiling via a fresh live AST scan, giving 29 offenders and ceiling=29 (lowered from the recorded 30 on dev; never raised, per gate policy). test_bff_pm12_portfolio_book_contract.py and tests/test_ppl_alloc_012_ranking_projection.py remain offenders as already documented (their main imports were never removed by this task's delivered scope); tests/test_bff_b3_trading_pulse.py remains off the offenders list."
+      ],
+      "post_merge_reverification": [
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+          "result": "8 passed (unchanged)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_trading_pulse.py services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+          "result": "15 passed, 25 failed (unchanged from prior approval; matches documented pre-existing baseline)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_emergency_containment.py",
+          "result": "34 passed, 0 failed (improved from the documented 31 passed/3 failed baseline; the 3 pre-existing failures were fixed by unrelated work already merged into dev, not by this task)"
+        }
+      ]
+    }
+  ],
   "contract_revision": {
     "kind": "artifact_contract",
     "action": "scope_split_under_acceptance_criterion_11",
@@ -78,7 +102,14 @@
       "sys_path_mutations": 0,
       "retained_composition_site": {
         "marker": "RETAINED_COMPOSITION",
-        "lines": [98, 110, 786, 787, 799, 802],
+        "lines": [
+          98,
+          110,
+          786,
+          787,
+          799,
+          802
+        ],
         "reason": "Calls bff_main._pm12_allocation_line_assertion_hash, which is defined nowhere in the repository (not in main.py, not in any module). Cannot be extracted or stubbed without inventing product behavior; requires a formal symbol-definition or extraction task before this seam can close.",
         "blocked_symbol": "_pm12_allocation_line_assertion_hash"
       },
