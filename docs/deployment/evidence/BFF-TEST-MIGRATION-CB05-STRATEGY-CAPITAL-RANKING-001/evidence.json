@@ -1,0 +1,229 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001",
+  "group": "B23_strategy_capital_ranking",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "27e49d598",
+  "head_sha": "30d8d2d4a13d74c43eeeb5ca6c0c20ce84b423d6",
+  "delivery_state": "ready_for_independent_review",
+  "reconciliation_addendum": [
+    {
+      "reason": "PR #5892 went DIRTY against dev (bff_test_architecture_inventory.json and rebalance_authority_test_support.py conflicted with unrelated tasks merged into dev in the interim). Reopened by Human/Ops for owner reconciliation; no implementation or verification redone.",
+      "merge_commit": "362281962f53278e9de004d33d506ec4b92cae7a",
+      "merged_dev_tip": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
+      "conflict_resolution": [
+        "rebalance_authority_test_support.py: kept both sides' imports (tempfile and contextlib.contextmanager), both are used elsewhere in the file.",
+        "bff_test_architecture_inventory.json: merged migrated_suites list (union of this task's test_bff_b3_trading_pulse.py entry and unrelated dev-side entries); recomputed layer_summary/main_by_layer/disposition_summary from the already-merged (non-conflicting) tests array; recomputed live_scan_non_whitelisted_main_importers and the ceiling via a fresh live AST scan (test_bff_test_architecture.py::_live_scan_non_whitelisted_main_importers), giving 48 offenders and ceiling=48 (never raised; prior dev-side value was 49)."
+      ],
+      "post_merge_reverification": [
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+          "result": "13 passed (unchanged from prior approval)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+          "result": "2 passed, 25 failed (unchanged from prior approval; matches documented pre-existing baseline)"
+        }
+      ]
+    },
+    {
+      "reason": "PR #5892 went DIRTY again after dev advanced further past the first reconciliation's merge base (dev tip e7db147f6a -> 8057d47d8). Only bff_test_architecture_inventory.json conflicted this time; rebalance_authority_test_support.py merged cleanly.",
+      "merge_commit": "856ebb23d7d908ff2fea07ebe7ceda4f749a05a0",
+      "merged_dev_tip": "8057d47d86d3b14547b3398f73c635eac0751d32",
+      "conflict_resolution": [
+        "bff_test_architecture_inventory.json: took dev's side for migrated_in_task_count (20, reflecting suites other tasks landed on dev since); recomputed disposition_summary/layer_summary/main_by_layer from the already-merged (non-conflicting) tests array; recomputed live_scan_non_whitelisted_main_importers and the ceiling via a fresh live AST scan, giving 29 offenders and ceiling=29 (lowered from the recorded 30 on dev; never raised, per gate policy). test_bff_pm12_portfolio_book_contract.py and tests/test_ppl_alloc_012_ranking_projection.py remain offenders as already documented (their main imports were never removed by this task's delivered scope); tests/test_bff_b3_trading_pulse.py remains off the offenders list."
+      ],
+      "post_merge_reverification": [
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+          "result": "8 passed (unchanged)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_trading_pulse.py services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+          "result": "15 passed, 25 failed (unchanged from prior approval; matches documented pre-existing baseline)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_emergency_containment.py",
+          "result": "34 passed, 0 failed (improved from the documented 31 passed/3 failed baseline; the 3 pre-existing failures were fixed by unrelated work already merged into dev, not by this task)"
+        }
+      ]
+    },
+    {
+      "reason": "PR #5892 base refreshed after dev advanced with PR #5920 (8057d47d8 -> f67ee443e). Merged cleanly without conflicts; updated owner to Antigravity per canonical task reassignment.",
+      "merge_commit": "30d8d2d4a13d74c43eeeb5ca6c0c20ce84b423d6",
+      "merged_dev_tip": "f67ee443e601b1b5ffba68d52103d73d899e62e9",
+      "conflict_resolution": [
+        "Clean merge, no conflicts encountered."
+      ],
+      "post_merge_reverification": [
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+          "result": "8 passed (unchanged)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+          "result": "5 passed (unchanged)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+          "result": "2 passed, 25 failed (unchanged; matches documented baseline)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_emergency_containment.py",
+          "result": "34 passed, 0 failed (unchanged)"
+        }
+      ]
+    }
+  ],
+  "contract_revision": {
+    "kind": "artifact_contract",
+    "action": "scope_split_under_acceptance_criterion_11",
+    "updated_by": "Human/Ops",
+    "updated_at": "2026-09-17T11:26:14Z",
+    "reason": "test_bff_pm12_portfolio_book_contract.py, tests/test_bff_rebalance_proposals.py, tests/test_ppl_alloc_009_assertion_semantics.py, and tests/test_overlay_retirement.py cannot be honestly migrated under this task's acceptance criteria (no main.py edits, no receiver-router edits, no assertion weakening). They are deferred to a successor task. This task's delivered scope is limited to test_bff_b3_trading_pulse.py (fully migrated) and test_ppl_alloc_012_ranking_projection.py (partially migrated, one documented RETAINED_COMPOSITION seam)."
+  },
+  "summary": "Fully decoupled test_bff_b3_trading_pulse.py from BFF main.py composition (5/5 tests pass, 0 main imports, 0 sys.path mutations) by mounting strategies/router.py on an isolated FastAPI app via rebalance_authority_test_support.py and replacing bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY global mutation with a route-level dependency override. Partially migrated test_ppl_alloc_012_ranking_projection.py: removed composition-globals mutation and sys.path surgery everywhere except one documented RETAINED_COMPOSITION site gated on the undefined _pm12_allocation_line_assertion_hash symbol (2 passed / 25 failed, vs 1 passed / 26 failed pre-change baseline on the same file -- net improvement, no regression). Extended the shared rebalance_authority_test_support.py harness with PplRankingProjectionHarness and fixed a retired-attribute collision (_ranking_snapshots -> _ppl_ranking_snapshots) required because ReadSurfacePorts.__setattr__ now rejects the old name on dev tip. Live AST scan of non-whitelisted BFF main importers dropped from 80 to 79 with test_bff_b3_trading_pulse.py's removal; bff_test_architecture_inventory.json ceiling lowered to 79 accordingly (never raised, per gate policy). The four deferred files, two nowhere-defined symbols, two main.py-only symbols, and two surfaced product defects are recorded below for the successor task per the operator's contract-split decision.",
+  "source_artifacts": [
+    "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+    "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+    "services/control-plane/bff/tests/rebalance_authority_test_support.py",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+  ],
+  "ast_and_inventory_verification": {
+    "live_ast_scan_non_whitelisted_main_importers_before": 80,
+    "live_ast_scan_non_whitelisted_main_importers_after": 79,
+    "ceiling_before": 80,
+    "ceiling_after": 79,
+    "ceiling_direction": "lowered_only_per_gate_policy",
+    "architecture_invariant_check": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "result": "13 passed, 0 failed"
+    }
+  },
+  "file_dispositions": {
+    "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "sha256": "7c65261f362a94ef161cf4395c955008aaf4d8a19d698925f6f1f0475756a838",
+      "bytes": 18644,
+      "lines": 442,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "services.control_plane.bff.strategies.router.create_strategies_router mounted on an isolated FastAPI app via rebalance_authority_test_support.py; bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY global mutation replaced with a route-level dependency override.",
+      "verification_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "verification_result": "5 passed"
+    },
+    "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py": {
+      "disposition": "PARTIAL_DECOUPLE_ONE_RETAINED_COMPOSITION_SEAM",
+      "tests_passed": 2,
+      "tests_failed": 25,
+      "pre_change_baseline": "1 passed / 26 failed on the same file before this task's edits; current 2 passed / 25 failed is a net improvement with no regression",
+      "sha256": "6cb85633c187564401ea59b284710946bfbbf59299a988ed47e8d0050fc02bf2",
+      "bytes": 133931,
+      "lines": 3152,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "retained_composition_site": {
+        "marker": "RETAINED_COMPOSITION",
+        "lines": [
+          98,
+          110,
+          786,
+          787,
+          799,
+          802
+        ],
+        "reason": "Calls bff_main._pm12_allocation_line_assertion_hash, which is defined nowhere in the repository (not in main.py, not in any module). Cannot be extracted or stubbed without inventing product behavior; requires a formal symbol-definition or extraction task before this seam can close.",
+        "blocked_symbol": "_pm12_allocation_line_assertion_hash"
+      },
+      "verification_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+      "verification_result": "2 passed, 25 failed (pre-existing gap, not introduced by this migration)"
+    },
+    "services/control-plane/bff/tests/rebalance_authority_test_support.py": {
+      "disposition": "SHARED_TEST_HARNESS_EXTENDED",
+      "sha256": "695e58db0ba187ed9806aa75d30a5c60c6bc287f09373a4fc277f5c11c649c3c",
+      "bytes": 39661,
+      "lines": 989,
+      "change_summary": "Added PplRankingProjectionHarness for test_ppl_alloc_012_ranking_projection.py's isolated-app mounting. Renamed a retired attribute the harness relied on (_ranking_snapshots -> _ppl_ranking_snapshots) because ReadSurfacePorts.__setattr__ on current dev tip now rejects the old name.",
+      "regression_check": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_emergency_containment.py",
+        "result": "31 passed, 3 failed",
+        "note": "Matches pre-existing baseline exactly (3 pre-existing failures in test_management_read_budget.py unrelated to this task). Confirms the shared-harness edit caused no collateral regression in other suites that import rebalance_authority_test_support.py."
+      }
+    }
+  },
+  "deferred_successor_scope": {
+    "successor_task": "not yet created; operator (Human/Ops) to open it",
+    "deferred_files": [
+      {
+        "file": "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+        "blocking_reason": "Depends on _management_portfolio_book_exposure_item, which is defined nowhere in the repository (not in main.py, not in any module). Cannot be honestly migrated without inventing the symbol; needs a formal symbol-definition task first."
+      },
+      {
+        "file": "services/control-plane/bff/tests/test_bff_rebalance_proposals.py",
+        "blocking_reason": "Depends on _pm12_performance_attribution_response, which is defined only inside services/control-plane/bff/main.py. Cannot be decoupled without either a narrow main.py extraction (out of this task's acceptance scope) or a documented RETAINED_COMPOSITION seam accepted by the successor's own acceptance criteria."
+      },
+      {
+        "file": "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py",
+        "blocking_reason": "Depends on _pm12_semantic_json_value, which is defined only inside services/control-plane/bff/main.py. Same blocking shape as test_bff_rebalance_proposals.py: needs either a scoped main.py extraction task or an accepted RETAINED_COMPOSITION seam."
+      },
+      {
+        "file": "services/control-plane/bff/tests/test_overlay_retirement.py",
+        "blocking_reason": "Not a decoupling candidate at all: it is a main-introspection suite that inherently inspects services/control-plane/bff/main.py process state (verifying absence of _PERSONA_BFF_OVERLAY, _STRATEGY_BFF_OVERLAY, etc. from main.__dict__). It belongs on composition_allowlist, not in a migration batch. It cannot be added to composition_allowlist today because test_bff_test_architecture.py's keyword rule (composition, catalog, resolution, uniqueness, smoke, boundaries, deletion, owner, architecture, migration) does not match the word 'retirement'. The successor should either widen the keyword rule (with review) or rename the file to match an existing keyword, then add it to composition_allowlist with a rationale."
+      }
+    ],
+    "symbols_defined_nowhere_in_repo": [
+      "_pm12_allocation_line_assertion_hash",
+      "_management_portfolio_book_exposure_item"
+    ],
+    "symbols_defined_only_in_main_py": [
+      "_pm12_performance_attribution_response",
+      "_pm12_semantic_json_value"
+    ]
+  },
+  "product_defects_surfaced_not_in_scope_to_fix": [
+    {
+      "id": "PERSONAS-SERVICE-PM12-SEMANTIC-VALUES-MATCH-NAMEERROR",
+      "description": "services/control-plane/bff/personas/service.py lines 9165 and 9220 both call the unqualified name _pm12_semantic_values_match, but personas/service.py neither defines nor imports it. The only definition in the repository is services/control-plane/bff/main.py:7009 (def _pm12_semantic_values_match). Any runtime path through personas/service.py that reaches either call site will raise NameError.",
+      "verified_at_head": "3dcb3db8c3449922b1db622ee176696c33aadde8",
+      "verification_commands": [
+        "grep -n _pm12_semantic_values_match services/control-plane/bff/personas/service.py  # -> lines 9165, 9220, both bare calls",
+        "grep -rn 'def _pm12_semantic_values_match' services/control-plane/bff/  # -> only services/control-plane/bff/main.py:7009",
+        "grep -n '^import|^from' services/control-plane/bff/personas/service.py | grep -i semantic  # -> no import found"
+      ],
+      "status": "genuine_latent_bug_not_fixed_here_per_task_scope"
+    },
+    {
+      "id": "CAPITAL-ROUTER-GET-CAPITAL-AUTHORITY-UNWIRED",
+      "description": "main.py:18388-18399 calls create_capital_router(read_surface=app_deps.read_surface, ...) but never passes get_capital_authority. Inside CapitalService._authority() (capital/service.py:167-169), an absent get_capital_authority falls back to self._store() -- i.e. the same read-surface store backs both reads and the write/authority path for all 25 Capital routes. Writes are not provably dead (read_surface is a real, non-None ReadSurfacePorts instance, confirmed live at this head), but no code path currently supplies a dedicated capital-authority object, so any Capital write route the wiring intends to route to a distinct authority instead silently uses the read store.",
+      "correction_of_prior_framing": "An earlier framing of this defect (recorded before this task's dispatch) stated that create_capital_router's internal resolved_get_read_store falls back to 'lambda: None' because main.py passes neither get_read_store nor get_capital_authority, making capital write routes dead. That framing no longer reproduces at this head: main.py:18390 passes read_surface=app_deps.read_surface (added 2026-09-04 in commit f48fdcc7a0, confirmed via git blame), which satisfies create_capital_router's first branch (`if read_surface is not None`) and prevents the None-returning fallback lambda from ever being selected. The narrower, currently-reproducible gap is specifically that get_capital_authority is unwired, not that the read store is None. The successor triaging this should re-verify against current head rather than reuse the older 'resolved_get_read_store is None' description.",
+      "verified_at_head": "3dcb3db8c3449922b1db622ee176696c33aadde8",
+      "verification_commands": [
+        "git blame -L 18388,18400 services/control-plane/bff/main.py  # -> read_surface=app_deps.read_surface added by f48fdcc7a0 on 2026-09-04",
+        "sed -n '132,160p' services/control-plane/bff/capital/router.py  # -> resolved_get_read_store branches on read_surface first, get_capital_authority is passed through unset (None)",
+        "sed -n '153,170p' services/control-plane/bff/capital/service.py  # -> _authority() falls back to self._store() when get_capital_authority is None"
+      ],
+      "status": "genuine_wiring_gap_narrower_than_originally_framed_not_fixed_here_per_task_scope"
+    }
+  ],
+  "verification": {
+    "python_environment": "PANTHEON_DEPENDENCY_PYTHON=/tmp/bff-command-contract-deps/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_trading_pulse.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "result": "13 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+        "result": "2 passed, 25 failed (matches documented pre-existing baseline of 1 passed / 26 failed; net improvement, no regression)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_emergency_containment.py",
+        "result": "31 passed, 3 failed (matches pre-existing baseline; confirms shared-harness edit is collateral-regression-free)"
+      }
+    ]
+  }
+}

@@ -44,6 +44,7 @@
     "test_tw03_before_after_compare_contract.py",
     "test_tw04_teaching_replay_contract.py",
     "tests/test_agora_performance_transport_and_isolated_store.py",
+    "tests/test_bff_b3_trading_pulse.py",
     "tests/test_bff_b6_001_security_hardening.py",
     "tests/test_bff_b6_003_nl_high_risk_refusal.py",
     "tests/test_bff_b6_management_nl_ask.py",
@@ -69,7 +70,7 @@
   },
   "main_by_layer": {
     "adapter": 2,
-    "application": 22,
+    "application": 21,
     "composition": 9,
     "hosted": 1,
     "router": 17
@@ -77,8 +78,8 @@
   "disposition_summary": {
     "ALLOWLIST": 15,
     "DECOUPLED": 303,
-    "MIGRATED": 26,
-    "PLANNED": 40
+    "MIGRATED": 27,
+    "PLANNED": 39
   },
   "tests": [
     {
@@ -1918,9 +1919,9 @@
     {
       "file": "tests/test_bff_b3_trading_pulse.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated in BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001: mounts strategies router on isolated FastAPI app via rebalance_authority_test_support, no main import, no sys.path surgery."
     },
     {
       "file": "tests/test_bff_b5_001_security_hardening.py",
@@ -2770,7 +2771,7 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 30,
+  "live_scan_non_whitelisted_main_importer_ceiling": 29,
   "live_scan_non_whitelisted_main_importers": [
     "test_bff_consol_008_fixture_pack_a.py",
     "test_bff_consol_009_fixture_pack_b.py",
@@ -2793,7 +2794,6 @@
     "test_rw04_experiment_launch_contract.py",
     "test_rw05_artifact_compare_contract.py",
     "tests/test_bff_b2_004_research_search.py",
-    "tests/test_bff_b3_trading_pulse.py",
     "tests/test_bff_knowledge_inbox.py",
     "tests/test_bff_path_dedupe.py",
     "tests/test_bff_rebalance_proposals.py",

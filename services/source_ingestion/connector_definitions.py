@@ -969,6 +969,41 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/alpha-db-vendor-signals",
     ),
+    ConnectorDefinition(
+        definition_id="dev-paper-us-equity-simulation",
+        adapter_token="DevPaperUsEquitySimulationAdapter.records_from_now",
+        adapter_version="1.0.0",
+        provider="Explicit controlled simulation",
+        source_kinds=("data_source",),
+        source_types=("market",),
+        source_classes=("market_daily",),
+        datasets=("us_price_daily",),
+        auth_modes=("none",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("none",),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+        secret_fields=(),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 10, "max_bytes": 65536, "timeout_seconds": 5, "max_rate_per_second": 5.0},
+        allowed_host_patterns=(),
+        definition_state=DefinitionState.SUPPORTED,
+        metadata={
+            "is_real": False,
+            "provenance": "simulation",
+            "dev_only": True,
+            "purpose": (
+                "Durable, code-owned, freshness-safe synthetic market-data connector for the "
+                "dev paper baseline's US persona (DEV-PAPER-MARKET-INPUT-STALENESS-001). "
+                "Never selectable outside PANTHEON_ENV=dev."
+            ),
+        },
+        test_manifest_ref="evidence://connector-definition/dev-paper-us-equity-simulation",
+    ),
 )
 
 DEPLOYED_CONNECTOR_DEFINITIONS: tuple[ConnectorDefinition, ...] = _CANONICAL_DEFINITIONS

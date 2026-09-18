@@ -18,6 +18,11 @@ from jsonschema import Draft7Validator
 
 from .configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .connectors import SourceConnector, SourceConnectorProvider, SourceEvidenceError
+from .connectors.dev_paper_simulation import (
+    DEV_PAPER_SIMULATION_CONNECTOR_ID,
+    DevPaperUsEquitySimulationAdapter,
+    is_dev_environment,
+)
 from .connectors.finmind_taiwan import FINMIND_TAIWAN_DATASETS, FinMindTaiwanDatasetAdapter
 from .connectors.taiwan_official import (
     TAIWAN_OFFICIAL_ENDPOINTS,
@@ -77,6 +82,11 @@ _OFFICIAL_TW_DATASETS = {
     for endpoint in TAIWAN_OFFICIAL_ENDPOINTS
     if endpoint.get("dataset") and str(endpoint.get("status") or "").startswith("implemented")
 }
+
+# Datasets the dev-only synthetic simulation connector can satisfy for the
+# paper baseline's US persona (DEV-PAPER-MARKET-INPUT-STALENESS-001). Never
+# selected outside PANTHEON_ENV=dev; see is_dev_environment().
+_DEV_PAPER_US_DATASETS = {"us_price_daily"}
 
 
 @dataclass(frozen=True)
@@ -207,6 +217,10 @@ class SourceProvisioningReconciler:
             "tw-finmind-datasets": lambda connector_id: FinMindTaiwanDatasetAdapter(connector_id=connector_id),
             TW_OFFICIAL_CONNECTOR_ID: lambda connector_id: TaiwanOfficialMarketDatasetAdapter(connector_id=connector_id),
         }
+        if is_dev_environment():
+            self.provider_factories[DEV_PAPER_SIMULATION_CONNECTOR_ID] = (
+                lambda connector_id: DevPaperUsEquitySimulationAdapter(connector_id=connector_id)
+            )
         if provider_factories:
             self.provider_factories.update(provider_factories)
 
@@ -412,6 +426,12 @@ class SourceProvisioningReconciler:
             return [TW_OFFICIAL_CONNECTOR_ID, "tw-finmind-datasets"]
         if requirement.market.upper() == "TW" and requirement.dataset in _FINMIND_DATASET_BY_NORMALIZED:
             return ["tw-finmind-datasets"]
+        if (
+            requirement.market.upper() == "US"
+            and requirement.dataset in _DEV_PAPER_US_DATASETS
+            and is_dev_environment()
+        ):
+            return [DEV_PAPER_SIMULATION_CONNECTOR_ID]
         return []
 
     def _provider_supports(self, connector_id: str, requirement: PersonaDataSourceRequirement) -> bool:
@@ -419,6 +439,12 @@ class SourceProvisioningReconciler:
             return requirement.market.upper() == "TW" and requirement.dataset in _FINMIND_DATASET_BY_NORMALIZED
         if connector_id == TW_OFFICIAL_CONNECTOR_ID:
             return requirement.market.upper() == "TW" and requirement.dataset in _OFFICIAL_TW_DATASETS
+        if connector_id == DEV_PAPER_SIMULATION_CONNECTOR_ID:
+            return (
+                requirement.market.upper() == "US"
+                and requirement.dataset in _DEV_PAPER_US_DATASETS
+                and is_dev_environment()
+            )
         return True
 
     def _build_plan(

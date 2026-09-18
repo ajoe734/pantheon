@@ -19,6 +19,7 @@ from services.research.adapters.taiwan_market_client import MopsRouteSpec, Taiwa
 from .connectors.alpha_db import ExternalAlphaDbAdapter
 from .connectors.base import SourceConnector, SourceEvidenceError, SourceRecord
 from .connectors.crypto_coingecko import CoinGeckoSpotMarketAdapter, _coin_ids_from_symbols
+from .connectors.dev_paper_simulation import DevPaperUsEquitySimulationAdapter
 from .connectors.finmind_taiwan import (
     FinMindTaiwanBrokerBulkBackfillAdapter,
     FinMindTaiwanBrokerDailyReportAdapter,
@@ -676,6 +677,15 @@ def _coingecko_spot(
     return tuple(records)
 
 
+def _dev_paper_simulation(
+    adapter: DevPaperUsEquitySimulationAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    symbols = _string_list(request.get("symbols")) or None
+    return adapter.records_from_now(symbols=symbols, trace_id=trace_id)
+
+
 def _polygon_daily(
     adapter: PolygonUsEquityDailyAdapter,
     request: Mapping[str, Any],
@@ -914,6 +924,7 @@ PROVIDER_ADAPTER_ALIASES: dict[str, str] = {
     "AlphaVantageUsEquityDailyAdapter": "AlphaVantageUsEquityDailyAdapter.records_from_time_series_payload",
     "IbkrBrokerReadbackAdapter": "IbkrBrokerReadbackAdapter.records_from_readback_file",
     "ShioajiBrokerReadbackAdapter": "ShioajiBrokerReadbackAdapter.records_from_readback_file",
+    "DevPaperUsEquitySimulationAdapter": "DevPaperUsEquitySimulationAdapter.records_from_now",
 }
 
 
@@ -1013,6 +1024,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=CoinGeckoSpotMarketAdapter,
         handler=_coingecko_spot,
         config_keys=("api_base_url", "vs_currency", "ohlc_days", "max_records", "timeout_seconds", "user_agent"),
+    ),
+    "DevPaperUsEquitySimulationAdapter.records_from_now": ProviderAdapterSpec(
+        token="DevPaperUsEquitySimulationAdapter.records_from_now",
+        adapter_cls=DevPaperUsEquitySimulationAdapter,
+        handler=_dev_paper_simulation,
+        config_keys=("symbols",),
     ),
     "PolygonUsEquityDailyAdapter.records_from_aggs_payload": ProviderAdapterSpec(
         token="PolygonUsEquityDailyAdapter.records_from_aggs_payload",
