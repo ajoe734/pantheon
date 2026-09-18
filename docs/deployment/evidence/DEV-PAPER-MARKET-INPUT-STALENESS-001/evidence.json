@@ -1,0 +1,67 @@
+{
+  "task_id": "DEV-PAPER-MARKET-INPUT-STALENESS-001",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "status": "implementation_ready_for_review",
+  "summary": "The dev paper baseline (bootstrap_dev_paper_baseline.py, persona market=\"US\", symbol SPY) had no code-owned, durable market-data connector at all. Its only market input was a one-off operator-registered `static_records` connector (conn-dev-product-20260913T040439Z-...) injected during an unrelated 12-loop acceptance exercise (S5-LOOPS-001), whose event_time values were frozen absolute timestamps baked into its config. Frozen timestamps can never satisfy the flat age_seconds<=86400s admission rule again once they age out, so the runtime binding was paused with market_input_stale forever and every subsequent dev paper baseline attempt time out at PERSONA_PROVISIONING_READBACK_FAILED. Fixed by adding a governed, dev-only synthetic connector auto-provisioned and auto-scheduled by the existing persona_source_reconciler machinery (same pattern already used for TW official market data), whose event_time is always computed relative to \"now\" at ingest time, and by threading the paused binding's market_input_stale reason into the persona provisioning failure's terminal_reason so a future recurrence is self-diagnosing from the API response alone.",
+  "root_cause_investigation": {
+    "method": "Live SSH investigation of the dev VM (34.81.52.222) via `ssh -F /dev/null -i ~/.ssh/google_compute_engine chloe_ong_dev_cctech_support_com@34.81.52.222`, no redeploy performed.",
+    "observed_at": "2026-09-18T06:20-07:10Z",
+    "findings": [
+      "The stale snapshot mss-318d9ad652c4a87f1b39c8ec (cited in the task brief) is served by GET http://127.0.0.1:18097/api/source-ingest/snapshots/latest?symbol=SPY on the dev VM; re-confirmed live at task closeout still returning event_time=2026-09-13T03:59:39Z / observed_at=2026-09-13T04:04:39Z, lineage.connector_ids=[\"conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e\"].",
+      "GET http://127.0.0.1:18097/api/source-ingest/connectors/conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e shows provider=\"Explicit controlled simulation\", fetch.mode=\"static_records\", and its two records carry hardcoded normalized_row.event_time values (2026-09-12T03:59:39Z, 2026-09-13T03:59:39Z) baked directly into the stored fetch config -- not derived at ingest time.",
+      "docs/deployment/step5-acceptance-report.md and docs/deployment/evidence/S5-LOOPS-001/ confirm this connector id (acceptance_stimulus_id dev-product-20260913T040439Z-...) was manually injected as a one-off 'fresh stimulus' for an unrelated 12-loop acceptance exercise on 2026-09-13, not as durable paper-baseline market input.",
+      "services/source_ingestion/persona_source_reconciler.py's auto-provisioning reconciler (confirmed running continuously in dev via container logs: repeated POST /api/source-ingest/persona-source-provisioning/reconcile against pantheon-source-ingest-1) never manages this connector: _default_candidates() only returns candidates for market==\"TW\"; for market==\"US\" it returned [] before this fix, so the connector backing the persona's actual required dataset was entirely invisible to the self-healing reconcile loop.",
+      "The dev source-ingest scheduler container (pantheon-source-ingest-scheduler-1) runs controller_worker.py in RECONCILE_ONLY_MODE, which explicitly asserts 'reconcile_only mode must not select provider connector execution' -- so even a correctly scheduled connector performs no automatic background ingestion on this dev topology; the persona_source_reconciler's reconcile-driven auto-provisioning is the only durable, already-running self-healing path in this deployment.",
+      "services/paper_fleet_reconciler/paper_fleet_reconciler.py's admission check (services/execution/market_snapshot_admission.py:admit_market_snapshot) correctly rejects the frozen snapshot once age_seconds > max_age_seconds=86400, pauses the binding (session_admission.reason_code=market_input_stale), which starves the deployment saga at awaiting_binding until persona provisioning times out with PERSONA_PROVISIONING_READBACK_FAILED after PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS (~600s) -- exactly the failure chain described in the task brief for deploy run 35312054524 / idempotency_key dev-paper-release-35312054524-1."
+    ]
+  },
+  "code_fix": {
+    "new_files": [
+      "services/source_ingestion/connectors/dev_paper_simulation.py",
+      "services/source_ingestion/tests/test_dev_paper_simulation.py"
+    ],
+    "modified_files": [
+      "services/source_ingestion/connector_definitions.py",
+      "services/source_ingestion/provider_adapters.py",
+      "services/source_ingestion/persona_source_reconciler.py",
+      "services/source_ingestion/tests/test_persona_source_reconciler.py",
+      "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/test_persona_provisioning_readback.py"
+    ],
+    "description": [
+      "Added a lean, dev-only 'dev-paper-us-equity-simulation' connector (DevPaperUsEquitySimulationAdapter) whose event_time/available_time are always computed relative to the injected clock at call time (the most recently completed UTC daily close before now), never frozen into config. Every record and the connector itself carry is_real=false, provenance=simulation, mirroring the honesty conventions of the fixture it replaces. Gated to PANTHEON_ENV=dev via is_dev_environment().",
+      "Registered it as a ConnectorDefinition (definition_state=SUPPORTED) and wired it into persona_source_reconciler.py's _default_candidates/_provider_supports for market=='US' + dataset 'us_price_daily' + dev environment, following the exact pattern already used for the TW official connector. The reconciler's existing _ensure_schedule logic (cadence 'daily' -> interval_seconds=86400>0) auto-enables its schedule, so the already-running persona-source-provisioning reconcile loop keeps it fresh and self-healing with no further manual steps.",
+      "Added a required_data_sources entry for market=='US' personas under PANTHEON_ENV=dev in services/control-plane/bff/personas/service.py:_market_persona_required_data_sources, closing the gap where the dev paper baseline's persona previously derived no live_pull requirement at all for its market. Staging/prod personas are unaffected (still return [] for US).",
+      "Enriched the persona provisioning terminal_reason: when the RuntimeBinding a persona is waiting on is paused with metadata.session_admission.reason_code set (e.g. market_input_stale), that reason_code and its detail (source_snapshot_id, source_event_time, max_age_seconds) are now appended to the existing comma-joined provisioning_failure_reason/terminal_reason string, e.g. '...,runtime_binding_failed_or_mismatched,market_input_stale:source_snapshot_id=...,source_event_time=...,max_age_seconds=86400' -- additive only, no existing failure marker or schema was changed."
+    ]
+  },
+  "verification": {
+    "provisioning": "python3 scripts/dev/provision_python_distribution.py with PANTHEON_DEPENDENCY_PYTHON pointed at a known-good sibling .venv-pantheon (this worktree's default dependency chain hit a pre-existing, unrelated typing_extensions/pydantic_core conflict in the host's shared .venv, not caused by this change)",
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_dev_paper_simulation.py services/source_ingestion/tests/test_persona_source_reconciler.py services/control-plane/bff/test_persona_provisioning_readback.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/paper_fleet_reconciler/test_paper_fleet_reconciler.py",
+      ".venv-pantheon/bin/python3 -m py_compile services/source_ingestion/connectors/dev_paper_simulation.py services/source_ingestion/tests/test_dev_paper_simulation.py services/control-plane/bff/personas/service.py services/control-plane/bff/test_persona_provisioning_readback.py services/source_ingestion/connector_definitions.py services/source_ingestion/persona_source_reconciler.py services/source_ingestion/provider_adapters.py services/source_ingestion/tests/test_persona_source_reconciler.py"
+    ],
+    "results": {
+      "focused_suite": "86 passed (test_dev_paper_simulation.py + test_persona_source_reconciler.py + test_persona_provisioning_readback.py)",
+      "paper_fleet_reconciler_suite": "60 passed, 2 errors -- both pre-existing and unrelated (ModuleNotFoundError: redis, in TestRedisFencedLeaderLease's docker-based Redis-lease tests; not touched by this change)",
+      "targeted_stale_and_resume_regression": "pytest -k 'market_input_stale or resum or admission' -> 9 passed, confirming the stale-input pause and fresh-snapshot resume paths were already fully covered by existing tests before this task; no duplicate tests were added for those two paths",
+      "py_compile": "all touched/added files compiled cleanly",
+      "live_admission_check": "Instantiated DevPaperUsEquitySimulationAdapter directly in this worktree's provisioned interpreter, generated a record, and passed it through services.execution.market_snapshot_admission.admit_market_snapshot(max_age_seconds=86400): admitted=True, age_seconds≈25484 (well inside the 86400s window), reason=None -- confirms the new connector's output actually satisfies the exact admission rule that was rejecting the frozen fixture."
+    }
+  },
+  "live_dev_state_at_closeout": {
+    "note": "No redeploy was performed for this task per the dispatch instruction ('Human/Ops owns the redeploy'). The code fix above lands with the next dev deploy; the currently-running dev containers still serve the pre-existing frozen snapshot mss-318d9ad652c4a87f1b39c8ec until then.",
+    "stale_snapshot_still_served": "GET http://127.0.0.1:18097/api/source-ingest/snapshots/latest?symbol=SPY on the dev VM still returns snapshot_id=mss-318d9ad652c4a87f1b39c8ec / event_time=2026-09-13T03:59:39Z at task closeout, confirming the diagnosis and that only a deploy of this fix (not a manual data patch) closes the gap durably.",
+    "acceptance_criteria_2_3_4_status": "Proven against the provisioned worktree interpreter (live_admission_check above) and by unit/integration tests exercising the reconciler + persona provisioning path end to end in-process; full live hosted proof against the running dev containers requires the next dev deploy, which is out of this task's authorized scope."
+  },
+  "acceptance_checklist": [
+    {"item": "the reason dev market source snapshots stopped refreshing is identified from live evidence rather than inferred", "status": "met", "evidence": "root_cause_investigation above, all findings sourced from live SSH probes of the dev VM plus in-repo evidence citations"},
+    {"item": "hosted dev can produce a market source snapshot that passes the admission freshness rule", "status": "met_pending_deploy", "evidence": "new connector proven admissible in-process (verification.live_admission_check); requires the next dev deploy to serve it from the running containers"},
+    {"item": "a paper runtime binding for a freshly provisioned persona reaches active instead of being paused by market admission", "status": "met_pending_deploy", "evidence": "code path traced and unit-tested end to end (persona required_data_sources -> reconciler auto-provision/schedule -> fresh snapshot -> admit_market_snapshot); requires the next dev deploy for a live hosted binding to observe this directly"},
+    {"item": "the governed dev paper baseline step completes end to end under lease", "status": "met_pending_deploy", "evidence": "same as above; bootstrap_dev_paper_baseline.py itself is unchanged and does not need to be, since the fix is upstream in required_data_sources + source-ingest provisioning"},
+    {"item": "the persona provisioning failure payload carries its terminal_reason so the next failure is self-diagnosing without a database query", "status": "met", "evidence": "code_fix terminal_reason enrichment + test_paused_binding_terminal_reason_includes_market_input_stale in services/control-plane/bff/test_persona_provisioning_readback.py"},
+    {"item": "regression tests cover the stale-input rejection and the recovered path", "status": "met", "evidence": "verification.targeted_stale_and_resume_regression confirms both paths were already covered by services/paper_fleet_reconciler/test_paper_fleet_reconciler.py; new tests added for the new connector, its reconciler wiring, and the terminal_reason enrichment"}
+  ]
+}
