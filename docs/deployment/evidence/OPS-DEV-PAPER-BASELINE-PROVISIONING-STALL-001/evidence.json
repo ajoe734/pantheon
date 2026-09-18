@@ -1,0 +1,146 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-DEV-PAPER-BASELINE-PROVISIONING-STALL-001",
+  "title": "Unstall governed dev paper baseline: persona stuck in provisioning blocks every nonprod deploy",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "pantheon",
+  "base_sha": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
+  "recorded_at": "2026-09-17T23:55:49Z",
+  "scope": {
+    "declared_artifacts": [
+      "scripts/ensure_devloop_paper_runtime_worker.sh",
+      "scripts/probe_dev_runtime_paper_lifecycle.py",
+      "docs/deployment/evidence/OPS-DEV-PAPER-BASELINE-PROVISIONING-STALL-001/evidence.json",
+      "scripts/bootstrap_dev_paper_baseline.py",
+      "scripts/test_bootstrap_dev_paper_baseline.py"
+    ],
+    "changed_artifacts": [
+      "scripts/bootstrap_dev_paper_baseline.py",
+      "scripts/test_bootstrap_dev_paper_baseline.py",
+      "docs/deployment/evidence/OPS-DEV-PAPER-BASELINE-PROVISIONING-STALL-001/evidence.json"
+    ],
+    "reviewed_no_change_required": [
+      "scripts/ensure_devloop_paper_runtime_worker.sh",
+      "scripts/probe_dev_runtime_paper_lifecycle.py"
+    ],
+    "evidence_manifest": "docs/deployment/evidence/OPS-DEV-PAPER-BASELINE-PROVISIONING-STALL-001/evidence.json"
+  },
+  "prior_task_context": {
+    "loop_l08_persona_provisioning_reconcile_001": "docs/deployment/evidence/LOOP-L08-PERSONA-PROVISIONING-RECONCILE-001/evidence.json diagnosed the 2026-09-15 stall (run 34926312378, 74 polls) as reconcile fail-closing correctly while RuntimeManagerClient.list_by_plan and the paper-worker monitoring session query both returned zero, and explicitly flagged (finding 4, 'timeout_threshold_discrepancy') that the bootstrap script's client-side --timeout-seconds 420 races the BFF's own internal PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS default of 600s, but left bootstrap_dev_paper_baseline.py out of that task's artifact scope and did not correct it.",
+    "loop_l08_l09_runtime_paper_owners_001": "docs/deployment/evidence/LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001/evidence.json re-verified both downstream owner paths (services/deployment/outbox_consumer_worker.py's RuntimeBinding dispatch, and services/execution/lean_runtime/paper_runtime.py's heartbeat publication) and found no functional gap, TODO, or wrong condition in either; it attributed the observed zero-binding/zero-session reading to 'no admitted DeploymentPlan had yet been dispatched through this path on that host' as an upstream trigger/deploy-authority concern outside its own artifact set.",
+    "why_this_task_reopened_it": "run 35234532249 on 2026-09-17 failed at the identical step with the identical shape (73 polls, persona-9e2a17ce62380f17b3d4 stuck at provisioning_state=provisioning) despite both prior tasks already being merged and present in the candidate, so the timeout-threshold discrepancy both prior tasks documented but neither fixed was reopened as this task's primary correction surface (contract_revision recorded 2026-09-17T23:26:56Z by Human/Ops added scripts/test_bootstrap_dev_paper_baseline.py for exactly this reason)."
+  },
+  "root_cause_analysis": {
+    "failure_summary": "Every dev-paper-baseline CI attempt is structurally unable to observe the BFF's own terminal provisioning verdict, because the client-side poll budget bootstrap_dev_paper_baseline.py is invoked with is shorter than the server-side authoritative timeout the BFF itself uses to decide the same question.",
+    "reproduction": {
+      "reproduced": true,
+      "method": "Source-level reproduction plus a network probe against the live hosted dev host, not a mutating live rerun (out of scope: source and isolated-test only). Read-only checks: `curl https://api.dev.mvl-cap.tw/readyz` and `/bff/version` confirmed dev is live and pinned at ae41705b4637110e665d2eed735afbd8307e28e6 with all readyz dependencies (runtime_manager, governance, deployment, lifecycle_projector) reporting ok/ready and zero backlog -- consistent with the task brief's description of dev being stalled at the pre-09-13 head. Authenticated persona-level probing (GET /bff/personas/{id}, RuntimeManagerClient.list_by_plan, list_authoritative_paper_runtime_monitoring_sessions) requires an operator dev-login credential pair that is not provisioned in this execution environment (dev-login is disabled on that host per /bff/version's config_posture.dev_login_enabled=false, auth_mode=strict) and GCP Secret Manager is not enabled in this worker's own project, so those specific owner-state reads could not be performed live from here; the determination below is therefore made from the two prior tasks' already-committed reproduction evidence plus static analysis of the exact code paths bootstrap_dev_paper_baseline.py and the BFF reconcile route execute.",
+      "code_level_evidence": [
+        ".github/workflows/nonprod-deploy.yml step 'Ensure governed dev paper baseline under lease' invokes scripts/run_dev_paper_baseline_with_diagnostics.sh, which runs `docker exec pantheon-operator-bff-1 python /workspace/scripts/bootstrap_dev_paper_baseline.py --timeout-seconds 420 --poll-seconds 5` -- a fixed, unconditional 420s client deadline for every deploy attempt.",
+        "services/control-plane/bff/personas/service.py line ~1829 computes `is_timeout` from `os.getenv(\"PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS\", \"600\")`: the reconcile lifecycle only resolves to a terminal state (paper_running, or provisioning_failed with a named provisioning_failure_reason in one of {deployment_saga_failed, deployment_projection_identity_mismatched, runtime_binding_failed_or_mismatched, paper_worker_failed_stale_or_duplicated, provisioning_timeout}) once that many seconds have elapsed since provisioning_readback_started_at; before that it legitimately returns lifecycle_state='provisioning' on every single poll, whether the underlying saga is broken or merely still running.",
+        "420s (bootstrap's CI-invoked client deadline) < 600s (the BFF's own default authoritative timeout) means bootstrap_dev_paper_baseline.py always aborts client-side roughly 180s (about 36 poll cycles at --poll-seconds 5) before the BFF can ever reach a terminal verdict. The 73-74 poll counts recorded in both the 2026-09-15 and 2026-09-17 runs are consistent with hitting this 420s client wall, not with the server ever having resolved the state.",
+        "The generic 'timed out waiting for authoritative runtime binding and paper worker' error bootstrap previously raised on this path carried only {attempts, persona_id, state, provisioning_state} -- no BFF-side diagnostic field -- so operators reading the failure could not distinguish 'the underlying provisioning is genuinely broken' from 'the client gave up before the server could answer', which is exactly why two separate prior tasks (LOOP-L08-PERSONA-PROVISIONING-RECONCILE-001 and LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001) each independently re-verified the downstream owner code and found it correct, yet the CI step kept failing identically afterward.",
+        "scripts/run_dev_paper_baseline_with_diagnostics.sh (not in this task's declared artifact contract; reviewed read-only) mints a fresh --name/--idempotency-key per (DEV_PAPER_RUN_ID, DEV_PAPER_ATTEMPT) pair for the official CI invocation, so the recurrence across the 2026-09-15 and 2026-09-17 runs is not explained by an idempotently-replayed stale record from a prior day; services/control-plane/bff/personas/routes/collection.py's persona_id = _persona_create_identity(tenant_id, normalized_name) is likewise derived from that per-run name, so each CI attempt provisions a distinct Persona identity."
+      ]
+    },
+    "determination": "The stall is not shown by available evidence to be either a stuck persona record reused across days, or a proven code defect in the RuntimeBinding/paper-worker ownership path -- both of those were the two candidate causes named in this task's acceptance criteria, and neither is supported once the per-run identity and the already-verified owner code are accounted for. The actual, directly evidenced defect is a timeout-budget mismatch in the operational tooling itself: bootstrap_dev_paper_baseline.py's CI-invoked client deadline (420s) is shorter than the BFF's own authoritative provisioning timeout (600s default), so the tool guarantees it never observes the server's terminal answer either way. This explains the observed recurrence (the symptom is identical regardless of whether the underlying saga is healthy-but-slow or genuinely stuck) and explains why the two prior, code-correct owner-path fixes did not resolve the CI-visible failure.",
+    "corrective_scope_boundary": "services/control-plane/bff/personas/routes/provisioning.py's reconcile response does not currently forward provisioning_failure_reason (or any of the other internally-computed BFF diagnostic fields) to the HTTP caller at all -- verified by reading the route handler's response construction, which only returns lifecycle_state/status/degraded_dependencies/authoritative_readback -- even though services/control-plane/bff/personas/service.py computes and persists provisioning_failure_reason internally once is_timeout resolves. That file is not in this task's declared artifact contract and is not touched here; it is a related but separately-scoped follow-up (surfacing an already-computed internal diagnostic through the reconcile API contract), not part of this task's narrowest correction."
+  },
+  "correction": {
+    "description": "scripts/bootstrap_dev_paper_baseline.py now computes an effective poll deadline that is never shorter than the BFF's own authoritative provisioning timeout plus a fixed safety margin, so it can no longer structurally give up before the server can resolve success or a named failure. It reads PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS from its own process environment -- which is the identical container env the BFF process reads, since bootstrap runs via `docker exec` into the same pantheon-operator-bff-1 container -- with the identical fallback default (600s), so both processes stay in lock-step without any docker-compose or CI-workflow change. A caller-requested --timeout-seconds is only ever widened, never shortened, so an operator who explicitly wants a longer budget still gets it. On any timeout, the raised BootstrapError now also carries whatever diagnostic fields the last reconcile poll returned (lifecycle_state, status, degraded_dependencies, and provisioning_failure_reason if a future reconcile-contract change starts returning it) instead of only {attempts, persona_id, state, provisioning_state}, so a genuine indefinite stall is at least as informative as the live response allows today.",
+    "no_fabricated_readiness": "The change only widens how long the tool is willing to wait for the BFF's own authoritative answer; it does not change any success/failure condition, does not add a bypass, and does not synthesize a persona_id, runtime_id, or runtime_binding_id. A persona that never resolves still raises BootstrapError after the widened deadline elapses.",
+    "files_changed": [
+      "scripts/bootstrap_dev_paper_baseline.py",
+      "scripts/test_bootstrap_dev_paper_baseline.py"
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "ac1_failure_reproduced": {
+      "status": "satisfied",
+      "proof": "Reproduced at the source level via the exact CI invocation chain (.github/workflows/nonprod-deploy.yml -> scripts/run_dev_paper_baseline_with_diagnostics.sh -> bootstrap_dev_paper_baseline.py --timeout-seconds 420) and the BFF's is_timeout computation (services/control-plane/bff/personas/service.py ~line 1829), cross-checked against both prior tasks' own reproduction evidence for the 2026-09-15 run. Live read-only probes against https://api.dev.mvl-cap.tw confirmed the host is reachable and pinned at the expected stalled commit (ae41705b4637110e665d2eed735afbd8307e28e6); authenticated persona-level probing was not possible from this execution environment (no operator dev-login credential pair provisioned here, and dev_login is disabled on that host)."
+    },
+    "ac2_root_cause_and_owner_boundary_determined": {
+      "status": "satisfied",
+      "proof": "See root_cause_analysis.determination. Evidence for ruling out the two named candidate causes: (a) stuck record -- scripts/run_dev_paper_baseline_with_diagnostics.sh mints a distinct name/idempotency-key per run+attempt, and persona_id is deterministically derived from that name, so the CI pipeline does not idempotently replay a prior day's persona; (b) missing owner in the runtime-binding/paper-worker path -- already independently re-verified as functionally correct by LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001's evidence. The actual, directly evidenced defect (timeout-budget mismatch) is documented with exact file/line references in root_cause_analysis.reproduction.code_level_evidence."
+    },
+    "ac3_correction_delivered": {
+      "status": "satisfied",
+      "proof": "See correction.description. Confined to the declared artifact contract (bootstrap_dev_paper_baseline.py + its test file); scripts/ensure_devloop_paper_runtime_worker.sh and scripts/probe_dev_runtime_paper_lifecycle.py were reviewed and require no change for this determination."
+    },
+    "ac4_isolated_tests_no_fabricated_readiness": {
+      "status": "satisfied",
+      "proof": "20 tests in scripts/test_bootstrap_dev_paper_baseline.py pass, including 4 new/updated tests exercising the widened-deadline logic directly: test_server_authoritative_timeout_seconds_defaults_and_parses, test_effective_poll_timeout_widens_a_too_short_client_budget, test_reconcile_keeps_polling_past_a_too_short_client_timeout_until_terminal (proves polling continues past the naive 420s client budget until the BFF itself reports a terminal provisioning_failed reason, rather than raising a generic timeout early), and test_timeout_error_surfaces_last_known_reconcile_reason (proves a genuine indefinite stall still raises after the widened deadline, carrying the last observed reconcile diagnostic -- no fabricated success). test_reconcile_timeout_raises was updated to use an explicit short PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS override so the pre-existing indefinite-stall-detection path remains covered without waiting on the production 600s default."
+    },
+    "ac5_convergence_proof_or_precisely_named_gap": {
+      "status": "satisfied",
+      "proof": "A live rerun of the paper baseline step is explicitly out of this task's scope ('source and isolated-test scope only ... no production or capital-affecting change'; 'the operator reruns nonprod-deploy after merge' is the stated verification step). The remaining gap this task did not close is precisely named in root_cause_analysis.corrective_scope_boundary: services/control-plane/bff/personas/routes/provisioning.py's reconcile response does not forward the internally-computed provisioning_failure_reason to callers, which is a separate artifact outside this task's declared contract and is handed to whichever task owns that file next."
+    }
+  },
+  "source_files_proof": {
+    "scripts/bootstrap_dev_paper_baseline.py": {
+      "bytes": 20963,
+      "lines": 529,
+      "sha256": "abb121cc9d9aee1483bc6e83702f946e29a8cf8b01757e06eb58ba3b412fed4f"
+    },
+    "scripts/test_bootstrap_dev_paper_baseline.py": {
+      "bytes": 19336,
+      "lines": 516,
+      "sha256": "1644fddaceb0a3a6bf29e4bc96bd1f7708cd366593c228c0d3e588fb4f7cf7c5"
+    },
+    "scripts/ensure_devloop_paper_runtime_worker.sh": {
+      "bytes": 1562,
+      "lines": 41,
+      "sha256": "356fa10ebcc2f54f1705ba5d73427252076033b743134d1d8f9f474d900f613b",
+      "note": "reviewed, unchanged: already targets the correct paper-fleet-reconciler compose service/container per LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001's own finding"
+    },
+    "scripts/probe_dev_runtime_paper_lifecycle.py": {
+      "bytes": 87163,
+      "lines": 2054,
+      "sha256": "9452818325dac759ae70b3feede9b6bb2e6f98321abd1db14068e7a6dc50a307",
+      "note": "reviewed, unchanged: exercises a synthetic end-to-end lifecycle (persona-devprobe-*) against DEFAULT_BFF_BASE_URL=https://api.dev.mvl-cap.tw / DEFAULT_FE_BASE_URL=https://app.dev.mvl-cap.tw; not the surface that produced this failure"
+    }
+  },
+  "test_executions": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_bootstrap_dev_paper_baseline.py",
+      "exit_code": 0,
+      "collected": 20,
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_bootstrap_dev_paper_baseline.py scripts/test_loop_prod_tel_002_hosted_workflow.py scripts/test_collect_dev_paper_diagnostics.py scripts/test_dev_paper_diagnostics_failure_path.py scripts/test_dev_paper_release_stimulus.py",
+      "exit_code": 0,
+      "collected": 72,
+      "passed": 72,
+      "failed": 0,
+      "skipped": 0,
+      "note": "cross-checks every other script that imports/wraps bootstrap_dev_paper_baseline.py for regressions"
+    }
+  ],
+  "unrelated_pre_existing_failure_observed_not_fixed": {
+    "test": "scripts/test_paper_runtime_topology_contract.py::test_dev_deploy_retires_static_worker_and_verifies_fleet",
+    "evidence": "Fails identically on the unmodified base commit e7db147f6a31f4af5754de7943d6edc4e08d3e4b (confirmed by stashing this task's changes and re-running the single test in isolation, then restoring the stash), asserting a `docker compose -p pantheon -f docker-compose.yml up -d` substring against deploy_nonprod_vm.sh that is no longer present verbatim. Out of this task's declared artifact scope; left unchanged and flagged here rather than folded into this task's commit."
+  },
+  "live_read_only_probe_log": {
+    "endpoint": "https://api.dev.mvl-cap.tw",
+    "commands": [
+      "curl -sS -m 10 https://api.dev.mvl-cap.tw/readyz",
+      "curl -sS -m 10 https://api.dev.mvl-cap.tw/bff/version"
+    ],
+    "observed": {
+      "readyz_status": "ok",
+      "bff_version_source_commit_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+      "bff_version_environment": "dev",
+      "bff_version_auth_mode": "strict",
+      "bff_version_dev_login_enabled": false,
+      "readyz_dependencies_all_ok": true,
+      "lifecycle_projector_backlog": 0
+    },
+    "authenticated_probe_attempted": true,
+    "authenticated_probe_result": "blocked: no dev-login operator credential pair provisioned in this execution environment; GET /bff/personas returned 401 AUTH_REQUIRED as expected for an unauthenticated request",
+    "no_production_or_capital_affecting_mutation_performed": true
+  }
+}
