@@ -17,8 +17,14 @@ from typing import Any, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 BFF_ROOT = ROOT / "services" / "control-plane" / "bff"
-if str(BFF_ROOT) not in sys.path:
-    sys.path.insert(0, str(BFF_ROOT))
+# The deployment step runs this file by absolute path with PYTHONPATH cleared, so
+# sys.path[0] is the scripts directory and nothing else. BFF_ROOT alone was enough
+# until the workshop store began importing services.research through
+# agora.strategy_workshop.reconstruction, which only resolves from the repository
+# root; keep both so the probe imports the same modules the container serves.
+for import_root in (ROOT, BFF_ROOT):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
 
 from agora.governance.store import (  # noqa: E402
     BACKEND_ENV as GOVERNANCE_BACKEND_ENV,
