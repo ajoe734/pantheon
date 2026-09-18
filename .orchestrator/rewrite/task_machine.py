@@ -137,6 +137,38 @@ def delivery_binding_digest(task: Mapping[str, object]) -> str | None:
     return _canonical_json_sha256(dict(binding))
 
 
+# GitHub's own ``mergeStateStatus`` vocabulary is reused for
+# ``delivery_binding.pr_merge_state`` wherever it maps cleanly (``DIRTY``,
+# ``CONFLICTING``). GitHub's plain ``BLOCKED`` is deliberately ambiguous --
+# it also covers unmet branch-protection requirements (missing reviews,
+# pending checks) that a reviewer can still act on -- so a conflict-caused
+# block must be observed and reported as the distinct ``BLOCKED_CONFLICT``
+# value rather than the bare ``BLOCKED`` GitHub reports. Only these three
+# values represent a PR a reviewer cannot possibly complete a review against.
+REVIEW_BLOCKING_PR_MERGE_STATES = frozenset({"DIRTY", "CONFLICTING", "BLOCKED_CONFLICT"})
+
+
+def review_dispatch_pr_conflict_hold_reason(task: Mapping[str, object]) -> str | None:
+    """Return why a reviewer must not be dispatched, or ``None`` if clear.
+
+    Reads ``delivery_binding.pr_merge_state``, an observed fact some external
+    prober is responsible for keeping fresh (dispatch admission must never
+    make a live GitHub call itself -- it runs on every task, every planning
+    cycle). Fails OPEN on a missing/unrecognized value: until that prober
+    exists and populates the field, every review task must keep dispatching
+    exactly as it did before this hold was added, rather than silently
+    freezing every reviewer dispatch on absent data.
+    """
+
+    binding = task.get("delivery_binding")
+    if not isinstance(binding, Mapping):
+        return None
+    merge_state = str(binding.get("pr_merge_state") or "").strip().upper()
+    if merge_state not in REVIEW_BLOCKING_PR_MERGE_STATES:
+        return None
+    return f"pr_merge_state:{merge_state.lower()}"
+
+
 @dataclass(frozen=True)
 class AssignmentTransition:
     old_owner: str

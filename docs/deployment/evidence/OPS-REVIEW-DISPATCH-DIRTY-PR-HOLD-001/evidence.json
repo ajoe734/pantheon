@@ -1,0 +1,66 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001",
+  "title": "Do not dispatch a reviewer onto a PR that is not mergeable; hold review_ready with a wait reason until the owner rebases",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
+  "scope": {
+    "owned": [
+      "review_dispatch_pr_conflict_hold_reason and REVIEW_BLOCKING_PR_MERGE_STATES in .orchestrator/rewrite/task_machine.py",
+      "the matching veto in task_execution_dispatch_candidate (.orchestrator/supervisor.py) and evaluate_task_delivery_admission (.orchestrator/dispatch_policy.py)",
+      "the in-memory review-dispatch hold diagnostic registry in .orchestrator/supervisor.py",
+      "RESPONSIBILITY_TRANSFER_EVENT_TYPES and canonical_worker_terminal_status recognizing a governed blocker as a valid end-of-responsibility event (.orchestrator/supervisor.py)",
+      "regression coverage in .orchestrator/test_supervisor.py"
+    ],
+    "not_changing": [
+      "PLAN-002 (the underlying shared-file bff_test_architecture_inventory.json contention that produces DIRTY PRs in the first place) -- explicitly out of scope per the task brief",
+      "live GitHub polling of a PR's mergeStateStatus -- no prober exists yet to populate delivery_binding.pr_merge_state; this change is fail-open on absent data and does not add that poller (see failure_reproduction below)",
+      ".orchestrator/worker_runner.py -- it only tracks child-process exit_code/runner_status and has no awareness of which ai-status.sh subcommand ran; the terminal-status classification already lived entirely in supervisor.py's activity-log-driven canonical_worker_terminal_status, so no worker_runner.py change was needed",
+      "the existing review/approve/reopen DIRTY-PR rejection in scripts/git/github_review_bridge.py -- unchanged; this task only stops the wasted dispatch that happens before that rejection is ever reached"
+    ],
+    "composes_with": [
+      "any future async prober that writes delivery_binding.pr_merge_state (e.g. extending probe_demanded_delivery_health or a new dedicated PR-health probe) -- the hold activates automatically once such a prober exists, no further planner change required",
+      "the reviewer's own governed `ai-status.sh blocker` call, which is the mechanism that durably records the wait reason on the canonical task row once a running reviewer discovers a DIRTY PR mid-review"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "2026-09-17: tasks CB02/CB05/CB07 sat in `review` with their PR DIRTY against dev (shared-file conflict in bff_test_architecture_inventory.json, tracked separately as PLAN-002). The planner kept emitting review_ready_dispatch for them anyway.",
+    "prior_outcome": "The dispatched reviewer completed a full review, then canonical `approve`/`reopen` rejected it because the PR was DIRTY. The reviewer worker exited, but its exit event type (blocker, if it filed one) was not in RESPONSIBILITY_TRANSFER_EVENT_TYPES, so canonical_worker_terminal_status returned None and the supervisor's poll loop treated the exit as worker_process_missing and redispatched. 18:50Z-22:50Z: 345 worker_lost_lease events, per-task generation churn, three provider accounts exhausted, plus 20 post_dispatch_maintenance re-verification conflicts.",
+    "regression": "test_dirty_pr_merge_state_holds_review_dispatch_admission and test_mergeable_or_unknown_pr_merge_state_still_dispatches_reviewer in .orchestrator/test_supervisor.py exercise both the supervisor.py diagnostics ladder (task_execution_dispatch_candidate) and the live planning ladder (dispatch_policy.py's evaluate_task_delivery_admission) for DIRTY/CONFLICTING/BLOCKED_CONFLICT vs. MERGEABLE/UNKNOWN/absent merge states. test_canonical_worker_terminal_status_recognizes_reviewer_blocker, test_canonical_worker_terminal_status_recognizes_owner_blocker, and test_missing_process_without_blocker_is_still_lost_lease prove a governed blocker-then-exit is now recognized as a clean responsibility transfer for both roles, while an unrelated dead process with no transfer event is still correctly treated as worker_process_missing."
+  },
+  "implementation": {
+    "admission_hold": "review_dispatch_pr_conflict_hold_reason(task) in .orchestrator/rewrite/task_machine.py reads task['delivery_binding']['pr_merge_state'] (uppercased); if it is DIRTY, CONFLICTING, or the conflict-specific BLOCKED_CONFLICT (deliberately distinct from GitHub's ambiguous bare BLOCKED, which also covers unmet branch-protection requirements a reviewer can still act on), it returns a reason string, else None. task_execution_dispatch_candidate (supervisor.py) and evaluate_task_delivery_admission (dispatch_policy.py) both veto a REVIEW_READY decision when this fires, matching the existing delivery_binding_is_current / is_non_default_repository_finalization_pending veto pattern already used in both ladders. dispatch_policy.py's evaluate_task_delivery_admission is the ladder the live per-cycle planner (dispatch_ready_tasks) actually calls; supervisor.py's task_execution_dispatch_candidate is used for diagnostics, stale-event revalidation, and recovery-replacement reservation -- both had to receive the veto.",
+    "fail_open_by_design": "No prober currently populates delivery_binding.pr_merge_state (none existed in the codebase to reuse -- the delivery_health mechanism tracks provider/account health, not PR merge state, and scripts/git/auto_integrator.py's DIRTY handling is a separate CLI script at merge time, not a per-task cached fact reachable from the IO-free planner). The hold therefore fails open on missing/unrecognized values, preserving today's dispatch behavior until a future prober writes this field; wiring that live poller is left as a follow-up, out of scope for this task.",
+    "diagnostic_registry": "record_review_dispatch_hold_diagnostic / review_dispatch_hold_diagnostic / clear_review_dispatch_hold_diagnostic in .orchestrator/supervisor.py give an inspectable in-memory record of a skipped dispatch (task_execution_dispatch_candidate is a pure, IO-free query called every planning tick and from several non-planning call sites, so it must not write the canonical status file itself). The durable canonical blocked/waiting_for row for the same DIRTY-PR condition is filed out-of-band by the reviewer's own governed `ai-status.sh blocker` call.",
+    "blocker_recognized_as_terminal": "RESPONSIBILITY_TRANSFER_EVENT_TYPES now includes \"blocker\" (already a member of GOVERNANCE_LIFECYCLE_EVENT_TYPES). canonical_worker_terminal_status's valid_statuses map gains \"blocker\": frozenset({\"blocked\"}). No additional role restriction was added -- the function's existing exact-actor-match check already fails closed on a mismatched owner/reviewer, and a blocker may legitimately be filed by either role, so this generalizes the fix beyond just the reviewer/DIRTY-PR case to any worker that files a governed blocker before exiting.",
+    "worker_runner_unchanged": "worker_runner.py has no notion of which ai-status.sh subcommand ran; the terminal-status classification lives entirely in supervisor.py, so no change was required there."
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/rewrite/test_task_machine.py .orchestrator/rewrite/test_dispatch_admission.py .orchestrator/test_worker_runner_heartbeat.py .orchestrator/rewrite/test_worker_runner_retired_helpers.py",
+        "result": "1 failed, 499 passed, 104 subtests passed in 192.08s"
+      }
+    ],
+    "pre_existing_base_failure_proof": {
+      "test": "rewrite.test_task_machine.AssignmentAuditSourceContractTests.test_runtime_writers_and_readers_use_only_canonical_assignment_api",
+      "detail": "Fails identically on an unmodified checkout of this same branch base (confirmed by stashing all task changes via `git stash push -u`, re-running in isolation, then restoring by exact stash SHA). It asserts scripts/ai_status.py does not contain certain forbidden reassignment-event-id string fragments (e.g. \"supervisor-reassign-\") that are unrelated to this task's dispatch_policy/supervisor/task_machine changes -- a pre-existing repository condition, not a regression introduced here.",
+      "result_after_restoring_task_changes": "test_supervisor.py alone re-verified clean: 360 passed, 81 subtests passed"
+    },
+    "scope_note": ".orchestrator/test_worker_runner.py does not exist in this repository (only test_worker_runner_heartbeat.py and rewrite/test_worker_runner_retired_helpers.py do); both ran clean and unmodified. Source and isolated-test scope only per acceptance criteria: no hosted deployment run and no live runtime state edit performed for this task.",
+    "runner": {
+      "python": "3.12",
+      "pytest_invocation": "provisioned via scripts/dev/provision_python_distribution.py, PANTHEON_DEPENDENCY_PYTHON pointed at an existing pytest-capable venv on this host"
+    },
+    "checksums": {
+      ".orchestrator/supervisor.py": "27f47c4729da48a18e8765c1644a262dccad019c9eaf87bdf3dc86d5a30563b9",
+      ".orchestrator/dispatch_policy.py": "2299dbb8fc2c2125e681df3c769e79e2335c60c3ae311058dd486bb60ff2a873",
+      ".orchestrator/rewrite/task_machine.py": "227456a0ce8a6448517b506807ca8dc64e074087f2e18fd709e3b617bf8e5b4b",
+      ".orchestrator/test_supervisor.py": "6447fac709f24a9ef4907ae446d6f9dbf3f47c531b90c62a408b72155a6d0278"
+    }
+  }
+}

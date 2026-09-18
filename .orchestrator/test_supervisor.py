@@ -3012,6 +3012,69 @@ class SharedPlannerContractTests(unittest.TestCase):
         accepted = planner_decision(self.config, task, target="Codex2")
         self.assertTrue(accepted["eligible"])
 
+    def test_dirty_pr_merge_state_holds_review_dispatch_admission(self) -> None:
+        """OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a reviewer must not be
+        dispatched against a PR already observed to be DIRTY, CONFLICTING,
+        or conflict-BLOCKED. Both the diagnostics/lease-revalidation ladder
+        (task_execution_dispatch_candidate) and the live planner ladder
+        (evaluate_dispatch_candidate) must agree.
+        """
+        for blocking_state in ("DIRTY", "CONFLICTING", "BLOCKED_CONFLICT"):
+            task = task_fixture(status="review", reviewer="Codex2")
+            binding = review_admission_binding()
+            binding["pr_merge_state"] = blocking_state
+            task["delivery_binding"] = binding
+
+            self.assertIsNone(
+                supervisor.task_execution_dispatch_candidate(
+                    self.config,
+                    task,
+                    "Codex2",
+                    {"TASK-1": task},
+                ),
+                msg=f"merge state {blocking_state} must veto candidate()",
+            )
+            rejected = planner_decision(self.config, task, target="Codex2")
+            self.assertFalse(
+                rejected["eligible"],
+                msg=f"merge state {blocking_state} must veto the live planner",
+            )
+
+            diagnostic = supervisor.review_dispatch_hold_diagnostic(task["id"])
+            self.assertIsNotNone(diagnostic)
+            self.assertEqual(
+                diagnostic["reason"], f"pr_merge_state:{blocking_state.lower()}"
+            )
+            supervisor.clear_review_dispatch_hold_diagnostic(task["id"])
+
+    def test_mergeable_or_unknown_pr_merge_state_still_dispatches_reviewer(self) -> None:
+        """Unchanged-behavior regression: an absent/unknown merge-state
+        observation must fail OPEN (dispatch proceeds) rather than silently
+        freezing every review task before any prober exists to populate the
+        field, and an explicit MERGEABLE observation must also dispatch.
+        """
+        for merge_state in (None, "MERGEABLE", "UNKNOWN", "", "BEHIND"):
+            task = task_fixture(status="review", reviewer="Codex2")
+            binding = review_admission_binding()
+            if merge_state is not None:
+                binding["pr_merge_state"] = merge_state
+            task["delivery_binding"] = binding
+
+            candidate = supervisor.task_execution_dispatch_candidate(
+                self.config,
+                task,
+                "Codex2",
+                {"TASK-1": task},
+            )
+            self.assertIsNotNone(candidate, msg=f"merge state {merge_state!r} must not veto")
+            self.assertEqual(candidate[0], supervisor.REASON_REVIEW_READY)
+
+            accepted = planner_decision(self.config, task, target="Codex2")
+            self.assertTrue(
+                accepted["eligible"], msg=f"merge state {merge_state!r} must not veto planner"
+            )
+            self.assertIsNone(supervisor.review_dispatch_hold_diagnostic(task["id"]))
+
     def test_operator_exact_head_acceptance_never_dispatches_owner_finalize(self) -> None:
         task = task_fixture(status="review_approved")
         delivery = review_admission_binding()
@@ -9484,6 +9547,159 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         terminate.assert_called_once_with(worker)
         self.assertEqual(worker["status"], "superseded")
         self.assertNotIn("governance_lease_guard", worker)
+
+    def test_canonical_worker_terminal_status_recognizes_reviewer_blocker(
+        self,
+    ) -> None:
+        """OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a reviewer that discovers a
+        DIRTY PR and correctly calls the governed ``ai-status.sh blocker``
+        (moving the task review -> blocked) must be recognized as a clean,
+        non-terminal end of responsibility -- not a lost lease.
+        """
+        config = config_fixture()
+        task = task_fixture(status="blocked", reviewer="Codex2")
+        worker = self._owner_worker(generation=1)
+        worker.update(
+            {
+                "run_id": "run-reviewer",
+                "agent_id": "codex2",
+                "logical_agent_id": "codex2",
+                "queue_event_id": "evt-reviewer",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+        )
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id="TASK-1",
+            worker_run_id="run-reviewer",
+            queue_event_id="evt-reviewer",
+            pid=1234,
+            pid_start_ticks=5678,
+        )
+        blocker_event = self._exact_lifecycle_event(
+            worker, event_type="blocker", agent="Codex2"
+        )
+
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[blocker_event],
+            ),
+            "blocked",
+        )
+
+        # A dead/successfully-exited reviewer worker with this blocker on
+        # record must be recognized through the same responsibility-transfer
+        # gate the poll loop consults before ever calling
+        # recover_lost_worker_lease(reason_kind="worker_process_missing").
+        exited_worker = dict(worker, runner_status="completed", exit_code=0)
+        self.assertTrue(
+            supervisor.worker_completed_after_responsibility_transition(
+                config,
+                exited_worker,
+                task,
+                activity_events=[blocker_event],
+            )
+        )
+
+        # Wrong actor on the exact same event/task/process identity still
+        # fails closed -- a blocker is not a wildcard escape hatch.
+        mismatched_actor_event = dict(blocker_event, agent="SomeoneElse")
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[mismatched_actor_event],
+            )
+        )
+
+    def test_canonical_worker_terminal_status_recognizes_owner_blocker(self) -> None:
+        """The same recognition generalizes to an owner-dispatched worker: any
+        worker (owner or reviewer) that correctly files a blocker and exits
+        is a clean handoff, not just the reviewer/DIRTY-PR case.
+        """
+        config = config_fixture()
+        task = task_fixture(status="blocked", owner="Codex")
+        worker = self._owner_worker(generation=1)
+        blocker_event = self._exact_lifecycle_event(
+            worker, event_type="blocker", agent="Codex"
+        )
+
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[blocker_event],
+            ),
+            "blocked",
+        )
+
+    def test_missing_process_without_blocker_is_still_lost_lease(self) -> None:
+        """Regression guard: a worker whose task is still review/in_progress
+        with no blocker (or other transfer) event on record, and a dead
+        process, must still be classified as a lost lease -- the blocker
+        recognition above must not be over-widened into a general escape
+        from lost-lease detection.
+        """
+        config = config_fixture()
+
+        review_task = task_fixture(status="review", reviewer="Codex2")
+        reviewer_worker = self._owner_worker(generation=1)
+        reviewer_worker.update(
+            {
+                "run_id": "run-reviewer",
+                "agent_id": "codex2",
+                "logical_agent_id": "codex2",
+                "queue_event_id": "evt-reviewer",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+        )
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                reviewer_worker,
+                review_task,
+                activity_events=[],
+            )
+        )
+        self.assertFalse(
+            supervisor.worker_completed_after_responsibility_transition(
+                config,
+                dict(reviewer_worker, runner_status="completed", exit_code=0),
+                review_task,
+                activity_events=[],
+            )
+        )
+
+        in_progress_task = task_fixture(status="in_progress", owner="Codex")
+        owner_worker = self._owner_worker(generation=1)
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                owner_worker,
+                in_progress_task,
+                activity_events=[],
+            )
+        )
+        self.assertFalse(
+            supervisor.worker_completed_after_responsibility_transition(
+                config,
+                dict(owner_worker, runner_status="completed", exit_code=0),
+                in_progress_task,
+                activity_events=[],
+            )
+        )
 
     def test_canonical_worker_terminal_status_recognizes_exact_reviewer_reopen(
         self,
