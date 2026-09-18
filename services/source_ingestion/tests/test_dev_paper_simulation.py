@@ -13,7 +13,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from services.source_ingestion.connector_definitions import get_connector_definition
+from services.source_ingestion.connector_definitions import (
+    get_connector_definition,
+    is_egress_free_connector_definition,
+)
 from services.source_ingestion.connectors.dev_paper_simulation import (
     DEV_PAPER_SIMULATION_CONNECTOR_ID,
     DevPaperUsEquitySimulationAdapter,
@@ -82,6 +85,10 @@ def test_connector_definition_registered_and_enabled_for_us_price_daily() -> Non
     assert definition.metadata.get("is_real") is False
     assert definition.metadata.get("provenance") == "simulation"
     assert definition.adapter_token in provider_adapter_tokens()
+    assert definition.is_egress_free is True
+    assert is_egress_free_connector_definition(definition) is True
+    assert definition.allowed_host_patterns == ()
+    assert definition.auth_modes == ("none",)
 
 
 def test_is_dev_environment_gate() -> None:
