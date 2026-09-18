@@ -238,6 +238,53 @@ print(entries[0].parent.parent.resolve())
 PY
 }
 
+install_watchdog() {
+  local runtime_root="$1"
+  local installer="${runtime_root}/scripts/supervisor_watchdog_install.py"
+  if [[ ! -f "$installer" ]]; then
+    log "WARNING: supervisor watchdog installer missing from runtime=$runtime_root"
+    return 0
+  fi
+  if [[ -f "$AUTHORITY_ENV_FILE" && ! -L "$AUTHORITY_ENV_FILE" ]]; then
+    if python3 -B "$installer" \
+      --repo "$runtime_root" \
+      --config "$LIVE_CONFIG" \
+      --authority-env-file "$AUTHORITY_ENV_FILE" \
+      --method auto \
+      --start-now; then
+      log "watchdog repointed at candidate=$runtime_root"
+    else
+      log "WARNING: watchdog repoint failed for candidate=$runtime_root -- supervisor code landed, but the restart-if-dead safety net may be stale until this is fixed"
+    fi
+  else
+    log "WARNING: watchdog authority env file missing or not a regular file ($AUTHORITY_ENV_FILE) -- skipped watchdog repoint"
+  fi
+}
+
+verify_runtime_pointers() {
+  local runtime_root="$1"
+  if [[ -f "$LIVE_CONFIG" ]]; then
+    local live_cmd_root
+    live_cmd_root="$(python3 -B -c "
+import json
+try:
+    with open('$LIVE_CONFIG') as fh:
+        cfg = json.load(fh)
+    cmd = cfg.get('watchdog', {}).get('supervisor_command', [])
+    for part in cmd:
+        if part.endswith('/supervisor.py'):
+            from pathlib import Path
+            print(Path(part).resolve().parent.parent)
+            break
+except Exception:
+    pass
+" 2>/dev/null || true)"
+    if [[ -n "$live_cmd_root" && "$live_cmd_root" != "$runtime_root" ]]; then
+      log "WARNING: live config supervisor_command root ($live_cmd_root) does not match runtime ($runtime_root)"
+    fi
+  fi
+}
+
 install_auto_integrator() {
   local runtime_root="$1"
   local installer="${runtime_root}/scripts/auto_integrator_install.py"
@@ -290,7 +337,9 @@ prune_old_command_runtimes() {
 
 active_root="$(current_command_root 2>/dev/null || true)"
 if [[ "$active_root" == "$candidate_root" && "$config_drift" -eq 0 ]]; then
+  install_watchdog "$candidate_root"
   install_auto_integrator "$candidate_root"
+  verify_runtime_pointers "$candidate_root"
   prune_old_command_runtimes
   log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=no-op-current-runtime)"
   exit 0
@@ -440,24 +489,9 @@ fi
 # restart-if-dead safety net quietly stops working once that sha is gone.
 # Best-effort: a watchdog install problem must never block landing new
 # supervisor code, so failures here are logged, never fatal.
-if [[ -f "$candidate_root/scripts/supervisor_watchdog_install.py" ]]; then
-  if [[ -f "$AUTHORITY_ENV_FILE" && ! -L "$AUTHORITY_ENV_FILE" ]]; then
-    if python3 -B "$candidate_root/scripts/supervisor_watchdog_install.py" \
-      --repo "$candidate_root" \
-      --config "$LIVE_CONFIG" \
-      --authority-env-file "$AUTHORITY_ENV_FILE" \
-      --method auto \
-      --start-now; then
-      log "watchdog repointed at candidate=$candidate_root"
-    else
-      log "WARNING: watchdog repoint failed for candidate=$candidate_root -- supervisor code landed, but the restart-if-dead safety net may be stale until this is fixed"
-    fi
-  else
-    log "WARNING: watchdog authority env file missing or not a regular file ($AUTHORITY_ENV_FILE) -- skipped watchdog repoint"
-  fi
-fi
-
+install_watchdog "$candidate_root"
 install_auto_integrator "$candidate_root"
+verify_runtime_pointers "$candidate_root"
 
 prune_old_command_runtimes
 log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=replaced)"

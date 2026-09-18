@@ -8,6 +8,7 @@ import importlib
 import json
 import os
 import sys
+import tempfile
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
@@ -22,12 +23,23 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
 from services.control_plane.bff import command_executor
+from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.auth.policy import (
     bff_error,
-    extract_identity,
     require_operator_role,
     require_read_role,
 )
+
+
+def extract_identity(*args: Any, **kwargs: Any) -> Any:
+    """Late-bound identity extraction.
+
+    Routers mounted by these harnesses resolve the auth policy's
+    ``extract_identity`` at request time, so a test that installs a stricter
+    identity extractor on ``auth.policy`` reaches the mounted app the same way
+    it reached the composition root's module-level indirection.
+    """
+    return auth_policy.extract_identity(*args, **kwargs)
 from services.control_plane.bff.capital.router import create_capital_router
 from services.control_plane.bff.command_adapters.router import (
     create_action_command_router,
@@ -111,7 +123,7 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
         self._rankings = state.get("rankings", [])
         self._rebalances = state.get("rebalances", [])
         self._capital_allocations = state.get("capital_allocations", [])
-        self._ranking_snapshots = state.get("ranking_snapshots", {})
+        self._ppl_ranking_snapshots = state.get("ranking_snapshots", {})
         self._allocation_evaluations = state.get("allocation_evaluations", {})
         ports = create_in_memory_read_surface_ports(
             persona_capital_runtime_kwargs={
@@ -258,17 +270,17 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
         snapshot_id = str(record.get("ranking_snapshot_id") or "")
         if not snapshot_id or not record.get("content_digest"):
             raise ValueError("ranking snapshot id and content_digest are required")
-        existing = self._ranking_snapshots.get(snapshot_id)
+        existing = self._ppl_ranking_snapshots.get(snapshot_id)
         if existing is not None and existing.get("content_digest") != record.get("content_digest"):
             raise ValueError("ranking snapshot id already has different content")
         stored = copy.deepcopy({**record, "ranking_snapshot_id": snapshot_id})
-        self._ranking_snapshots[snapshot_id] = stored
+        self._ppl_ranking_snapshots[snapshot_id] = stored
         ranking = {**stored, "id": snapshot_id, "ranking_id": snapshot_id}
         self._replace(self._rankings, ranking, "ranking_id", "id")
         return copy.deepcopy(stored)
 
     def get_ranking_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        record = self._ranking_snapshots.get(str(snapshot_id or ""))
+        record = self._ppl_ranking_snapshots.get(str(snapshot_id or ""))
         return copy.deepcopy(record) if record is not None else None
 
     def put_allocation_evaluation(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -300,7 +312,7 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
     def tamper_ranking_snapshot_item(
         self, snapshot_id: str, persona_id: str, field: str, value: Any
     ) -> None:
-        record = self._ranking_snapshots[snapshot_id]
+        record = self._ppl_ranking_snapshots[snapshot_id]
         item = next(item for item in record.get("items", []) if item.get("persona_id") == persona_id)
         item[field] = value
 
@@ -319,7 +331,7 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
                 "rankings": self._rankings,
                 "rebalances": self._rebalances,
                 "capital_allocations": self._capital_allocations,
-                "ranking_snapshots": self._ranking_snapshots,
+                "ranking_snapshots": self._ppl_ranking_snapshots,
                 "allocation_evaluations": self._allocation_evaluations,
             }
         )
@@ -441,6 +453,129 @@ def rebalance_payload(**overrides: Any) -> Dict[str, Any]:
     }
     payload.update(overrides)
     return _assign_rebalance_lineage(payload)
+
+
+class PplRankingProjectionHarness:
+    """Isolated BFF app for the PPL ranking / capital projection suites.
+
+    Mounts the same already-extracted production router factories the
+    composition root mounts for the persona-league, quarterly-ranking,
+    promotion-review, capital and command-adapter surfaces, with the read
+    surface, command store and idempotency stores injected explicitly
+    instead of reached through ``main.py`` module globals.
+    """
+
+    def __init__(
+        self,
+        *,
+        read_surface: Optional[PplProjectionTestDouble] = None,
+        command_path: Optional[str] = None,
+    ) -> None:
+        self.read_surface = read_surface if read_surface is not None else PplProjectionTestDouble()
+        if command_path is None:
+            self._command_dir = tempfile.TemporaryDirectory()
+            command_path = os.path.join(self._command_dir.name, "commands.jsonl")
+        self.command_path = command_path
+        self.command_store = CommandStore(command_path)
+        self.final_idempotency: Dict[str, Dict[str, Any]] = {}
+        self.gov_idempotency: Dict[str, Dict[str, Any]] = {}
+        self.app = self._build_app()
+
+    def _build_app(self) -> FastAPI:
+        from services.control_plane.bff.command_adapters.service import CommandAdapterService
+        from services.control_plane.bff.core.errors import register_error_handlers
+        from services.control_plane.bff.management_read_models.router import (
+            create_management_router,
+        )
+        from services.control_plane.bff.personas import (
+            PersonaService,
+            create_personas_router,
+        )
+        from services.control_plane.bff.personas.service import (
+            create_persona_registry_write_owner,
+        )
+
+        app = FastAPI()
+        register_error_handlers(app)
+
+        self.persona_service = PersonaService(
+            write_owner=create_persona_registry_write_owner(),
+            read_store=self.read_surface,
+            ranking_write_owner=self.read_surface,
+            command_store=self.command_store,
+        )
+        app.include_router(
+            create_personas_router(
+                service=self.persona_service,
+                extract_identity_fn=extract_identity,
+                require_read_role_fn=require_read_role,
+                require_operator_role_fn=require_operator_role,
+                bff_error_fn=bff_error,
+                utc_now_fn=utc_now,
+            )
+        )
+        app.include_router(
+            create_capital_router(
+                read_surface=lambda: self.read_surface,
+                extract_identity=extract_identity,
+                require_read_role=require_read_role,
+                require_operator_role=require_operator_role,
+                bff_error=bff_error,
+                utc_now=utc_now,
+            )
+        )
+        self.command_adapter_service = CommandAdapterService(
+            command_store=lambda: self.command_store,
+            read_surface=lambda: self.read_surface,
+            extract_identity=extract_identity,
+            require_operator_role=require_operator_role,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            final_contract_idempotency=self.final_idempotency,
+            gov_bff_idempotency=self.gov_idempotency,
+        )
+        app.include_router(
+            create_command_adapters_router(service=self.command_adapter_service)
+        )
+        app.include_router(
+            create_management_router(
+                get_read_store=lambda: self.read_surface,
+                extract_identity=extract_identity,
+                require_read_role=require_read_role,
+                bff_error=bff_error,
+                utc_now=utc_now,
+            )
+        )
+
+        @app.post("/api/v1/bindings", status_code=201)
+        async def _create_binding(payload: Dict[str, Any] = Body(...)):
+            return command_executor.create_capital_binding(payload)
+
+        return app
+
+    def client(self) -> TestClient:
+        return TestClient(self.app, raise_server_exceptions=False)
+
+    def set_read_surface(self, read_surface: PplProjectionTestDouble) -> PplProjectionTestDouble:
+        """Swap the injected read projection the mounted routers resolve."""
+        self.read_surface = read_surface
+        self.persona_service._read_store = read_surface
+        self.persona_service._ranking_write_owner = read_surface
+        return read_surface
+
+    def restart(
+        self, read_surface: Optional[PplProjectionTestDouble] = None
+    ) -> "PplRankingProjectionHarness":
+        """Rebuild process-local BFF state over the same durable files."""
+        return PplRankingProjectionHarness(
+            read_surface=(
+                read_surface
+                if read_surface is not None
+                else self.read_surface.clone_for_restart()
+            ),
+            command_path=self.command_path,
+        )
 
 
 def _build_authority_harness_app(
