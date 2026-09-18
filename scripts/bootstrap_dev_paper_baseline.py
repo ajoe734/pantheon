@@ -24,6 +24,21 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8001"
 DEFAULT_NAME = "Pantheon Dev Paper Baseline 3"
 DEFAULT_IDEMPOTENCY_KEY = "dev-paper-bootstrap-20260720-operator-a-v3"
 
+# The BFF only resolves a Persona's reconcile lifecycle to a terminal state
+# (paper_running, or provisioning_failed with a named provisioning_failure_reason)
+# once PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS has elapsed since
+# provisioning_readback_started_at (services/control-plane/bff/personas/service.py,
+# the ``is_timeout`` computation). Before that, an in-flight saga legitimately
+# reports lifecycle_state="provisioning" on every poll. A client-side poll
+# deadline shorter than that server-side timeout can never observe a terminal
+# answer: it always aborts with a content-free "timed out waiting" error,
+# regardless of whether provisioning is actually broken or just still running.
+# This process runs inside the same operator-bff container (docker exec) as
+# the BFF it polls, so it reads the identical env var with the identical
+# fallback default to stay in lock-step with the server's own timeout.
+DEFAULT_SERVER_PROVISIONING_TIMEOUT_SECONDS = 600.0
+SERVER_TIMEOUT_SAFETY_MARGIN_SECONDS = 30.0
+
 
 class BootstrapError(RuntimeError):
     """Raised when the dev paper baseline cannot safely converge."""
@@ -149,6 +164,76 @@ def _failure_summary(status: int, body: Mapping[str, Any]) -> str:
     return json.dumps(fields, sort_keys=True)
 
 
+def server_authoritative_timeout_seconds(environ: Mapping[str, str] | None = None) -> float:
+    """Read the BFF's own provisioning timeout from the shared container env.
+
+    Falls back to the BFF's hardcoded default (600s) on an unset or malformed
+    value, exactly mirroring ``os.getenv(..., "600")`` in
+    ``services/control-plane/bff/personas/service.py`` so both processes
+    agree without needing a compose-file change.
+    """
+
+    source = environ if environ is not None else os.environ
+    raw = source.get("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS")
+    if raw is None:
+        return DEFAULT_SERVER_PROVISIONING_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_SERVER_PROVISIONING_TIMEOUT_SECONDS
+    return value if value > 0 else DEFAULT_SERVER_PROVISIONING_TIMEOUT_SECONDS
+
+
+def effective_poll_timeout_seconds(
+    requested_timeout_seconds: float,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> float:
+    """Never poll for less than the server needs to reach a terminal state.
+
+    A caller-requested timeout shorter than the server's own authoritative
+    timeout would abort before the BFF can ever report success or a named
+    failure reason, so the effective deadline is widened (never shortened)
+    to cover it plus a fixed safety margin for the terminal reconcile poll
+    itself.
+    """
+
+    return max(
+        requested_timeout_seconds,
+        server_authoritative_timeout_seconds(environ) + SERVER_TIMEOUT_SAFETY_MARGIN_SECONDS,
+    )
+
+
+def _timeout_detail(
+    *,
+    attempts: int,
+    persona_id: str,
+    state: str,
+    provisioning_state: str,
+    requested_timeout_seconds: float,
+    effective_timeout_seconds: float,
+    last_reconcile_meta: Mapping[str, Any] | None,
+) -> str:
+    detail: dict[str, Any] = {
+        "attempts": attempts,
+        "persona_id": persona_id,
+        "state": state,
+        "provisioning_state": provisioning_state,
+        "requested_timeout_seconds": requested_timeout_seconds,
+        "effective_timeout_seconds": effective_timeout_seconds,
+    }
+    if last_reconcile_meta:
+        detail["last_reconcile_provisioning_failure_reason"] = last_reconcile_meta.get(
+            "provisioning_failure_reason"
+        )
+        detail["last_reconcile_lifecycle_state"] = last_reconcile_meta.get("lifecycle_state")
+        detail["last_reconcile_status"] = last_reconcile_meta.get("status")
+        detail["last_reconcile_degraded_dependencies"] = last_reconcile_meta.get(
+            "degraded_dependencies"
+        )
+    return json.dumps(detail, sort_keys=True)
+
+
 def ensure_paper_baseline(
     *,
     base_url: str,
@@ -159,6 +244,7 @@ def ensure_paper_baseline(
     request_timeout_seconds: float,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     assert_dev_paper_boundary()
     token = _login(base_url, request_timeout_seconds=request_timeout_seconds)
@@ -170,8 +256,10 @@ def ensure_paper_baseline(
         "market": "US",
         "strategy_family": "dev_paper_baseline",
     }
-    deadline = monotonic() + timeout_seconds
+    effective_timeout_seconds = effective_poll_timeout_seconds(timeout_seconds, environ=environ)
+    deadline = monotonic() + effective_timeout_seconds
     attempts = 1
+    last_reconcile_meta: dict[str, Any] = {}
 
     status, body = _post_json(
         f"{base_url.rstrip('/')}/bff/management/personas/create-paper-bundle",
@@ -257,14 +345,14 @@ def ensure_paper_baseline(
         if monotonic() >= deadline:
             raise BootstrapError(
                 "timed out waiting for authoritative runtime binding and paper worker: "
-                + json.dumps(
-                    {
-                        "attempts": attempts,
-                        "persona_id": persona_id,
-                        "state": state,
-                        "provisioning_state": provisioning_state,
-                    },
-                    sort_keys=True,
+                + _timeout_detail(
+                    attempts=attempts,
+                    persona_id=persona_id,
+                    state=state,
+                    provisioning_state=provisioning_state,
+                    requested_timeout_seconds=timeout_seconds,
+                    effective_timeout_seconds=effective_timeout_seconds,
+                    last_reconcile_meta=last_reconcile_meta,
                 )
             )
 
@@ -294,6 +382,7 @@ def ensure_paper_baseline(
         r_lifecycle = str(r_meta.get("lifecycle_state") or r_data.get("state") or "").strip()
         r_status_label = str(r_meta.get("status") or "").strip().lower()
         degraded_deps = r_meta.get("degraded_dependencies") or []
+        last_reconcile_meta = dict(r_meta)
 
         if r_lifecycle in {"provisioning_failed", "failed"}:
             raise BootstrapError(
@@ -393,14 +482,14 @@ def ensure_paper_baseline(
         if monotonic() >= deadline:
             raise BootstrapError(
                 "timed out waiting for authoritative runtime binding and paper worker: "
-                + json.dumps(
-                    {
-                        "attempts": attempts,
-                        "persona_id": persona_id,
-                        "state": state,
-                        "provisioning_state": provisioning_state,
-                    },
-                    sort_keys=True,
+                + _timeout_detail(
+                    attempts=attempts,
+                    persona_id=persona_id,
+                    state=state,
+                    provisioning_state=provisioning_state,
+                    requested_timeout_seconds=timeout_seconds,
+                    effective_timeout_seconds=effective_timeout_seconds,
+                    last_reconcile_meta=last_reconcile_meta,
                 )
             )
 
