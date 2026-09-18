@@ -181,3 +181,59 @@ def test_workflow_does_not_require_optional_startup_log_messages() -> None:
     assert "docker inspect" not in step
     assert "docker logs" not in step
     assert "initialized backend=postgres" not in step
+
+
+def test_agora_package_resolves_to_deployed_bff_modules(tmp_path) -> None:
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    code = (
+        "import importlib.util\n"
+        f"spec = importlib.util.spec_from_file_location('agora_persistence_smoke', {str(HELPER_PATH)!r})\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "import agora\n"
+        "print(agora.__file__)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    expected_agora_init = str((ROOT / "services" / "control-plane" / "bff" / "agora" / "__init__.py").resolve())
+    assert result.stdout.strip() == expected_agora_init
+
+
+def test_branch_ci_gate_executes_persistence_smoke_test() -> None:
+    branch_ci = yaml.safe_load((ROOT / ".github" / "workflows" / "branch-ci.yml").read_text(encoding="utf-8"))
+    steps = branch_ci["jobs"]["smoke"]["steps"]
+    delivery_step = next(
+        step for step in steps if step.get("name") == "Run delivery diagnostics and exit-status regressions"
+    )
+    assert "scripts/test_agora_workshop_restart_persistence_smoke.py" in delivery_step["run"]
+
+
+def test_smoke_helper_and_governance_store_import_without_fastapi(tmp_path) -> None:
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    code = (
+        "import sys\n"
+        "sys.modules['fastapi'] = None\n"
+        "import importlib.util\n"
+        f"spec = importlib.util.spec_from_file_location('agora_persistence_smoke', {str(HELPER_PATH)!r})\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "from agora.governance.store import ProposalStore\n"
+        "assert ProposalStore is not None\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_branch_ci_gate_installs_fastapi_for_smoke_job() -> None:
+    branch_ci = yaml.safe_load((ROOT / ".github" / "workflows" / "branch-ci.yml").read_text(encoding="utf-8"))
+    steps = branch_ci["jobs"]["smoke"]["steps"]
+    install_step = next(
+        step for step in steps if step.get("name") == "Install deps (best-effort)"
+    )
+    assert "fastapi" in install_step["run"]

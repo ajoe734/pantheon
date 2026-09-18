@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from typing import Iterator
@@ -14,8 +13,8 @@ from typing import Any, Iterator
 
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.tests.conftest import build_consolidated_cross_cutting_app
 
 
 HEADERS = {"Authorization": "Bearer op-2:operator"}
@@ -177,33 +176,11 @@ class DetailSmokeBTestReadPorts(ReadSurfacePorts):
 
 @contextmanager
 def _pack_b_client() -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_program_overlay = dict(bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY)
-        original_experiment_overlay = dict(bff_main._GOV_BFF_EXPERIMENT_OVERLAY)
-        original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
-        env = {
-            **SERVICE_ENV_BLANKS,
-            "PANTHEON_BFF_AUTH_STUB": "true",
-            "PANTHEON_BFF_AUTH_MODE": "permissive",
-        }
-        try:
-            with mock.patch.dict(os.environ, env, clear=False):
-                bff_main.read_store = DetailSmokeBTestReadPorts(
-                    allow_local_snapshot_fallback=True,
-                )
-                bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
-                bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-                bff_main._GOV_BFF_IDEMPOTENCY.clear()
-                yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
-            bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
-            bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.update(original_program_overlay)
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.update(original_experiment_overlay)
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
+    store = DetailSmokeBTestReadPorts(
+        allow_local_snapshot_fallback=True,
+    )
+    app = build_consolidated_cross_cutting_app(read_surface=store)
+    yield TestClient(app)
 
 
 def _get(client: TestClient, path: str):
