@@ -100,7 +100,8 @@
   "coordination": {
     "repositories": {
       "pantheon": {
-        "repo": "ajoe734/pantheon"
+        "repo": "ajoe734/pantheon",
+        "integration_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/integration-runtimes/pantheon/b435986b13d5c323c533225f5ea3f6481d79a1be"
       },
       "execute_plans": {
         "repo": "ajoe734/execute-plans",

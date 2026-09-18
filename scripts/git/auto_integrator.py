@@ -71,9 +71,11 @@ DEFAULT_LOCK = ".orchestrator/auto-integrator.lock"
 DEFAULT_MERGE_METHOD = "merge"
 UNBLOCK_REQUEST_SCHEMA = unblock_contract.REQUEST_SCHEMA
 UNBLOCK_REQUEST_INBOX = unblock_contract.REQUEST_INBOX
-DEFAULT_LIVE_CONFIG = Path(
-    "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
-)
+DEFAULT_DEPLOY_ROOT = Path.home() / "pantheon-ci-deploy"
+DEPLOY_ROOT = Path(
+    os.environ.get("PANTHEON_DEPLOY_ROOT") or DEFAULT_DEPLOY_ROOT
+).expanduser()
+DEFAULT_LIVE_CONFIG = DEPLOY_ROOT / "runtime" / "live-supervisor-mainroot-config.json"
 LIVE_CONFIG_ENV = "PANTHEON_LIVE_SUPERVISOR_CONFIG"
 FINAL_MERGE_TIMEOUT_SECONDS = 60.0
 LOCK_SCHEMA = "pantheon-auto-integrator-lock/v2"
@@ -3377,6 +3379,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 live_config_path, runner, command_root=ROOT
             )
         except (ExecuteAuthorityError, OSError, ValueError) as exc:
+            print(
+                f"ALERT: auto-integrator live execute authority binding failed: {exc}",
+                file=sys.stderr,
+            )
             parser.error(f"live execute authority binding failed: {exc}")
     else:
         if args.status_file is not None:
