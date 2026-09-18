@@ -134,6 +134,9 @@ class HTTP:
         self.version_failure = None
         self.recover_on_restore = False
         self.runtime_config = None
+        # Absent by default: images that never reported the field must keep
+        # proving the viewer round trip.
+        self.dev_login_enabled = None
         self.login_mfa_verified = False
         self.login = {"access_token": "fixture-private-access-token", "meta": {"identity": "viewer"}, "scope": "viewer"}
         self.me = {"data": {"roles": ["viewer"], "operator_id": "pantheon-dev-viewer", "tenant_id": "tenant-dev",
@@ -150,7 +153,11 @@ class HTTP:
         if path == self.fail:
             return 500, b'{"secret":"fixture-error-body"}'
         if path == "/health": return 200, b"{}"
-        if path == "/bff/version": return 200, json.dumps({"source_commit_sha": self.source, "config_posture": {"auth_stub": False, "auth_mode": "strict"}}).encode()
+        if path == "/bff/version":
+            posture = {"auth_stub": False, "auth_mode": "strict"}
+            if self.dev_login_enabled is not None:
+                posture["dev_login_enabled"] = self.dev_login_enabled
+            return 200, json.dumps({"source_commit_sha": self.source, "config_posture": posture}).encode()
         if path == "/deployment.json": return 200, self.manifest.read_bytes()
         if path == "/bff/auth/dev-login":
             # Model the legacy image's config-fed claim to make rollback auth
@@ -998,6 +1005,42 @@ def test_drift_recovery_fail_closed_cases(case, failure, expected_match):
         case.args.baseline_source = "standby_frontend_pair_manifest"
 
     with pytest.raises(d.a.ArtifactError, match=expected_match):
+        execute(case)
+    no_replacement(case)
+
+
+def test_predecessor_without_dev_login_registry_is_recorded_not_claimed(case):
+    # Hosted dev after the 2026-09-17 rollback drill: the served predecessor
+    # declares an empty dedicated identity registry, so no credential can
+    # resolve a viewer and every later release would otherwise be stranded.
+    case.http.dev_login_enabled = False
+    seal(case)
+    result = execute(case, "verify")
+    assert result["public"]["dev_login_enabled"] is False
+    assert result["public"]["authenticated_viewer_readback_verified"] is False
+    assert result["public"]["strict_auth_denials_verified"] is True
+    assert result["public"]["fe_manifest_bytes_verified"] is True
+    assert not any(url.endswith("/bff/auth/dev-login") for _, url, _, _ in case.http.calls)
+
+
+def test_declared_dev_login_absence_never_relaxes_strict_denials(case):
+    case.http.dev_login_enabled = False
+    real_request = case.http.request
+    def patched_request(method, url, *, headers=None, body=None):
+        if "/bff/me" in url:
+            return 200, json.dumps(case.http.me).encode()
+        return real_request(method, url, headers=headers, body=body)
+    case.http.request = patched_request
+    with pytest.raises(d.a.ArtifactError, match="strict auth negative probe"):
+        execute(case)
+    no_replacement(case)
+
+
+@pytest.mark.parametrize("declared", [None, "false", 0, "no"])
+def test_only_a_literal_false_skips_the_viewer_probe(case, declared):
+    case.http.dev_login_enabled = declared
+    case.http.login["meta"]["identity"] = "operator_a"
+    with pytest.raises(d.a.ArtifactError, match="dedicated viewer identity"):
         execute(case)
     no_replacement(case)
 
