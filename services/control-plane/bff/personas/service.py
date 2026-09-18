@@ -1579,6 +1579,11 @@ def _evaluate_persona_provisioning_status(
     binding: Optional[Dict[str, Any]] = None
     binding_ok = False
     binding_failed = False
+    # Populated when the (sole) RuntimeBinding for this plan is paused with a
+    # recorded market-admission pause reason, so the terminal_reason built
+    # below can name the underlying cause instead of only the generic
+    # "runtime_binding_failed_or_mismatched" marker.
+    binding_pause_admission: Optional[Dict[str, Any]] = None
     authoritative_bindings: List[Dict[str, Any]] = []
     if plan_id:
         try:
@@ -1640,19 +1645,40 @@ def _evaluate_persona_provisioning_status(
                     binding_failed = True
             elif len(active_bindings) > 1:
                 binding_failed = True
-            elif binding_id and any(
-                str(value.get("binding_id") or value.get("id") or "") == binding_id
-                for value in (all_bindings or {}).values()
-                if isinstance(value, dict)
-            ):
-                # The expected binding identity exists under another plan.
-                binding_failed = True
-            elif any(
-                str(value.get("state") or value.get("status") or "").lower()
-                in {"failed", "stopped", "error"}
-                for value in authoritative_bindings
-            ):
-                binding_failed = True
+            else:
+                paused_bindings = [
+                    value
+                    for value in authoritative_bindings
+                    if str(value.get("state") or value.get("status") or "").lower() == "paused"
+                ]
+                if paused_bindings:
+                    # A paused binding for this plan is a failed/mismatched
+                    # binding from provisioning's point of view; when exactly
+                    # one is paused, surface why (e.g. market_input_stale)
+                    # instead of only the generic marker below.
+                    binding_failed = True
+                    if len(paused_bindings) == 1:
+                        paused_metadata = paused_bindings[0].get("metadata")
+                        session_admission = (
+                            paused_metadata.get("session_admission")
+                            if isinstance(paused_metadata, dict)
+                            else None
+                        )
+                        if isinstance(session_admission, dict) and session_admission.get("reason_code"):
+                            binding_pause_admission = session_admission
+                elif binding_id and any(
+                    str(value.get("binding_id") or value.get("id") or "") == binding_id
+                    for value in (all_bindings or {}).values()
+                    if isinstance(value, dict)
+                ):
+                    # The expected binding identity exists under another plan.
+                    binding_failed = True
+                elif any(
+                    str(value.get("state") or value.get("status") or "").lower()
+                    in {"failed", "stopped", "error"}
+                    for value in authoritative_bindings
+                ):
+                    binding_failed = True
         except Exception as exc:
             log.warning(
                 "Failed to query RuntimeBindings for plan %s / %s: %s",
@@ -1867,6 +1893,18 @@ def _evaluate_persona_provisioning_status(
             failure_reasons.append("deployment_projection_identity_mismatched")
         if binding_failed:
             failure_reasons.append("runtime_binding_failed_or_mismatched")
+            if isinstance(binding_pause_admission, dict):
+                pause_reason_code = str(binding_pause_admission.get("reason_code") or "").strip()
+                if pause_reason_code:
+                    pause_detail_parts = [
+                        f"{key}={binding_pause_admission[key]}"
+                        for key in ("source_snapshot_id", "source_event_time", "max_age_seconds")
+                        if binding_pause_admission.get(key) not in (None, "")
+                    ]
+                    pause_detail = ",".join(pause_detail_parts)
+                    failure_reasons.append(
+                        f"{pause_reason_code}:{pause_detail}" if pause_detail else pause_reason_code
+                    )
         if heartbeat_failed:
             failure_reasons.append("paper_worker_failed_stale_or_duplicated")
         if is_timeout:
@@ -3792,6 +3830,29 @@ def _market_persona_required_data_sources(item: dict[str, Any]) -> list[dict[str
                     "require_connector_approved",
                     "require_schedule_active",
                     "require_payload_push_health",
+                ],
+            },
+        ]
+    if market == "US" and os.getenv("PANTHEON_ENV", "").strip().lower() == "dev":
+        # Dev-only: the paper baseline's US persona (bootstrap_dev_paper_baseline.py)
+        # otherwise has no live_pull requirement at all, which left it with no
+        # code-owned market-data connector (DEV-PAPER-MARKET-INPUT-STALENESS-001).
+        # Bound to the dev-only synthetic connector registered in
+        # services/source_ingestion/connector_definitions.py /
+        # persona_source_reconciler.py; never applied outside PANTHEON_ENV=dev.
+        return [
+            {
+                "dataset": "us_price_daily",
+                "market": "US",
+                "cadence": "daily",
+                "source_class": "live_pull",
+                "connector_candidates": [
+                    "dev-paper-us-equity-simulation",
+                ],
+                "policy_gates": [
+                    "require_connector_approved",
+                    "require_schedule_active",
+                    "require_source_health_ok",
                 ],
             },
         ]

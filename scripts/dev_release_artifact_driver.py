@@ -370,6 +370,18 @@ def _public(args, expected_fe, http, barrier):
     for headers in ({}, {"Authorization": "Bearer artifact-driver-invalid-token"}):
         status, _ = request("GET", "/bff/me", headers=headers)
         if status not in (401, 403): raise a.ArtifactError("BFF strict auth negative probe failed")
+    # The served image is the authority on whether dedicated dev-login
+    # identities exist at all: an empty registry is reported as an explicit
+    # false, and no credential can then resolve a viewer. Demanding the round
+    # trip anyway strands every later release behind a predecessor that was
+    # brought up without those secrets, so the declared absence is recorded
+    # rather than claimed as a verified login. Only a literal false skips the
+    # probe; a missing or non-boolean field still demands the full proof, and
+    # the strict-auth denials above are proven either way.
+    if posture.get("dev_login_enabled") is False:
+        return {"source_sha": source_sha, "fe_manifest_bytes_verified": True,
+                "strict_auth_denials_verified": True, "dev_login_enabled": False,
+                "authenticated_viewer_readback_verified": False}
     client_id = os.environ.get("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID", "")
     secret = os.environ.get("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET", "")
     if not client_id or not secret:
@@ -395,7 +407,8 @@ def _public(args, expected_fe, http, barrier):
         session.get("authenticated") is not True or session.get("session_kind") != "bearer" or session.get("fresh") is not True):
         raise a.ArtifactError("server-bound viewer identity/tenant/auth readback mismatch")
     return {"source_sha": source_sha, "fe_manifest_bytes_verified": True,
-            "strict_auth_denials_verified": True, "authenticated_viewer_readback_verified": True}
+            "strict_auth_denials_verified": True, "dev_login_enabled": True,
+            "authenticated_viewer_readback_verified": True}
 
 
 def _layout(args):

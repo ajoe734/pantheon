@@ -1,4 +1,27 @@
-"""BFF contract tests for MGMT-OPS-006: governed operator actions and Human Review."""
+"""BFF contract tests for MGMT-OPS-006: governed operator actions and Human Review.
+
+RETAINED_COMPOSITION: the operator-action precondition logic this suite
+exercises (role checks that route through ``_enforce_ops_console_preconditions``,
+the ``_VALIDATORS`` dispatch table, and the source-confidence gate driven by
+``_ops_read_model_entry_for_persona``) is defined only as module-level globals
+in ``services/control_plane/bff/main.py`` and wired into the extracted
+``CommandAdapterService``/``create_command_adapters_router`` purely through
+that composition (see ``main.py`` around ``_VALIDATORS = {...}`` and
+``_command_adapter_service = _CommandAdapterService(validators=_VALIDATORS, ...)``).
+Neither ``command_adapters/service.py``, ``command_adapters/router.py`` nor
+``command_adapters/preconditions.py`` define an equivalent standalone
+validators table or ``_ops_read_model_entry_for_persona`` hook (grepped for
+``_enforce_ops_console_preconditions``/``_VALIDATORS`` across
+``services/control-plane/bff`` and found only in ``main.py``), so this suite
+still imports the package-qualified composition root to reach the *real*,
+already-wired ``command_adapter_service`` object (never a sys.path hack) and
+monkeypatches the same module globals (``read_store``, ``command_store``,
+``_ops_read_model_entry_for_persona``) the production validators close over.
+The HTTP surface itself is still exercised through a fresh ``FastAPI()`` app
+that mounts only the extracted ``create_command_adapters_router`` (not the
+full ``bff_main.app`` monolith), reusing the real production service/router
+factory rather than reimplementing any handler or validator logic here.
+"""
 from __future__ import annotations
 
 import os
@@ -12,8 +35,13 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 
 import json
-from services.control_plane.bff import main as bff_main
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.command_adapters.router import (
+    create_command_adapters_router,
+)
 from services.control_plane.bff.ports import ReadSurfacePorts
 from services.control_plane.bff.models import CommandType, RiskLevel
 
@@ -109,6 +137,18 @@ class MgmtOps006TestReadPorts(ReadSurfacePorts):
         return next((r for r in ds if isinstance(r, dict) and (r.get("runtime_id") == runtime_id or r.get("runtimeId") == runtime_id)), None)
 
 
+def _mounted_app() -> FastAPI:
+    # RETAINED_COMPOSITION: mounts the real, already-wired production
+    # command_adapter_service (built in main.py from _VALIDATORS and the
+    # _enforce_ops_console_preconditions/_ops_read_model_entry_for_persona
+    # composition graph) onto a fresh app instead of the bff_main.app
+    # monolith. No handler/validator logic is reimplemented here.
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(create_command_adapters_router(service=bff_main.command_adapter_service))
+    return app
+
+
 @contextmanager
 def _client_with_store(store: MgmtOps006TestReadPorts) -> Iterator[TestClient]:
     original_store = bff_main.read_store
@@ -120,7 +160,7 @@ def _client_with_store(store: MgmtOps006TestReadPorts) -> Iterator[TestClient]:
             commands = bff_main.app_deps.command_store
             bff_main.command_store = commands
             with patch.object(commands, "file_path", os.path.join(command_dir, "commands.jsonl")), patch.object(commands, "_cache", []):
-                yield TestClient(bff_main.app, raise_server_exceptions=False)
+                yield TestClient(_mounted_app(), raise_server_exceptions=False)
     finally:
         bff_main.read_store = original_store
         bff_main.command_store = original_commands

@@ -19,6 +19,21 @@ from fastapi.testclient import TestClient
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 
+# RETAINED_COMPOSITION (see task BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001):
+# This suite proves that main.py's own composition-level event-loop isolation
+# (the MGMT-LOAD-005 read-isolation wrapper around synchronous management
+# reads, and the per-route timeout budget it enforces) does not block
+# unrelated routes such as `/health` on the same running app. That is a
+# property of the *whole assembled app* -- the same event loop, the same
+# route table, the same timeout wrapper wired at composition time in
+# main.py -- not of any single extracted router in isolation. Building a
+# standalone app for a subset of routes would not exercise the real
+# composition-level guarantee this file is named for, and reimplementing the
+# timeout/isolation wrapper in the test would be exactly the "copy production
+# logic into the test" pattern the migration forbids. This suite therefore
+# keeps a package-qualified `from services.control_plane.bff import main as
+# bff_main` import to drive the live composed app rather than a `sys.path`
+# hack.
 from services.control_plane.bff import main as bff_main  # noqa: E402
 from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports  # noqa: E402
 

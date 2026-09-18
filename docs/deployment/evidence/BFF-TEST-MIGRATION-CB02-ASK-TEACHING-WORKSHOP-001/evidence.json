@@ -1,0 +1,174 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-CB02-ASK-TEACHING-WORKSHOP-001",
+  "batch_index": 2,
+  "batch_alias": "B20",
+  "base_sha": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "depends_on": [
+    "BFF-TEST-MIGRATION-REPARTITION-PLAN-002"
+  ],
+  "domain": "ASK sessions, committee lifecycle, memo publish, trainer sessions, rapid eval, teaching dialogs, and workshop replay",
+  "migration_approach": "Mount assistant and strategy workshop routers onto an isolated FastAPI app per module; inject fake session/committee providers rather than modifying main._data or main.py globals.",
+  "receiver_modules_unmodified": [
+    "services/control-plane/bff/assistant/routes.py",
+    "services/control-plane/bff/agora/strategy_workshop/router.py"
+  ],
+  "architecture_gate": {
+    "live_scan_non_whitelisted_main_importers_before": 49,
+    "live_scan_non_whitelisted_main_importers_after": 40,
+    "live_scan_ceiling_before": 49,
+    "live_scan_ceiling_after": 40,
+    "ceiling_delta": -9,
+    "migrated_suites_count_before": 28,
+    "migrated_suites_count_after": 37,
+    "migrated_suites_delta": 9,
+    "layer_delta": {
+      "application": -1,
+      "router": -8
+    }
+  },
+  "pairwise_disjoint_scope": {
+    "target_files_count": 9,
+    "target_tests_count": 172,
+    "target_files": [
+      "services/control-plane/bff/test_ask_001_sessions_contract.py",
+      "services/control-plane/bff/test_ask_003_committee_lifecycle.py",
+      "services/control-plane/bff/test_ask_004_memo_publish_contract.py",
+      "services/control-plane/bff/test_trn002_trainer_session_contract.py",
+      "services/control-plane/bff/test_trn003_rapid_eval_contract.py",
+      "services/control-plane/bff/test_tw01_teaching_dialog_contract.py",
+      "services/control-plane/bff/test_tw02_parameter_controls_contract.py",
+      "services/control-plane/bff/test_tw03_before_after_compare_contract.py",
+      "services/control-plane/bff/test_tw04_teaching_replay_contract.py"
+    ]
+  },
+  "results": {
+    "test_ask_001_sessions_contract.py": {
+      "file": "services/control-plane/bff/test_ask_001_sessions_contract.py",
+      "layer": "router",
+      "before_coupling": "Imported services.control_plane.bff.main as bff_main, invoked bff_main.app, mutated bff_main.read_store",
+      "after_coupling": "Decoupled via isolated FastAPI app mounting create_identity_router with injected _AskSessionsReadStore, CommandStore, and idempotency_store; 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatching",
+      "tests_passed": 24,
+      "tests_total": 24,
+      "disposition": "MIGRATED"
+    },
+    "test_ask_003_committee_lifecycle.py": {
+      "file": "services/control-plane/bff/test_ask_003_committee_lifecycle.py",
+      "layer": "application",
+      "before_coupling": "Imported services.control_plane.bff.main as bff_main, invoked bff_main.app, mutated bff_main.read_store",
+      "after_coupling": "Decoupled via isolated FastAPI app mounting create_agora_router with injected _CommitteeSessionsReadStore, CommandStore, and idempotency_store; 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatching",
+      "tests_passed": 29,
+      "tests_total": 29,
+      "disposition": "MIGRATED"
+    },
+    "test_ask_004_memo_publish_contract.py": {
+      "file": "services/control-plane/bff/test_ask_004_memo_publish_contract.py",
+      "layer": "router",
+      "before_coupling": "Imported services.control_plane.bff.main as bff_main, invoked bff_main.app, mutated bff_main.read_store",
+      "after_coupling": "Decoupled via isolated FastAPI app mounting create_agora_router and create_governance_router with injected _MemoPublishReadStore, CommandStore, and idempotency_store; 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatching",
+      "tests_passed": 31,
+      "tests_total": 31,
+      "disposition": "MIGRATED"
+    },
+    "test_trn002_trainer_session_contract.py": {
+      "file": "services/control-plane/bff/test_trn002_trainer_session_contract.py",
+      "layer": "router",
+      "before_coupling": "Imported services.control_plane.bff.main as bff_main, invoked bff_main.app, accessed bff_main.read_store",
+      "after_coupling": "Decoupled via isolated FastAPI app mounting create_training_router with injected _TrainerSessionReadStore, CommandStore, and idempotency_store; 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatching",
+      "tests_passed": 27,
+      "tests_total": 27,
+      "disposition": "MIGRATED"
+    },
+    "test_trn003_rapid_eval_contract.py": {
+      "file": "services/control-plane/bff/test_trn003_rapid_eval_contract.py",
+      "layer": "router",
+      "before_coupling": "Imported services.control_plane.bff.main as bff_main, invoked bff_main.app, accessed bff_main.read_store",
+      "after_coupling": "Decoupled via isolated FastAPI app mounting create_training_router with injected _RapidEvalReadStore, CommandStore, and idempotency_store; 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatching",
+      "tests_passed": 13,
+      "tests_total": 13,
+      "disposition": "MIGRATED"
+    },
+    "test_tw01_teaching_dialog_contract.py": {
+      "file": "services/control-plane/bff/test_tw01_teaching_dialog_contract.py",
+      "layer": "router",
+      "before_coupling": "Imported services.control_plane.bff.main as bff_main, invoked bff_main.app, mutated bff_main.read_store",
+      "after_coupling": "Decoupled via isolated FastAPI app mounting create_training_router with injected _TeachingDialogReadStore, CommandStore, and idempotency_store; attached client-scoped read_store reference for isolated degradation assertions; 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatching",
+      "tests_passed": 5,
+      "tests_total": 5,
+      "disposition": "MIGRATED"
+    },
+    "test_tw02_parameter_controls_contract.py": {
+      "file": "services/control-plane/bff/test_tw02_parameter_controls_contract.py",
+      "layer": "router",
+      "before_coupling": "Imported services.control_plane.bff.main as bff_main, invoked bff_main.app, accessed bff_main.read_store",
+      "after_coupling": "Decoupled via isolated FastAPI app mounting create_training_router with injected _ParameterControlsReadStore, CommandStore, and idempotency_store; 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatching",
+      "tests_passed": 5,
+      "tests_total": 5,
+      "disposition": "MIGRATED"
+    },
+    "test_tw03_before_after_compare_contract.py": {
+      "file": "services/control-plane/bff/test_tw03_before_after_compare_contract.py",
+      "layer": "router",
+      "before_coupling": "Imported services.control_plane.bff.main as bff_main, invoked bff_main.app, patched bff_main.utc_now",
+      "after_coupling": "Decoupled via isolated FastAPI app mounting create_training_router with injected _CompareReadStore, CommandStore, and idempotency_store; dynamic local _utc_now() function with _now_override hook replaces bff_main monkeypatching; 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatching",
+      "tests_passed": 4,
+      "tests_total": 4,
+      "disposition": "MIGRATED"
+    },
+    "test_tw04_teaching_replay_contract.py": {
+      "file": "services/control-plane/bff/test_tw04_teaching_replay_contract.py",
+      "layer": "router",
+      "before_coupling": "Imported services.control_plane.bff.main as bff_main, invoked bff_main.app, accessed bff_main.read_store",
+      "after_coupling": "Decoupled via isolated FastAPI app mounting create_training_router and create_strategies_router with injected _TeachingReplayReadStore, CommandStore, idempotency_store, and bff_me_tenant_payload; 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatching",
+      "tests_passed": 34,
+      "tests_total": 34,
+      "disposition": "MIGRATED"
+    }
+  },
+  "residual_disposition": {
+    "summary": "All 9 CB02 test suites fully decoupled from bff/main.py composition root and passing cleanly; live-scan non-whitelisted main importer ceiling successfully lowered from 49 to 40; 0 residual blockers",
+    "decoupled_suites": [
+      "services/control-plane/bff/test_ask_001_sessions_contract.py",
+      "services/control-plane/bff/test_ask_003_committee_lifecycle.py",
+      "services/control-plane/bff/test_ask_004_memo_publish_contract.py",
+      "services/control-plane/bff/test_trn002_trainer_session_contract.py",
+      "services/control-plane/bff/test_trn003_rapid_eval_contract.py",
+      "services/control-plane/bff/test_tw01_teaching_dialog_contract.py",
+      "services/control-plane/bff/test_tw02_parameter_controls_contract.py",
+      "services/control-plane/bff/test_tw03_before_after_compare_contract.py",
+      "services/control-plane/bff/test_tw04_teaching_replay_contract.py"
+    ],
+    "residual_suite": null,
+    "residual_analysis": null
+  },
+  "static_checks": {
+    "main_composition_root_imports": 0,
+    "sys_path_mutations": 0,
+    "global_read_store_monkeypatches": 0,
+    "global_read_store_monkeypatch_details": "none; 0 global read_store monkeypatches",
+    "dynamic_imports": 0,
+    "subprocess_calls": 0,
+    "verdict": "clean"
+  },
+  "verification": [
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "8 passed in 4.77s",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_ask_001_sessions_contract.py services/control-plane/bff/test_ask_003_committee_lifecycle.py services/control-plane/bff/test_ask_004_memo_publish_contract.py services/control-plane/bff/test_trn002_trainer_session_contract.py services/control-plane/bff/test_trn003_rapid_eval_contract.py services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_tw03_before_after_compare_contract.py services/control-plane/bff/test_tw04_teaching_replay_contract.py",
+      "result": "172 passed, 4 warnings in 133.63s",
+      "exit_code": 0
+    }
+  ],
+  "review": {
+    "owner": "Antigravity2",
+    "reviewer": "Antigravity",
+    "decision": "ready_for_review",
+    "notes": "All 9 CB02 suites decoupled from bff/main.py composition root and passing cleanly via isolated FastAPI app fixtures. 0 main imports, 0 dynamic imports, 0 subprocess calls, 0 sys.path mutations, 0 global read_store monkeypatches across all 9 suites. AST live-scan ceiling lowered from 49 to 40."
+  }
+}
