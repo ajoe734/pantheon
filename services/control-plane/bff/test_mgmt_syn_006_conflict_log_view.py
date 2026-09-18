@@ -2,15 +2,38 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from contextlib import contextmanager
-from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.evolution.router import (
+    _default_dataset_surface_status,
+    _default_utc_now,
+)
+from services.control_plane.bff.management_read_models.router import (
+    _default_bff_error,
+    _default_extract_identity,
+    _default_require_read_role,
+)
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
+
+# BFF-TEST-MIGRATION-CB07: DECOUPLED. /bff/synthesis/conflict-logs[/{log_id}]
+# is owned by research/routes/knowledge.py (mounted via
+# research.router.create_research_router) -- the same production
+# _conflict_view() projection main.py used to reach only through its own
+# closures. extract_identity/require_read_role/bff_error are reused from
+# management_read_models.router's own defaults (same pattern as the B12
+# precedent test_bff_b3_management_evidence.py). dataset_surface_status is
+# supplied from evolution.router's default because research.router's own
+# built-in default (_default_surface_status) ignores the ``source`` kwarg
+# entirely and always reports "available"; evolution.router's default
+# correctly maps a "missing" source to an "unavailable" surface status,
+# matching main.py's original _dataset_surface_status semantics that this
+# test's unavailable-surface assertions depend on.
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-syn:operator,reviewer,admin:mfa"}
@@ -173,35 +196,40 @@ def _normalize_conflict_logs(payload: Optional[object]) -> list[dict]:
     return normalized
 
 
+def _mounted_app(store) -> FastAPI:
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(
+        create_research_router(
+            read_surface=store,
+            extract_identity=_default_extract_identity,
+            require_read_role=_default_require_read_role,
+            bff_error=_default_bff_error,
+            utc_now=_default_utc_now,
+            dataset_surface_status=_default_dataset_surface_status,
+        )
+    )
+    return app
+
+
 @contextmanager
 def _conflict_log_client(
     monkeypatch,
     *,
     payload: Optional[object] = None,
 ) -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-        monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-        monkeypatch.delenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED", raising=False)
-        if payload is not None:
-            store_path = Path(td) / "synthesis_conflict_logs.json"
-            store_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-            monkeypatch.setenv("PANTHEON_BFF_SYNTHESIS_CONFLICT_LOG_STORE", str(store_path))
-            logs = _normalize_conflict_logs(payload)
-            store = create_in_memory_read_surface_ports(
-                ooda_management_kwargs={"synthesis_conflict_logs": logs}
-            )
-            store.dataset_source = lambda ds: "service_store" if ds == "synthesis_conflict_logs" else "typed_store"
-        else:
-            monkeypatch.delenv("PANTHEON_BFF_SYNTHESIS_CONFLICT_LOG_STORE", raising=False)
-            store = create_in_memory_read_surface_ports()
-            store.dataset_source = lambda ds: "missing" if ds == "synthesis_conflict_logs" else "typed_store"
-        bff_main.read_store = store
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original_store
+    monkeypatch.delenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED", raising=False)
+    if payload is not None:
+        logs = _normalize_conflict_logs(payload)
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"synthesis_conflict_logs": logs}
+        )
+        store.dataset_source = lambda ds: "service_store" if ds == "synthesis_conflict_logs" else "typed_store"
+    else:
+        store = create_in_memory_read_surface_ports()
+        store.dataset_source = lambda ds: "missing" if ds == "synthesis_conflict_logs" else "typed_store"
+    app = _mounted_app(store)
+    yield TestClient(app, raise_server_exceptions=False)
 
 
 def test_conflict_log_list_and_detail_project_management_view(monkeypatch) -> None:

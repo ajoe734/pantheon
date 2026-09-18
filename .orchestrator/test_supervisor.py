@@ -4481,6 +4481,148 @@ class DurableQueueContractTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
         launch.assert_called_once()
 
+    def _review_ready_event(self, *, event_id: str) -> tuple[dict[str, object], dict[str, object]]:
+        task = task_fixture(status="review", reviewer="Codex2")
+        # ``delivery_binding`` (frozen handoff contract) is what pure
+        # admission requires for REVIEW_READY eligibility; ``review_binding``
+        # (pr/head/base only) is the smaller, live-GitHub-facing binding this
+        # task's live PR-mergeability check resolves from -- both name the
+        # same PR #42 here.
+        task["delivery_binding"] = review_admission_binding()
+        task["review_binding"] = {
+            "pr": 42,
+            "head_sha": "a" * 40,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        event = supervisor.build_dispatch_event(
+            task, "Codex2", supervisor.REASON_REVIEW_READY, {"TASK-1": task}
+        )
+        event.update(
+            {
+                "event_id": event_id,
+                "event_key": event["key"],
+                "target_agent": "codex2",
+                "target_display_name": "Codex2",
+                "delivery_endpoint_id": "codex2",
+                "message": "wake",
+            }
+        )
+        return task, event
+
+    def test_review_ready_dispatch_withheld_when_bound_pr_is_dirty(self) -> None:
+        """OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a task in ``review`` whose
+        bound PR already reports ``mergeStateStatus=DIRTY`` must not be
+        dispatched to a reviewer -- launching one only reproduces the
+        2026-09-17 CB02/CB05/CB07 storm (a reviewer whose approve/reopen is
+        rejected by the canonical merge gate, misclassified as a lost lease).
+        The hold must be non-terminal: the queue event stays ``pending`` with
+        a named wait reason, not ``completed``/``failed``.
+        """
+
+        task, event = self._review_ready_event(event_id="evt-review-dirty")
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
+        with_queue_intents(state, event)
+        with (
+            mock.patch.object(supervisor, "queue_events", return_value=[event]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "live_review_pr_merge_state", return_value="DIRTY"
+            ),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError(
+                    "must not dispatch a reviewer onto a DIRTY PR"
+                ),
+            ),
+        ):
+            changed = supervisor.process_queue(self.config, state)
+        self.assertTrue(changed)
+        record = state["queue"]["events"]["evt-review-dirty"]
+        self.assertEqual(record["status"], "pending")
+        self.assertIn("review_pr_dirty", record["last_wait_reason"])
+        self.assertIn("DIRTY", record["last_wait_reason"])
+        self.assertIn("42", record["last_wait_reason"])
+
+    def test_review_ready_dispatch_resumes_once_pr_is_mergeable_again(self) -> None:
+        """The withheld dispatch above must resume with no leftover
+        contamination once the live check reports MEREABLE again."""
+
+        task, event = self._review_ready_event(event_id="evt-review-clear")
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
+        with_queue_intents(state, event)
+        # Simulate a previous cycle's hold still recorded on the row.
+        state["queue"]["events"]["evt-review-clear"]["status"] = "pending"
+        state["queue"]["events"]["evt-review-clear"]["last_wait_reason"] = "review_pr_dirty:ajoe734/pantheon#42:DIRTY"
+        request = supervisor.DeliveryRequest(
+            agent_id="codex2",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="TASK-1",
+            reason=supervisor.REASON_REVIEW_READY,
+            metadata={"workspace_path": "/tmp/task-1"},
+        )
+        with (
+            mock.patch.object(supervisor, "queue_events", return_value=[event]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "live_review_pr_merge_state", return_value="MERGEABLE"
+            ),
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(
+                supervisor, "prepare_worker_workspace", return_value=(True, None)
+            ),
+            mock.patch.object(
+                supervisor, "check_worker_tree_clean", return_value=(True, None)
+            ),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-1", {"auto_delivered": True}),
+            ) as launch,
+            mock.patch.object(
+                supervisor, "sync_dispatched_task_status", return_value=True
+            ),
+        ):
+            changed = supervisor.process_queue(self.config, state)
+        self.assertTrue(changed)
+        launch.assert_called_once()
+        self.assertEqual(
+            state["queue"]["events"]["evt-review-clear"]["status"], "started"
+        )
+
+    def test_live_review_pr_merge_state_fails_open_without_binding(self) -> None:
+        """No ``review_binding`` (or no configured repository slug) must
+        never attempt a live GitHub call -- it must simply return None so an
+        ordinary owner/reviewer dispatch is never held on an unrelated task.
+        """
+
+        task = task_fixture(status="review", reviewer="Codex2")
+        self.assertIsNone(supervisor.live_review_pr_merge_state(self.config, task))
+        self.assertFalse(
+            supervisor.review_pr_merge_state_is_conflicted(
+                supervisor.live_review_pr_merge_state(self.config, task)
+            )
+        )
+
+    def test_review_pr_merge_state_is_conflicted_only_for_dirty(self) -> None:
+        """UNKNOWN/BEHIND/UNSTABLE/BLOCKED are transient GitHub signals, not
+        merge conflicts, and must never trip this hold."""
+
+        for benign in ("UNKNOWN", "BEHIND", "UNSTABLE", "BLOCKED", "CLEAN", "", None):
+            with self.subTest(merge_state=benign):
+                self.assertFalse(
+                    supervisor.review_pr_merge_state_is_conflicted(benign)
+                )
+        self.assertTrue(supervisor.review_pr_merge_state_is_conflicted("DIRTY"))
+        self.assertTrue(supervisor.review_pr_merge_state_is_conflicted("dirty"))
+
     def test_launch_auth_retry_reuses_health_admission_and_pending_intent(self) -> None:
         state = with_healthy_delivery_health(self.config, {"workers": {}, "queue": {"events": {}}})
         with_queue_intents(state, self.event)
@@ -9484,6 +9626,159 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         terminate.assert_called_once_with(worker)
         self.assertEqual(worker["status"], "superseded")
         self.assertNotIn("governance_lease_guard", worker)
+
+    def test_canonical_worker_terminal_status_recognizes_reviewer_blocker(
+        self,
+    ) -> None:
+        """OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a reviewer that discovers a
+        DIRTY PR and correctly calls the governed ``ai-status.sh blocker``
+        (moving the task review -> blocked) must be recognized as a clean,
+        non-terminal end of responsibility -- not a lost lease.
+        """
+        config = config_fixture()
+        task = task_fixture(status="blocked", reviewer="Codex2")
+        worker = self._owner_worker(generation=1)
+        worker.update(
+            {
+                "run_id": "run-reviewer",
+                "agent_id": "codex2",
+                "logical_agent_id": "codex2",
+                "queue_event_id": "evt-reviewer",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+        )
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id="TASK-1",
+            worker_run_id="run-reviewer",
+            queue_event_id="evt-reviewer",
+            pid=1234,
+            pid_start_ticks=5678,
+        )
+        blocker_event = self._exact_lifecycle_event(
+            worker, event_type="blocker", agent="Codex2"
+        )
+
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[blocker_event],
+            ),
+            "blocked",
+        )
+
+        # A dead/successfully-exited reviewer worker with this blocker on
+        # record must be recognized through the same responsibility-transfer
+        # gate the poll loop consults before ever calling
+        # recover_lost_worker_lease(reason_kind="worker_process_missing").
+        exited_worker = dict(worker, runner_status="completed", exit_code=0)
+        self.assertTrue(
+            supervisor.worker_completed_after_responsibility_transition(
+                config,
+                exited_worker,
+                task,
+                activity_events=[blocker_event],
+            )
+        )
+
+        # Wrong actor on the exact same event/task/process identity still
+        # fails closed -- a blocker is not a wildcard escape hatch.
+        mismatched_actor_event = dict(blocker_event, agent="SomeoneElse")
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[mismatched_actor_event],
+            )
+        )
+
+    def test_canonical_worker_terminal_status_recognizes_owner_blocker(self) -> None:
+        """The same recognition generalizes to an owner-dispatched worker: any
+        worker (owner or reviewer) that correctly files a blocker and exits
+        is a clean handoff, not just the reviewer/DIRTY-PR case.
+        """
+        config = config_fixture()
+        task = task_fixture(status="blocked", owner="Codex")
+        worker = self._owner_worker(generation=1)
+        blocker_event = self._exact_lifecycle_event(
+            worker, event_type="blocker", agent="Codex"
+        )
+
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[blocker_event],
+            ),
+            "blocked",
+        )
+
+    def test_missing_process_without_blocker_is_still_lost_lease(self) -> None:
+        """Regression guard: a worker whose task is still review/in_progress
+        with no blocker (or other transfer) event on record, and a dead
+        process, must still be classified as a lost lease -- the blocker
+        recognition above must not be over-widened into a general escape
+        from lost-lease detection.
+        """
+        config = config_fixture()
+
+        review_task = task_fixture(status="review", reviewer="Codex2")
+        reviewer_worker = self._owner_worker(generation=1)
+        reviewer_worker.update(
+            {
+                "run_id": "run-reviewer",
+                "agent_id": "codex2",
+                "logical_agent_id": "codex2",
+                "queue_event_id": "evt-reviewer",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+        )
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                reviewer_worker,
+                review_task,
+                activity_events=[],
+            )
+        )
+        self.assertFalse(
+            supervisor.worker_completed_after_responsibility_transition(
+                config,
+                dict(reviewer_worker, runner_status="completed", exit_code=0),
+                review_task,
+                activity_events=[],
+            )
+        )
+
+        in_progress_task = task_fixture(status="in_progress", owner="Codex")
+        owner_worker = self._owner_worker(generation=1)
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                owner_worker,
+                in_progress_task,
+                activity_events=[],
+            )
+        )
+        self.assertFalse(
+            supervisor.worker_completed_after_responsibility_transition(
+                config,
+                dict(owner_worker, runner_status="completed", exit_code=0),
+                in_progress_task,
+                activity_events=[],
+            )
+        )
 
     def test_canonical_worker_terminal_status_recognizes_exact_reviewer_reopen(
         self,
