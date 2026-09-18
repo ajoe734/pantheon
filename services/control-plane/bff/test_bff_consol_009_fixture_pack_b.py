@@ -12,17 +12,15 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
-from typing import Any
-
 from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.tests.conftest import build_consolidated_cross_cutting_app
 
 HEADERS = {"Authorization": "Bearer op-2:operator"}
 FIXTURE_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_b.json"
@@ -128,13 +126,10 @@ class FixturePackBTestReadPorts(ReadSurfacePorts):
         return list(ds.values()) if isinstance(ds, dict) else list(ds)
 
 
-def _fresh_pack_b_client(td: str) -> TestClient:
-    bff_main.read_store = FixturePackBTestReadPorts(
-        allow_local_snapshot_fallback=True,
-    )
-    bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-    bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    return TestClient(bff_main.app)
+def _fresh_pack_b_client(td: str | None = None) -> TestClient:
+    store = FixturePackBTestReadPorts(allow_local_snapshot_fallback=True)
+    app = build_consolidated_cross_cutting_app(read_surface=store)
+    return TestClient(app)
 
 
 def _list_payload_count(payload: dict) -> int:
@@ -202,101 +197,68 @@ def test_fixture_pack_b_runtime_is_fail_closed_paper_canary() -> None:
 
 def test_pack_b_evolution_live_list_returns_non_empty() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
-                client = _fresh_pack_b_client(td)
-                resp = client.get("/api/v1/evolution-decisions", headers=HEADERS)
-                assert resp.status_code == 200, f"/api/v1/evolution-decisions: {resp.text}"
-                data = resp.json()
-                items = data.get("data") or data.get("items") or []
-                assert len(items) >= 1, "evolution-decisions must return ≥1 record"
-        finally:
-            bff_main.read_store = original
+        with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
+            client = _fresh_pack_b_client(td)
+            resp = client.get("/api/v1/evolution-decisions", headers=HEADERS)
+            assert resp.status_code == 200, f"/api/v1/evolution-decisions: {resp.text}"
+            data = resp.json()
+            items = data.get("data") or data.get("items") or []
+            assert len(items) >= 1, "evolution-decisions must return ≥1 record"
 
 
 def test_pack_b_v5_interventions_live_list_returns_non_empty() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
-                client = _fresh_pack_b_client(td)
-                # Seed the intervention from fixture pack B into the in-memory store
-                payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-                interventions = payload["datasets"]["v5_interventions"]
-                original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
-                bff_main._V5_INTERVENTIONS_STORE.extend(interventions.values())
-                try:
-                    resp = client.get("/bff/v5/interventions", headers=HEADERS)
-                    assert resp.status_code == 200, f"/bff/v5/interventions: {resp.text}"
-                    body = resp.json()
-                    assert body["count"] >= 1, "v5/interventions must return ≥1 record"
-                    assert any(
-                        item["intervention_id"] == "intv-pack-b-001"
-                        for item in body["items"]
-                    )
-                finally:
-                    bff_main._V5_INTERVENTIONS_STORE.clear()
-                    bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
-        finally:
-            bff_main.read_store = original
+        with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
+            client = _fresh_pack_b_client(td)
+            resp = client.get("/bff/v5/interventions", headers=HEADERS)
+            assert resp.status_code == 200, f"/bff/v5/interventions: {resp.text}"
+            body = resp.json()
+            assert body["count"] >= 1, "v5/interventions must return ≥1 record"
+            assert any(
+                item["intervention_id"] == "intv-pack-b-001"
+                for item in body["items"]
+            )
 
 
 def test_pack_b_agora_signals_live_list_returns_non_empty() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
-                client = _fresh_pack_b_client(td)
-                resp = client.get("/bff/agora/signals", headers=HEADERS)
-                assert resp.status_code == 200, f"/bff/agora/signals: {resp.text}"
-                data = resp.json()
-                items = data.get("data") or data.get("items") or []
-                assert len(items) >= 1, "agora/signals must return ≥1 record"
-        finally:
-            bff_main.read_store = original
+        with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
+            client = _fresh_pack_b_client(td)
+            resp = client.get("/bff/agora/signals", headers=HEADERS)
+            assert resp.status_code == 200, f"/bff/agora/signals: {resp.text}"
+            data = resp.json()
+            items = data.get("data") or data.get("items") or []
+            assert len(items) >= 1, "agora/signals must return ≥1 record"
 
 
 def test_pack_b_agora_sessions_live_list_returns_non_empty() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
-                client = _fresh_pack_b_client(td)
-                resp = client.get("/bff/agora/sessions", headers=HEADERS)
-                assert resp.status_code == 200, f"/bff/agora/sessions: {resp.text}"
-                data = resp.json()
-                items = data.get("data") or data.get("items") or []
-                assert len(items) >= 1, "agora/sessions must return ≥1 record"
-        finally:
-            bff_main.read_store = original
+        with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
+            client = _fresh_pack_b_client(td)
+            resp = client.get("/bff/agora/sessions", headers=HEADERS)
+            assert resp.status_code == 200, f"/bff/agora/sessions: {resp.text}"
+            data = resp.json()
+            items = data.get("data") or data.get("items") or []
+            assert len(items) >= 1, "agora/sessions must return ≥1 record"
 
 
 def test_pack_b_research_tickets_live_list_returns_non_empty() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
-                client = _fresh_pack_b_client(td)
-                resp = client.get("/api/v1/research/tickets", headers=HEADERS)
-                assert resp.status_code == 200, f"/api/v1/research/tickets: {resp.text}"
-                data = resp.json()
-                items = data.get("data") or data.get("items") or []
-                assert len(items) >= 1, "research/tickets must return ≥1 record"
-        finally:
-            bff_main.read_store = original
+        with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
+            client = _fresh_pack_b_client(td)
+            resp = client.get("/api/v1/research/tickets", headers=HEADERS)
+            assert resp.status_code == 200, f"/api/v1/research/tickets: {resp.text}"
+            data = resp.json()
+            items = data.get("data") or data.get("items") or []
+            assert len(items) >= 1, "research/tickets must return ≥1 record"
 
 
 def test_pack_b_runtime_bindings_live_list_returns_non_empty() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
-                client = _fresh_pack_b_client(td)
-                resp = client.get("/bff/deployments", headers=HEADERS)
-                assert resp.status_code == 200, f"/bff/deployments: {resp.text}"
-                data = resp.json()
-                items = data.get("data") or data.get("items") or []
-                assert len(items) >= 1, "deployments (runtime-linked) must return ≥1 record"
-        finally:
-            bff_main.read_store = original
+        with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
+            client = _fresh_pack_b_client(td)
+            resp = client.get("/bff/deployments", headers=HEADERS)
+            assert resp.status_code == 200, f"/bff/deployments: {resp.text}"
+            data = resp.json()
+            items = data.get("data") or data.get("items") or []
+            assert len(items) >= 1, "deployments (runtime-linked) must return ≥1 record"
