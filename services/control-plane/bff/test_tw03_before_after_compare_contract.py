@@ -1,20 +1,90 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
-from unittest import mock
+from typing import Any
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from test_training_session_service_client import create_training_read_surface_double
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    default_utc_now,
+    extract_identity_stub,
+    require_read_role,
+)
+from services.control_plane.bff.test_training_session_service_client import (
+    create_training_read_surface_double,
+)
+from services.control_plane.bff.training.router import create_training_router
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
+
+_now_override: str | None = None
+
+
+def _utc_now() -> str:
+    return _now_override if _now_override is not None else default_utc_now()
+
+
+def _page_slice(
+    items: list[dict[str, Any]],
+    page_token: str | None,
+    page_size: int,
+) -> tuple[list[dict[str, Any]], str | None]:
+    start = int(page_token) if page_token else 0
+    end = start + page_size
+    next_page = str(end) if end < len(items) else None
+    return items[start:end], next_page
+
+
+def _dataset_surface_status(
+    dataset: str,
+    *,
+    snapshot_at: str | None = None,
+    has_data: bool | None = None,
+    missing_message: str | None = None,
+    source: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "degraded" if source == "local_snapshot" else "ok",
+        "source": source or "local_snapshot",
+        "staleness": {
+            "served_from": "local_snapshot",
+            "last_known_at": snapshot_at or _utc_now(),
+        },
+    }
+
+
+def _create_test_app(read_surface: Any) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Any, exc: Any) -> JSONResponse:
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}},
+        )
+
+    app.include_router(
+        create_training_router(
+            read_surface=read_surface,
+            extract_identity=extract_identity_stub,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=_utc_now,
+            page_slice=_page_slice,
+            dataset_surface_status=_dataset_surface_status,
+        )
+    )
+    return app
 
 
 @contextmanager
@@ -24,7 +94,6 @@ def _seeded_client(
     service_backed_preview_store: bool = False,
 ):
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         original_preview_store = os.environ.get("PANTHEON_BFF_TRAINER_PREVIEW_STORE")
         if service_backed_preview_store:
             os.environ["PANTHEON_BFF_TRAINER_PREVIEW_STORE"] = os.path.join(
@@ -33,12 +102,12 @@ def _seeded_client(
             )
         else:
             os.environ.pop("PANTHEON_BFF_TRAINER_PREVIEW_STORE", None)
-        bff_main.read_store = create_training_read_surface_double()
-        client = TestClient(bff_main.app)
+        store = create_training_read_surface_double()
+        app = _create_test_app(store)
+        client = TestClient(app)
         try:
             yield client
         finally:
-            bff_main.read_store = original_store
             if original_preview_store is None:
                 os.environ.pop("PANTHEON_BFF_TRAINER_PREVIEW_STORE", None)
             else:
@@ -80,13 +149,17 @@ def test_tw03_get_preview_returns_backend_owned_compare_payload() -> None:
 
 
 def test_tw03_pending_preview_supports_eval_lookup_and_polling_contract() -> None:
+    global _now_override
     with _seeded_client() as client:
-        with mock.patch.object(bff_main, "utc_now", return_value="2026-04-20T19:50:00Z"):
+        _now_override = "2026-04-20T19:50:00Z"
+        try:
             response = client.get(
                 "/api/v1/trainer/sessions/trn-20260419-001/preview",
                 params={"eval_id": "teval-20260419-015"},
                 headers={"Authorization": OPERATOR_AUTH},
             )
+        finally:
+            _now_override = None
         assert response.status_code == 200, response.text
 
         payload = response.json()
