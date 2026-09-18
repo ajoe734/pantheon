@@ -231,6 +231,25 @@ def uninstall_cron(*, dry_run: bool) -> None:
     print(f"uninstalled cron watchdog entry: {CRON_TAG}")
 
 
+def verify_installed_watchdog(repo_root: Path) -> tuple[bool, str]:
+    expected = str(repo_root.resolve())
+    unit_path = Path.home() / ".config" / "systemd" / "user" / SERVICE_NAME
+    if unit_path.is_file():
+        try:
+            content = unit_path.read_text(encoding="utf-8")
+            if expected in content:
+                return True, f"systemd unit {SERVICE_NAME} binds {expected}"
+            return False, f"systemd unit {SERVICE_NAME} does not bind {expected}"
+        except OSError as exc:
+            return False, f"cannot read {unit_path}: {exc}"
+    cron_lines = [line for line in current_crontab() if CRON_TAG in line]
+    if cron_lines:
+        if any(expected in line for line in cron_lines):
+            return True, f"cron watchdog binds {expected}"
+        return False, f"cron watchdog does not bind {expected}"
+    return False, "no watchdog installed (neither systemd unit nor cron entry found)"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Install or remove the persistent Pantheon supervisor watchdog."
@@ -261,6 +280,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Print intended changes without applying them.")
     parser.add_argument("--uninstall", action="store_true", help="Remove the selected persistence backend.")
     parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Verify that the active watchdog persistence (systemd or cron) binds the repo runtime.",
+    )
+    parser.add_argument(
         "--start-now",
         dest="start_now",
         action=argparse.BooleanOptionalAction,
@@ -273,6 +297,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     repo_root = repo_root_from(args.repo)
+    if args.verify:
+        ok, msg = verify_installed_watchdog(repo_root)
+        print(f"watchdog verification: {msg}")
+        return 0 if ok else 1
     try:
         config_path = explicit_regular_file(args.config) if args.config and not args.uninstall else None
         authority_env_file = (

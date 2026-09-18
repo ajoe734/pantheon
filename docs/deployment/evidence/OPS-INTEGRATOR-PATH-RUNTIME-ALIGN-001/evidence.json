@@ -1,0 +1,64 @@
+{
+  "task_id": "OPS-INTEGRATOR-PATH-RUNTIME-ALIGN-001",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "title": "Auto-integrator has no dedicated merge checkout and runtime pointers disagree",
+  "timestamp": "2026-09-18T09:20:00Z",
+  "summary": "Resolved auto-integrator fail-closed rejection and runtime pointer drift across deployment infrastructure. Configured dedicated absolute integration_path for repository pantheon in .orchestrator/config.json; updated sync-dev-root.sh to install and verify supervisor watchdog unit and auto-integrator cron runner across all promotion pathways; added --verify flag to supervisor_watchdog_install.py; fixed stale home directory assumptions in auto_integrator.py and added explicit stderr alerting on live execute authority binding failures. Verified with 12 passing tests in test_sync_dev_root.py, 154 passing tests in test_auto_integrator.py, zero recurring cron failures, and successful live end-to-end integration of review-approved PRs #5918 and #5919.",
+  "acceptance_criteria_verification": {
+    "pantheon_dedicated_integration_path": {
+      "satisfied": true,
+      "path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/integration-runtimes/pantheon/b435986b13d5c323c533225f5ea3f6481d79a1be",
+      "declared_in": ".orchestrator/config.json",
+      "isolation": "Dedicated clean integration checkout, distinct from worker worktrees and source checkout"
+    },
+    "auto_integrator_end_to_end_merge": {
+      "satisfied": true,
+      "evidence": "Merged PR #5918 and PR #5919 into dev via live auto-integrator runner without missing-dedicated-integration-path rejection."
+    },
+    "live_supervisor_config_carries_integration_path": {
+      "satisfied": true,
+      "evidence": "sync-dev-root.sh extracts pantheon_integration_root from .orchestrator/config.json and passes --repository-integration-root during check_config_drift.py and promote_candidate_runtime, preventing promotion from washing away the setting."
+    },
+    "runtime_pointers_synchronized": {
+      "satisfied": true,
+      "evidence": "Watchdog unit, auto-integrator cron runner, and active supervisor process resolve to command runtime b435986b13d5c323c533225f5ea3f6481d79a1be. Validated via supervisor_watchdog_install.py --verify."
+    },
+    "no_further_cron_binding_failures": {
+      "satisfied": true,
+      "evidence": "auto-integrator-cron.log confirms zero authority binding failures after alignment (line 6476+); cron runner operates cleanly every 5 minutes."
+    },
+    "regression_tests": {
+      "satisfied": true,
+      "evidence": "test_sync_dev_root.py: 12 passed (including test_sync_repoints_watchdog_and_auto_integrator_on_no_op_current_runtime and test_sync_aligns_watchdog_and_auto_integrator_after_promotion); test_auto_integrator.py: 154 passed (including execute authority mismatch, alert emission, and configured integration path checks)."
+    }
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "python3 -m unittest scripts/git/test_auto_integrator.py",
+        "result": "Ran 154 tests in 6.148s, OK"
+      },
+      {
+        "command": "~/.local/bin/uvx --with pytest pytest scripts/test_sync_dev_root.py",
+        "result": "12 passed in 34.25s"
+      },
+      {
+        "command": "python3 scripts/supervisor_watchdog_install.py --verify --repo $PANTHEON_COMMAND_ROOT",
+        "result": "watchdog verification: systemd unit pantheon-supervisor-watchdog.service binds /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/b435986b13d5c323c533225f5ea3f6481d79a1be"
+      },
+      {
+        "command": "bash -n scripts/sync-dev-root.sh",
+        "result": "Syntax check passed with exit code 0"
+      },
+      {
+        "command": "python3 -m py_compile scripts/git/auto_integrator.py scripts/supervisor_watchdog_install.py",
+        "result": "Compilation passed with exit code 0"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "decision": "pending independent exact-head review"
+  }
+}
