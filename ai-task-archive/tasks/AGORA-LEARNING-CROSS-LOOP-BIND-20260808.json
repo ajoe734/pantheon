@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "task_id": "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+  "archived_at": "2026-08-13T02:59:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start only after L12-MIN-INTEGRATE releases shared Compose/catalog ownership.",
+      "Wire scoped service URLs and non-embedded credentials for Agora handoff consumption and Consultation intake; no service may receive broader write authority than its endpoint requires.",
+      "Fail closed and report degraded when a token, upstream, tenant scope, or durable store is absent; never fall back to seed or anonymous cross-service access.",
+      "Expose bounded worker health/backlog/readback without making queue emptiness equal readiness.",
+      "Prove restart activation, credential rejection, tenant mismatch, upstream outage, and disabled-by-default rollback behavior.",
+      "Touch the loop catalog only if the runtime binding changes a declared contract; otherwise leave it byte-identical."
+    ],
+    "artifacts": [
+      "docker-compose.yml",
+      "scripts/test_agora_learning_cross_loop_compose_contract.py",
+      "docs/deployment/evidence/agora/AGORA-LEARNING-CROSS-LOOP-BIND-20260808/"
+    ],
+    "depends_on": [
+      "IMIT-CONSULTATION-INTAKE-20260808",
+      "L12-MIN-INTEGRATE-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": "codex://root/agora-current-gap-execution-20260808",
+      "conversation_id": "codex-root-agora-current-gap-execution-20260808",
+      "documents": [
+        {
+          "kind": "AGORA_CURRENT_GAP_AUDIT",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/GAP-AUDIT.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "2d1f16b1ab3c9fc0f89b2648e93c496365bbb03b",
+            "frozen origin/dev de8635aa958593ca332395baba1880aacf096952",
+            "deployment run 31250996848"
+          ]
+        },
+        {
+          "kind": "AGORA_CURRENT_GAP_PLAN",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "exact head 2d1f16b1ab3c9fc0f89b2648e93c496365bbb03b",
+            "origin/dev de8635aa958593ca332395baba1880aacf096952"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/execution-tasks.json",
+          "sourceRefs": [
+            "nine unique governed tasks",
+            "reuse L12-VERIFY-LEARN-REAL-VERIFIER-001",
+            "unique sink AGORA-CURRENT-CLOSE-20260808"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T11:54:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "ecd0e13cb8cc306cd8414e6c559a2e16f7c6ceaacfec2f2dceb5cb45d24595cb",
+      "packet_id": "pkt-agora-current-environment-gap-final-20260808-2d1f16b1a",
+      "source_turn_ids": [
+        "user-request-agora-gap-and-execution-tasks-for-supervisor",
+        "codex-readonly-agora-current-state-audit-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start only after L12-MIN-INTEGRATE releases shared Compose/catalog ownership.",
+          "Wire scoped service URLs and non-embedded credentials for Agora handoff consumption and Consultation intake; no service may receive broader write authority than its endpoint requires.",
+          "Fail closed and report degraded when a token, upstream, tenant scope, or durable store is absent; never fall back to seed or anonymous cross-service access.",
+          "Expose bounded worker health/backlog/readback without making queue emptiness equal readiness.",
+          "Prove restart activation, credential rejection, tenant mismatch, upstream outage, and disabled-by-default rollback behavior.",
+          "Touch the loop catalog only if the runtime binding changes a declared contract; otherwise leave it byte-identical."
+        ],
+        "artifacts": [
+          "docker-compose.yml",
+          "scripts/test_agora_learning_cross_loop_compose_contract.py",
+          "docs/deployment/evidence/agora/AGORA-LEARNING-CROSS-LOOP-BIND-20260808/"
+        ],
+        "depends_on": [
+          "IMIT-CONSULTATION-INTAKE-20260808",
+          "L12-MIN-INTEGRATE-20260808"
+        ],
+        "id": "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+        "owner": "Antigravity",
+        "phase": "A2c runtime binding",
+        "reviewer": "Claude",
+        "summary": "Add only the runtime credentials, endpoints, health contract, and activation needed for the two reviewed cross-service edges.",
+        "title": "Bind the Agora-Learning-Consultation workers in the dev runtime"
+      },
+      "task_spec_hash": "2db28ba0fddfd990fb575bac543ab2591776023aec11f9646be9ed614808abed"
+    },
+    "generation": 1,
+    "id": "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+    "last_update": "2026-08-13T02:59:58Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset. Preserve merged/archive evidence; remaining product work is rematerialized as dependency-free, current-source V2 roots.",
+    "owner": "Antigravity",
+    "phase": "A2c runtime binding",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Add only the runtime credentials, endpoints, health contract, and activation needed for the two reviewed cross-service edges.",
+    "title": "Bind the Agora-Learning-Consultation workers in the dev runtime",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T18:01:26Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AGORA-LEARNING-CROSS-LOOP-BIND-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-12T03:12:45Z",
+      "status": "done",
+      "task_id": "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T03:12:45Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned AGORA-LEARNING-CROSS-LOOP-BIND-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-08-12T04:43:12Z",
+      "status": "done",
+      "task_id": "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-12T04:43:12Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AGORA-LEARNING-CROSS-LOOP-BIND-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:59:58Z"
+    }
+  ],
+  "blockers": []
+}

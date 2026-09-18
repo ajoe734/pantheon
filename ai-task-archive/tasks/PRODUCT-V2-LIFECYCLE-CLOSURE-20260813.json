@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "task_id": "PRODUCT-V2-LIFECYCLE-CLOSURE-20260813",
+  "archived_at": "2026-08-13T03:00:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start from current origin/dev and ignore retired task assumptions",
+      "Prove one current event reaches projector storage and scoped BFF readback",
+      "Keep readiness fail-closed for stale or quarantined state",
+      "Land one reviewed PR with current evidence"
+    ],
+    "artifacts": [
+      "services/trade_journey/",
+      "services/control-plane/bff/trade_journeys.py",
+      "services/control-plane/bff/trade_journey_projection_store.py",
+      "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "docs/deployment/evidence/product-v2/lifecycle-closure/"
+    ],
+    "depends_on": [],
+    "generation": 1,
+    "id": "PRODUCT-V2-LIFECYCLE-CLOSURE-20260813",
+    "last_update": "2026-08-13T03:00:11Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset; remaining product work is rematerialized as current-source dependency-free roots.",
+    "owner": "Antigravity",
+    "phase": "V2 Product Delivery",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "以目前 dev 為準，驗證 lifecycle projector、Postgres read model、BFF readiness 與 deployment identity；只修真正仍存在的端到端缺口。",
+    "title": "Close the current lifecycle projection product path",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

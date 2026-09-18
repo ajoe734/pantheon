@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+  "archived_at": "2026-08-13T02:01:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Reproduce or deterministically explain the transaction-time Candidate Git directory ENOTDIR that aborted the governed promotion of 619acd04184e8d3fc3aef322d160e7c9106670ad.",
+      "Preserve the real-directory, no-symlink, no-gitfile immutable candidate guard and its fail-closed behaviour.",
+      "Add focused source regression coverage plus a committed pre-review evidence manifest.",
+      "Perform no live config edit, direct process signal, manual checkout, candidate deletion, or runtime promotion; any later rollout is separately authorized."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/sync-dev-root.sh",
+      "scripts/test_promote_supervisor_runtime.py",
+      "scripts/test_sync_dev_root.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "id": "Codex2",
+        "roles": [
+          "auto-worker"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "documents": [
+        {
+          "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+          "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+          "sourceRefs": [
+            "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T134307753860Z-3911075.json",
+            "sha256:1c252fb6a3691ac47a92e2a770782b503372b4825bb1f71031828efe8e92fe0e"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T13:45:52Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "c8438978bb81133617333e958d43d8a76143e210576bb8742e67de8473489e24",
+      "packet_id": "sup-runtime-v10-candidate-git-identity-followup-20260808-1343",
+      "source_turn_ids": [
+        "promotion-evidence-20260808T134307753860Z-3911075",
+        "candidate-discover-20260808T134552Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce or deterministically explain the transaction-time Candidate Git directory ENOTDIR that aborted the governed promotion of 619acd04184e8d3fc3aef322d160e7c9106670ad.",
+          "Preserve the real-directory, no-symlink, no-gitfile immutable candidate guard and its fail-closed behaviour.",
+          "Add focused source regression coverage plus a committed pre-review evidence manifest.",
+          "Perform no live config edit, direct process signal, manual checkout, candidate deletion, or runtime promotion; any later rollout is separately authorized."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/sync-dev-root.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "scripts/test_sync_dev_root.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808"
+        ],
+        "id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+        "owner": "Codex2",
+        "phase": "Supervisor Runtime / Source-only Candidate Identity Repair",
+        "reviewer": "Codex",
+        "summary": "The authorized governed rollout aborted before mutation with Candidate Git directory ENOTDIR, while later discover-only verification accepted the same candidate's Git identity. Diagnose and repair only the source transaction boundary; do not retry the live promotion in this task.",
+        "title": "Diagnose transaction-time immutable candidate Git identity rejection"
+      },
+      "task_spec_hash": "ee0959b3549ff7ff14abfd531b9ff36e7c538aac9e387be549e41fd9206d50cb"
+    },
+    "generation": 1,
+    "id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+    "last_update": "2026-08-13T02:01:44Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime / Source-only Candidate Identity Repair",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "The authorized governed rollout aborted before mutation with Candidate Git directory ENOTDIR, while later discover-only verification accepted the same candidate's Git identity. Diagnose and repair only the source transaction boundary; do not retry the live promotion in this task.",
+    "title": "Diagnose transaction-time immutable candidate Git identity rejection",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-09T10:21:31Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:20:33Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:20:33Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T03:13:15Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T03:13:15Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:43:43Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:01:44Z"
+    }
+  ],
+  "blockers": []
+}

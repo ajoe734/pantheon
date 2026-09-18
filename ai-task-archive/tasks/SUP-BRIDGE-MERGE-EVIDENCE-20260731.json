@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "task_id": "SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+  "archived_at": "2026-07-31T19:19:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Evidence identifies 314e02f2b922f75c6aa25f200b6f326fb674a24c as the merged delivery commit",
+      "Evidence retains 93dddc1436eeb57256480523837f6e1b888ec77a only as PR head",
+      "Evidence keeps exact original task owner reviewer lines",
+      "No implementation or config changes",
+      "PR starts from current dev and all checks pass"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730/merged-closeout.md"
+    ],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+      "head_sha": "4f0d613a292457d83a78aeeee09440691fa222e8",
+      "mode": "required_commit_status",
+      "pr": 4421,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4421",
+      "recorded_at": "2026-07-31T19:18:32Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51455030426,
+      "status_state": "success"
+    },
+    "id": "SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+    "last_update": "2026-07-31T19:19:45Z",
+    "next": "Owner finalized approved task and recorded squash-merge delivery evidence closeout",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Dev Bridge Evidence Correction",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+      "head_sha": "4f0d613a292457d83a78aeeee09440691fa222e8",
+      "pr": 4421
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730/merged-closeout.md",
+    "review_notes_zh": [
+      "精確 head 4f0d613a292457d83a78aeeee09440691fa222e8 僅修改一份 bridge 合併證據，squash merge commit 與 PR head 身分分離正確；git diff --check、commit trailers、全部 8 個 GitHub checks 均通過。"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Correct squash-merge delivery evidence",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-31T19:19:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-bridge-merge-evidence-20260731",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-3e9529ca477e-live",
+        "source_sha": "3e9529ca477e99a4fd24f1d13d4c2da5a48f8397",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-bridge-merge-evidence-20260731",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-3e9529ca477e-live"
+      },
+      "commit": "4f0d613a292457d83a78aeeee09440691fa222e8",
+      "commit_subject": "SUP-BRIDGE-MERGE-EVIDENCE-20260731: fix",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "docs/deployment/evidence/twelve-loop-gap/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730/merged-closeout.md",
+        "Not changing": "implementation code, service configuration, or task brief",
+        "Composes with": "dev-bridge merge evidence reconciliation",
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+        "Reviewer": "Human/Ops",
+        "Verified": "docs diff inspected against squash-merge commit 314e02f2b922f75c6aa25f200b6f326fb674a24c"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e62935877c0e05b2144844887935868650d0698a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T19:06:58Z",
+      "from": "Antigravity",
+      "message": "Updated dev-bridge merged-closeout evidence with merged delivery commit 314e02f2b922f75c6aa25f200b6f326fb674a24c and PR Head 93dddc1436eeb57256480523837f6e1b888ec77a. Pushed commit f9cd437452771ddcfd463fe3c00c21ed873cd7e4 and opened PR #4421.",
+      "resolved_at": "2026-07-31T19:07:53Z",
+      "status": "done",
+      "task_id": "SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-31T19:07:53Z",
+      "from": "Human/Ops",
+      "message": "Changes required on #4421 exact head f9cd437452771ddcfd463fe3c00c21ed873cd7e4: exact one-file evidence correction is accepted, but Commit trailers fails because subject is 81 chars. Rewrite the single task commit with subject SUP-BRIDGE-MERGE-EVIDENCE-20260731: fix, preserve the evidence diff and trailers byte-for-byte, push with --force-with-lease, wait for all checks, then hand off exact new head.",
+      "resolved_at": "2026-07-31T19:07:53Z",
+      "status": "done",
+      "task_id": "SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T19:11:59Z",
+      "from": "Human/Ops",
+      "message": "Exact-head validation rejects 30db856b6c171468d0aeca3f44df3a6700d7cc7a: git diff --check reports a new blank line at EOF in the sole evidence file. Remove only that extra final blank line, preserve the corrected delivery commit/PR head fields and valid subject/trailers, rewrite the single task commit with force-with-lease, push, and hand off the new exact head.",
+      "resolved_at": "2026-07-31T19:11:59Z",
+      "status": "done",
+      "task_id": "SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T19:17:36Z",
+      "from": "Antigravity",
+      "message": "Rewrote task commit subject to 'SUP-BRIDGE-MERGE-EVIDENCE-20260731: fix' (38 chars <= 70 chars), preserved evidence diff and trailers byte-for-byte. Pushed new head 4f0d613a292457d83a78aeeee09440691fa222e8 to task/SUP-BRIDGE-MERGE-EVIDENCE-20260731. All 8 CI checks passed on PR #4421.",
+      "resolved_at": "2026-07-31T19:18:32Z",
+      "status": "done",
+      "task_id": "SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-31T19:18:32Z",
+      "from": "Human/Ops",
+      "message": "Approved exact PR #4421 head 4f0d613a292457d83a78aeeee09440691fa222e8 after independent diff, whitespace, evidence identity, trailer, and 8/8 CI verification.",
+      "status": "done",
+      "task_id": "SUP-BRIDGE-MERGE-EVIDENCE-20260731",
+      "to": "Antigravity",
+      "resolved_at": "2026-07-31T19:19:45Z"
+    }
+  ],
+  "blockers": []
+}

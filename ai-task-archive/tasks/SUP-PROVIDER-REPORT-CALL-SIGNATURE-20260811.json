@@ -1,0 +1,201 @@
+{
+  "version": 1,
+  "task_id": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+  "archived_at": "2026-08-11T03:12:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the current load_provider_report_tick TypeError against the pinned runtime/source shape and identify every apply_provider_probe_to_report call/signature in scope.",
+      "Make the smallest source-only repair so the deployed supervisor and origin/dev call sites share one compatible signature; preserve provider probe semantics, fail-closed gating, hysteresis, auth/quota handling, and all unrelated scheduler behavior.",
+      "Add focused regression coverage for the config-bearing call path and the load_provider_report_tick phase; run the relevant supervisor/provider test suites and record exact output.",
+      "Record exact-head evidence and a task-scoped manifest before independent review; do not edit live runtime files, canonical task state, provider/account credentials, scheduler caps, or restart/signal the supervisor.",
+      "Delivery requires clean task worktree, commit trailers, PR, independent exact-head review, checks, and protected merge; no manual runtime workaround is accepted as completion."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "supervisor",
+          "provider-report",
+          "acceptance"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration"
+        ]
+      },
+      "audit_conversation_href": "task:SUPERVISOR-FLEET-THROUGHPUT-20260811",
+      "conversation_id": "SUPERVISOR-FLEET-THROUGHPUT-20260811",
+      "documents": [
+        {
+          "kind": "PROVIDER_REPORT_RUNTIME_CALL_SIGNATURE_BLOCKER",
+          "path": "docs/deployment/evidence/supervisor/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811/evidence.json",
+          "sourceRefs": [
+            "runtime:0bd7cf8842a622fb40eca125f490d4073b3a1044",
+            "log:load_provider_report_tick:unexpected-keyword-config",
+            "canonical:SUPERVISOR-FLEET-THROUGHPUT-20260811"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T01:20:00Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "91e9477235cfd2210a8d3af9e9c3cfac2ee3072f16e02ca18150449c8c8d6b44",
+      "packet_id": "sup-provider-report-call-signature-20260811-0120",
+      "source_turn_ids": [
+        "provider-report-typeerror-reconciliation-20260811",
+        "approved-continue-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the current load_provider_report_tick TypeError against the pinned runtime/source shape and identify every apply_provider_probe_to_report call/signature in scope.",
+          "Make the smallest source-only repair so the deployed supervisor and origin/dev call sites share one compatible signature; preserve provider probe semantics, fail-closed gating, hysteresis, auth/quota handling, and all unrelated scheduler behavior.",
+          "Add focused regression coverage for the config-bearing call path and the load_provider_report_tick phase; run the relevant supervisor/provider test suites and record exact output.",
+          "Record exact-head evidence and a task-scoped manifest before independent review; do not edit live runtime files, canonical task state, provider/account credentials, scheduler caps, or restart/signal the supervisor.",
+          "Delivery requires clean task worktree, commit trailers, PR, independent exact-head review, checks, and protected merge; no manual runtime workaround is accepted as completion."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811/"
+        ],
+        "depends_on": [],
+        "id": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+        "owner": "Codex",
+        "phase": "Supervisor / Provider Report Runtime Compatibility",
+        "reviewer": "Antigravity2",
+        "summary": "The live supervisor repeatedly logs load_provider_report_tick TypeError because the origin/dev caller passes config= while the runtime function signature is not uniform across the deployed source. Deliver the smallest source-only compatibility repair and evidence it through the governed PR flow.",
+        "title": "Repair provider-report probe call signature without changing fleet policy"
+      },
+      "task_spec_hash": "1cc31078e8c13360ff64db979b336406561472acb71bc21ffcba69747233ffa4"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+      "head_sha": "231125cf1b00c5dd758927d87ab1af9255aca347",
+      "mode": "required_commit_status",
+      "pr": 4741,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4741",
+      "recorded_at": "2026-08-11T02:17:11Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/231125cf1b00c5dd758927d87ab1af9255aca347",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51995175448,
+      "status_state": "success"
+    },
+    "id": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+    "last_update": "2026-08-11T03:12:10Z",
+    "next": "PR #4741 merged exact approved head 231125cf1b00 into dev at 7f93be09e3f4; owner closeout reran 21 focused supervisor tests with 5 subtests and 99 provider tests with 7 subtests, plus py_compile, evidence JSON, and diff checks; provider/fleet policy unchanged.",
+    "owner": "Codex",
+    "phase": "Supervisor / Provider Report Runtime Compatibility",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+      "head_sha": "231125cf1b00c5dd758927d87ab1af9255aca347",
+      "pr": 4741
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811/evidence.json",
+    "reviewer": "Antigravity2",
+    "status": "done",
+    "summary_zh": "The live supervisor repeatedly logs load_provider_report_tick TypeError because the origin/dev caller passes config= while the runtime function signature is not uniform across the deployed source. Deliver the smallest source-only compatibility repair and evidence it through the governed PR flow.",
+    "title": "Repair provider-report probe call signature without changing fleet policy",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T03:12:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-provider-report-call-signature-20260811",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "source_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-provider-report-call-signature-20260811",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+          "worker_run_id": "codex-20260811T030727Z-ab013cf4",
+          "queue_event_id": "evt-20260811T030630Z-fb6e84eb",
+          "pid": 2491153,
+          "pid_start_ticks": 25669566,
+          "process_generation": "worker-process-generation-sha256:559966103f44690ba81ecb1ca734b22241f12ad4d58325dd0c03f1e943a864d8"
+        }
+      },
+      "commit": "231125cf1b00c5dd758927d87ab1af9255aca347",
+      "commit_subject": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811: add evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "exact split-module TypeError reproduction and task-scoped",
+        "Not changing": "provider projection semantics, hysteresis, auth or quota state,",
+        "Composes with": "the entrypoint alias anchor and governed immutable supervisor",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+        "Reviewer": "Antigravity2",
+        "Verified": "635 supervisor tests and 161 subtests; 99 provider tests and 7 subtests; focused 21 tests and 5 subtests; py_compile, jq, diff check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7f93be09e3f40e9f11a28cf6c0766e116a54adc6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T02:12:40Z",
+      "from": "Codex",
+      "message": "PR #4741 is ready for independent exact-head review at 231125cf1b00c5dd758927d87ab1af9255aca347. Review the committed evidence manifest, __main__ alias boundary, exact pre-binding TypeError reproduction, and unchanged provider/fleet semantics. Verification: full supervisor 635 passed + 161 subtests; provider 99 passed + 7 subtests; focused 21 passed + 5 subtests.",
+      "resolved_at": "2026-08-11T02:17:11Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-11T02:17:11Z",
+      "from": "Antigravity2",
+      "message": "Independent exact-head review passed for PR #4741 at HEAD 231125cf1b00c5dd758927d87ab1af9255aca347. Verified source-only __main__ module alias in .orchestrator/supervisor.py, exact TypeError reproduction and repair in test_provider_report_tick_uses_running_config_compatible_supervisor, committed evidence manifest docs/deployment/evidence/supervisor/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811/evidence.json, and clean test runs (1 new test passed, 21 focused supervisor tests passed, 99 provider permission tests passed).",
+      "resolved_at": "2026-08-11T02:26:17Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T02:26:17Z",
+      "from": "Antigravity2",
+      "message": "Owner closeout verification passed at exact reviewed HEAD 231125cf1b00c5dd758927d87ab1af9255aca347 (focused pytest: 1 passed; 21 passed/5 subtests; 99 passed/7 subtests). PR #4741 required checks and Pantheon canonical review gate are green, but governed auto_integrator fails closed on diagnostic-only check 'Audit signed canonical review (not required issuer) (4741)'; PR remains OPEN. Preserve review_approved binding and do not bypass with direct gh merge; waiting for integrator/diagnostic reconciliation.",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+      "to": "Codex",
+      "resolved_at": "2026-08-11T03:12:11Z"
+    }
+  ],
+  "blockers": []
+}

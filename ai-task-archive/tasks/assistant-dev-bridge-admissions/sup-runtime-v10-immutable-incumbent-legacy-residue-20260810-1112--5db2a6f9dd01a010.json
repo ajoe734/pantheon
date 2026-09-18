@@ -1,0 +1,95 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ],
+    "id": "Codex",
+    "roles": [
+      "auto-worker"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-runtime-v10-immutable-incumbent-legacy-residue-20260810-1112--5db2a6f9dd01a010.json",
+  "admitted_at": "2026-08-10T11:20:42Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "sourceRefs": [
+        "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T110935473464Z-3180076.json",
+        "sha256:ca12389058566fe55813c05f26d61fe673ff7eca9dceccce826860c5d041a7b0",
+        "candidate:963bb20cf3fe0b50bd961b45a365f8f3f547716d",
+        "incumbent:5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "incumbent-pid:2272245",
+        "rejected-brief:.orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md",
+        "rejected-brief-sha256:435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-10T11:12:29Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "5db2a6f9dd01a0108d75ac77aee0f260e27827f99c65f8a56e349ec7b0875a4f",
+  "packet_id": "sup-runtime-v10-immutable-incumbent-legacy-residue-20260810-1112",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "b69159406247b76a39021b9484f55e687deb007493ab0c5706e9d8d30bd2d278",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "promotion-evidence-20260810T110935473464Z-3180076",
+    "post-abort-readback-20260810T111000Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the 963bb20c governed retry exactly: the live incumbent is a SHA-named standalone command runtime at accepted dev ancestor 5877b644 with the required -B argv and command-root/runtime-SHA environment, but one historical supervisor-generated tracked task brief causes the default immutable incumbent capture to abort before baseline, config, signal, launch, or rollback.",
+          "Add an explicit fail-closed transaction boundary for provenance-verifiable historical task-brief residue on an immutable incumbent. Do not clean, reset, stash, checkout, edit, or otherwise mutate the incumbent root, and do not weaken the clean immutable candidate requirement.",
+          "Bind the exact incumbent PID/starttime/cwd/commit/tree/remote/config/environment plus every admitted residue path, regular-file inode metadata, current byte digest, historical generation provenance, and revalidation digest before authority is granted. Reject staged/index-flag drift, non-task-brief paths, symlinks, hard links, Git identity mismatch, unaccepted commits, arbitrary current bytes, and every post-capture race.",
+          "Preserve immutable candidate Git and launch-source identity, config CAS, restart-intent-before-TERM, exact process-generation signalling, PYTHONDONTWRITEBYTECODE=1 and -B launch, status-child bytecode absence, three fresh-loop gates, authoritative-shadow catch-up, queue/worker parity, provider baseline, and rollback identity/cleanup.",
+          "Add positive and negative tests that distinguish the explicitly bootstrapped incumbent from the clean candidate, retain the command-checkout task-brief prevention boundary, and commit a task-scoped evidence manifest before independent review.",
+          "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate deletion, canonical state edit, scheduling change, or fleet-routing policy change. Any rollout retry remains a separately governed dispatch."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "scripts/sync-dev-root.sh",
+          "scripts/test_sync_dev_root.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809"
+        ],
+        "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Immutable Incumbent Bootstrap",
+        "reviewer": "Codex2",
+        "summary": "The authorized 963bb20c retry reached a clean candidate but treated the accepted SHA-named incumbent as a normal immutable root, so the existing mutable-only legacy bootstrap was not enabled and one pre-fix generated task-brief overwrite aborted the transaction. Extend only the explicit provenance-bound incumbent bootstrap boundary; preserve strict candidate cleanliness and all transaction gates.",
+        "title": "Bind historical task-brief residue on immutable incumbent promotion"
+      },
+      "task_spec_hash": "a256692a945e851764cabb169f2564a47ed9e1c54cbb368251b7510c5e08b0dd"
+    }
+  ]
+}

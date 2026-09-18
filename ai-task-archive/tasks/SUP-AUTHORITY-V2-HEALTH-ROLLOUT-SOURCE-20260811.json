@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "task_id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+  "archived_at": "2026-08-11T19:35:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Report runtime identity, liveness, readiness and scheduling progress as separate dimensions. Exact command root, source commit, config hash and PID generation are identity; process and singleton ownership are liveness; task head, queue and provider registry access are readiness; cycle budget, dispatch latency and runnable-backlog service are progress.",
+      "Remove the process_alive or lock_held healthy shortcut. A held lock cannot compensate for a mismatched or dead exact runtime process, and a fresh heartbeat cannot compensate for stalled scheduling progress.",
+      "Retain PromotionTransaction locking, exact process termination, config CAS, immutable candidate launch, three fresh-loop verification, known-good rollback and durable transaction evidence.",
+      "Require immutable active incumbent and immutable known-good rollback roots. Delete mutable incumbent bootstrap, split-entrypoint compatibility, legacy task-brief drift, pycache residue, legacy environment and admission-lock churn branches and their allow_legacy switches after focused provenance tests prove the supported contract.",
+      "Promotion postchecks must consume the four-dimensional health contract, exact process generation, task projection, worker/queue/lease parity and provider baseline. Rollback must prove the same contract.",
+      "Add failure injection at every promotion state, PID reuse, lock orphan, stale heartbeat, correct heartbeat with no scheduling progress, wrong runtime root, candidate launch failure and rollback launch failure.",
+      "Delete obsolete migration classes, helpers, flags and tests in the same PR and report gross/net production line change. Deliver by clean PR, independent exact-head review and required checks."
+    ],
+    "artifacts": [
+      "scripts/supervisor_runtime_health.py",
+      "scripts/test_supervisor_runtime_health.py",
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py"
+    ],
+    "depends_on": [
+      "SUP-AUTHORITY-V2-TASK-STORE-20260811"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "supervisor-runtime",
+          "fleet-dispatch",
+          "deployment"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration-coordinator"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-supervisor-authority-v2-20260811",
+      "documents": [
+        {
+          "kind": "GOVERNANCE",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Integration And Coordination Lane",
+            "Single Dispatch Authority",
+            "Completion Definition For Repo Changes"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "run_once",
+            "dispatch_ready_tasks",
+            "process_queue",
+            "persist_task_reassignment",
+            "chair_reassignment_triage_needed_for_task"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/rewrite/task_state_store.py",
+          "sourceRefs": [
+            "append_state_commit",
+            "load_snapshot",
+            "full-state journal"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/ai_status.py",
+          "sourceRefs": [
+            "command_start",
+            "command_reopen",
+            "command_approve",
+            "command_done",
+            "canonical task-state lock"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/promote_supervisor_runtime.py",
+          "sourceRefs": [
+            "PromotionTransaction",
+            "mutable incumbent compatibility",
+            "rollback"
+          ]
+        },
+        {
+          "kind": "HISTORICAL_NONAUTHORITATIVE_PLAN",
+          "path": "docs/02-architecture/SUPERVISOR_REWRITE_PLAN.md",
+          "sourceRefs": [
+            "retain useful findings only",
+            "do not preserve dual paths"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T15:08:43Z",
+      "intent": "replace_conflicting_supervisor_control_paths",
+      "mode": "supervisor_architecture_governed_delivery",
+      "packet_digest": "1dae7fbc85c31410e339ec68a992fc2f46df94a5ced0798136240dbe23480f40",
+      "packet_id": "pkt-supervisor-authority-v2-cutover-20260811T150843Z",
+      "source_turn_ids": [
+        "operator-approved-authoritative-supervisor-spec-20260811",
+        "operator-approved-complete-implementation-20260811",
+        "function-level-call-path-and-deletion-map-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Report runtime identity, liveness, readiness and scheduling progress as separate dimensions. Exact command root, source commit, config hash and PID generation are identity; process and singleton ownership are liveness; task head, queue and provider registry access are readiness; cycle budget, dispatch latency and runnable-backlog service are progress.",
+          "Remove the process_alive or lock_held healthy shortcut. A held lock cannot compensate for a mismatched or dead exact runtime process, and a fresh heartbeat cannot compensate for stalled scheduling progress.",
+          "Retain PromotionTransaction locking, exact process termination, config CAS, immutable candidate launch, three fresh-loop verification, known-good rollback and durable transaction evidence.",
+          "Require immutable active incumbent and immutable known-good rollback roots. Delete mutable incumbent bootstrap, split-entrypoint compatibility, legacy task-brief drift, pycache residue, legacy environment and admission-lock churn branches and their allow_legacy switches after focused provenance tests prove the supported contract.",
+          "Promotion postchecks must consume the four-dimensional health contract, exact process generation, task projection, worker/queue/lease parity and provider baseline. Rollback must prove the same contract.",
+          "Add failure injection at every promotion state, PID reuse, lock orphan, stale heartbeat, correct heartbeat with no scheduling progress, wrong runtime root, candidate launch failure and rollback launch failure.",
+          "Delete obsolete migration classes, helpers, flags and tests in the same PR and report gross/net production line change. Deliver by clean PR, independent exact-head review and required checks."
+        ],
+        "artifacts": [
+          "scripts/supervisor_runtime_health.py",
+          "scripts/test_supervisor_runtime_health.py",
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py"
+        ],
+        "depends_on": [
+          "SUP-AUTHORITY-V2-TASK-STORE-20260811"
+        ],
+        "id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+        "owner": "Codex",
+        "phase": "Supervisor Authority V2 / Health and Rollout Source",
+        "reviewer": "Antigravity",
+        "summary": "Keep the useful transactional rollout core, make health distinguish identity from progress, and remove one-time mutable incumbent compatibility from the permanent runtime.",
+        "title": "Make supervisor health truthful and retire rollout migration branches"
+      },
+      "task_spec_hash": "9c910af63140180dd06cbfef3a01a28a3c9eac0a356a7b8dff87a366eeca94ca"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+      "head_sha": "1bf9d5d4b1be8f8878a00e43b16a2ea0facb4417",
+      "mode": "required_commit_status",
+      "pr": 4763,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4763",
+      "recorded_at": "2026-08-11T19:25:03Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/1bf9d5d4b1be8f8878a00e43b16a2ea0facb4417",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 52050890241,
+      "status_state": "success"
+    },
+    "id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+    "last_update": "2026-08-11T19:35:46Z",
+    "next": "Owner closeout complete: exact approved head 1bf9d5d4b1be8f8878a00e43b16a2ea0facb4417 merged via PR #4763 to dev as 8a303db3ca195cc0a4d65ffae5c1a44d76384711; reran 275 focused tests, py_compile, evidence JSON validation, legacy/mutable residue scan, and git diff --check. Full Task-ID remains in the reviewed commit trailer; TASK_REQUIRE_SUBJECT_TASK_ID=false used only because the exact approved subject is abbreviated. Generated task brief remains untracked and intentionally excluded per closeout policy.",
+    "owner": "Codex",
+    "phase": "Supervisor Authority V2 / Health and Rollout Source",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+      "head_sha": "1bf9d5d4b1be8f8878a00e43b16a2ea0facb4417",
+      "pr": 4763
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "Keep the useful transactional rollout core, make health distinguish identity from progress, and remove one-time mutable incumbent compatibility from the permanent runtime.",
+    "title": "Make supervisor health truthful and retire rollout migration branches",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T19:35:46Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-authority-v2-health-rollout-source-20260811",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+        "source_sha": "9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-authority-v2-health-rollout-source-20260811",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+          "worker_run_id": "codex-20260811T192829Z-37c0c9df",
+          "queue_event_id": "evt-20260811T192733Z-ac52a2b6",
+          "pid": 470623,
+          "pid_start_ticks": 31555717,
+          "process_generation": "worker-process-generation-sha256:5740bafcbe77d6c1dfa59f3733c86a1dead0c17d02f324cbd8c3ff75d26a3358"
+        }
+      },
+      "commit": "1bf9d5d4b1be8f8878a00e43b16a2ea0facb4417",
+      "commit_subject": "SUP-AUTHORITY-V2: bind rollout state matrix evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+        "Reviewer": "Antigravity",
+        "Verified": "275 focused tests passed; JSON validation; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8a303db3ca195cc0a4d65ffae5c1a44d76384711",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T19:13:12Z",
+      "from": "Codex",
+      "message": "Review PR #4763 exact head 64c8b289ae919953702fdc9f2b8194509ff303ae. Validate four independent health dimensions, conjunctive exact-generation process/singleton liveness, heartbeat-insufficient progress, distinct immutable active-incumbent/rollback roots, legacy-switch deletion, three-loop transaction and rollback baseline parity. Focused tests: 262 passed. Evidence: docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811/evidence.json. Source commit: 2e911c654b40802a73e4b0e501452684af3dd8eb.",
+      "resolved_at": "2026-08-11T19:19:50Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T19:19:50Z",
+      "from": "Codex",
+      "message": "Superseding review binding: PR #4763 exact head 1bf9d5d4b1be8f8878a00e43b16a2ea0facb4417. Added explicit durable failure injection for every nonterminal PromotionState. Final focused suite: 275 passed in 65.42s. Candidate source/test commit: da6b9ca17dc2c5ce84abf977c8423ad0c2d5cdcc. Evidence refreshed at docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811/evidence.json. Review prior four-dimensional health, immutable roots, legacy deletion, three-loop and rollback parity criteria against this new exact head only.",
+      "resolved_at": "2026-08-11T19:20:07Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T19:20:07Z",
+      "from": "Codex",
+      "message": "Superseding review binding: PR #4763 exact head 1bf9d5d4b1be8f8878a00e43b16a2ea0facb4417. Added durable failure injection for every nonterminal PromotionState. Final focused suite: 275 passed in 65.42s. Candidate source/test commit: da6b9ca17dc2c5ce84abf977c8423ad0c2d5cdcc. Evidence refreshed at docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811/evidence.json. Review this exact head only.",
+      "resolved_at": "2026-08-11T19:25:03Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T19:25:03Z",
+      "from": "Antigravity",
+      "message": "Independent review approved for exact PR #4763 head 1bf9d5d4b1be8f8878a00e43b16a2ea0facb4417. Verified 4D health evaluation model, conjunctive process generation + singleton lock liveness, removal of process_alive/lock_held shortcuts, immutable active incumbent and rollback roots, removal of mutable incumbent/legacy compatibility, failure injections across all PromotionState values, net code reduction (-1,739 prod lines / -3,677 test lines), 275 passing focused tests, and clean residue scan.",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+      "to": "Codex",
+      "resolved_at": "2026-08-11T19:35:46Z"
+    }
+  ],
+  "blockers": []
+}

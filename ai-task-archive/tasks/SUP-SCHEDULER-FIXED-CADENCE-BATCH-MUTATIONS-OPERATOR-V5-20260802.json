@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802",
+  "archived_at": "2026-08-02T10:04:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Supersede operator V4 because its acceptance contains false reviewer policy; start only after handoff lease guard V5 is completed.",
+      "Preserve the corrected shared reviewer identity and distinct execution quota groups without changing either policy.",
+      "Reproduce observed 55 to 71 second steady ticks, 94 and 133 second ticks, and 33 to 73 second runtime-admission lock holds on 2026-08-02.",
+      "Schedule the next tick from monotonic fixed cadence instead of sleeping a full interval after cycle work; missed ticks coalesce without overlapping cycles.",
+      "Plan policy mutations outside exclusive runtime admission and apply bounded compare-and-swap batches.",
+      "Git, provider, network, and evidence probes remain outside canonical and runtime-admission locks.",
+      "Approve, assign, note, reopen, and bridge commands are not blocked by long policy scans or serial mutations.",
+      "Regression proves dispatch priority, dependencies, leases, retries, quota routing, reviewer eligibility, and failure streak behavior remain unchanged.",
+      "Emit p50, p95, max cycle duration, cadence lag, and lock-hold metrics; source canary target is near 30 seconds with no lock hold above 30 seconds.",
+      "Run focused scheduler and full relevant supervisor regressions, benchmark, py_compile, evidence JSON, trailer, scope, and diff checks.",
+      "Do not edit config, account or quota groups, reviewer or provider policy, live services, product tasks, or catalog.",
+      "Deliver clean PR to dev, exact-head Human/Ops review, merge, and canonical archive. Rollback is merge revert."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802/"
+    ],
+    "depends_on": [
+      "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-policy-corrected-dispatch-chain-v5-20260802",
+      "conversation_id": "codex-root-l12-three-pass-gap-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Codex and Codex2 share one ChatGPT account",
+            "Pantheon supervisor is the only routine implementation dispatcher"
+          ]
+        },
+        {
+          "kind": "INVALID_V4_TASK_EVIDENCE",
+          "path": "ai-status.json",
+          "sourceRefs": [
+            "four operator V4 tasks contain false different-accounts and mutual-review acceptance",
+            "all four remain nonterminal and are replaced before implementation"
+          ]
+        },
+        {
+          "kind": "THREE_PASS_GAP_AUDIT",
+          "path": "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md",
+          "sourceRefs": [
+            "PR #4494 merge 0a2bd446952936998996ba6ecc89b1cbacd55bce"
+          ]
+        },
+        {
+          "kind": "IMMUTABLE_28_TASK_CATALOG",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+          "sourceRefs": [
+            "sha256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+            "G1 remains unmaterialized until V5 canary and legal dispatcher bootstrap"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T09:59:00Z",
+      "intent": "replace_false_policy_v4_dispatch_closeout_chain_with_correct_v5",
+      "mode": "kernel_repair",
+      "packet_digest": "0dea13a8292f4a6d8fdd760af779bd66bd2a9bd7126688b7c6d15aa0468730a0",
+      "packet_id": "pkt-sup-dispatch-closeout-chain-policy-corrected-v5-20260802T0959Z",
+      "source_turn_ids": [
+        "user-requires-supervisor-autoworker-dispatch",
+        "user-requires-complete-gap-execution",
+        "false-review-policy-propagated-into-v4-chain"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Supersede operator V4 because its acceptance contains false reviewer policy; start only after handoff lease guard V5 is completed.",
+          "Preserve the corrected shared reviewer identity and distinct execution quota groups without changing either policy.",
+          "Reproduce observed 55 to 71 second steady ticks, 94 and 133 second ticks, and 33 to 73 second runtime-admission lock holds on 2026-08-02.",
+          "Schedule the next tick from monotonic fixed cadence instead of sleeping a full interval after cycle work; missed ticks coalesce without overlapping cycles.",
+          "Plan policy mutations outside exclusive runtime admission and apply bounded compare-and-swap batches.",
+          "Git, provider, network, and evidence probes remain outside canonical and runtime-admission locks.",
+          "Approve, assign, note, reopen, and bridge commands are not blocked by long policy scans or serial mutations.",
+          "Regression proves dispatch priority, dependencies, leases, retries, quota routing, reviewer eligibility, and failure streak behavior remain unchanged.",
+          "Emit p50, p95, max cycle duration, cadence lag, and lock-hold metrics; source canary target is near 30 seconds with no lock hold above 30 seconds.",
+          "Run focused scheduler and full relevant supervisor regressions, benchmark, py_compile, evidence JSON, trailer, scope, and diff checks.",
+          "Do not edit config, account or quota groups, reviewer or provider policy, live services, product tasks, or catalog.",
+          "Deliver clean PR to dev, exact-head Human/Ops review, merge, and canonical archive. Rollback is merge revert."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802/"
+        ],
+        "depends_on": [
+          "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802"
+        ],
+        "id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Scheduler / Fixed Cadence Batch Mutations / operator V5",
+        "reviewer": "Human/Ops",
+        "summary": "Replace full-interval-after-work sleeping and long serial mutations with fixed cadence and bounded CAS batches.",
+        "title": "Run supervisor on fixed cadence with bounded mutation batches and corrected identity policy"
+      },
+      "task_spec_hash": "e81d26b4ae4ad5d078b704831e4a331b5c3b233e11afe9e33a6ecfcd8035df68"
+    },
+    "id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802",
+    "last_update": "2026-08-02T10:04:28Z",
+    "next": "Operator rejected the shared-account/shared-review-identity premise. Codex and Codex2 may use different accounts; preserve distinct configured quota groups, do not hardcode equivalence, and do not impose a global mutual-review ban. This task is replaced by an account-neutral governed chain.",
+    "owner": "Codex",
+    "phase": "Supervisor Scheduler / Fixed Cadence Batch Mutations / operator V5",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Replace full-interval-after-work sleeping and long serial mutations with fixed cadence and bounded CAS batches.",
+    "title": "Run supervisor on fixed cadence with bounded mutation batches and corrected identity policy",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

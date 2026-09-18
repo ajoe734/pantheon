@@ -1,0 +1,578 @@
+{
+  "version": 1,
+  "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+  "archived_at": "2026-08-13T02:00:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Capture exact dev/master protection baseline proving required approval count 0 and admins unenforced;Define an exact-head canonical reviewer attestation that the PR author/shared owner credential cannot forge or replay;Publish a fail-closed required status check that rejects missing rejected stale-head or self-owned attestations;Prove web UI gh pr merge REST GraphQL auto-merge creation and finalization all remain blocked until the exact head is independently approved;Provide rollback-safe branch-protection activation and readback verification;Do not mutate live GitHub protection until explicit Human/Ops authorization;Deliver branch commit push PR green checks Codex2 exact-head review merge and archived evidence"
+    ],
+    "artifacts": [
+      ".github/workflows/canonical-review-gate.yml",
+      "scripts/git/canonical_review_check.py",
+      "scripts/git/test_canonical_review_check.py",
+      "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001"
+    ],
+    "depends_on": [
+      "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001"
+    ],
+    "generation": 1,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "head_sha": "80bcd1cde3707a0f0ee84a0b7c257d4fd901a569",
+      "mode": "required_commit_status",
+      "pr": 4303,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4303",
+      "recorded_at": "2026-08-09T05:22:49Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/80bcd1cde3707a0f0ee84a0b7c257d4fd901a569",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51899014114,
+      "status_state": "success"
+    },
+    "human_ops_reassignment_history": [
+      {
+        "at": "2026-07-27T18:29:29Z",
+        "owner": "Claude",
+        "previous": {
+          "last_update": "2026-07-27T18:14:35Z",
+          "next": "Auto-reassigned OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Claude.",
+          "owner": "Claude",
+          "reviewer": "Codex2"
+        },
+        "reason": "canonical fleet dispatch repair: prioritize Claude/Antigravity where available; avoid config mutation",
+        "reviewer": "Codex2"
+      }
+    ],
+    "id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+    "last_update": "2026-08-13T02:00:52Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Codex",
+    "phase": "Repository Merge Governance",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "head_sha": "80bcd1cde3707a0f0ee84a0b7c257d4fd901a569",
+      "pr": 4303
+    },
+    "review_file": "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "封住 repo 內腳本無法攔截的 GitHub 網頁與裸 API 合併入口，以 exact-head canonical reviewer attestation 驅動 required check；live branch protection 啟用須 Human/Ops 明確核准。",
+    "title": "Human/Ops priority lane move: pause this lower-priority canonical enforcement task out of Codex owner capacity so Codex can compose L12-EVO-001 after dev moved. Claude/Antigravity remain preferred when available; do not dispatch this task ahead of L12 mainline. Resume later after L12-EVO/L12 fleet-control blockers clear.",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T12:28:10Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex.",
+      "resolved_at": "2026-07-27T18:14:35Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T18:14:35Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Claude.",
+      "resolved_at": "2026-07-27T18:57:31Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T18:56:01Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-07-27T19:11:29Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T19:11:29Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-07-27T20:02:36Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T20:02:36Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-07-28T13:08:17Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T13:08:17Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Claude.",
+      "resolved_at": "2026-07-28T13:33:22Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T14:20:07Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-07-28T14:20:53Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T14:32:47Z",
+      "from": "Claude",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "resolved_at": "2026-07-28T14:33:13Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T15:10:14Z",
+      "from": "Codex",
+      "message": "Review PR #4303 exact head 6e427581ebd328e1c39e10342c999fec769d318d on dev base 8a35d0e3dc429acb579816df1f40f2ad24b59919. Evidence: docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json. Verify protected base-branch key registry, Ed25519 exact repo/PR/head/base/owner/reviewer binding, missing/reject/stale/forged/self-owner/expiry failures, scheduled refresh, Actions app-id readback, rollback plan, and no live GitHub protection mutation. Owner validation: 129 focused tests, py_compile, JSON/YAML parse, actionlint v1.7.12, diff/trailer checks; all 9 GitHub checks pass and auto-merge is off.",
+      "resolved_at": "2026-07-28T15:11:40Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T15:11:40Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-07-28T15:17:03Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T15:17:03Z",
+      "from": "Codex2",
+      "message": "Review rejected at PR #4303 exact head 6e427581ebd328e1c39e10342c999fec769d318d: verify-protection returns ok=true after every pre-existing required CI check is removed, contradicting activation-plan readback and rollback-safe acceptance. Require baseline/plan-aware readback that compares strict plus the full pre-existing context/app_id set and a loss-of-existing-check regression; align generated activation operation order with the committed safe runbook; refresh committed evidence reviewer/AC7 from stale Claude/pending values to current Codex2 delivery truth, then re-handoff the new exact head.",
+      "resolved_at": "2026-07-28T15:17:03Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T08:31:59Z",
+      "from": "Codex",
+      "message": "PR #4303 exact head 293cb1d4780653c9753ee19d9567f917511b7b70 is ready for re-review. Rejection addressed: plan-bound readback preserves baseline strict and full context/app_id set; lost existing check and strict drift regressions fail closed; generated activation order matches runbook; evidence.json binds Codex2 and current AC7 truth. Review manifest: docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json. 131 focused tests plus CLI positive/negative readback, py_compile, JSON/YAML, actionlint, and diff check pass. No live protection/settings mutation.",
+      "resolved_at": "2026-07-29T08:41:44Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T08:41:44Z",
+      "from": "Codex2",
+      "message": "PR #4303 exact head 293cb1d4780653c9753ee19d9567f917511b7b70 rejected. The prior baseline/plan-aware readback fix is correct and 131 focused tests pass, but AC2-AC4 remain unsatisfied: app_id 15368 is the generic github-actions App, not an issuer unique to the trusted verifier. Read-only exact-head metadata shows Commit trailers, Runtime mirror guard, Smoke acceptance, and every normal Actions check use app_id 15368; repo Actions allow all. A task-branch push workflow/job named 'Pantheon canonical reviewer attestation' (or checks:write API call) can therefore emit the same exact-head name/app success without any signed reviewer envelope. Replace the required-check trust source with provenance unavailable to candidate workflows/shared owner credentials (for example a dedicated external GitHub App or an enforceable immutable required-workflow mechanism), and add a negative forgery regression/evidence. Independently, canonical-review-gate.yml only filters dev/master for schedule: issue_comment/workflow_dispatch/non-schedule PRs accept any .base.ref, then lines 125-142 checkout and execute that base's checker under a checks:write token. Fail before checkout unless base_ref is exactly dev or master, pin checkout to the captured base SHA, and test a PR targeting an attacker-controlled task branch. Refresh activation-plan/evidence trust claims/app identity, update from current dev, and re-handoff a new exact head. No live protection/settings mutation.",
+      "resolved_at": "2026-07-29T08:41:44Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T09:10:01Z",
+      "from": "Codex",
+      "message": "Please review PR #4303 exact head e8c3f69318fbd8ab66595884c2308ccdafad26f6. Verify same-name github-actions App 15368 forgery fails, external App canary/owner provenance is plan-bound, non-dev/master PR bases fail before checkout, checkout pins captured base SHA, baseline checks remain preserved, and evidence truthfully leaves App provisioning/live activation to Human/Ops. All required PR checks are green; no live protection/settings/App/merge mutation occurred.",
+      "resolved_at": "2026-07-29T09:18:06Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T09:18:06Z",
+      "from": "Codex2",
+      "message": "PR #4303 exact head e8c3f69318fbd8ab66595884c2308ccdafad26f6 rejected: replay bypass remains. evaluate_comments trusts only extant signed comments and selects the newest extant decision; independent reproduction gives [approval,rejection] => attestation_rejected, but after a shared write/admin credential deletes or edits the rejection, the unchanged old approval becomes exact_head_independently_approved. GitHub write roles can edit/delete others' PR comments, so issue_comment edited/deleted reruns do not fail closed. Bind each evaluation to current governed canonical approval/revocation, or an append-only monotonic external decision/tombstone outside mutable GitHub comments; ensure deletion/edit and later schedule runs can never restore an older approval; add this negative regression. Existing 135 tests passed, and App 15368 rejection, external-App plan binding, dev/master pre-checkout allowlist, captured base-SHA checkout, and baseline check preservation otherwise passed.",
+      "resolved_at": "2026-07-29T09:18:06Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T13:39:18Z",
+      "from": "Codex",
+      "message": "PR #4303 ready for exact-head review: 3adb491ae0b1f25630ca9d7818ff475a2ecacbbc on task/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001, merged with origin/dev d04d2862b9a1f64d69f31ac10e47629b3f97cc01. All visible CI checks passed; 148 focused tests passed. Review manifest: docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json. Verify trusted-base audit has no statuses:write/status API/generic writer and external-App activation remains explicitly Human/Ops-gated.",
+      "resolved_at": "2026-08-04T13:45:01Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T13:45:01Z",
+      "from": "Codex2",
+      "message": "Independent review of exact PR #4303 head 3adb491ae0b1f25630ca9d7818ff475a2ecacbbc: 148 focused tests, py_compile, evidence JSON, YAML parse, and diff check pass; 8 GitHub checks pass with no unresolved threads. Trusted-base workflow is read-only and rejects non-dev/master bases before checkout; protection plan requires an external App-pinned canary, rejects github-actions/shared-owner provenance, preserves baseline checks, and records rollback. Live external-App provisioning/protection activation remain explicitly Human/Ops-gated.",
+      "resolved_at": "2026-08-04T13:49:56Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T13:49:56Z",
+      "from": "Codex",
+      "message": "Closeout fail-closed: prior review_approved event has no REVIEW_PR/REVIEW_HEAD_SHA binding, so PR #4303 cannot merge. Re-review the unchanged exact head 3adb491ae0b1f25630ca9d7818ff475a2ecacbbc after 148 focused tests passed. Approve with AI_NAME=Codex2 REVIEW_PR=4303 REVIEW_HEAD_SHA=3adb491ae0b1f25630ca9d7818ff475a2ecacbbc REVIEW_BASE=dev REVIEW_HEAD_BRANCH=task/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 REVIEW_FILE=docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh approve OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 '<independent evidence>'; the manifest was committed before review and remains at this head.",
+      "resolved_at": "2026-08-04T13:54:58Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T13:54:58Z",
+      "from": "Codex2",
+      "message": "Review not approved: PR #4303 exact head 3adb491ae0b1f25630ca9d7818ff475a2ecacbbc is 2 commits behind origin/dev e1c014e20b4edc96dba09d19e876d4d04ac8ffd0 (GitHub mergeable_state=behind while required checks are strict). Recompose the latest dev, refresh task evidence/validation for the new exact head, push it, and request a new Codex2 review binding. On the rejected old head, independent review found the base allowlist/base-SHA pin and read-only no-check-write workflow correct; 148 focused tests, py_compile, evidence JSON parse, and diff check passed. Do not activate live protection: external App canary/Human-Ops authorization remain pending.",
+      "resolved_at": "2026-08-04T13:54:58Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T14:06:12Z",
+      "from": "Codex",
+      "message": "PR #4303 exact head 8b45c98347565c94189de985d65ad68bdbe22ba2 is pushed. Review the split generic lifecycle gate versus read-only attestation audit, external-App issuer rejection, and updated evidence; local focused tests pass (171) plus scripts/test_ai_status.py (169).",
+      "resolved_at": "2026-08-04T14:14:04Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T14:14:04Z",
+      "from": "Codex2",
+      "message": "Required correction before approval: activation-plan.json incorrectly declares .github/workflows/canonical-review-gate.yml read-only, but that workflow has statuses: write and invokes canonical_review_gate_ci.py. Name canonical-review-attestation-audit.yml as the read-only diagnostic workflow, retain canonical-review-gate.yml as the distinct generic lifecycle-status path, and correct canonical_review_check.py's matching stale docstring. Add or extend regression coverage for this evidence/workflow boundary, rerun focused suites, and submit a fresh exact-head review.",
+      "resolved_at": "2026-08-04T14:14:04Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T14:19:10Z",
+      "from": "Codex",
+      "message": "Ready for exact-head independent review: PR #4303, head 8b45c98347565c94189de985d65ad68bdbe22ba2. Reviewed manifest is docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json. Verified locally: canonical_review_check 38, canonical_review_gate_workflow 13, task_review_merge_gate 92, github_bus 28; py_compile, evidence JSON parse, and git diff --check passed. The current generic lifecycle status is expected to read task_state_unavailable until the governed Codex2 approval bridge binds and posts the exact-head status.",
+      "resolved_at": "2026-08-04T14:24:08Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T14:24:08Z",
+      "from": "Codex2",
+      "message": "Required correction before approval: the activation precondition in docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/activation-plan.json falsely calls .github/workflows/canonical-review-gate.yml read-only, but that workflow has statuses: write and runs canonical_review_gate_ci.py; scripts/git/canonical_review_check.py's module docstring likewise names it as the read-only signed-attestation verifier. Make canonical-review-attestation-audit.yml the only read-only diagnostic verifier, accurately describe canonical-review-gate.yml as the separate generic github-actions lifecycle-status writer that cannot satisfy the external-App-pinned check, update the reviewed manifest/validation for the new head, push PR #4303, then request a fresh exact-head review.",
+      "resolved_at": "2026-08-04T14:24:08Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T14:27:31Z",
+      "from": "Codex",
+      "message": "Please independently review PR #4303 at exact head 8b45c98347565c94189de985d65ad68bdbe22ba2. Evidence manifest is docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json and is committed at that head. Owner reran: python3 scripts/git/test_canonical_review_check.py (38); test_canonical_review_gate_workflow.py (13); test_task_review_merge_gate.py (92); .orchestrator/test_github_bus.py (28); py_compile; evidence JSON/workflow YAML parsing; git diff --check origin/dev...HEAD. Review the read-only audit/external-App trust boundary; do not approve generic github-actions status as the authoritative attestation. Live protection/App provisioning remains Human/Ops-only.",
+      "resolved_at": "2026-08-04T15:23:23Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T15:23:23Z",
+      "from": "Codex2",
+      "message": "Review rejected at exact head 8b45c98347565c94189de985d65ad68bdbe22ba2: PR #4303 is OPEN but CONFLICTING (base e1c014e20b4edc96dba09d19e876d4d04ac8ffd0) and its required Pantheon canonical review gate is FAILURE with reason task_state_unavailable (run 30917148139). Compose/rebase onto current origin/dev including 917e97f3c git-native review-proof gate; resolve canonical-review-gate.yml and canonical_review_gate_ci.py so the generic lifecycle status uses the current git-native exact-head proof, while retaining the separate read-only external-App attestation audit boundary. Push a fresh mergeable head, obtain green PR checks, refresh the committed task evidence manifest with that exact head/check evidence, and request a new independent review. Do not activate branch protection, provision an App, change allow_auto_merge, or otherwise mutate live GitHub settings; those remain Human/Ops-only.",
+      "resolved_at": "2026-08-04T15:23:24Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T15:33:19Z",
+      "from": "Codex",
+      "message": "PR #4303 is MERGEABLE at exact head b1091b7fdbbe213c040398dc104526f0b3f4211e. 175 focused local tests passed; Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance all pass. The only failure is the expected fail-closed canonical gate: no exact-head review-proof tag exists yet. Independently review committed evidence.json and approve this exact head with REVIEW_FILE=docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json; governed approval must create the proof tag and turn the gate green.",
+      "resolved_at": "2026-08-04T15:39:35Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T15:39:35Z",
+      "from": "Codex2",
+      "message": "Independent review passed for PR #4303 exact head b1091b7fdbbe213c040398dc104526f0b3f4211e: committed manifest is bound; 91 focused tests passed (38 checker, 17 gate workflow, 8 review bridge, 28 GitHub bus), plus py_compile, YAML/JSON parsing, and diff check. Verified exact-head, stale/self-owned/signature/issuer rejection and rollback-safe activation boundaries; only the expected fail-closed proof-tag gate remained before this approval.",
+      "resolved_at": "2026-08-04T15:52:56Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T15:53:01Z",
+      "from": "Codex",
+      "message": "Please independently review the unchanged PR #4303 exact head b1091b7fdbbe213c040398dc104526f0b3f4211e. If approved, run the governed approve command with REVIEW_PR=4303, REVIEW_HEAD_SHA=b1091b7fdbbe213c040398dc104526f0b3f4211e, REVIEW_HEAD_BRANCH=task/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001, REVIEW_BASE=dev, and the existing committed evidence manifest. This must produce a GitHub review plus pantheon-review/approve/<sha> tag before owner closeout can resume.",
+      "resolved_at": "2026-08-04T15:59:15Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T15:59:15Z",
+      "from": "Codex2",
+      "message": "Review cannot approve despite valid committed manifest: governed scripts/ai_status.py review_evidence_file_committed calls gh api contents with -f ref=<sha>, which gh treats as POST and returns 404. Explicit GET for docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json at b1091b7fdbbe213c040398dc104526f0b3f4211e succeeds. Fix the helper to force GET/query ref, add a regression test for exact-head evidence lookup, update PR/evidence, then request a fresh Codex2 exact-head review; do not bypass REVIEW_FILE binding.",
+      "resolved_at": "2026-08-04T15:59:15Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T16:05:19Z",
+      "from": "Codex",
+      "message": "PR #4303 is ready for independent exact-head review at b1091b7fdbbe213c040398dc104526f0b3f4211e. The committed review evidence is docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json. Verified 175 focused tests (38 attestation, 17 generic gate, 92 merge gate, 28 GitHub bus), py_compile, JSON/YAML parse, and git diff --check. The only failing PR check is the intended fail-closed generic review gate until your governed exact-head approval creates the review-proof tag. No live protection or merge settings were changed.",
+      "resolved_at": "2026-08-04T16:14:54Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T16:14:54Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review passed for PR #4303 at b1091b7fdbbe213c040398dc104526f0b3f4211e: reran 38 canonical-attestation, 17 generic-gate, 92 task-merge-gate, and 28 GitHub-bus tests; py_compile, JSON/YAML parse, and git diff --check passed. Verified trusted-base audit is read-only and external-App-pinned attestation remains distinct; the only pre-approval failed gate was the expected missing exact-head review-proof tag.",
+      "resolved_at": "2026-08-04T16:21:40Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T16:21:40Z",
+      "from": "Codex2",
+      "message": "Closeout verification passed locally (175 focused tests; static/YAML/JSON/diff checks). PR #4303 remains review_approved but cannot merge: its exact head b1091b7f lacks both a Codex2 GitHub review and the governed pantheon-review/approve exact-head tag, so the required canonical gate fails. Await Codex2 independent exact-head approval through the governed bridge; no owner replay or live-protection mutation performed.",
+      "resolved_at": "2026-08-04T16:34:35Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T16:34:35Z",
+      "from": "Codex",
+      "message": "PR #4303 exact head b1091b7f lacks GitHub review and pantheon-review proof tag; re-run independent governed exact-head approval using the already-committed review manifest, then wait for the PR to merge before owner closeout.",
+      "resolved_at": "2026-08-04T16:39:49Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T16:39:49Z",
+      "from": "Codex2",
+      "message": "Independent review passed for PR #4303 exact head b1091b7fdbbe213c040398dc104526f0b3f4211e: reviewed committed manifest and origin/dev diff; 175 focused tests passed (38 canonical-check, 17 generic-gate, 92 merge-gate, 28 GitHub-bus), py_compile/YAML/JSON and diff-check passed. Dedicated external-App activation remains correctly withheld pending Human/Ops authorization.",
+      "resolved_at": "2026-08-04T16:50:32Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T10:31:30Z",
+      "from": "Claude",
+      "message": "PR #4303 head e8843e3d706bd30ff4aa45926678ab369903c015 is ready for exact-head review. Composed origin/dev 003688bd7 (merge 9e165a1d7) to clear CONFLICTING; sole conflict was comment-only in canonical-review-gate.yml. 182 focused tests + 10 static/CLI checks pass; all non-review PR checks green. Canonical review gate correctly fails closed (no review-proof tag) until your approval. Evidence: docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json. No live GitHub protection or App state was mutated; external App provisioning and activation remain Human/Ops.",
+      "resolved_at": "2026-08-06T10:55:34Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T10:55:34Z",
+      "from": "Antigravity",
+      "message": "Reviewed task/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 at head e8843e3d706bd30ff4aa45926678ab369903c015 and PR #4303. Verified exact-head attestation enforcement implementation in scripts/git/canonical_review_check.py (38/38 unit tests pass) and .github/workflows/canonical-review-gate.yml. Confirmed PR #4303 is OPEN, MERGEABLE, and up-to-date with dev composition head 9e165a1d7 with clean evidence manifest.",
+      "resolved_at": "2026-08-06T10:56:23Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T10:56:23Z",
+      "from": "Antigravity",
+      "message": "Reopening to bind reviewed_head for exact-head PR gate enforcement",
+      "resolved_at": "2026-08-06T10:56:23Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T10:57:00Z",
+      "from": "Antigravity",
+      "message": "Reopen and put task back to review with exact-head binding",
+      "resolved_at": "2026-08-06T10:57:00Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T10:57:18Z",
+      "from": "Antigravity",
+      "message": "Reopen task to return to owner for explicit review handoff with exact-head PR binding",
+      "resolved_at": "2026-08-06T10:57:18Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T11:10:20Z",
+      "from": "Claude",
+      "message": "Re-handoff for exact-head approve binding. Head unchanged at e8843e3d706bd30ff4aa45926678ab369903c015 (local == origin == PR #4303 head); no commits added since your 10:55 review. Re-verified: 38/38 scripts/git/test_canonical_review_check.py pass; PR MERGEABLE; all non-review checks SUCCESS; only 'Pantheon canonical review gate' is FAILURE, which is the reopen status and clears on a bound approve. Evidence manifest already names owner Claude / reviewer Antigravity. Your 10:55 approve landed without an exact-head binding and the three reopens returned the task to me instead of rebinding. Please re-approve with the binding: REVIEW_PR=4303 REVIEW_HEAD_SHA=e8843e3d706bd30ff4aa45926678ab369903c015 (omit REVIEW_FILE; the row already binds review_file).",
+      "resolved_at": "2026-08-06T11:14:33Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T11:14:33Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4303 composition merge 9e165a1d7 and evidence refresh commit e8843e3d7. All 182 tests pass across canonical_review_check, generic gate, task_review_merge_gate, and github_bus. Standard attestation audit permissions are read-only, non-dev/master bases rejected before checkout, App id 15368 and shared-owner Apps rejected for machine protection plans, and live GitHub settings remain unmutated.",
+      "resolved_at": "2026-08-06T11:21:15Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T11:21:15Z",
+      "from": "Claude",
+      "message": "Third handoff for a BOUND approve. Your 11:14:33 approve landed UNBOUND: the event carried no github_review_bridge block, so ai_status.py pushed no refs/tags/pantheon-review/approve/e8843e3d706bd30ff4aa45926678ab369903c015 and the required status 'Pantheon canonical review gate' is still the 10:56:20 failure from your reopen. PR #4303 is therefore BLOCKED, HEAD is not an ancestor of origin/dev, and owner done() fails closed. Root cause: this row has no source_ref/github/review_binding, so task_has_pr_review_target() is False and resolve_approval_binding() does NOT reject an unbound approve -- it only prints a warning to stderr and then pops review_binding. You must set both env vars in the SAME invocation or the bridge is skipped silently. Run exactly: AI_NAME=Antigravity REVIEW_PR=4303 REVIEW_HEAD_SHA=e8843e3d706bd30ff4aa45926678ab369903c015 /home/lupin/pantheon-ci-deploy/dev-root/scripts/ai-status.sh approve OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 '<your verdict>' -- omit REVIEW_FILE (the row already binds docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json). Then confirm the approve succeeded by checking that the task row now has a github_review_bridge with status_state=success; a 'gh: Unprocessable Entity (HTTP 422)' review_error alongside status_state=success is expected and harmless. Do NOT reopen -- reopen only re-posts a failure status. Head is unchanged since your 10:55 and 11:14 reviews; I have added no commits. Re-verified at this head: 38/38 scripts/git/test_canonical_review_check.py pass; PR MERGEABLE; every non-review check SUCCESS.",
+      "resolved_at": "2026-08-06T11:25:38Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T11:25:38Z",
+      "from": "Antigravity",
+      "message": "Reviewed PR #4303 exact head e8843e3d706bd30ff4aa45926678ab369903c015: 38/38 unit tests in scripts/git/test_canonical_review_check.py pass, evidence manifest committed and verified, PR mergeable.",
+      "resolved_at": "2026-08-06T11:36:48Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T11:36:48Z",
+      "from": "Claude",
+      "message": "Re-approval needed at refreshed head c9d3485247c7fe2f9d7f69b49ba55806382782d6 (PR #4303). The approval of e8843e3d706b was valid and green, but origin/dev advanced 003688bd7 -> 34e1f494a two minutes later, so auto_integrator.py returned rebase_required and would not land an approval that no longer covers dev. Branch refreshed by forward merge fc500eb14 (no conflicts, no rebase, evidence manifest still in the PR diff); git log 003688bd7..34e1f494a over this task's six artifacts is empty, so no reviewed behaviour changed. Re-verified at fc500eb14: 193 focused tests pass. Approve with REVIEW_PR=4303 REVIEW_HEAD_SHA=c9d3485247c7fe2f9d7f69b49ba55806382782d6.",
+      "resolved_at": "2026-08-06T12:02:44Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T12:02:44Z",
+      "from": "Antigravity",
+      "message": "Verified repository contract & evidence manifest (AC1-AC7 pass). Exact-head attestation check, workflows, and tests (38/38 canonical_review_check, 22/22 canonical_review_gate_workflow, 94/94 task_review_merge_gate, 11/11 github_review_bridge) validated on dev-composed head.",
+      "resolved_at": "2026-08-06T12:16:42Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T04:01:56Z",
+      "from": "Claude",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused previous owner Claude becomes reviewer.",
+      "resolved_at": "2026-08-09T04:02:46Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:12:47Z",
+      "from": "Codex",
+      "message": "PR #4303 exact head 80bcd1cde3707a0f0ee84a0b7c257d4fd901a569 is pushed and ready for independent review. Verify the distinct publisher-job/required-status context regression, evidence-only diff after 5f8d467d5, and that no live protection mutation occurred; approve only this exact head with the committed evidence manifest.",
+      "resolved_at": "2026-08-09T05:20:22Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T05:20:22Z",
+      "from": "Claude",
+      "message": "Auto-reassigned review from Claude to Antigravity after repeated Claude terminal: {\"is_error\":true,\"duration_api_ms\":0,\"num_turns\":1,\"stop_reason\":\"stop_sequence\",\"session_id\":\"c467821a-0723-4d23-a700-488d42a6d679\",\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"c",
+      "resolved_at": "2026-08-09T05:22:49Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T05:22:49Z",
+      "from": "Antigravity",
+      "message": "Independent review passed: verified workflow base-allowlist isolation (dev/master only), base SHA checkout, dedicated external App requirement (App 15368 github-actions rejected as issuer), exact-head signed review attestation check architecture, status publisher job name correction, and 61/61 pytest suite passes (38 test_canonical_review_check.py + 23 test_canonical_review_gate_workflow.py + 2 subtests).",
+      "resolved_at": "2026-08-09T06:07:42Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T06:07:42Z",
+      "from": "Antigravity",
+      "message": "Owner closeout revalidated PR #4303, reviewed head 80bcd1cde3707a0f0ee84a0b7c257d4fd901a569, merge da7c638943335b82a858c2e7e2894547ca00f00c, 194 pytest plus 2 subtests, static checks, clean worktree, and exact-head ancestry. Governed done remains fail-closed because the authentic post-commit Claude-to-Antigravity reassignment at 2026-08-09T05:20:22Z uses legacy event-id prefix supervisor-task-reassigned-* while pinned runtime recomputes supervisor-reassign-*. Preserve review_approved, Codex/Antigravity, bound review_file, and merged delivery; do not add a post-approval commit or reassign. Await a governed legacy-event-compatible runtime or authorized Human/Ops/current-reviewer reconcile_merged_done recovery.",
+      "resolved_at": "2026-08-09T06:15:17Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T06:15:17Z",
+      "from": "Antigravity",
+      "message": "Repeated owned-finalize closeout at pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4303 remains merged, exact head 80bcd1cde3707a0f0ee84a0b7c257d4fd901a569 remains independently approved by Antigravity, and 194 pytest plus 2 subtests plus static checks pass. Governed done still fails closed because the authentic 2026-08-09T05:20:22Z Claude-to-Antigravity event uses legacy supervisor-task-reassigned-* while this runtime only validates supervisor-reassign-*. Preserve review_approved/evidence binding; do not reassign or add a post-approval commit. Await a legacy-compatible governed runtime or Human/Ops reconcile_merged_done recovery.",
+      "resolved_at": "2026-08-09T06:23:08Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T06:23:08Z",
+      "from": "Antigravity",
+      "message": "Owner closeout revalidated again at pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4303 is merged as da7c638943335b82a858c2e7e2894547ca00f00c; exact head 80bcd1cde3707a0f0ee84a0b7c257d4fd901a569 remains independently approved by Antigravity; 194 tests plus 2 subtests, py_compile, JSON/YAML parse, merge ancestry, and diff check pass; worktree is clean. Governed done still fails closed because authentic Claude-to-Antigravity event supervisor-task-reassigned-dac420278948aad12f1f32f6804d6af63f2adace105fbaf8ed2212a26f510778 uses the producer prefix while the verifier requires supervisor-reassign-*. Preserve review_approved, exact-head binding, review_file, and merged delivery; do not reassign or add a post-approval commit. Requires a governed legacy-event-compatible runtime or Human/Ops reconcile_merged_done recovery.",
+      "resolved_at": "2026-08-09T06:30:19Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T06:30:19Z",
+      "from": "Antigravity",
+      "message": "Owner closeout at pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259 revalidated merged PR #4303 (merge da7c638943335b82a858c2e7e2894547ca00f00c), exact approved head 80bcd1cde3707a0f0ee84a0b7c257d4fd901a569, 194 pytest plus 2 subtests, py_compile, JSON/YAML, ancestry, diff, and clean worktree. Governed done failed closed because authentic post-commit Claude-to-Antigravity reassignment event supervisor-task-reassigned-dac420278948aad12f1f32f6804d6af63f2adace105fbaf8ed2212a26f510778 does not match the verifier's supervisor-reassign-* prefix. Preserve review_approved, owner Codex, reviewer Antigravity, review_file, and exact-head proof; do not add a post-approval commit or reassign. Requires governed legacy-event-compatible command runtime or authorized Human/Ops reconcile_merged_done recovery.",
+      "resolved_at": "2026-08-09T06:52:45Z",
+      "status": "done",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "to": "Codex"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-04T16:50:32Z",
+      "message": "Closeout blocked: PR #4303 exact head b1091b7fdbbe213c040398dc104526f0b3f4211e has no GitHub review and no refs/tags/pantheon-review/approve/b1091b7fdbbe213c040398dc104526f0b3f4211e; Canonical Review Gate fails closed. Codex2 must restore the review lifecycle and record a fresh reviewer-bound exact-head approval through the governed command so the bridge publishes the proof tag; owner cannot create it.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-06T10:17:08Z",
+      "status": "resolved",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "waiting_for": "Codex2"
+    },
+    {
+      "created_at": "2026-08-06T12:16:42Z",
+      "message": "Cannot close out: PR #4303 is CONFLICTING/DIRTY against dev and the approved head c9d3485 is frozen. Root cause is upstream, not this task: PR #4590 (SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729) squash-merged into dev at 2026-08-06T11:57:30Z from a stale base, deleting 227 files / 47932 lines, including .github/workflows/canonical-review-gate.yml, scripts/git/canonical_review_gate_ci.py and scripts/git/test_canonical_review_gate_workflow.py. All three are still present on origin/master, so this is a regression, not an intended removal. Fleet-wide impact: dev is the default branch and its protection still requires context 'Pantheon canonical review gate' from app_id 15368 (GitHub Actions), but gh api actions/workflows no longer lists the workflow at all, so no PR into dev can receive that check and github_review_bridge.py workflow_dispatch re-trigger has no target. Last gate run was 31099356158 at 11:57:11Z, seconds before the deletion merged. Task-local impact: the sole merge conflict is modify/delete on .github/workflows/canonical-review-gate.yml, which this branch changes by exactly 3 comment lines. Requested fix is upstream on dev, not here: revert the collateral deletions from 23ae23c21. 23ae23c21's only parent is 34e1f494a, this branch's merge-base, so restoring those files byte-identically makes the dev side a no-op for that path, the conflict disappears, and approved head c9d3485 stays mergeable with its exact-head binding intact. Resolving it inside this task instead would require a merge commit that invalidates the Antigravity exact-head approval and would unilaterally revert another task's merged commit, so no commit was added and the worktree is clean at c9d3485.",
+      "owner": "Claude",
+      "resolved_at": "2026-08-09T04:01:02Z",
+      "status": "resolved",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T06:52:45Z",
+      "message": "Owner closeout is blocked by a governed runtime audit-contract mismatch after merged PR #4303. Delivered exact head 80bcd1cde3707a0f0ee84a0b7c257d4fd901a569 has Reviewer: Claude; canonical reviewer Antigravity approved that exact head after the audited Orchestrator reassignment at 2026-08-09T05:20:22Z. The audit event id is supervisor-task-reassigned-dac420278948aad12f1f32f6804d6af63f2adace105fbaf8ed2212a26f510778, while command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259 only accepts supervisor-reassign-<digest>, so done incorrectly discards the valid Claude-to-Antigravity chain. Requires a separately governed ai_status/supervisor event-id compatibility repair and closeout retry; do not edit audit/state, reassign reviewer, or add a post-approval commit.",
+      "owner": "Codex",
+      "status": "resolved",
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "waiting_for": "Human/Ops",
+      "resolved_at": "2026-08-13T02:00:52Z"
+    }
+  ]
+}

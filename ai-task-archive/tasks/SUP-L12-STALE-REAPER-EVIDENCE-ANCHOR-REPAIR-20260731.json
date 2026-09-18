@@ -1,0 +1,340 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+  "archived_at": "2026-08-06T14:50:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Verify PR #4385 current head f5e70e86e01bde005dae5fed94b151c9bc07f389 and PR #4395 evidence before editing",
+      "Repair subject README/evidence.json references from nonexistent 9d53a94a265c55af4c8d15c50ab3751f1440ac0f to actual 9d53a94a295d71ee49aea6f4b96e47fbcfd29093, or reopen/supersede #4385 with an equivalent concrete fix if the head moved",
+      "Re-run focused stale failure-streak reaper tests, evidence JSON validation, git diff --check, commit trailer check, and config-boundary check",
+      "Deliver through task branch, PR, visible checks, reviewer approval, and governed closeout; do not edit .orchestrator/config.json and do not count review_approved row state alone"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#wave0x-fleet-reconcile-fallout",
+      "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+      "documents": [
+        {
+          "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+          "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+          "sourceRefs": [
+            "PR#4394",
+            "head 8861d5231f577c85b947c75ce9e4e8cc13ee487a"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_GRAPH",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json",
+          "sourceRefs": [
+            "Wave 0X added at 2026-07-31T12:25:00Z"
+          ]
+        },
+        {
+          "kind": "RECONCILE_EVIDENCE_PR",
+          "path": "https://github.com/ajoe734/pantheon/pull/4395",
+          "sourceRefs": [
+            "#4385 evidence names nonexistent anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f"
+          ]
+        },
+        {
+          "kind": "RECONCILE_EVIDENCE_PR",
+          "path": "https://github.com/ajoe734/pantheon/pull/4396",
+          "sourceRefs": [
+            "#4386 current-head support proof is review_approved but PR #4396 is draft"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-31T12:29:08Z",
+      "intent": "dispatch_parallel_wave0x_reconcile_fallout_repairs",
+      "mode": "kernel_repair",
+      "packet_digest": "24fcc3087b0aa6e1aa1d99cd1d03387f2f2fc59f36c1eab79314e5a8192986fc",
+      "packet_id": "pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z",
+      "source_turn_ids": [
+        "user-complete-gap-audit-and-supervisor-dispatch",
+        "codex-wave0x-fleet-reconcile-fallout-20260731"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Verify PR #4385 current head f5e70e86e01bde005dae5fed94b151c9bc07f389 and PR #4395 evidence before editing",
+          "Repair subject README/evidence.json references from nonexistent 9d53a94a265c55af4c8d15c50ab3751f1440ac0f to actual 9d53a94a295d71ee49aea6f4b96e47fbcfd29093, or reopen/supersede #4385 with an equivalent concrete fix if the head moved",
+          "Re-run focused stale failure-streak reaper tests, evidence JSON validation, git diff --check, commit trailer check, and config-boundary check",
+          "Deliver through task branch, PR, visible checks, reviewer approval, and governed closeout; do not edit .orchestrator/config.json and do not count review_approved row state alone"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
+        "reviewer": "Claude2",
+        "summary": "Repair the concrete nonexistent-anchor defect found by the real auto-worker exact-head reconciliation for PR #4385 before stale failure-streak reaper can satisfy Wave 0.",
+        "title": "Repair #4385 stale-reaper evidence anchor and revalidate exact head"
+      },
+      "task_spec_hash": "c5a998ac1677d802a3929d63c2d65f5bd60970060ade7d5356776dfac59d39a2"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "head_sha": "9f7c1a73b8f4405322b5aa86ae927cbb363957d6",
+      "mode": "required_commit_status",
+      "pr": 4452,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4452",
+      "recorded_at": "2026-08-06T14:38:24Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/9f7c1a73b8f4405322b5aa86ae927cbb363957d6",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51771231295,
+      "status_state": "success"
+    },
+    "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+    "last_update": "2026-08-06T14:50:38Z",
+    "next": "PR #4452 merged into dev as 1fde75fc9 at approved exact head 9f7c1a73b; subject packet SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 now cites the resolvable anchor 9d53a94a295d (invalid 9d53a94a265c removed); evidence.json for both packets validates; approve tag pantheon-review/approve/9f7c1a73b confirmed and the required gate status re-posted from Actions run 31112669800.",
+    "owner": "Claude",
+    "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "head_sha": "9f7c1a73b8f4405322b5aa86ae927cbb363957d6",
+      "pr": 4452
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "Repair the concrete nonexistent-anchor defect found by the real auto-worker exact-head reconciliation for PR #4385 before stale failure-streak reaper can satisfy Wave 0.",
+    "title": "Repair #4385 stale-reaper evidence anchor and revalidate exact head",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-06T14:50:38Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-stale-reaper-evidence-anchor-repair-20260731",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-stale-reaper-evidence-anchor-repair-20260731",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+          "worker_run_id": "claude1-3-20260806T144341Z-b61055aa",
+          "queue_event_id": "evt-20260806T144335Z-b3b8caac",
+          "pid": 3641723,
+          "pid_start_ticks": 46447301,
+          "process_generation": "worker-process-generation-sha256:12ffe742c970bd0b7db1653f64963951a9406d3ecd7ce837bc5aed3fc5abaa4e"
+        }
+      },
+      "commit": "9f7c1a73b8f4405322b5aa86ae927cbb363957d6",
+      "commit_subject": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731: anchor rebind",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "the evidence-anchor repair for the PR #4385 stale L12",
+        "Not changing": ".orchestrator/config.json, .orchestrator/supervisor.py,",
+        "Composes with": "PR #4385 rejected head f5e70e86, PR #4395 reconciliation",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+        "Reviewer": "Antigravity",
+        "Verified": "5 focused stale-reaper tests pass on a locally patched tree; anchor, ancestry, JSON, trailer, whitespace, and config-boundary checks pass on this head"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1fde75fc902971d5a6c8761ac511d8e2ca58da95",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T12:29:59Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-07-31T12:31:28Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:30:22Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-07-31T12:31:37Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T14:36:26Z",
+      "from": "Codex2",
+      "message": "PR #4452 exact head 1448778931c2058fceb715ad13423e639f5c0865 is ready for independent review. Source #4385 head f5e70e86 and #4395 evidence were verified; invalid anchor was corrected to 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 with ancestry preserved. Five focused tests and 473 full supervisor tests passed; exact-head CI, JSON, trailers, diff, ancestry, and config-boundary checks are green. Review file: docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/evidence.json",
+      "resolved_at": "2026-08-01T14:41:16Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T14:41:16Z",
+      "from": "Antigravity",
+      "message": "Independent review passed by Antigravity: Verified PR #4452 exact head 14487789314c4495e865a7d7ef1aae9c43d70650 supersedes PR #4385 head f5e70e86e01bde005dae5fed94b151c9bc07f389 and repairs invalid evidence anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f to valid commit 9d53a94a295d71ee49aea6f4b96e47fbcfd29093. Tested 5 focused reaper regressions and 473 supervisor tests green.",
+      "resolved_at": "2026-08-01T14:43:37Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T14:43:37Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "resolved_at": "2026-08-01T15:02:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:25:27Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-01T15:27:03Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:19:31Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-01T16:21:52Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T14:48:44Z",
+      "from": "Codex2",
+      "message": "Chair reassigned owner from Codex2 to Antigravity: Blocked non-human task: Antigravity is auth-ready and not dispatch-paused, while Codex remains the distinct reviewer; the existing PR/task brief makes the handoff safely rerunnable. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-04T14:57:10Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-04T14:57:10Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-08-04T14:58:31Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T14:58:13Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-08-04T14:59:59Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T15:19:41Z",
+      "from": "Codex",
+      "message": "PR #4452 is ready for independent exact-head review at 7786617d30980dbcbb9ef44f5cf793ecd0a0b4de; 5 focused stale-reaper regressions and 584 supervisor tests pass, with JSON, trailers, diff/config, anchor/ancestry, and PR-head checks verified. Bind docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/evidence.json only after reviewing this exact head.",
+      "resolved_at": "2026-08-04T15:28:43Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T15:28:43Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review passed for PR #4452 at 7786617d30980dbcbb9ef44f5cf793ecd0a0b4de: remote/local head match; corrected 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 resolves and rejected f5e70e86e01bde005dae5fed94b151c9bc07f389 remains ancestral; invalid 9d53a94a265c55af4c8d15c50ab3751f1440ac0f does not resolve; 5 focused stale-reaper regressions and 584 supervisor tests passed; JSON, trailers, diff, and config-boundary checks passed.",
+      "resolved_at": "2026-08-04T15:36:03Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T15:36:03Z",
+      "from": "Codex2",
+      "message": "Closeout verification passed at PR #4452 head 7786617d30980dbcbb9ef44f5cf793ecd0a0b4de (5 focused stale-reaper tests; JSON, trailer, diff, config, and ancestry checks). Fail-closed: canonical review gate reports no pantheon-review/approve/7786617d30980dbcbb9ef44f5cf793ecd0a0b4de proof tag; PR remains OPEN and unmerged. Codex2 must bind the already-committed review manifest to this exact head without changing delivery scope.",
+      "resolved_at": "2026-08-04T15:53:16Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T14:35:00Z",
+      "from": "Claude",
+      "message": "Review PR #4452 at exact head 9f7c1a73b8f4405322b5aa86ae927cbb363957d6 (owner rebound Codex->Claude). Delivered diff is documentation only: subject anchor 9d53a94a265c...->9d53a94a295d... in SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 README+evidence.json, plus this task's packet and brief. supervisor.py/test_supervisor.py are byte-identical to origin/dev@eca6b7de because the reaper landed on dev via squash 23ae23c21 (#4590); the manifest's old changed_files claim naming them was corrected. All 4 PR checks SUCCESS; anchor, ancestry, JSON, trailer, whitespace, config-boundary checks pass. Focused 5 stale-reaper tests pass only on a locally patched tree and the patch is NOT delivered: squash 23ae23c21 also reverted provider_permissions.py 2427->2006 lines, deleting provider_auth_probe_due that supervisor.py:90 imports, so 'import supervisor' fails on unmodified dev and no green full-suite baseline exists; the manifest now claims none. Out of scope, unrepaired, needs Human/Ops: that provider_permissions.py revert and the deletion of .github/workflows/canonical-review-gate.yml from dev (still present on master) - the latter means the canonical review gate context may need a workflow_dispatch from master against this head. Bind approve with REVIEW_PR=4452 REVIEW_HEAD_SHA=9f7c1a73b8f4405322b5aa86ae927cbb363957d6.",
+      "resolved_at": "2026-08-06T14:38:24Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T14:38:24Z",
+      "from": "Antigravity",
+      "message": "Reviewed PR #4452 exact head 9f7c1a73b8f4405322b5aa86ae927cbb363957d6. Verified anchor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 correction, JSON validity, commit trailers, dev merge-base ancestry, and clean GitHub CI status check rollup.",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "to": "Claude",
+      "resolved_at": "2026-08-06T14:50:39Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-01T15:02:22Z",
+      "message": "Owner closeout failed exact-head admission: Antigravity approval event ai-status-event-b096995d1461ef4a03d90e4e5ec9c4f4873504963535a1f8e6daaf56d5ef91bc cites nonexistent 14487789314c4495e865a7d7ef1aae9c43d70650, while PR #4452 was 1448778931c2058fceb715ad13423e639f5c0865 and is now evidence-audit head 4a25e17074565c9854666d9cb5f0d8dd55fd19d8. Antigravity must independently review exact current PR head and bind docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/evidence.json before merge/done.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "resolved_at": "2026-08-04T14:48:44Z",
+      "status": "resolved",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "waiting_for": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-04T15:53:16Z",
+      "message": "Closeout blocked: PR #4452 remains OPEN at exact head 7786617d30980dbcbb9ef44f5cf793ecd0a0b4de, has zero GitHub reviews, and CI run 30922653899 fails because pantheon-review/approve/7786617d30980dbcbb9ef44f5cf793ecd0a0b4de is absent. The review_approved row conflicts with the committed pending manifest and cannot satisfy protected merge or done.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-06T10:17:56Z",
+      "status": "resolved",
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "waiting_for": "Codex2"
+    }
+  ]
+}

@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+  "archived_at": "2026-08-02T06:39:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start from origin/dev; rejected PR #4438 heads 94e3b6f3/d616beaa/35056b71 and stale PR #4385 are evidence only and must not enter ancestry.",
+      "Extend each exact task plus logical-provider failure record with failure kind, reason class, count, failure timestamp, owner-at-failure, provider identity, and a stable failure generation without mutating canonical task state.",
+      "Build a pure authoritative progress extractor that recognizes only a governed reviewer reopen/handoff or verified commit/head event for the same task occurring after the failure timestamp. Generic task.last_update, dispatch sync, notes, worker start, test reruns, or repeated handoff of the same rejected head are not progress.",
+      "Bind progress to exact task, unchanged owner, reviewer identity, event id/type/timestamp, and exact new head/commit when present. Independent reviewer identity must differ from owner; owner==reviewer is invalid evidence.",
+      "Provide backward-compatible fail-closed decoding for old streak records. Missing owner, kind, timestamp, event identity, or malformed generations may not auto-recover.",
+      "Add separate deterministic tests for reviewer reopen, reviewer handoff, verified new head, same rejected head replay, generic last_update, owner change, stale/pre-failure event, cross-task/provider event, malformed legacy record, and unrelated streak preservation.",
+      "Run focused tests and full relevant serialization/state regression. Do not change failure-loop gating, queueing, leases, dispatch, config, or live runtime in this task.",
+      "Rollout is source merge only. Rollback is revert of this task merge commit.",
+      "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+      "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+      "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+      "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+      "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+      "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#v2-split-after-stale-review",
+      "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+      "documents": [
+        {
+          "kind": "SUPERSEDED_IDENTITY_MONOLITH",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-promotion-split-chain-20260801T0000Z.json",
+          "sourceRefs": [
+            "PR #4437 rejected heads 07316c73 and 77af55015",
+            "same rejected 77af55015 replayed without code changes",
+            "GitHub review comments 5148931145, 5148948795, 5149092858"
+          ]
+        },
+        {
+          "kind": "SUPERSEDED_RETRY_MONOLITH",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-progress-aware-failure-streak-retry-20260801T0116Z.json",
+          "sourceRefs": [
+            "PR #4438 rejected heads 94e3b6f3, d616beaa and 35056b71",
+            "real owner/reviewer probe returned false",
+            "15-minute owner run timed out and same trees replayed",
+            "GitHub review comments 5148942746, 5149044158, 5149078704"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T02:18:00Z",
+      "intent": "split_repeated_stale_review_monoliths_into_governed_v2_chains",
+      "mode": "kernel_repair",
+      "packet_digest": "355ad2d403cceefb30b138a1399e95d7024427643f80c7aae422463aecf1f1e0",
+      "packet_id": "pkt-sup-runtime-identity-retry-v2-split-20260801T0218Z",
+      "source_turn_ids": [
+        "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+        "human-ops-pr4437-three-exact-head-rejections",
+        "human-ops-pr4438-three-exact-head-rejections-and-timeout"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start from origin/dev; rejected PR #4438 heads 94e3b6f3/d616beaa/35056b71 and stale PR #4385 are evidence only and must not enter ancestry.",
+          "Extend each exact task plus logical-provider failure record with failure kind, reason class, count, failure timestamp, owner-at-failure, provider identity, and a stable failure generation without mutating canonical task state.",
+          "Build a pure authoritative progress extractor that recognizes only a governed reviewer reopen/handoff or verified commit/head event for the same task occurring after the failure timestamp. Generic task.last_update, dispatch sync, notes, worker start, test reruns, or repeated handoff of the same rejected head are not progress.",
+          "Bind progress to exact task, unchanged owner, reviewer identity, event id/type/timestamp, and exact new head/commit when present. Independent reviewer identity must differ from owner; owner==reviewer is invalid evidence.",
+          "Provide backward-compatible fail-closed decoding for old streak records. Missing owner, kind, timestamp, event identity, or malformed generations may not auto-recover.",
+          "Add separate deterministic tests for reviewer reopen, reviewer handoff, verified new head, same rejected head replay, generic last_update, owner change, stale/pre-failure event, cross-task/provider event, malformed legacy record, and unrelated streak preservation.",
+          "Run focused tests and full relevant serialization/state regression. Do not change failure-loop gating, queueing, leases, dispatch, config, or live runtime in this task.",
+          "Rollout is source merge only. Rollback is revert of this task merge commit.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801"
+        ],
+        "id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Retry V2 / 1 Evidence Generation",
+        "reviewer": "Human/Ops",
+        "summary": "Implement only durable failure-generation records and authoritative governed-progress extraction; do not change dispatch eligibility yet.",
+        "title": "Record authoritative failure and governed progress generations"
+      },
+      "task_spec_hash": "384215108bb7bd3e921b08624f4ad293440db0c9285c0d29ca696c3fc595e529"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "reopen",
+      "head_branch": "task/SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "head_sha": "69e69ffacfad945eaf53992e8d3207dae5a03151",
+      "mode": "required_commit_status",
+      "pr": 4442,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4442",
+      "recorded_at": "2026-08-01T02:54:47Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51471031738,
+      "status_state": "failure"
+    },
+    "id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+    "last_update": "2026-08-02T06:39:33Z",
+    "next": "Superseded by the clean V3 activity normalizer merged in PR #4483 (5cb03dd5ebe3ce13435c848175c5dab5450e9ea5); rejected/stale V2 heads remain evidence only.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Retry V2 / 1 Evidence Generation",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Implement only durable failure-generation records and authoritative governed-progress extraction; do not change dispatch eligibility yet.",
+    "title": "Coordinate atomic V3 failure evidence replacements",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T02:29:25Z",
+      "from": "Antigravity",
+      "message": "Opened PR #4442 for SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801 containing failure streak raw_ref recording and work_progress_snapshot evidence extraction. Ready for Human/Ops review.",
+      "resolved_at": "2026-08-01T02:30:49Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-01T02:30:49Z",
+      "from": "Human/Ops",
+      "message": "Exact-head rejection e89d09ea. The patch only propagates raw_ref; it does not implement the required immutable failure generation (reason class, owner-at-failure, provider identity, timestamp/generation), governed reviewer reopen/handoff or verified-new-head extractor, exact event/task/owner/reviewer binding, same-head replay rejection, or fail-closed legacy decoding. Tests add only one raw_ref assertion, not the ten required deterministic cases. Delivery also commits a generated task brief, all three subjects exceed 72 chars, evidence falsely lists the brief as a product change, and Commit trailers CI is failing. Rewrite from current origin/dev with no rejected/old commits in ancestry, implement the entire bounded evidence layer only, add the full deterministic matrix, use <=72-char subject plus exact trailers, rerun focused/full relevant tests and diff check, then force-update PR #4442 for a fresh exact-head review.",
+      "resolved_at": "2026-08-01T02:30:49Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T02:36:32Z",
+      "from": "Antigravity",
+      "message": "Rewrote implementation from origin/dev tip. Added versioned v2 failure streak generation fields and pure authoritative extract_authoritative_progress_evidence extractor in supervisor.py with test suite in test_supervisor.py. Pushed commit 67e8ce116 to PR #4442 for Human/Ops review.",
+      "resolved_at": "2026-08-01T02:39:55Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-01T02:39:55Z",
+      "from": "Human/Ops",
+      "message": "Exact-head rejection 67e8ce116. Independent full test run passes (471 tests, 4 subtests), but direct acceptance probes all fail: generation id does not change for the next failure; reason_class is absent; decoder accepts records missing owner/kind/generation; missing verified defaults to accepted; empty event id is accepted; cross-provider progress is accepted; and an owner-originated handoff is accepted as reviewer progress. The extractor also does not require a canonical governed event identity or exact 40-hex new head. CI Commit trailers fails because subject is 89 chars. Fix these fail-open cases with separate negative tests, bind exact task/provider/unchanged owner/independent reviewer/event id+type+timestamp/new head, require explicit verified=true, rotate an immutable generation per failure, and make legacy decode require every recovery field. Rewrite/amend to a <=72-char subject, preserve only supervisor.py/test changes, rerun full test and probes, then update PR #4442.",
+      "resolved_at": "2026-08-01T02:39:55Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T02:45:50Z",
+      "from": "Human/Ops",
+      "message": "Exact-head rejection 85b4d8607. Subject is now compliant (65 chars) and trailer CI passes, but the code is otherwise the same unwired 1041551 logic. Real runtime-shape probes: actual failure worker yields owner_at_failure empty and cannot decode; actual governed reopen {type,agent,event_id,ts} is not recognized; actual worker_commit {type,agent,commit,event_id,ts} is not recognized; reason_class is absent; decode accepts missing failure kind and missing reason_class. The current tests invent reviewer/owner fields not emitted by ai-status and therefore cannot prove recovery. Instrument every real record_task_failure_streak path with canonical owner/reviewer plus a durable failure evidence identity; record/require normalized kind and reason_class. Normalize captured real activity shapes: reviewer reopen must prove event.agent equals canonical reviewer and differs from unchanged owner; worker_commit must prove event.agent equals unchanged owner and commit is a new exact 40-hex head. Add these exact real-shape tests. Do not change dispatch eligibility or config. Keep the 65-char subject, rerun full supervisor tests, probes and diff check, then update PR #4442.",
+      "resolved_at": "2026-08-01T02:45:50Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T02:50:25Z",
+      "from": "Human/Ops",
+      "message": "Exact-head rejection 5b2c309e2. reason_class and the 65-char subject are now fixed, but the two required real-runtime bindings remain unchanged. Probe using the captured worker shape request_snapshot.metadata.task.owner/reviewer still records owner_at_failure=\"\" because record_task_failure_streak reads only nonexistent worker.owner/request_snapshot.owner; every real call site still omits owner/reviewer/failure evidence identity, so the v2 record cannot decode. Probes using captured ai-activity shapes {type:reopen,agent:Human/Ops,event_id,ts} and {type:worker_commit,agent:Antigravity,commit,event_id,ts} both return None because the extractor still expects invented reviewer+owner fields, omits worker_commit, and requires verified on a worker_commit event that instead derives trust from governed event type/source. Wire canonical task owner/reviewer from request_snapshot.metadata.task or an explicit call-site argument; persist reviewer_at_failure and raw_ref/event identity; normalize real reopen and worker_commit events, requiring event.agent==reviewer or unchanged owner respectively and new exact 40-hex commit. Add direct tests with these exact captured shapes. Keep scope supervisor.py/test only and subject <=72; rerun full tests and real-shape probes before updating #4442. If this exact wiring is not delivered next run, the task must be atomized rather than replayed.",
+      "resolved_at": "2026-08-01T02:50:25Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T02:54:47Z",
+      "from": "Human/Ops",
+      "message": "Exact-head rejection 69e69ffac. Synthetic enhanced-shape probes pass, but captured live-state probes fail: request_snapshot.metadata.task contains only id/artifacts/next, so actual record owner is empty and cannot decode; raw_ref and reviewer are absent; last rejected head is never recorded. Decoder does not require failure evidence identity. Extractor accepts missing task_id, wrong reviewer, missing worker_commit agent, and the same rejected head when the record lacks a baseline. This proves the current monolith cannot safely feed retry recovery. Stop redispatching this PR. Replacement tasks must separately wire immutable failure records from real call sites and normalize real governed activity events, with captured-shape negative tests. Do not merge #4442.",
+      "resolved_at": "2026-08-01T02:54:47Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T14:25:10Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801 away from unavailable lane Human/Ops, Claude2 (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Antigravity, reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-08-01T14:25:47Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T14:48:28Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-01T14:49:31Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:30:23Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-01T15:32:55Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "to": "Codex2"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-01T02:54:59Z",
+      "message": "Atomic V3 replacements required after captured live-state probes disproved PR #4442. Do not redispatch or merge #4442; supersede this wrapper only after both replacements are exact-head reviewed and merged.",
+      "owner": "Human/Ops",
+      "status": "resolved",
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "waiting_for": "Antigravity",
+      "resolved_at": "2026-08-02T06:39:33Z"
+    }
+  ]
+}

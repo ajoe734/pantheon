@@ -1,0 +1,93 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-supervisor-bridge-materialization-20260730T1644Z--c1333ce91499a1ab.json",
+  "admitted_at": "2026-07-30T16:44:36Z",
+  "audit_conversation_href": "codex://root/l12-supervisor-bridge-materialization-20260730",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-supervisor-bridge-materialization-20260730",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "EXECUTION_TASK_GRAPH",
+      "path": "docs/bff/execution-tasks/2026-07-29-l12-post-4380-gap-fleet-dispatch/tasks.json",
+      "sourceRefs": [
+        "PR#4382",
+        "HEAD ca00f813f4e6a5dfcfb2cf402ebba425a034d03e"
+      ]
+    },
+    {
+      "kind": "GAP_AUDIT",
+      "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/POST_4380_THREE_PASS_GAP_AUDIT_2026-07-29T1314Z.md",
+      "sourceRefs": [
+        "activity-log-only dispatch finding 2026-07-30T16:35:14Z"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-30T16:44:11Z",
+  "intent": "dispatch_supervisor_bridge_materialization_repair",
+  "mode": "kernel_repair",
+  "packet_digest": "c1333ce91499a1ab77db0ddfe47eded662a7880a03252db28cca582aeb3e8ec3",
+  "packet_id": "pkt-supervisor-bridge-materialization-20260730T1644Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "c26a576475b730ff5d10ff2932e2000c0b681c56e7bfc9bad88497bbfdfbb5ee",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-supervisor-not-codex-subagents",
+    "codex-wave0-bridge-materialization"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "task_spec": {
+        "acceptance": [
+          "A queued DevTaskPacket is drained by the supervisor tick path, not by a manual Codex subagent workflow",
+          "Every dispatched task appears in canonical ai-status.json and task-state event/checkpoint readback",
+          "A receipt/admission record cannot report success when canonical task materialization is missing",
+          "Regression covers activity-log-only false positive dispatch",
+          "No .orchestrator/config.json edit is required"
+        ],
+        "artifacts": [
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          ".orchestrator/supervisor.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"
+        ],
+        "depends_on": [],
+        "id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Dev Bridge",
+        "reviewer": "Claude2",
+        "summary": "Repair the assistant dev bridge so supervisor-visible canonical task-state readback, not receipt text alone, is the success gate before auto-worker execution tasks are considered accepted.",
+        "title": "Repair supervisor DevTaskPacket materialization readback"
+      },
+      "task_spec_hash": "4dff94adbd025aa532c13b00fb2baa246e2cd0fd6d48942a8063105fedfdddc2"
+    }
+  ]
+}

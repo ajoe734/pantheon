@@ -1,0 +1,148 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-wave0x-pipeline-blockers-supersede-20260731T1255Z--5d0c5d22c6409e15.json",
+  "admitted_at": "2026-07-31T12:54:47Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#pipeline-blockers-supersede",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+      "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+      "sourceRefs": [
+        "PR#4394",
+        "head 85ca010c09c8d888539eb364bbdd7410bd8586ae",
+        "12:46Z pipeline architecture addendum"
+      ]
+    },
+    {
+      "kind": "EXECUTION_TASK_GRAPH",
+      "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json",
+      "sourceRefs": [
+        "updated_at 2026-07-31T12:46:41Z",
+        "old Wave0X task IDs are immutable-bound to pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z; this packet uses superseding IDs"
+      ]
+    },
+    {
+      "kind": "FAILED_REQUEUE_RECEIPT",
+      "path": ".orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json",
+      "sourceRefs": [
+        "bridge assignment conflict proves existing task IDs cannot be spec-updated"
+      ]
+    },
+    {
+      "kind": "PR",
+      "path": "https://github.com/ajoe734/pantheon/pull/4395",
+      "sourceRefs": [
+        "head f68827c8e17d6a1f081afe24f62ba85c116166e8",
+        "canonical review gate success",
+        "auto-integrator mergeStateStatus=BLOCKED"
+      ]
+    },
+    {
+      "kind": "PR",
+      "path": "https://github.com/ajoe734/pantheon/pull/4396",
+      "sourceRefs": [
+        "head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f",
+        "no longer draft",
+        "canonical review gate success",
+        "auto-integrator mergeStateStatus=BLOCKED missing Human/Ops root-freeze exact-head context"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T12:54:43Z",
+  "intent": "dispatch_superseding_wave0x_pipeline_blocker_repairs_with_current_heads",
+  "mode": "kernel_repair",
+  "packet_digest": "5d0c5d22c6409e151a39305a683f23b94fa8d5724807093b24e9fb3c7b06b5b7",
+  "packet_id": "pkt-l12-wave0x-pipeline-blockers-supersede-20260731T1255Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "74a78b1cf954180f4c84cd3d65428ee34aeb9dc2a930fea79cf122d6fd979598",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-complete-gap-audit-and-supervisor-dispatch",
+    "codex-pipeline-blockers-supersede-20260731T1255Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Verify the failed requeue receipt .orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json and record that the prior task ID is immutable-bound to the old packet/spec",
+          "Verify PR #4385 current head f5e70e86e01bde005dae5fed94b151c9bc07f389 and PR #4395 current head f68827c8e17d6a1f081afe24f62ba85c116166e8 before editing",
+          "Repair subject README/evidence.json references from nonexistent 9d53a94a265c55af4c8d15c50ab3751f1440ac0f to actual 9d53a94a295d71ee49aea6f4b96e47fbcfd29093, or reopen/supersede #4385 with an equivalent concrete fix if the head moved",
+          "Re-run focused stale failure-streak reaper tests, evidence JSON validation, git diff --check, commit trailer check, and config-boundary check",
+          "Deliver through task branch, PR, visible checks, reviewer approval, protected merge when allowed, and governed closeout; do not edit .orchestrator/config.json and do not count review_approved row state alone"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout V2",
+        "reviewer": "Claude2",
+        "summary": "Supersedes preempted immutable task SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731 after bridge rejected spec update. Repair #4385 nonexistent evidence anchor before stale-reaper can satisfy Wave 0.",
+        "title": "Supersede Wave0X #4385 evidence-anchor repair with current-head spec"
+      },
+      "task_spec_hash": "7c05f3a17fbc03f19adb3c12ed0e1a07e44e4098eece74c09275c6b7fe44741f"
+    },
+    {
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Verify the failed requeue receipt .orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json and record that the prior task ID is immutable-bound to the old packet/spec",
+          "Verify #4396 head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f and task row review_approved evidence before changing PR state",
+          "Confirm Branch CI and Pantheon canonical review gate remain green, then run auto-integrator eligibility dry-run",
+          "Resolve or record the remaining mergeStateStatus=BLOCKED/root-freeze exact-head gate through governed closeout; do not treat no-longer-draft as sufficient",
+          "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout V2",
+        "reviewer": "Claude2",
+        "summary": "Supersedes preempted immutable task SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 after bridge rejected spec update. #4396 is no longer draft but still blocked by merge/root-freeze closeout.",
+        "title": "Supersede Wave0X #4396 governed closeout with current-head spec"
+      },
+      "task_spec_hash": "215b028d82a5c67cb81ef082bb8f5be4fc93f30473e1f9d73a06cb92eeea2e8a"
+    }
+  ]
+}

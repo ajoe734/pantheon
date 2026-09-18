@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "task_id": "L12-MIN-DEP-20260808",
+  "archived_at": "2026-08-10T02:27:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Submit one approved paper deployment command through the existing outbox consumer.",
+      "Persist a terminal DeploymentPlan and one valid RuntimeBinding.",
+      "Prove Capital can read the binding and remove the current missing-plan inconsistency.",
+      "Do not implement live deployment or unrelated governance hardening."
+    ],
+    "artifacts": [
+      "services/deployment/outbox_consumer_worker.py",
+      "services/deployment/runtime_manager_dispatch_adapter.py",
+      "services/deployment/service.py",
+      "services/deployment/test_l12_dep_001_dispatcher.py",
+      "services/deployment/test_outbox_consumer_worker.py",
+      "services/runtime-manager/deploy_authority.py",
+      "services/runtime-manager/test_deploy_authority.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DEP-20260808/"
+    ],
+    "depends_on": [
+      "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+      "L12-MIN-CONS-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-l12-minimum-functional-closure-20260808",
+      "documents": [
+        {
+          "kind": "MINIMUM_FUNCTIONAL_GAP_DESIGN",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4621",
+            "f56e2bc91",
+            "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+          "sourceRefs": [
+            "packet_a",
+            "pantheon-twelve-loop-minimum-functional-closure-2026-08-08"
+          ]
+        },
+        {
+          "kind": "LEGACY_DAG_RECONCILIATION",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+          "sourceRefs": [
+            "28-old-ids-zero-materialized-at-snapshot"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T09:23:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9",
+      "packet_id": "pkt-l12-minimum-functional-a-20260808-f56e2bc91",
+      "source_turn_ids": [
+        "user-explicit-l12-minimum-functional-closure-dispatch-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Submit one approved paper deployment command through the existing outbox consumer.",
+          "Persist a terminal DeploymentPlan and one valid RuntimeBinding.",
+          "Prove Capital can read the binding and remove the current missing-plan inconsistency.",
+          "Do not implement live deployment or unrelated governance hardening."
+        ],
+        "artifacts": [
+          "services/deployment/outbox_consumer_worker.py",
+          "services/deployment/runtime_manager_dispatch_adapter.py",
+          "services/deployment/service.py",
+          "services/deployment/test_l12_dep_001_dispatcher.py",
+          "services/deployment/test_outbox_consumer_worker.py",
+          "services/runtime-manager/deploy_authority.py",
+          "services/runtime-manager/test_deploy_authority.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DEP-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "L12-MIN-CONS-20260808"
+        ],
+        "id": "L12-MIN-DEP-20260808",
+        "owner": "Antigravity",
+        "phase": "M1 loop closure",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Run one approved paper deployment command to RuntimeBinding"
+      },
+      "task_spec_hash": "4c95f3a4f50f92b75a65802389447049f9bbdbb00238bd39045fbd909152f61b"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-MIN-DEP-20260808",
+      "head_sha": "6a9ca4749bed6c2d2cad14dfe4f78a6b4a648937",
+      "mode": "required_commit_status",
+      "pr": 4694,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4694",
+      "recorded_at": "2026-08-09T23:59:29Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/6a9ca4749bed6c2d2cad14dfe4f78a6b4a648937",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51919246094,
+      "status_state": "success"
+    },
+    "id": "L12-MIN-DEP-20260808",
+    "last_update": "2026-08-10T02:27:28Z",
+    "next": "Owner closeout: PR #4694 merged into dev at f8da01542b8eee102b4f6e0906969e53a993079f; reviewer-bound manifest docs/deployment/evidence/twelve-loop-gap/L12-MIN-DEP-20260808/evidence.json covers exact approved head 6a9ca4749bed6c2d2cad14dfe4f78a6b4a648937. Re-ran focused deployment/runtime pytest suite and py_compile; retained only the supervisor-generated task-brief status note uncommitted to preserve exact-head review binding.",
+    "owner": "Codex2",
+    "phase": "M1 loop closure",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-MIN-DEP-20260808",
+      "head_sha": "6a9ca4749bed6c2d2cad14dfe4f78a6b4a648937",
+      "pr": 4694
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DEP-20260808/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Run one approved paper deployment command to RuntimeBinding",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-10T02:27:28Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-min-dep-20260808",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-MIN-DEP-20260808",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "source_sha": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-min-dep-20260808",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "L12-MIN-DEP-20260808",
+          "worker_run_id": "codex-20260810T022352Z-2234de2a",
+          "queue_event_id": "evt-20260810T022326Z-3b87ff8c",
+          "pid": 3034096,
+          "pid_start_ticks": 16768035,
+          "process_generation": "worker-process-generation-sha256:8649cdc878cfba22ab0a78305837ed40b59b3eceffe2393447aa7117d515421f"
+        }
+      },
+      "commit": "6a9ca4749bed6c2d2cad14dfe4f78a6b4a648937",
+      "commit_subject": "L12-MIN-DEP-20260808: record paper deployment evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Task-scoped evidence for the Deployment outbox terminal paper",
+        "Not changing": "RuntimeBinding write ownership, paper fleet start/readback,",
+        "Composes with": "Antigravity's independent review and L12-MIN-CAP-20260808's",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "L12-MIN-DEP-20260808",
+        "Reviewer": "Antigravity",
+        "Verified": "evidence JSON parse and SHA-256 companion check passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/L12-MIN-DEP-20260808",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f8da01542b8eee102b4f6e0906969e53a993079f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T14:53:26Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-MIN-DEP-20260808 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-08-09T10:14:29Z",
+      "status": "done",
+      "task_id": "L12-MIN-DEP-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:14:29Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-MIN-DEP-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:11:35Z",
+      "status": "done",
+      "task_id": "L12-MIN-DEP-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:11:35Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-MIN-DEP-20260808 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-09T19:17:39Z",
+      "status": "done",
+      "task_id": "L12-MIN-DEP-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T23:55:23Z",
+      "from": "Codex2",
+      "message": "Ready for independent review on PR #4694 at 6a9ca4749bed6c2d2cad14dfe4f78a6b4a648937. Reviewed evidence manifest: docs/deployment/evidence/twelve-loop-gap/L12-MIN-DEP-20260808/evidence.json. The committed deterministic in-process acceptance command drives one approved paper DeploymentPlan through two Deployment outbox polls, authoritative RuntimeBinding readback, terminal DEP-003 projection, and Capital compatibility readback; it leaves paper-fleet start/readback to L12-MIN-CAP-20260808. Re-verified: /tmp/pantheon-worker-worktrees/pantheon/l12-min-dep-20260808/.venv-pantheon/bin/python3 -m pytest -q services/deployment/test_l12_dep_001_dispatcher.py::test_approved_paper_command_reaches_terminal_plan_and_binding; 1 passed (one existing Starlette TestClient deprecation warning); py_compile passed for modified deployment files.",
+      "resolved_at": "2026-08-09T23:59:29Z",
+      "status": "done",
+      "task_id": "L12-MIN-DEP-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T23:59:29Z",
+      "from": "Antigravity",
+      "message": "Reviewed PR #4694 at 6a9ca4749bed6c2d2cad14dfe4f78a6b4a648937 and evidence manifest docs/deployment/evidence/twelve-loop-gap/L12-MIN-DEP-20260808/evidence.json. Independently verified AC1-AC4: approved paper deployment command successfully processes through outbox polls, updates RuntimeBinding, projects terminal DEP-003 status, and verifies Capital compatibility without starting fleet workers. Focused pytest suite passed (170 tests).",
+      "resolved_at": "2026-08-10T01:03:08Z",
+      "status": "done",
+      "task_id": "L12-MIN-DEP-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T01:03:08Z",
+      "from": "Antigravity",
+      "message": "Closeout blocked: PR #4694 remains open because auto_integrator rejects failed non-required issuer audit 'Audit signed canonical review (not required issuer)'; all protected required checks and canonical review gate pass. Exact reviewed head 6a9ca4749 is unchanged; no merge bypass or post-review commit made.",
+      "resolved_at": "2026-08-10T01:32:55Z",
+      "status": "done",
+      "task_id": "L12-MIN-DEP-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T01:32:55Z",
+      "from": "Antigravity",
+      "message": "Closeout verification passed (170 focused tests; evidence SHA/JSON); PR #4694 remains review_approved because Canonical Review Attestation Audit fails: no reviewer-signed PR comment was published after the bridge's 422 native-review rejection.",
+      "resolved_at": "2026-08-10T01:50:37Z",
+      "status": "done",
+      "task_id": "L12-MIN-DEP-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T01:50:37Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verified: 170 focused deployment/runtime tests and py_compile passed; committed review evidence checksum matches. PR #4694 required checks are green and exact-head review gate is green, but governed auto-integrator dry run refuses merge because non-required GitHub Actions check 'Audit signed canonical review (not required issuer) (4694)' is red. This review-pipeline/integrator discrepancy is outside the Deployment task scope; status remains review_approved pending a governed integration-path repair or accepted policy resolution.",
+      "resolved_at": "2026-08-10T02:08:55Z",
+      "status": "done",
+      "task_id": "L12-MIN-DEP-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T02:08:55Z",
+      "from": "Antigravity",
+      "message": "Owner closeout checkpoint: exact-head evidence and focused critical-path test/py_compile pass; PR #4694 remains open because Canonical Review Attestation Audit is red (verifier produced no result). Await an external review-pipeline rerun/fix and merge into dev before done.",
+      "status": "done",
+      "task_id": "L12-MIN-DEP-20260808",
+      "to": "Codex2",
+      "resolved_at": "2026-08-10T02:27:29Z"
+    }
+  ],
+  "blockers": []
+}

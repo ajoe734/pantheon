@@ -1,0 +1,93 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ],
+    "id": "Codex2",
+    "roles": [
+      "auto-worker"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-runtime-v10-legacy-context-canonicality-followup-20260809-1227--4bb1892e77ed5fb0.json",
+  "admitted_at": "2026-08-09T12:32:54Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "sourceRefs": [
+        "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260809T122553555165Z-1540306.json",
+        "sha256:4b1dcfd46a5080bd6403cdd93427dfb5040dbf1b571b27a28c658819c3833f59",
+        "candidate:f7933594f3b5159341a72f2388bcf3104538a072",
+        "incumbent:5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "rejected-brief:.orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-09T12:27:00Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "4bb1892e77ed5fb001f7b98a402f8632e2acd004aaf2732ac8d101acdfde9612",
+  "packet_id": "sup-runtime-v10-legacy-context-canonicality-followup-20260809-1227",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "bba0cca945c040bb0cb5a8d9fccf8d58538c083bfe1d7189489605b3bedf8558",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "promotion-evidence-20260809T122553555165Z-1540306",
+    "candidate-discover-20260809T122654Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the f7933594 governed-bootstrap rejection against the active mutable incumbent: only legacy tracked task-brief modifications are considered, and the first path sup_dispatch_refactor_proposal_doc_commit_20260806.md fails the current canonical-rendered-byte comparison before any baseline, config, signal, launch, or rollback action.",
+          "Design a source-only, history-bounded provenance proof for task-brief residue generated before the fixed command-checkout boundary. It must not treat arbitrary current task-brief bytes, a filename-only allowlist, or a current renderer mismatch as sufficient authority.",
+          "Continue to reject staged or index-flag drift, symlinks, gitfiles, non-regular files, non-task-brief paths, untracked launch-source imports, unaccepted head/tree/remote identity, config byte races, and any changed legacy-drift byte/path/inode binding between capture and revalidation.",
+          "Preserve immutable candidate identity, launch-source byte capture, config CAS, intent-before-TERM ordering, exact-generation signalling, bytecode self-rejection, three fresh-loop gates, authoritative-shadow catch-up, queue/worker parity, provider baseline, and rollback; add focused positive and negative regression coverage.",
+          "Commit a task-scoped evidence manifest before independent review and keep the repair source-only: no live config edit, process signal, runtime promotion, checkout/reset/stash of the active root, candidate deletion, task-state edit, supervisor scheduling change, or fleet-routing policy change. A later rollout retry is separately governed."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "scripts/sync-dev-root.sh",
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809"
+        ],
+        "id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+        "owner": "Claude2",
+        "phase": "Supervisor Runtime / Source-only Legacy Context Canonicality",
+        "reviewer": "Antigravity",
+        "summary": "PR #4667 retained strict byte equality by re-rendering legacy brief content from current bound config, but the active pre-fix brief now fails that comparison before any promotion mutation. Repair only a fail-closed historical-context provenance boundary for the known generated residue; do not broaden drift acceptance or touch the live runtime.",
+        "title": "Bind historical generated task-brief canonicality for legacy bootstrap"
+      },
+      "task_spec_hash": "2b7c1b3b845ef15a46f8cc9c8b94635c2dede7638c1c4b2440bf6708a75f0f57"
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+  "archived_at": "2026-07-31T19:04:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "legacy null seen_event_keys are normalized before trimming",
+      "run_scan/trim_seen_events no longer fail with TypeError comparing NoneType",
+      "focused watcher tests pass",
+      "PR #4397 Branch CI passes",
+      "post-live-repair supervisor tick has no run_scan/trim_seen_events TypeError"
+    ],
+    "artifacts": [
+      ".orchestrator/watch_events.py",
+      ".orchestrator/test_watch_events.py"
+    ],
+    "control_plane_wave": "wave0_fleet_unblock",
+    "depends_on": [],
+    "github_base": "dev",
+    "github_head_sha": "fd67904e2c1adb7256d4d9d9dc618105346be424",
+    "github_pr": 4397,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+      "head_sha": "fd67904e2c1adb7256d4d9d9dc618105346be424",
+      "mode": "required_commit_status",
+      "pr": 4397,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4397",
+      "recorded_at": "2026-07-31T12:50:37Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51432202774,
+      "status_state": "success"
+    },
+    "id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+    "last_update": "2026-07-31T19:04:47Z",
+    "live_repair": {
+      "backup": "/home/lupin/pantheon/.orchestrator/state.json.bak-codex-root-seen-event-null-repair-20260731T115920Z",
+      "kind": "runtime_state_only_seen_event_keys_nonnull",
+      "performed": true,
+      "repaired_null_seen_event_keys": 1992
+    },
+    "next": "Reconciled from merged #4420 exact evidence; #4397 delivery is merged and live at runtime 3e9529ca477e99a4fd24f1d13d4c2da5a48f8397.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Watcher Scan",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+      "head_sha": "fd67904e2c1adb7256d4d9d9dc618105346be424",
+      "pr": 4397
+    },
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "修復 legacy seen_event_keys:null 造成 live supervisor run_scan/trim_seen_events TypeError，讓 supervisor 能恢復掃描與派工。",
+    "target_repo": "pantheon",
+    "title": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731: close merged live gate",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-31T19:04:47Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/home/lupin/pantheon-ci-deploy/dev-root-3e9529ca477e-live",
+      "commit": "fd67904e2c1adb7256d4d9d9dc618105346be424",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3e9529ca477e99a4fd24f1d13d4c2da5a48f8397",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": "docs/deployment/evidence/twelve-loop-gap/SUP-SEEN-EVENT-KEYS-NONNULL-20260731/merged-closeout.md",
+        "commit": "be17ad4f29bfbe3c44d4944d4b1e355d51bd21df",
+        "merge_target_ref": "origin/dev",
+        "merge_target_sha": "3e9529ca477e99a4fd24f1d13d4c2da5a48f8397",
+        "owner": "Antigravity",
+        "reviewer": "Human/Ops",
+        "canonical_reviewer": "Human/Ops",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T12:30:13Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-07-31T12:31:31Z",
+      "status": "done",
+      "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T12:50:37Z",
+      "from": "Antigravity",
+      "message": "Reviewed commit fd67904e2c1adb7256d4d9d9dc618105346be424 on PR #4397. Changes in watch_events.py properly normalize legacy null seen_event_keys timestamps from event key regex or string conversion before sorting/trimming. Unit tests in test_watch_events.py pass, local python distribution provisioned cleanly, and PR #4397 Branch CI checks are green.",
+      "resolved_at": "2026-07-31T12:50:51Z",
+      "status": "done",
+      "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T12:51:22Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-SEEN-EVENT-KEYS-NONNULL-20260731 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-31T12:56:20Z",
+      "status": "done",
+      "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:56:20Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verification passed on reviewed head fd67904e2c1adb7256d4d9d9dc618105346be424: python3 .orchestrator/test_watch_events.py (9/9), py_compile, and git diff --check. PR #4397 remains OPEN/BLOCKED solely because exact head is missing required Human/Ops context 'Pantheon root merge freeze 2026-07-27'; preserve review_approved until that separate gate is supplied, then run governed exact-head integration and done.",
+      "resolved_at": "2026-07-31T13:04:45Z",
+      "status": "done",
+      "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T14:18:36Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-07-31T14:19:01Z",
+      "status": "done",
+      "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T18:45:42Z",
+      "from": "Antigravity",
+      "message": "PR #4397 head fd67904e2c1adb7256d4d9d9dc618105346be424 merged as cf6a8fed7baeb102330bf32af3f59cc347d1e92a into dev and running live in runtime 98760e3d1e6be1318ee769848195d8a5a14f0230. Tests in .orchestrator/test_watch_events.py verified clean. Handoff to Human/Ops for review approval.",
+      "status": "done",
+      "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+      "to": "Human/Ops",
+      "resolved_at": "2026-07-31T19:04:47Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-31T13:04:45Z",
+      "message": "PR #4397 exact reviewed head fd67904e2c1adb7256d4d9d9dc618105346be424 is MERGEABLE and all Branch CI plus Pantheon canonical review gate checks pass, but dev branch protection still lacks required context 'Pantheon root merge freeze 2026-07-27'. Waiting for Human/Ops to bind that one-head gate; then Codex2 can rerun auto_integrator and governed done.",
+      "owner": "Codex2",
+      "resolved_at": "2026-07-31T14:14:49Z",
+      "status": "resolved",
+      "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

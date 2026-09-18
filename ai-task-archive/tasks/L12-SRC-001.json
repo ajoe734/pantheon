@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "task_id": "L12-SRC-001",
+  "archived_at": "2026-07-26T12:45:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Persona source requirement creates or updates connector and schedule without manual calls",
+      "Scheduled reconciliation remains supervised while provider pulls remain bounded and allowlisted",
+      "Duplicate ticks and two workers create no duplicate schedule or SourceRecord",
+      "Missed ticks recover after restart and connector failures remain isolated",
+      "SourceHealth reports policy denial credentials provider failure and success truthfully"
+    ],
+    "actual_state_sources": [
+      "connector registry",
+      "source schedules",
+      "SourceRecord and SourceHealth"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [
+        "L12-DIST-001"
+      ],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-SRC-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/source_ingestion",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-SRC-001"
+    },
+    "artifacts": [
+      "services/source_ingestion",
+      "docs/deployment/evidence/twelve-loop-gap/L12-SRC-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "d60815b28011bd0353af600620ed79b4cbca339db63003e6086e968df2a84ca6",
+    "current_maturity": "api-only",
+    "depends_on": [
+      "L12-FLEET-001"
+    ],
+    "desired_state_sources": [
+      "Persona.required_data_sources",
+      "connector and egress policy"
+    ],
+    "dispatch_rules": [
+      "External egress remains deny-by-default",
+      "Do not turn one failed connector into global failure",
+      "Persist intent before side effects"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-SRC-001",
+    "fleet_lane": "source",
+    "id": "L12-SRC-001",
+    "last_update": "2026-07-26T12:45:29Z",
+    "loop_ids": [
+      "source_ingestion"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Finalized merged source reconciliation delivery: PR #4175 merged at 2723ddf19adc52fba95160b6bf08ac87ae764408 with required checks green; fresh focused controller/reconciler/scheduler/multiprocess suite passed 125 tests; evidence JSON and checksum verified; approved repo-relative review manifest bound.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No uncontrolled continuous external crawl"
+    ],
+    "owner": "Codex2",
+    "phase": "Twelve Loop Remediation / Source",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "duplicate and two-worker tests",
+      "missed-tick restart test",
+      "provider failure matrix",
+      "bounded real-provider dev proof"
+    ],
+    "requires_human_ops_signoff": false,
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "讓 Persona required_data_sources 自動形成 connector/schedule desired state；排程常駐但外部 pull 仍受 allowlist、rate limit 與 egress policy 限制。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SRC-001.md",
+    "title": "Implement safe supervised source due-state reconciliation",
+    "wave": 1,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-SRC-001/evidence.json",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T12:45:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-src-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-SRC-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-87b17c1107dd",
+        "source_sha": "87b17c1107ddaf93dcb138f05efcc25fbe1e95e0",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-src-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-87b17c1107dd"
+      },
+      "commit": "b156b2ec6996bb4c8bb8f99821039785339edbb0",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/L12-SRC-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3998d9d341546209d3c854b6ce716dba2456086c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T09:57:50Z",
+      "from": "Codex2",
+      "message": "Implementation merged via PR #4144 at 77ce7f90927a84f659d86d2ddbf31d00a08a0b86. Review services/source_ingestion reconcile_only vs finite reconcile_and_pull boundary, two-worker idempotency, supervised concurrency cap, SourceHealth outcome matrix, and docs/deployment/evidence/twelve-loop-gap/L12-SRC-001. Verified full source-ingestion 729 passed/2 skipped, focused 124 passed, bounded exact-host TWSE live proof passed. Root deployment composition remains with allowed-overlap L12-DIST-001.",
+      "resolved_at": "2026-07-26T10:15:55Z",
+      "status": "done",
+      "task_id": "L12-SRC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T10:15:55Z",
+      "from": "Codex",
+      "message": "Review failed: the explicit two-worker idempotency acceptance is not met. The added tests use one TestClient/module and are serialized by module-level threading.RLock, so they prove same-process threads only. JsonlConnectorScheduleStore and JsonlIngestScheduleStore enqueue/claim operate on per-process in-memory maps without a cross-process transaction/lease. Independent two-instance reproduction against shared JSONL produced schedule_jsonl_records=2, two distinct frontiers, and both workers claimed one. Implement cross-process atomic reconcile plus enqueue/claim/dedupe (or a durable singleton lease that makes the second worker fail closed), add a genuine multi-process test proving one connector, schedule, run, and SourceRecord, update the evidence packet to remove the current false pass, then rerun focused and full source-ingestion suites.",
+      "resolved_at": "2026-07-26T10:15:55Z",
+      "status": "done",
+      "task_id": "L12-SRC-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T10:57:58Z",
+      "from": "Codex2",
+      "message": "Cross-process repair merged via PR #4156 at e79b6ee483c352463c8653b094f99377b383fda8. Required checks passed. Please independently re-run test_two_process_workers_create_one_connector_schedule_run_and_source_record and inspect raw JSONL cardinality: one connector config, schedule, frontier id, ingest run id, and SourceRecord. Local focused suite: 125 passed; full source-ingestion: 730 passed, 2 skipped. Evidence explicitly removes the prior thread-only false pass.",
+      "resolved_at": "2026-07-26T11:31:50Z",
+      "status": "done",
+      "task_id": "L12-SRC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T11:31:50Z",
+      "from": "Codex",
+      "message": "Reviewer verified PR #4144 merge 77ce7f90927a84f659d86d2ddbf31d00a08a0b86 and cross-process repair PR #4156 merge e79b6ee483c352463c8653b094f99377b383fda8 are ancestors of origin/dev with required checks green. Independently ran the genuine multiprocessing-spawn acceptance test: 1 passed; raw JSONL showed connector_config=1, connector_schedule=1, unique frontier_id=1 across 3 append-only state entries, unique ingest_run_id=1 across 3 state entries, and source_record=1. Focused controller/reconciler/scheduler suite passed 125 tests; startup missed-tick restart test passed. Inspected reload-under-flock reconcile, enqueue, claim, and mutation boundaries plus bounded TWSE allowlist proof and truthful failure/restart coverage. Approval is limited to source-ingestion scope; owner must refresh pending publication fields during closeout.",
+      "status": "done",
+      "task_id": "L12-SRC-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-26T12:45:30Z"
+    }
+  ],
+  "blockers": []
+}

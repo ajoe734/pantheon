@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+  "archived_at": "2026-08-10T17:51:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the 2026-08-10 fail-closed blocker on clean candidate 0305c861f54c4082060120afdfbc012622e5ac0a where materialized rollback resolves to the same runtime root and the helper rejects Candidate runtime equals the rollback runtime before admission-lock, config, signal, or launch.",
+      "Implement only the narrow source-level rollback identity materialization needed to keep candidate and rollback roots distinct and immutable for same-SHA or split-root incumbent bootstrap; reject missing, ambiguous, or same-root rollback identities rather than guessing.",
+      "Preserve all existing fail-closed gates: immutable candidate identity, incumbent PID/cwd/argv binding, config CAS, admission-lock ordering, lease parity, authoritative projection equality, provider baseline, three fresh loops, bytecode self-rejection, and automatic rollback; do not weaken or broadly ignore any gate.",
+      "Add focused regression coverage for the same-SHA rollback collision, split-root incumbent provenance, and candidate-versus-rollback identity separation; run the complete promotion test suite, focused tests, and git diff --check.",
+      "Change only the declared scripts, focused tests, and task evidence. Do not run promotion, signal or restart services, edit live config/state/queues, sync or patch dev-root, modify provider/account routing, or manually edit canonical task state.",
+      "Deliver from a clean task/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810 branch through protected PR to dev, required checks, independent Codex2 exact-head review, merge, and governed done closeout; the parent live promotion remains a separate supervisor dispatch after this source merge."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "supervisor-runtime",
+          "acceptance",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+      "conversation_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+      "documents": [
+        {
+          "kind": "RUNTIME_PROMOTION_BLOCKER",
+          "path": "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.md",
+          "sourceRefs": [
+            "ai-activity-log.jsonl#ai-status-event-39644a96e5f4a098733df78bd009a371f8b9731ce571be2c64c4dfe901e6fd63",
+            "candidate:0305c861f54c4082060120afdfbc012622e5ac0a",
+            "merged-source:8b77e779efed6a3a8eea574969c4374a78e22c1e",
+            "blocker:Candidate runtime equals the rollback runtime"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-10T17:26:21.492204Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "396c988aee64eec5a13147ff982828a1283fefa7edc987465254af5e91c3c8aa",
+      "packet_id": "pkt-sup-runtime-v10-same-commit-rollback-nonalias-20260810T172621Z",
+      "source_turn_ids": [
+        "ai-status-event-39644a96e5f4a098733df78bd009a371f8b9731ce571be2c64c4dfe901e6fd63",
+        "merge:PR-4724:8b77e779efed6a3a8eea574969c4374a78e22c1e",
+        "promotion-blocker:same-commit-rollback"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the 2026-08-10 fail-closed blocker on clean candidate 0305c861f54c4082060120afdfbc012622e5ac0a where materialized rollback resolves to the same runtime root and the helper rejects Candidate runtime equals the rollback runtime before admission-lock, config, signal, or launch.",
+          "Implement only the narrow source-level rollback identity materialization needed to keep candidate and rollback roots distinct and immutable for same-SHA or split-root incumbent bootstrap; reject missing, ambiguous, or same-root rollback identities rather than guessing.",
+          "Preserve all existing fail-closed gates: immutable candidate identity, incumbent PID/cwd/argv binding, config CAS, admission-lock ordering, lease parity, authoritative projection equality, provider baseline, three fresh loops, bytecode self-rejection, and automatic rollback; do not weaken or broadly ignore any gate.",
+          "Add focused regression coverage for the same-SHA rollback collision, split-root incumbent provenance, and candidate-versus-rollback identity separation; run the complete promotion test suite, focused tests, and git diff --check.",
+          "Change only the declared scripts, focused tests, and task evidence. Do not run promotion, signal or restart services, edit live config/state/queues, sync or patch dev-root, modify provider/account routing, or manually edit canonical task state.",
+          "Deliver from a clean task/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810 branch through protected PR to dev, required checks, independent Codex2 exact-head review, merge, and governed done closeout; the parent live promotion remains a separate supervisor dispatch after this source merge."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810/"
+        ],
+        "depends_on": [],
+        "id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Rollback Identity Repair",
+        "reviewer": "Codex2",
+        "summary": "Source-only repair for the exact rollback materialization collision discovered by the governed alias-guard live-promotion preflight. Keep the live runtime untouched and make the candidate/rollback identity contract explicit and independently testable.",
+        "title": "Repair same-SHA rollback identity materialization for supervisor promotion"
+      },
+      "task_spec_hash": "9c9a2a11ab68df236a9dbcf8928b767cf499985f7ff0bbd506d100cafebd2ff4"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+      "head_sha": "51eb129f72bac765b981a8aa42774e302f5e1b83",
+      "mode": "required_commit_status",
+      "pr": 4726,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4726",
+      "recorded_at": "2026-08-10T17:48:09Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/51eb129f72bac765b981a8aa42774e302f5e1b83",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51968269374,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+    "last_update": "2026-08-10T17:51:02Z",
+    "next": "Owner finalized approved task after PR #4726 merged into dev at 37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d with all required CI checks passed and evidence bound.",
+    "owner": "Antigravity2",
+    "phase": "Supervisor Runtime / Source-only Rollback Identity Repair",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+      "head_sha": "51eb129f72bac765b981a8aa42774e302f5e1b83",
+      "pr": 4726
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "Source-only repair for the exact rollback materialization collision discovered by the governed alias-guard live-promotion preflight. Keep the live runtime untouched and make the candidate/rollback identity contract explicit and independently testable.",
+    "title": "Repair same-SHA rollback identity materialization for supervisor promotion",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-10T17:51:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-same-commit-rollback-nonalias-20260810",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "source_sha": "0305c861f54c4082060120afdfbc012622e5ac0a",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-same-commit-rollback-nonalias-20260810",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+          "worker_run_id": "antigravity2-20260810T174916Z-16d029bd",
+          "queue_event_id": "evt-20260810T174854Z-02ad0c43",
+          "pid": 2616839,
+          "pid_start_ticks": 22320428,
+          "process_generation": "worker-process-generation-sha256:3b62d3049bda84664016d55b4fdb4ee2a892cb8c11a8dc22118b4c40dbb9b7b9"
+        }
+      },
+      "commit": "51eb129f72bac765b981a8aa42774e302f5e1b83",
+      "commit_subject": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810: repair rollback",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "scripts/promote_supervisor_runtime.py same-SHA rollback materialization",
+        "Not changing": "supervisor core loop, candidate runtime validation gates",
+        "Composes with": "dev-root supervisor runtime promotion flow",
+        "LLM-Agent": "Antigravity2",
+        "Task-ID": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+        "Reviewer": "Codex2",
+        "Verified": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py (329 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-10T17:39:37Z",
+      "from": "Antigravity2",
+      "message": "PR #4726 opened at 51eb129f72bac765b981a8aa42774e302f5e1b83; ready for independent review",
+      "resolved_at": "2026-08-10T17:48:09Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T17:48:09Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review passed for PR #4726 at 51eb129f72bac765b981a8aa42774e302f5e1b83: removed cross-root same-SHA reuse so candidate/rollback aliasing fails closed before admission/config/signal/launch; focused rollback plus split-entrypoint tests 6 passed, full scripts/test_promote_supervisor_runtime.py 329 passed in 62.98s, git diff --check passed, and required CI product checks passed.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+      "to": "Antigravity2",
+      "resolved_at": "2026-08-10T17:51:03Z"
+    }
+  ],
+  "blockers": []
+}

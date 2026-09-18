@@ -1,0 +1,254 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-dispatch-closeout-chain-policy-corrected-v5-20260802T0959Z--0dea13a8292f4a6d.json",
+  "admitted_at": "2026-08-02T10:00:44Z",
+  "audit_conversation_href": "codex://root/l12-policy-corrected-dispatch-chain-v5-20260802",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-three-pass-gap-20260802",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V5-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "Codex and Codex2 share one ChatGPT account",
+        "Pantheon supervisor is the only routine implementation dispatcher"
+      ]
+    },
+    {
+      "kind": "INVALID_V4_TASK_EVIDENCE",
+      "path": "ai-status.json",
+      "sourceRefs": [
+        "four operator V4 tasks contain false different-accounts and mutual-review acceptance",
+        "all four remain nonterminal and are replaced before implementation"
+      ]
+    },
+    {
+      "kind": "THREE_PASS_GAP_AUDIT",
+      "path": "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md",
+      "sourceRefs": [
+        "PR #4494 merge 0a2bd446952936998996ba6ecc89b1cbacd55bce"
+      ]
+    },
+    {
+      "kind": "IMMUTABLE_28_TASK_CATALOG",
+      "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+      "sourceRefs": [
+        "sha256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+        "G1 remains unmaterialized until V5 canary and legal dispatcher bootstrap"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T09:59:00Z",
+  "intent": "replace_false_policy_v4_dispatch_closeout_chain_with_correct_v5",
+  "mode": "kernel_repair",
+  "packet_digest": "0dea13a8292f4a6d8fdd760af779bd66bd2a9bd7126688b7c6d15aa0468730a0",
+  "packet_id": "pkt-sup-dispatch-closeout-chain-policy-corrected-v5-20260802T0959Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "e788b57a197c393a3d55b96a7d245be0c42b1e605fcd2749cf713f3949bcdcb4",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-requires-supervisor-autoworker-dispatch",
+    "user-requires-complete-gap-execution",
+    "false-review-policy-propagated-into-v4-chain"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Supersede operator V4 because its acceptance contains the false Codex/Codex2 independent-review policy. Start from current origin/dev only after the corrected shared identity guard V2 is merged.",
+          "Codex and Codex2 remain separate configured execution quota groups but one current review identity; this task must consume the shared predicate and may not authorize mutual review.",
+          "Reproduce the signed-packet receipts that timed out in canonical assign while later direct canonical assign succeeded; record exact lock owner and elapsed phases with scratch-root instrumentation.",
+          "Never wait on governed ai-status subprocesses while holding runtime-admission, task-state, event-log, inbox, or replay locks required by that subprocess.",
+          "Make transient task-state timeouts retryable with bounded backoff, exact packet identity replay protection, and at-most-once canonical materialization.",
+          "Require durable processed receipt, admission record, exact task-spec hash, and canonical active-or-archive readback for every task ID.",
+          "Add concurrent real-event-log integration tests with a full supervisor cycle plus approve, assign, note, reopen, and prove governed assign under two seconds p95.",
+          "Cover timeout-before-task, timeout-after-one, crash-after-rename, stale claim, forged retry, concurrent drainers, mismatched spec, and restart recovery.",
+          "Preserve provider dispatch, worker leases, shared reviewer eligibility, signature checks, artifact guards, journal integrity, and zero partial materialization.",
+          "Run focused bridge suites, relevant full supervisor regression, 2000-event benchmark, py_compile, evidence JSON, trailer, scope, and diff checks.",
+          "Do not edit config, live runtime, canonical JSON by hand, provider/account/quota policy, unrelated services, product tasks, or the fixed L12 catalog.",
+          "Deliver clean PR to dev, exact-head Human/Ops review, merge, and canonical archive before rollout. Rollback is merge revert."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+          "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802/"
+        ],
+        "depends_on": [
+          "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802",
+          "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+        ],
+        "id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Dispatch Pipeline / Dev Bridge Lock Boundary / operator V5",
+        "reviewer": "Human/Ops",
+        "summary": "Correct the V4 acceptance conflict and remove the signed bridge canonical-assign lock boundary without weakening review identity.",
+        "title": "Remove canonical assign lock timeout from supervisor dev bridge with corrected identity policy"
+      },
+      "task_spec_hash": "fb20c5dde64377831d268dc32866f97ee13e25919b7da40aa3a5dc7555f1befc"
+    },
+    {
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Supersede operator V4 because its acceptance contains false reviewer policy; start only after bridge V5 is completed.",
+          "Codex and Codex2 remain one current review identity even though execution quota groups stay distinct; preserve the merged shared eligibility predicate.",
+          "Reproduce healthy workers killed with exit 143 immediately after their own review handoff or canonical review transition at 09:45 and 09:50 on 2026-08-02.",
+          "Governance-only assign, note, reopen, review, approval, or handoff cannot supersede a healthy active implementation lease.",
+          "Only explicit cancel, eligible preemption, exact legal reassignment, or terminal canonical truth may end the lease.",
+          "Keep execution responsibility, independent review provenance, and canonical lifecycle separately auditable.",
+          "Lease decisions bind exact task, run, PID starttime, queue event, process generation, and canonical event order.",
+          "Concurrent owner, reviewer, or status mutation fails closed without killing unrelated work; stale-worker recovery remains effective.",
+          "Run focused and full relevant supervisor and ai-status suites, py_compile, evidence JSON, trailer, scope, and diff checks.",
+          "Do not edit config, account or quota groups, reviewer policy, provider policy, live runtime, services, product tasks, or catalog.",
+          "Deliver clean PR to dev, exact-head Human/Ops review, merge, and canonical archive. Rollback is merge revert."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802/"
+        ],
+        "depends_on": [
+          "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802"
+        ],
+        "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Governance Handoff / Active Lease Guard / operator V5",
+        "reviewer": "Human/Ops",
+        "summary": "Prevent governance transitions from killing the healthy auto-worker that produced them while preserving independent review truth.",
+        "title": "Preserve active worker lease across governance handoff with corrected identity policy"
+      },
+      "task_spec_hash": "7a9bf66d66f494e2d370ef1665752de05629e8255fd3832e9e5aa8b780785223"
+    },
+    {
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Supersede operator V4 because its acceptance contains false reviewer policy; start only after handoff lease guard V5 is completed.",
+          "Preserve the corrected shared reviewer identity and distinct execution quota groups without changing either policy.",
+          "Reproduce observed 55 to 71 second steady ticks, 94 and 133 second ticks, and 33 to 73 second runtime-admission lock holds on 2026-08-02.",
+          "Schedule the next tick from monotonic fixed cadence instead of sleeping a full interval after cycle work; missed ticks coalesce without overlapping cycles.",
+          "Plan policy mutations outside exclusive runtime admission and apply bounded compare-and-swap batches.",
+          "Git, provider, network, and evidence probes remain outside canonical and runtime-admission locks.",
+          "Approve, assign, note, reopen, and bridge commands are not blocked by long policy scans or serial mutations.",
+          "Regression proves dispatch priority, dependencies, leases, retries, quota routing, reviewer eligibility, and failure streak behavior remain unchanged.",
+          "Emit p50, p95, max cycle duration, cadence lag, and lock-hold metrics; source canary target is near 30 seconds with no lock hold above 30 seconds.",
+          "Run focused scheduler and full relevant supervisor regressions, benchmark, py_compile, evidence JSON, trailer, scope, and diff checks.",
+          "Do not edit config, account or quota groups, reviewer or provider policy, live services, product tasks, or catalog.",
+          "Deliver clean PR to dev, exact-head Human/Ops review, merge, and canonical archive. Rollback is merge revert."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802/"
+        ],
+        "depends_on": [
+          "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802"
+        ],
+        "id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Scheduler / Fixed Cadence Batch Mutations / operator V5",
+        "reviewer": "Human/Ops",
+        "summary": "Replace full-interval-after-work sleeping and long serial mutations with fixed cadence and bounded CAS batches.",
+        "title": "Run supervisor on fixed cadence with bounded mutation batches and corrected identity policy"
+      },
+      "task_spec_hash": "e81d26b4ae4ad5d078b704831e4a331b5c3b233e11afe9e33a6ecfcd8035df68"
+    },
+    {
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V5-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Supersede operator V4 because its acceptance contains false reviewer policy and omits the corrective identity and guarded-dispatcher dependencies.",
+          "Bind every accepted dependency to exact merged dev commit, green checks, independently reviewed exact head, and canonical completed archive.",
+          "Promote only through the reviewed transactional runtime promotion path with gate-before-switch and automatic rollback; never patch live source or config.",
+          "Codex and Codex2 remain distinct execution quota groups but one current review identity. Prove no fallback, approval, closeout, or merge gate treats them as independent reviewers.",
+          "Prove task-scoped live auth or quota unavailability triggers bounded legal owner/reviewer pair fallback; with no independent legal reviewer, fail closed with zero canonical mutation.",
+          "Prove captured fixture quota lines cannot pause unrelated Codex lanes and a healthy post-cooldown Antigravity live probe clears the quota pause automatically without manual state or config edits.",
+          "Prove stale eligible missing-process streak recovery is bounded while live auth and quota failure remains fail closed.",
+          "Prove governance review and handoff do not kill healthy active worker leases.",
+          "Observe at least thirty scheduler intervals near configured 30-second cadence and record p50, p95, max lag, every lock hold, worker/queue/provider deltas, and no overlapping cycles.",
+          "Require no runtime-admission or canonical lock hold above 30 seconds and authoritative projection, queue lease, process identity, provider readiness, reviewer eligibility, and config hash invariants throughout.",
+          "Rollback automatically on any identity, cadence, projection, lease, provider, config, or queue invariant failure and prove restored PID, root, commit, tree, config hash, and three fresh loops.",
+          "Do not materialize the fixed 28-task G1 frontier in this canary; successful canary only authorizes the separately guarded Antigravity dispatcher bootstrap and admission step.",
+          "Do not enable real writes, trading capital, product controllers, account policy changes, config edits, or manual canonical state edits.",
+          "Commit exact live evidence in a clean PR to dev with Human/Ops exact-head review, merge, and canonical archive."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V5-20260802/"
+        ],
+        "depends_on": [
+          "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+          "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+          "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+          "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802",
+          "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+          "SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-V2-20260802",
+          "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802",
+          "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802",
+          "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802",
+          "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802"
+        ],
+        "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V5-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Live Canary / Quota Routing Cadence Identity / operator V5",
+        "reviewer": "Human/Ops",
+        "summary": "Promote the fully corrected supervisor transactionally and prove quota recovery, legal review identity, leases, and cadence before G1 admission.",
+        "title": "Run transactional live quota-routing cadence and review-identity canary"
+      },
+      "task_spec_hash": "c5e45fead22718f748bb367af79cc381579de14c5261b5c27a81a1e8eca93f9c"
+    }
+  ]
+}

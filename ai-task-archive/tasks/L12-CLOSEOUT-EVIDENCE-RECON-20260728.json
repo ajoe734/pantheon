@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+  "archived_at": "2026-07-28T17:55:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Create task-scoped closeout evidence PR without restarting implementation; L12-DIST evidence validates repository/root/full delivery commit; L12-FLEET-WORKER-OUTCOME evidence no longer claims in_progress and binds PR #4301 head/merge; after merge run reconcile_merged_done or record exact guard output."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CLOSEOUT-EVIDENCE-RECON-20260728"
+    ],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Codex",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "head_sha": "cf3ba1b5c8449a0893c27febd2ecc9d017c4d306",
+      "mode": "required_commit_status",
+      "pr": 4306,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4306",
+      "recorded_at": "2026-07-28T17:50:24Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51236782405,
+      "status_state": "success"
+    },
+    "id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+    "last_update": "2026-07-28T17:55:04Z",
+    "next": "Owner closeout complete: PR #4306 exact head cf3ba1b5c8449a0893c27febd2ecc9d017c4d306 merged to dev as f8a35e5b79fa8c8353fd1e8cf72e7834f3284338; focused merged-done pytest passed 3 tests (149 deselected), py_compile, diff checks, and evidence/delivery/merge ancestry passed. Governed reconcile_merged_done as Codex2 failed closed with 'Only Human/Ops can reconcile an already-merged task to done' (exit 1); both parent reconciliations remain Human/Ops-only.",
+    "owner": "Codex2",
+    "phase": "Twelve Loop Remediation / Wave 0 Closeout Evidence",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "head_sha": "cf3ba1b5c8449a0893c27febd2ecc9d017c4d306",
+      "pr": 4306
+    },
+    "review_file": ".orchestrator/task-briefs/l12_closeout_evidence_recon_20260728.md",
+    "review_notes_zh": [
+      "PR #4306 exact head cf3ba1b5c8449a0893c27febd2ecc9d017c4d306 維持四檔 evidence-only scope；新 commit 僅納入先前核准的 task closeout brief，未改兩個已合併實作。",
+      "兩份 parent brief 以 validate_merged_done_evidence 獨立通過，canonical owner/reviewer、ajoe734/pantheon、e91382b508b42456d75747fdf3cef92c7850d2ad 與 25f238f94282f2cd8541ff488b003b5e983fd864 full commits 全部正確。",
+      "PR #4286/#4193/#4301/#4279 exact head/merge 與八個 origin/dev ancestry 通過；focused pytest 3 passed、149 deselected，py_compile、diff checks 與 PR #4306 八個 Branch CI jobs 全綠。"
+    ],
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "修復已 merged 但仍無法 reconcile_done 的 L12 closeout evidence；不得重新做已合併實作。",
+    "title": "Repair reconcile-safe closeout evidence for merged nonterminal L12 rows",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-28T17:55:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-closeout-evidence-recon-20260728",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "4a1801df863ea6477b87c2e957320529e84d3cee",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-closeout-evidence-recon-20260728",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "cf3ba1b5c8449a0893c27febd2ecc9d017c4d306",
+      "commit_subject": "L12-CLOSEOUT-EVIDENCE-RECON-20260728: record approval closeout",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped review-approved closeout brief",
+        "Not changing": "repaired parent evidence, merged implementations, or canonical state",
+        "Composes with": "PR #4306 refreshed exact-head review and post-merge actor guard",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+        "Reviewer": "Codex",
+        "Verified": "governed row, PR exact-head checks, and git diff check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f8a35e5b79fa8c8353fd1e8cf72e7834f3284338",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-28T16:24:03Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-CLOSEOUT-EVIDENCE-RECON-20260728 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-07-28T16:28:27Z",
+      "status": "done",
+      "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T16:26:05Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-CLOSEOUT-EVIDENCE-RECON-20260728 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-07-28T16:28:31Z",
+      "status": "done",
+      "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T16:51:16Z",
+      "from": "Codex2",
+      "message": "PR #4306 is ready for exact-head review at b0741fd68de75d011d7b03018fde038ae5725962. Review the repaired immutable briefs for L12-DIST-001 and L12-FLEET-WORKER-OUTCOME-001 plus reconciliation.md; parent delivery/merge ancestry, PR #4286/#4301 identities, both validate_merged_done_evidence probes, focused 3-test pytest, py_compile, and diff checks passed. No merged implementation changed.",
+      "resolved_at": "2026-07-28T16:58:23Z",
+      "status": "done",
+      "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T16:58:23Z",
+      "from": "Codex",
+      "message": "Independent exact-head review approved PR #4306 at b0741fd68de75d011d7b03018fde038ae5725962: diff is limited to four task/evidence files; both repaired briefs pass validate_merged_done_evidence with repository/root/full delivery commit bindings; governed parent rows are review_approved; PR #4286/#4301 exact heads and merge commits match GitHub; all eight cited implementation/closeout heads and merges are ancestors of origin/dev; focused pytest 3 passed (149 deselected), py_compile and both diff checks passed, and all 9 visible PR checks are green. Owner closeout must merge the PR and record the Codex2-only Human/Ops actor guard required by acceptance.",
+      "resolved_at": "2026-07-28T17:00:07Z",
+      "status": "done",
+      "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T17:00:07Z",
+      "from": "Codex",
+      "message": "Reopen: PR #4306 head moved to c385cfc0acd5c005a4b16f828e02ab14800d206b after dev update; prior approval at b0741fd68de75d011d7b03018fde038ae5725962 is stale. Re-run exact-head owner/reviewer flow.",
+      "resolved_at": "2026-07-28T17:00:07Z",
+      "status": "done",
+      "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T17:28:52Z",
+      "from": "Codex2",
+      "message": "PR #4306 is ready for independent exact-head review at c385cfc0acd5c005a4b16f828e02ab14800d206b. Verify the reconcile-safe L12-DIST-001 and L12-FLEET-WORKER-OUTCOME-001 briefs plus task-scoped reconciliation evidence; keep both merged implementations unchanged. If accepted, bind .orchestrator/task-briefs/l12_closeout_evidence_recon_20260728.md as review_file and approve the exact head for merge.",
+      "resolved_at": "2026-07-28T17:35:54Z",
+      "status": "done",
+      "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T17:35:54Z",
+      "from": "Codex",
+      "message": "Independent exact-head review approved PR #4306 at c385cfc0acd5c005a4b16f828e02ab14800d206b: evidence-only four-file diff; both repaired parent briefs pass reconcile validator with canonical owner/reviewer and full merged delivery commits; PR identities and origin/dev ancestry match; focused pytest 3 passed, py_compile/diff check and eight Branch CI jobs passed. Owner must perform the post-merge reconcile/actor-guard closeout.",
+      "resolved_at": "2026-07-28T17:41:18Z",
+      "status": "done",
+      "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T17:41:18Z",
+      "from": "Codex",
+      "message": "Reopen: PR #4306 branch updated to bd06081bc3b5080f7c860fcb34bfcaa927ca3885 after root-required base update; prior approval at c385cfc0acd5c005a4b16f828e02ab14800d206b is stale. Re-run owner/reviewer exact-head flow.",
+      "resolved_at": "2026-07-28T17:41:18Z",
+      "status": "done",
+      "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T17:43:21Z",
+      "from": "Codex2",
+      "message": "PR #4306 strict-dev refresh ready for exact-head re-review at cf3ba1b5c8449a0893c27febd2ecc9d017c4d306. Scope remains the same four task/evidence files; the only new task commit records the prior review-approved closeout brief. Focused reconcile tests: 3 passed, 149 deselected; py_compile, diff checks, origin/dev currency, and parent delivery ancestry passed. Auto-merge remains off.",
+      "resolved_at": "2026-07-28T17:50:24Z",
+      "status": "done",
+      "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T17:50:24Z",
+      "from": "Codex",
+      "message": "Independent exact-head review approved PR #4306 at cf3ba1b5c8449a0893c27febd2ecc9d017c4d306: four-file evidence-only scope; both parent briefs pass reconcile validation with canonical identities and full merged delivery commits; PR identities and all eight origin/dev ancestry checks match; focused pytest 3 passed (149 deselected), py_compile/diff checks and eight Branch CI jobs passed. Owner may proceed with merge and post-merge actor-guard closeout.",
+      "status": "done",
+      "task_id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
+      "to": "Codex2",
+      "resolved_at": "2026-07-28T17:55:05Z"
+    }
+  ],
+  "blockers": []
+}

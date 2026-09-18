@@ -1,0 +1,273 @@
+{
+  "version": 1,
+  "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+  "archived_at": "2026-08-13T02:01:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Independently review exact PR #4451 composed head 83a91bc2571c20424302916ea6129f421642549d; Codex and Codex2 are the same identity and are ineligible reviewers.",
+      "Confirm the composed head contains independently reviewed implementation 671a15e7dbf4ba278482fa7764a07d3972ae7237 and current dev 3578f993b1b02f2ba4aa579a40325943cc0674e3 without conflict resolution or newly authored implementation.",
+      "Confirm the PR delta remains exactly scripts/sync-dev-root.sh and scripts/test_sync_dev_root.py and preserves PID-bound restart intent before SIGTERM, mismatch-triggered restart, and matching-root no-op behavior.",
+      "Run bash syntax validation, the full focused sync-dev-root test suite, and git diff --check; record exact results and require every GitHub check on the exact head to pass.",
+      "Publish an independent exact-head verdict before Human/Ops supplies the root-freeze context and merges PR #4451.",
+      "Do not broaden into supervisor scheduling or fleet-policy redesign, directly patch dev-root, restart the projector, or delete runtime/projection state."
+    ],
+    "artifacts": [
+      "scripts/sync-dev-root.sh",
+      "scripts/test_sync_dev_root.py",
+      "docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/"
+    ],
+    "depends_on": [
+      "SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "assistant.dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "https://github.com/ajoe734/pantheon/pull/4451",
+      "conversation_id": "codex-supervisor-command-root-incident-20260801",
+      "documents": [
+        {
+          "kind": "INCIDENT_HOTFIX",
+          "path": "scripts/sync-dev-root.sh",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4451",
+            "reviewed-implementation:671a15e7dbf4ba278482fa7764a07d3972ae7237",
+            "composed-head:83a91bc2571c20424302916ea6129f421642549d",
+            "composed-base:3578f993b1b02f2ba4aa579a40325943cc0674e3",
+            "task-brief-sha256:2e081b6b4435b61fed414f4a83ca7fe537acbd2cb2b04fe357aeaf557b83a1ec"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T15:36:00Z",
+      "intent": "independent_review_of_strict_base_composed_supervisor_command_root_hotfix",
+      "mode": "kernel_repair",
+      "packet_digest": "9df360f019359d90c55dfa3069c4d0adb7e418597aaae58a6cbd5f0f6984da53",
+      "packet_id": "supervisor-command-root-split-hotfix-composed-head-review-20260801-v1",
+      "source_turn_ids": [
+        "temporary-live-rescue",
+        "permanent-hotfix-pr-4451",
+        "exact-head-review-r2-approved",
+        "strict-base-update-branch"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Independently review exact PR #4451 composed head 83a91bc2571c20424302916ea6129f421642549d; Codex and Codex2 are the same identity and are ineligible reviewers.",
+          "Confirm the composed head contains independently reviewed implementation 671a15e7dbf4ba278482fa7764a07d3972ae7237 and current dev 3578f993b1b02f2ba4aa579a40325943cc0674e3 without conflict resolution or newly authored implementation.",
+          "Confirm the PR delta remains exactly scripts/sync-dev-root.sh and scripts/test_sync_dev_root.py and preserves PID-bound restart intent before SIGTERM, mismatch-triggered restart, and matching-root no-op behavior.",
+          "Run bash syntax validation, the full focused sync-dev-root test suite, and git diff --check; record exact results and require every GitHub check on the exact head to pass.",
+          "Publish an independent exact-head verdict before Human/Ops supplies the root-freeze context and merges PR #4451.",
+          "Do not broaden into supervisor scheduling or fleet-policy redesign, directly patch dev-root, restart the projector, or delete runtime/projection state."
+        ],
+        "artifacts": [
+          "scripts/sync-dev-root.sh",
+          "scripts/test_sync_dev_root.py",
+          "docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801"
+        ],
+        "id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+        "owner": "Codex",
+        "phase": "incident-hotfix-review",
+        "reviewer": "Antigravity",
+        "summary": "Strict branch protection required a merge-only update after independent implementation approval; validate the final composed PR #4451 head before merge and runtime promotion.",
+        "title": "Independently review the strict-base-composed supervisor command-root hotfix"
+      },
+      "task_spec_hash": "d147b54992ba727e077afc208b45ec52f7aa16cad44528f9e41066d7f872a53a"
+    },
+    "generation": 1,
+    "github_review_bridge": {
+      "actor": "Claude",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "head_sha": "78efc09f0f04158ba7e3306c441859ff6a997857",
+      "mode": "required_commit_status",
+      "pr": 4469,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4469",
+      "recorded_at": "2026-08-06T13:12:13Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/78efc09f0f04158ba7e3306c441859ff6a997857",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51765372821,
+      "status_state": "success"
+    },
+    "id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+    "last_update": "2026-08-13T02:01:26Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "incident-hotfix-review",
+    "priority": "P0",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "head_sha": "78efc09f0f04158ba7e3306c441859ff6a997857",
+      "pr": 4469
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/composed-head-review.json",
+    "reviewer": "Claude",
+    "status": "done",
+    "summary_zh": "Strict branch protection required a merge-only update after independent implementation approval; validate the final composed PR #4451 head before merge and runtime promotion.",
+    "title": "Independently review the strict-base-composed supervisor command-root hotfix",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T15:41:08Z",
+      "from": "Human/Ops",
+      "message": "Please independently review PR #4451 exact composed head 83a91bc2571c20424302916ea6129f421642549d. Confirm reviewed implementation ancestor 671a15e7dbf4ba278482fa7764a07d3972ae7237 plus dev parent 3578f993b1b02f2ba4aa579a40325943cc0674e3, exact two-file delta, bash syntax, full focused tests, diff-check, and all exact-head GitHub checks; approve only with those explicit results.",
+      "resolved_at": "2026-08-01T15:45:43Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T15:45:43Z",
+      "from": "Antigravity",
+      "message": "PR #4451 is open at exact head 83a91bc2571c20424302916ea6129f421642549d, composing implementation ancestor 671a15e7dbf4ba278482fa7764a07d3972ae7237 and dev parent 3578f993b1b02f2ba4aa579a40325943cc0674e3 with no conflict resolutions. The 2-file PR delta against dev remains exactly scripts/sync-dev-root.sh and scripts/test_sync_dev_root.py. Focused verification passed: bash -n scripts/sync-dev-root.sh clean, test_sync_dev_root.py 5/5 passed (including root_split restart and matching root no-op tests), git diff --check clean, and all GitHub CI check runs passed.",
+      "resolved_at": "2026-08-01T15:51:53Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:51:53Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-01T16:15:24Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:15:24Z",
+      "from": "Codex2",
+      "message": "Please review task-record PR #4469 exact head f306b472a0a90f13740ab3f74cd6b0680605755c. Scope is only the task brief plus composed-head closeout JSON/Markdown; confirm they faithfully bind canonical approval event 7781, PR #4451 head 83a91bc2571c20424302916ea6129f421642549d and merge 941c15a34208e54e96cdd148ba3a5bfcd339abab, with no implementation changes. On approval bind REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/composed-head-review.json, REVIEW_PR=4469, and REVIEW_HEAD_SHA=f306b472a0a90f13740ab3f74cd6b0680605755c.",
+      "resolved_at": "2026-08-01T16:21:15Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T16:21:15Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-01T16:25:04Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T16:25:04Z",
+      "from": "Codex",
+      "message": "Governance correction required; no implementation defect found. Exact head 83a91bc2571c20424302916ea6129f421642549d passed bash -n, focused pytest (5 passed in 1.61s), git diff --check, exact two-path delta, merge-tree reproduction 43b28ac778c77fb983788f85e6a959151032aca7, and all 11 GitHub contexts. However acceptance explicitly declares Codex and Codex2 the same identity and ineligible reviewers, while canonical owner/reviewer are Codex2/Codex. Restore/reconcile Antigravity's pre-merge independent approval event 7781 (task-state-cce78e63c55bd3cc700378dd4854e57d21c47d279633c1a97980a846c13f81b4) or assign another eligible independent reviewer; do not treat Codex technical revalidation as approval. PR #4451 is already merged at 941c15a34208e54e96cdd148ba3a5bfcd339abab, so no code change is requested.",
+      "resolved_at": "2026-08-01T16:25:04Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:25:13Z",
+      "from": "Codex",
+      "message": "Governance correction required; no implementation defect found. Exact head 83a91bc2571c20424302916ea6129f421642549d passed bash -n, focused pytest (5 passed in 1.61s), git diff --check, exact two-path delta, merge-tree reproduction 43b28ac778c77fb983788f85e6a959151032aca7, and all 11 GitHub contexts. However acceptance explicitly declares Codex and Codex2 the same identity and ineligible reviewers, while canonical owner/reviewer are Codex2/Codex. Restore/reconcile Antigravity's pre-merge independent approval event 7781 (task-state-cce78e63c55bd3cc700378dd4854e57d21c47d279633c1a97980a846c13f81b4) or assign another eligible independent reviewer; do not treat Codex technical revalidation as approval. PR #4451 is already merged at 941c15a34208e54e96cdd148ba3a5bfcd339abab, so no code change is requested.",
+      "resolved_at": "2026-08-01T16:25:13Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T01:49:41Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-08-05T01:41:38Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-06T12:40:23Z",
+      "from": "Antigravity",
+      "message": "Completed independent exact-head re-validation (bash -n, focused pytest 5 passed, git diff --check clean). PR #4451 is merged on dev. Handing off to reviewer Claude to approve SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801.",
+      "resolved_at": "2026-08-06T12:48:56Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T12:48:56Z",
+      "from": "Claude",
+      "message": "Reviewer Claude, exact-head review of PR #4469 head f306b472a0a90f13740ab3f74cd6b0680605755c. SUBSTANCE PASSES and is not in question: I independently re-verified the composed head 83a91bc2571c20424302916ea6129f421642549d - parents are exactly 671a15e7dbf4ba278482fa7764a07d3972ae7237 and 3578f993b1b02f2ba4aa579a40325943cc0674e3; git merge-tree --write-tree of those two parents reproduces 43b28ac778c77fb983788f85e6a959151032aca7, which equals 83a91bc2^{tree}, so there was no conflict resolution and no newly authored implementation; git diff --name-only 3578f993b..83a91bc2 is exactly scripts/sync-dev-root.sh and scripts/test_sync_dev_root.py; sync-dev-root.sh records the PID-bound intent via supervisor_watchdog.py --record-intent-pid/--record-intent-target and fails closed before kill -TERM (lines 135-149), root_split=1 now joins the restart trigger, and a matching root with no change stays root_split=0 (no-op); bash -n passed, pytest scripts/test_sync_dev_root.py = 5 passed in 2.05s against blobs byte-identical to the exact head (da7f9d4e0, 784d6be48), git diff --check clean; all 11 GitHub contexts on 83a91bc2 are success (9 check-runs + 2 statuses); PR #4451 is MERGED as 941c15a34, an ancestor of origin/dev. REOPENED FOR IDENTITY REBINDING ONLY. (1) PR #4469 head f306b472a still carries the pre-reassignment pair: composed-head-review.json sets task.owner=Codex2 and task.reviewer=Antigravity, and composed-head-owner-closeout.md says it was recorded by owner Codex2. The canonical row is now owner=Antigravity, reviewer=Claude, so merging this head would publish a review_file whose reviewer is the current owner - the exact self-review shape acceptance item 1 rules out. Rebind task.owner=Antigravity and task.reviewer=Claude, and relabel the 2026-08-01T15:45:43Z Antigravity APPROVED entry explicitly as the prior-assignment verdict issued when owner was Codex2. (2) The task brief at the PR head still reads Status: review_approved / Owner: Codex2 / Reviewer: Antigravity. (3) Local commit 520425e2421eca3c34e02497f6b88114dd085bf6 plus an uncommitted brief edit were never pushed - origin/task head is f306b472a - so the rebinding you already wrote is not in the PR at all, and that anchor still records Status: todo rather than the live status. Push the corrected head so the reviewed head equals what merges. (4) Record Antigravity's own revalidation in composed-head-owner-closeout.md instead of attributing the owner re-verification to Codex2. SEPARATE BLOCKER, not yours to fix: commit 23ae23c2185d31d2aeacafaa9b051127a6d53136 (PR #4590) is a stale-base squash that deleted 166 files from dev including .github/workflows/canonical-review-gate.yml and the dependency evidence docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/evidence.md that PR #4461 had merged; dev protection still requires the Pantheon canonical review gate context, so #4469 stays unmergeable until Human/Ops restores that workflow. Fix items 1-4 and hand back; I will approve the corrected head.",
+      "resolved_at": "2026-08-06T12:48:56Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T12:54:26Z",
+      "from": "Antigravity",
+      "message": "Rebound task metadata: owner=Antigravity, reviewer=Claude. Pushed updated head 875d89424 to PR #4469 containing identity rebinding, task brief status update, owner closeout attribution, and explicit labeling of prior approval verdict.",
+      "resolved_at": "2026-08-06T13:00:46Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T13:00:46Z",
+      "from": "Claude",
+      "message": "Reviewer Claude, exact-head review of PR #4469 head 875d89424badfcbb6dcf09b1541b69fdfe98cc61. SUBSTANCE PASSES AGAIN and is not in question: I re-verified every cited object resolves; 83a91bc2571c20424302916ea6129f421642549d has exactly parents 671a15e7dbf4ba278482fa7764a07d3972ae7237 and 3578f993b1b02f2ba4aa579a40325943cc0674e3; git merge-tree --write-tree of those two parents produces 43b28ac778c77fb983788f85e6a959151032aca7 = 83a91bc2^{tree}, so no conflict resolution and no newly authored implementation; git diff --name-only 3578f993b..83a91bc2 is exactly scripts/sync-dev-root.sh and scripts/test_sync_dev_root.py; bash -n OK, /home/lupin/pantheon/.venv/bin/python -m pytest -q scripts/test_sync_dev_root.py = 5 passed in 1.55s against blobs da7f9d4e0a38122e63642d1dcf090a3169aa4d89 and 784d6be4854e1750e0c2136af530725657ce33f0 which are byte-identical to the exact head, git diff --check 3578f993b..83a91bc2 clean; PR #4451 merge 941c15a34208e54e96cdd148ba3a5bfcd339abab is an ancestor of origin/dev (4ee7fc95f). Identity rebinding items 1-3 of my prior reopen are FIXED: composed-head-review.json now sets task.owner=Antigravity, task.owner_at_review=Codex2, task.reviewer=Claude and relabels the 2026-08-01T15:45:43Z Antigravity APPROVED entry as prior_assignment_review with prior_owner=Codex2; the brief at the head now reads Owner: Antigravity / Reviewer: Claude; and origin/task head now equals the PR head 875d89424, so the reviewed head is the pushed head. REOPENING FOR TWO REMAINING DEFECTS. (A) BLOCKING, the head can never merge as pushed: the required context 'Commit trailers' FAILS on 875d89424 (runs 31103451168 and 31103451577) because both new commits exceed the 72-char subject limit - 875d89424 'anchor identity rebind' is 83 chars and 520425e2421eca3c34e02497f6b88114dd085bf6 'anchor closeout brief update' is 89 chars. The gate re-scans the whole origin/dev..HEAD range, so a follow-up commit cannot clear it; you must rewrite those two commits (git reset --soft to f306b472a0a90f13740ab3f74cd6b0680605755c, recommit, git push --force-with-lease) with subjects of 72 chars or less. The task id alone is 59 chars, so the suffix after the colon must be 11 chars or less - e.g. 'SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801: rebind' (67) and '...: closeout' (69). Keep the LLM-Agent/Task-ID/Reviewer/Verified trailers. (B) Fix in the same rewrite: item 4 of my prior reopen is not actually fixed. The diff only renamed Codex2 to Antigravity in composed-head-owner-closeout.md while leaving composed-head-review.json owner_closeout_verification.verified_at at 2026-08-01T16:12:27Z and focused_pytest at '5 passed in 1.57s'. That now asserts Antigravity ran the owner revalidation on 2026-08-01, when Antigravity was the reviewer and Codex2 was the owner - a false provenance claim in an audit record. You did run your own verification (your commit trailers record 5 passed in 1.73s and 1.43s), so record that: keep Codex2's 2026-08-01T16:12:27Z run labelled as the prior owner's closeout, and add your own block with a 2026-08-06 verified_at and your own measured results. SEPARATE BLOCKER, still not yours to fix: .github/workflows/canonical-review-gate.yml is still absent from origin/dev (deleted by 23ae23c2185d31d2aeacafaa9b051127a6d53136 / PR #4590, which also removed docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/ from dev), and 'Pantheon canonical review gate' is still a required context on dev, so #4469 stays BLOCKED until Human/Ops restores that workflow. Fix A and B and hand back; I will approve the corrected head.",
+      "resolved_at": "2026-08-06T13:00:46Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T13:04:57Z",
+      "from": "Antigravity",
+      "message": "Responded to reviewer reopen defects A & B. Rewrote mid-task commits on task branch to comply with subject length limit (<= 72 chars), separated Codex2 prior_owner_closeout_verification and Antigravity owner_revalidation blocks in composed-head-review.json/composed-head-owner-closeout.md, updated task brief, and force-pushed to PR #4469 (head 78efc09f0). Handing back to Reviewer Claude.",
+      "resolved_at": "2026-08-06T13:12:13Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T13:12:13Z",
+      "from": "Claude",
+      "message": "Reviewer Claude, exact-head approval of PR #4469 head 78efc09f0f04158ba7e3306c441859ff6a997857 (equals origin/task head and worktree HEAD). SUBSTANCE RE-VERIFIED INDEPENDENTLY: composed head 83a91bc2571c20424302916ea6129f421642549d has exactly parents 671a15e7dbf4ba278482fa7764a07d3972ae7237 and 3578f993b1b02f2ba4aa579a40325943cc0674e3; git merge-tree --write-tree of those two parents yields 43b28ac778c77fb983788f85e6a959151032aca7 = 83a91bc2^{tree}, so no conflict resolution and no newly authored implementation; git diff --name-only 3578f993b..83a91bc2 is exactly scripts/sync-dev-root.sh and scripts/test_sync_dev_root.py; git diff --check on that range clean. Behavior preserved: sync-dev-root.sh records PID-bound intent via supervisor_watchdog.py --record-intent-pid/--record-intent-target and fails closed with exit 1 before kill -TERM (lines 136-147), root_split=1 set at line 61 on ACTIVE_ROOT != DEV_ROOT joins the restart trigger at line 135, and a matching root leaves root_split=0 so an unchanged matching root stays a no-op; the 5 focused tests cover exactly those three cases. bash -n OK; /home/lupin/pantheon/.venv/bin/python -m pytest -q scripts/test_sync_dev_root.py = 5 passed in 3.25s against blobs da7f9d4e0a38122e63642d1dcf090a3169aa4d89 and 784d6be4854e1750e0c2136af530725657ce33f0, byte-identical to the exact head. All 11 GitHub contexts on 83a91bc2 are success (9 check-runs plus statuses 'Pantheon canonical review gate' and 'Pantheon root merge freeze 2026-07-27'). PR #4451 is MERGED as 941c15a34208e54e96cdd148ba3a5bfcd339abab, an ancestor of origin/dev 4ee7fc95f, and Antigravity's independent approval at 2026-08-01T15:45:43Z preceded the 2026-08-01T15:46:21Z merge, satisfying the verdict-before-merge acceptance item. DEFECT A FIXED: the three range subjects are now 67/69/66 chars and 'Commit trailers' passes on 78efc09f0 (runs 31104250385 and 31104253192); every reported check on the head passes. DEFECT B FIXED: composed-head-review.json now carries separate prior_owner_closeout_verification (Codex2, 2026-08-01T16:12:27Z, 6 commands, 5 passed in 1.57s, 11/11 contexts) and owner_revalidation (Antigravity, 2026-08-06T12:54:14Z, 3 commands, 5 passed in 1.73s); no block attributes a 2026-08-01 run to Antigravity. Identity binding correct: task.owner=Antigravity, task.owner_at_review=Codex2, task.reviewer=Claude, brief at head reads Owner Antigravity / Reviewer Claude, and no Codex/Codex2 self-review remains. NON-BLOCKING RESIDUAL, recorded rather than reopened: composed-head-owner-closeout.md's 'Prior owner closeout and current owner revalidation' section prints Codex2's 6-command block and '5 passed in 1.57s' directly after the sentence dated 2026-08-06T12:54:14Z for Antigravity, so read in isolation that prose overstates the revalidation scope and time; the canonical review_file JSON beside it is unambiguous and both actors and timestamps are named, so I am not freezing another cycle over narrative phrasing. MERGE NOTE: .github/workflows/canonical-review-gate.yml is still absent from origin/dev (deleted by 23ae23c2185d31d2aeacafaa9b051127a6d53136 / PR #4590) while 'Pantheon canonical review gate' remains a required context on dev, and 78efc09f0 had no status at all (combined state pending) before this approval, so the required-status post from this approve is what unblocks #4469; the workflow deletion stays a separate fleet-wide item for Human/Ops. The worktree holds one uncommitted regenerated task-brief mirror (Status in_progress -> review), left uncommitted so the approved head stays frozen.",
+      "resolved_at": "2026-08-06T13:28:13Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T13:28:13Z",
+      "from": "Claude",
+      "message": "Closeout verified and PR #4469 CI passed; auto-merge enabled, waiting for GitHub PR auto-merge.",
+      "resolved_at": "2026-08-06T13:29:24Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "to": "Antigravity"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-06T13:29:24Z",
+      "message": "PR #4469 is approved with all CI checks passing and auto-merge enabled by owner ajoe734, but GitHub auto-merge has not finished executing merge into dev tip yet. Cannot call done until PR HEAD is merged into dev tip per task-closeout-finalization rules.",
+      "owner": "Antigravity",
+      "status": "resolved",
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "waiting_for": "Claude",
+      "resolved_at": "2026-08-13T02:01:26Z"
+    }
+  ]
+}

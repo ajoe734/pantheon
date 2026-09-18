@@ -1,0 +1,128 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-l12-dispatcher-authoritative-snapshot-scaling-20260802T0755Z--872752d1d4da32f5.json",
+  "admitted_at": "2026-08-02T07:55:42Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#dispatcher-authoritative-snapshot-scaling-20260802",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "IMMUTABLE_28_TASK_PRODUCT_CATALOG",
+      "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+      "sourceRefs": [
+        "28 tasks",
+        "G1=25",
+        "G2=2",
+        "G3=1",
+        "catalog delta must remain zero"
+      ]
+    },
+    {
+      "kind": "CURRENT_PROOF_GUARDED_DISPATCHER",
+      "path": "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "sourceRefs": [
+        "load_authoritative_task_state currently calls load_events then project_latest_state",
+        "30s and 60s dry-runs time out before catalog admission"
+      ]
+    },
+    {
+      "kind": "AUTHORITATIVE_SNAPSHOT_IMPLEMENTATION",
+      "path": ".orchestrator/rewrite/task_state_store.py",
+      "sourceRefs": [
+        "load_snapshot",
+        "checkpoint prefix SHA-256",
+        "actual prefix-head binding",
+        "tail-only validation"
+      ]
+    },
+    {
+      "kind": "PRIOR_TASK_STATE_SCALING_BASELINE",
+      "path": "ai-task-archive/tasks/SUP-TASK-STATE-LOCK-LATENCY-001.json",
+      "sourceRefs": [
+        "PR #4266",
+        "prior 2050-event 134MB benchmark",
+        "does not wire current-proof dispatcher to load_snapshot"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T07:54:35Z",
+  "intent": "repair_current_proof_dispatcher_authoritative_snapshot_scaling_before_28_task_materialization",
+  "mode": "kernel_repair",
+  "packet_digest": "872752d1d4da32f53cc414a65c318072745e722107e1dcc3b18d8426cf490972",
+  "packet_id": "pkt-sup-l12-dispatcher-authoritative-snapshot-scaling-20260802T0755Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "f6edd6b0236be00f4144c1e2c80fbc4818e02ca80df2a603f73903f9d521e062",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-three-pass-gap-audit-fleet-dispatch",
+    "dispatcher-dry-run-timeout-2gb-authoritative-event-log-20260802"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev in a clean governed task worktree; supervisor and auto-worker are the only implementation path.",
+          "Reproduce and evidence the 2026-08-02 failure: authoritative task-state event log about 2.03GB with at least 8413 events; current guarded dispatcher dry-run times out at 30s and 60s before catalog admission while load_authoritative_task_state calls load_events and validates full historical states.",
+          "Make every guarded-dispatcher authoritative state read and post-materialization readback consume one consistent validated snapshot through the existing task-state store contract instead of materializing and revalidating the full event list.",
+          "Preserve SHA-256 journal-prefix verification, actual prefix-head binding, sequence/hash-chain/state_sha validation, shared/exclusive lock ordering, checkpoint-tail validation, immutable-catalog validation, deduplication, and all-or-nothing authoritative transaction semantics.",
+          "Fail closed for absent, stale, truncated, forged, internally valid but wrong-head, torn, unreadable, or mismatched checkpoints. Never accept checkpoint fields or mtime alone as authority; fallback full replay is allowed only when integrity requires it and must be explicit in evidence.",
+          "The product catalog remains byte-for-byte unchanged with exactly 28 unique tasks, G1=25, G2=2, G3=1, the existing BFF revalidation task and release-gate edge retained, and unique sink L12-VERIFY-LEARN-REAL-VERIFIER-001.",
+          "Add deterministic regressions for warm checkpoint plus empty tail, warm checkpoint plus appended tail, concurrent append, forced full replay equivalence, corrupt/truncated/forged checkpoint, hash or sequence mismatch, and pre-admission failure without partial task materialization.",
+          "Add a scale test or benchmark representing at least the current 2GB/8400-event workload without checking a giant fixture into git; capture elapsed phases, peak memory, checkpoint use, number of revalidated tail events, and prove the guarded dry-run completes under 30 seconds and reaches a catalog admission verdict.",
+          "Run focused dispatcher and task-state-store suites, the guarded-remediation catalog validator, py_compile, JSON evidence validation, git diff --check, and relevant supervisor regression.",
+          "No config edit, canonical event-log/checkpoint mutation, log truncation/rotation, manual state edit, provider policy change, worker kill, product-controller implementation, catalog task materialization, live service mutation, or deployment in this source task.",
+          "Keep unrelated runtime-generated files out. Evidence must identify current source SHA, exact benchmark input identity, before/after timings, integrity negatives, residual risks, and remain review_pending until independent exact-head approval.",
+          "Deliver a clean PR to dev with required Task-ID-prefixed commit and truthful trailers; wait for checks and Human/Ops exact-head review before merge.",
+          "Rollout is source merge followed by separately governed command-runtime promotion and live canary. Rollback is PR revert; no config migration or destructive journal operation."
+        ],
+        "artifacts": [
+          "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+          "scripts/test_dispatch_twelve_loop_gap_2026_07_26.py",
+          ".orchestrator/rewrite/task_state_store.py",
+          ".orchestrator/rewrite/test_task_state_store.py",
+          "docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802/"
+        ],
+        "depends_on": [
+          "SUP-TASK-STATE-LOCK-LATENCY-001",
+          "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+          "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2"
+        ],
+        "id": "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+        "owner": "Antigravity",
+        "phase": "Twelve Loop Current Gap / Dispatcher Prerequisite",
+        "reviewer": "Human/Ops",
+        "summary": "Remove the proven pre-admission full-journal replay from the guarded current-proof dispatcher while preserving authoritative hash-chain, checkpoint integrity, all-or-nothing catalog admission, and the exact 28-task product DAG.",
+        "title": "Scale guarded L12 dispatcher authoritative state reads"
+      },
+      "task_spec_hash": "9dccec7c1b3b07b3e0acc9f6440c3fa18885647467f0e7cef07791d8cb417654"
+    }
+  ]
+}

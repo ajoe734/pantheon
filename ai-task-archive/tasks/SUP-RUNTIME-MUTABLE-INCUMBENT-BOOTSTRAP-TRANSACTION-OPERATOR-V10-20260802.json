@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+  "archived_at": "2026-08-02T20:54:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce PR #4522 exact NO-GO where PID 3538768 runs from mutable dev-root and live config cannot bind immutable incumbent identity",
+      "Keep normal discover and promote fail closed unless the new explicit bootstrap transaction contract is fully satisfied",
+      "Capture exact mutable incumbent PID start ticks cwd argv config inode bytes SHA Git HEAD tree remote and governed source bytes then bind them to a freshly materialized immutable rollback runtime at the same accepted dev commit",
+      "Derive candidate and rollback watchdog commands from one captured live config without changing the external config before the transaction",
+      "Serialize promotion lock watchdog launch authority and runtime admission lock then record exact intentional restart before TERM and atomically fsync the candidate config only after the incumbent generation is confirmed stopped",
+      "On candidate failure atomically install the immutable rollback config and launch only the captured rollback generation; an unknown live child or config race must prohibit a competing launch",
+      "Add separate negative tests for PID reuse ambiguous processes symlink or path swaps stale or unaccepted Git identity tracked source drift config replacement watchdog races every config-write crash window candidate failure rollback failure and directory fsync failure",
+      "Preserve canonical task state active leases queue parity provider readiness explicit Human/Ops review and distinct Codex and Codex2 account and quota groups with no global mutual-review rule",
+      "Use a clean task worktree from current origin/dev and deliver only declared source tests and task evidence through commit push PR green checks exact-head Human/Ops review governed merge and canonical archive",
+      "Do not execute live promotion in this source task; after merge the blocked V9 canary must select a new candidate and perform the real transactional rollout plus rollback proof"
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/promote-supervisor-runtime.sh",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802",
+      "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802"
+    ],
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+      "head_sha": "978b44c30bea81cd964f6563f4b066384c2daae7",
+      "mode": "required_commit_status",
+      "pr": 4524,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4524",
+      "recorded_at": "2026-08-02T20:44:54Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51512759990,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+    "last_update": "2026-08-02T20:54:41Z",
+    "next": "Closeout complete: Human/Ops approved exact PR #4524 head 978b44c30bea81cd964f6563f4b066384c2daae7; merged to dev as 1d0355768e4e66984ec3f1d6daab06f66c6ef7ad with all required checks green. Owner revalidated 295 promotion/watchdog/sync tests plus 744 ai-status/supervisor tests and 189 subtests; compile, shell, CLI, JSON, and diff checks passed. Source-only: no live config/process mutation. Existing four task-scoped commits are durable; abbreviated subject is required because the 73-character task ID exceeds the 72-character subject limit, with the full Task-ID trailer preserved.",
+    "owner": "Codex2",
+    "phase": "Supervisor runtime promotion / atomic config bootstrap V10",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+      "head_sha": "978b44c30bea81cd964f6563f4b066384c2daae7",
+      "pr": 4524
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802/evidence.json",
+    "review_notes_zh": [
+      "Exact head 978b44c30bea81cd964f6563f4b066384c2daae7; 獨立驗證 295 passed; 744 passed + 189 subtests; commit trailers/runtime mirror/packaging/smoke 全綠; 未執行 live mutation; Codex/Codex2 account/quota/reviewer policy 未變更"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "把 live config entrypoint 改寫納入同一個 rollback-safe promotion transaction，安全地把目前 mutable dev-root incumbent bootstrap 到第一個 immutable command runtime。",
+    "title": "Make config switch and mutable-incumbent bootstrap one atomic promotion transaction",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T20:54:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-mutable-incumbent-bootstrap-transaction-operator-v10-20260802",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-mutable-incumbent-bootstrap-transaction-operator-v10-20260802",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "978b44c30bea81cd964f6563f4b066384c2daae7",
+      "commit_subject": "SUP-RUNTIME-V10: refresh rewritten anchor evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped source evidence commit identity.",
+        "Not changing": "promotion implementation, tests, live config or processes,",
+        "Composes with": "PR #4524 exact-head Human/Ops review.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+        "Reviewer": "Human/Ops",
+        "Verified": "rewritten trees identical; commit trailer range check passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1d0355768e4e66984ec3f1d6daab06f66c6ef7ad",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T20:31:54Z",
+      "from": "Codex2",
+      "message": "PR #4524 is ready for exact-head review at 377323c615861119717fcb6f0dd404bdd2a1845f. Source-only atomic mutable bootstrap; evidence manifest and failure matrix committed. Validation: promotion/watchdog/sync 295 passed; ai-status/supervisor 744 passed and 189 subtests. No live config, signal, launch, or promotion action. Please bind the committed evidence.json on approval.",
+      "resolved_at": "2026-08-02T20:32:51Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T20:32:51Z",
+      "from": "Human/Ops",
+      "message": "Exact-head review 377323c615861119717fcb6f0dd404bdd2a1845f is not approvable: both push and PR Commit trailers checks fail because subjects for 377323c6 (89 chars), 8a80c389 (101), and e4879e8e (93) exceed 72 chars. Rewrite all three subjects without changing tree content, force-push PR #4524, update evidence/source head if needed, rerun checks, and hand off the new exact SHA. No live action.",
+      "resolved_at": "2026-08-02T20:32:51Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T20:39:04Z",
+      "from": "Codex2",
+      "message": "PR #4524 exact head 978b44c30bea81cd964f6563f4b066384c2daae7 is ready for independent review. All rewritten commit subjects pass the 72-char trailer gate; the three original trees are byte-identical, task evidence source_anchor is refreshed, and required Commit trailers / Runtime mirror guard / Python packaging provision / Smoke acceptance checks all pass. Review file: docs/deployment/evidence/supervisor/SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802/evidence.json. No live promotion, signal, launch, or config mutation was performed.",
+      "resolved_at": "2026-08-02T20:40:42Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T20:40:42Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approved exact PR #4524 head 978b44c30bea81cd964f6563f4b066384c2daae7 after independent source/evidence review, 295 promotion/watchdog/sync tests, 744 ai-status/supervisor tests plus 189 subtests, and all required GitHub checks green. Source-only; no live action.",
+      "resolved_at": "2026-08-02T20:41:00Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T20:41:00Z",
+      "from": "Human/Ops",
+      "message": "Administrative exact-head rebinding only: first approval lacked explicit PR/head binding. Reapprove PR #4524 at 978b44c30bea81cd964f6563f4b066384c2daae7 with REVIEW_PR/REVIEW_HEAD_SHA; no source change or live action.",
+      "resolved_at": "2026-08-02T20:41:00Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T20:44:02Z",
+      "from": "Codex2",
+      "message": "Source remains unchanged and PR #4524 is green at exact head 978b44c30bea81cd964f6563f4b066384c2daae7. Please independently reapprove with REVIEW_PR=4524 and REVIEW_HEAD_SHA=978b44c30bea81cd964f6563f4b066384c2daae7; no live action is authorized by this source-only review.",
+      "resolved_at": "2026-08-02T20:44:54Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T20:44:54Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approved exact PR #4524 head 978b44c30bea81cd964f6563f4b066384c2daae7 after independent source/evidence review, 295 promotion/watchdog/sync tests, 744 ai-status/supervisor tests plus 189 subtests, and all required GitHub checks green. Source-only; no live action.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+      "to": "Codex2",
+      "resolved_at": "2026-08-02T20:54:42Z"
+    }
+  ],
+  "blockers": []
+}

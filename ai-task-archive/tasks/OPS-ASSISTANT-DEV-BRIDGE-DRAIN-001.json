@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+  "archived_at": "2026-07-27T15:11:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce supervisor auto-drain pydantic unavailable while a pending packet remains undrained or prove it was stale and cannot recur in installed runtime.",
+      "Reproduce bridge dispatch using status-root ai_status.py being washed out by authoritative projection because it does not append task-state events.",
+      "Dev bridge dispatch uses installed governed command runtime or equivalent canonical writer binding in authoritative mode.",
+      "Repo-local verified bridge assignment does not require an auto-worker lease, while untrusted worker mutations still require active leases.",
+      "Supervisor auto-drain of a fresh signed packet leaves the task in canonical ai-status after the next projection cycle and writes durable admission evidence.",
+      "If fixing requires scripts/ai_status.py or .orchestrator/supervisor.py, split or formally compose with L12-SIGNOFF-001/SUP-TASK-STATE-LOCK-LATENCY-001 instead of overlapping artifacts."
+    ],
+    "artifacts": [
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "scripts/drain_assistant_dev_task_packet_inbox.py",
+      "scripts/queue_assistant_dev_task_packet.py",
+      "scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "docs/deployment/evidence/supervisor/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001"
+    ],
+    "auto_created_by": "codex-root-canonical-command-runtime-20260727",
+    "depends_on": [],
+    "id": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+    "last_update": "2026-07-27T15:11:25Z",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: PR #4251 merged into dev at 436e88de8f4267208b1ceee2283759c6a3e31542 from task head 055db0ce20930a522851f4666364cc90dcd8bd1c; composed-head validation passed 70 focused, 157 assistant broad, and 147 status/runtime tests plus 45 subtests, with py_compile, JSON, diff, and all required PR checks green.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime / Dev Bridge Reliability",
+    "review_file": "docs/deployment/evidence/supervisor/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001/evidence.json",
+    "review_notes_zh": [
+      "Exact-head 7f6216c41 獨立檢查通過：installed governed command-root/journal binding、Human/Ops mutation identity、signed packet actor provenance、ambient lease marker removal與symlink fail-closed邊界一致。",
+      "獨立重跑 focused 70、assistant broad 157、status/runtime 147 + 45 subtests全數通過；receipt/admission hashes與active supervisor pydantic/runtime evidence一致；PR #4251 required checks全綠。",
+      "PR仍落後最新dev且尚未merge；owner closeout必須更新並確認merge evidence後才能done。"
+    ],
+    "reviewer": "Codex2",
+    "source_packet_ids": [
+      "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001"
+    ],
+    "status": "done",
+    "summary_zh": "修正 DevTaskPacket bridge 在 authoritative task-state 下使用 status-root script，導致 assignment 沒寫入 task-state event log 而被 projection 沖掉；保留 actor/lease與pydantic auto-drain可重現證據。",
+    "target_repo": "pantheon",
+    "title": "Repair supervisor DevTaskPacket drain and bridge command binding",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T15:11:25Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-assistant-dev-bridge-drain-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-eecb96fa3826",
+        "source_sha": "eecb96fa3826e8e3527a77da7f187a32b33c6c93",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-assistant-dev-bridge-drain-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-eecb96fa3826"
+      },
+      "commit": "055db0ce20930a522851f4666364cc90dcd8bd1c",
+      "commit_subject": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001: finalize composed verification",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "owner closeout verification in the task brief and supervisor bridge evidence.",
+        "Not changing": "reviewed bridge implementation, supervisor.py, ai_status.py, task-state projection, or live runtime configuration.",
+        "Composes with": "PR #4251 updated checks, merge into dev, and governed done delivery metadata.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+        "Reviewer": "Codex2",
+        "Verified": "70 focused; 157 assistant; 147 status/runtime plus 45 subtests; py_compile and diff check passed."
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "436e88de8f4267208b1ceee2283759c6a3e31542",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T14:53:23Z",
+      "from": "Codex",
+      "message": "PR #4251 is open at exact head 7f6216c41 with auto-merge gated by required checks. Please independently review installed command-root/journal binding, trusted Human/Ops bridge identity versus preserved packet actor, ambient lease marker removal, symlink fail-closed behavior, and evidence manifest docs/deployment/evidence/supervisor/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001/evidence.json. Validation: focused 70; broad 157; status/runtime 147 plus 45 subtests.",
+      "resolved_at": "2026-07-27T15:01:11Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T15:01:11Z",
+      "from": "Codex2",
+      "message": "Codex2 independent exact-head review approved PR #4251 at 7f6216c41b6f1ae1d166c8f269de1eedbfb280a4: governed installed command runtime and authoritative journal binding fail closed on invalid path/symlink; bridge mutation uses trusted Human/Ops with all ambient worker lease markers removed while signed packet actor remains in metadata/admission provenance; historical receipt/admission hashes and active pydantic 2.13.4 supervisor evidence match the committed manifest; independently reran 70 focused, 157 assistant broad, and 147 status/runtime tests plus 45 subtests; all visible required checks green. PR remains open/behind dev, so owner must update, merge, record merge evidence, and close out before done.",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-27T15:11:26Z"
+    }
+  ],
+  "blockers": []
+}

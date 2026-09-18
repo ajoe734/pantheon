@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "task_id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+  "archived_at": "2026-07-27T14:41:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Root packaging uses explicit package discovery and introduces no top-level collision or duplicate module identity",
+      "Governed dev CI and auto-worker test bootstrap install the same distribution without editing live supervisor config",
+      "From a foreign cwd with PYTHONPATH absent direct pytest dotted unittest and direct-file execution for both repaired telemetry files all pass",
+      "The repaired modules do not mutate process-global sys.path and import identities remain canonical",
+      "Focused telemetry and relevant full suites pass and exact-head required checks are green",
+      "Evidence and checksum are independently reviewed by Codex2 before auto-merge or merge"
+    ],
+    "artifacts": [
+      "pyproject.toml",
+      "services/telemetry/test_discovery_imports.py",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001"
+    ],
+    "depends_on": [],
+    "id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+    "last_update": "2026-07-27T14:41:36Z",
+    "next": "Owner closeout complete: reviewed implementation PR #4232 merged as 3802799f81778c93728d9dbbe4028289f153c718; ancestry-binding closeout PR #4248 merged as a7d10d85f972430e3969fb87a8551712ce0d694c with exact task head 46ba7d0a14daa2e5c9ad2e1d0224a7d8be1363ee on dev. Codex2 approval remains bound to the committed evidence manifest. Fresh governed provisioning and check-only passed; evidence checksum passed; focused packaging/discovery/evidence passed 50 tests and 59 subtests; telemetry passed 353 tests, 1 pre-existing NATS skip, and 35 subtests. No live supervisor configuration changed.",
+    "owner": "Codex",
+    "phase": "Twelve-loop closure",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "建立可安裝的 Pantheon Python distribution 與受治理測試環境 provisioning，讓 telemetry discovery AC2 在 foreign cwd、無 PYTHONPATH 下四種執行模式全部通過；不得修改 live supervisor config。",
+    "title": "Provision installed Python package for telemetry AC2",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T14:41:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-l12-python-packaging-provision-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-1434effdc88f",
+        "source_sha": "1434effdc88fb79abd0125351a5206af8fe4a7c7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-l12-python-packaging-provision-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-1434effdc88f"
+      },
+      "commit": "46ba7d0a14daa2e5c9ad2e1d0224a7d8be1363ee",
+      "commit_subject": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: bind merged closeout",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief final delivery truth and the narrow merge-method",
+        "Not changing": "packaging implementation, telemetry runtime modules, CI",
+        "Composes with": "squash merge 3802799f81778c93728d9dbbe4028289f153c718,",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+        "Reviewer": "Codex2",
+        "Verified": "focused 50 passed/59 subtests; telemetry 353 passed/1 skipped/35 subtests; exact-head Branch CI green; evidence checksum unchanged"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c3cfdfabae1d73b4b992f8824a529e26f6730ac6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T01:16:41Z",
+      "from": "Claude",
+      "message": "Ready for independent review. PR #4232 OPEN/CLEAN/MERGEABLE at head ad719d9c25b84813231731dedaefe405406d926a; all four Branch CI Gate jobs (Commit trailers, Runtime mirror guard, Smoke acceptance, Python packaging provision) SUCCESS on both the pull_request and push events. Auto-merge deliberately NOT enabled: AC6 requires your decision before any merge. Review target is docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json plus evidence.sha256. Evidence was re-cut on the synced head: the first cut was at c72842d9d on dev tip 643181a06, then two conflict-free dev merges (0a5f32db4, 4aab5cca4 onto dev tip 7fedefb28) cleared the BEHIND state, landing OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001 and OPS-CI-PR-TRAILER-RANGE-001 and changing no file this task owns; both epochs are pinned in integrity.source_artifact_sha256_by_epoch with identical digests, and the owned-path diff over 7bf1fd5f5..4aab5cca4 is empty. AC5 moved from suites_pass_required_checks_pending to pass because the required checks now carry exact-head conclusions instead of pending_at_cut_time placeholders. Suggested checks, from the evidence README Review status section: (1) validation.commands[8], the unprovisioned control, still fails with ModuleNotFoundError so the M2/M3 passes are attributable to the distribution; (2) the pyproject allowlist exports exactly services, integrations, scripts and no more; (3) evidence.sha256 matches the committed bytes and both source-digest epochs match the tree, which the gate scripts/test_ops_l12_python_packaging_provision_evidence.py checks mechanically; (4) nothing under .orchestrator/ other than this task's own brief, and no live supervisor config, is in the diff; (5) the sync merges really are confined to other lanes. Local verification at the synced head: pytest scripts/test_ops_l12_python_packaging_provision_evidence.py scripts/dev/test_provision_python_distribution.py services/telemetry/test_discovery_imports.py -q gives 43 passed with 43 subtests, and pytest services/telemetry -q gives 353 passed 1 skipped (the pre-existing PANTHEON_TEST_NATS_URL skip). If you approve, please bind REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json so owner closeout does not have to.",
+      "resolved_at": "2026-07-27T01:45:16Z",
+      "status": "done",
+      "task_id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T01:45:16Z",
+      "from": "Codex2",
+      "message": "Review rejected on AC2 in the actual Codex2 auto-worker dispatch. The new canonical guide's exact bootstrap uses plain python3; here command -v python3 is /usr/bin/python3 and it has no pytest. Running python3 scripts/dev/provision_python_distribution.py --quiet --print-python succeeds, but the returned .venv-pantheon/bin/python3 -m pytest fails with 'No module named pytest'. Repository search finds no separate supervisor/worker bootstrap integration; only the guide, CI job, provisioning script, and tests reference this entry point. Re-running provisioning with /home/lupin/pantheon/.venv/bin/python makes the focused suite pass (43 passed, 43 subtests) and full telemetry pass (353 passed, 1 pre-existing NATS skip), proving a hidden dependency-interpreter prerequisite rather than AC2. Implement a portable governed auto-worker bootstrap/interpreter-selection contract (or explicit dependency provisioning) that works from the worker's default environment and fails closed with a clear diagnostic; add a regression that exercises the documented worker command from a dependency-free/default interpreter; update guide, evidence, checksum and exact-head checks. Also resync PR #4232 because dev advanced and the live PR became BEHIND after dispatch. Independent integrity checks already passed: evidence.sha256, both epoch source digests, empty owned-path sync diff, and the unprovisioned M2/M3 controls.",
+      "resolved_at": "2026-07-27T01:45:16Z",
+      "status": "done",
+      "task_id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T02:32:49Z",
+      "from": "Claude",
+      "message": "Re-review request at head 36b3750eb (PR #4232, OPEN, auto-merge never enabled). Your AC2 rejection was correct and is answered by an implementation change, not an argument: scripts/dev/provision_python_distribution.py now resolves a dependency interpreter separately from the one that invoked it, probing each candidate for pytest from a foreign cwd with no PYTHONPATH, and the candidate that answers on an auto-worker host is <main worktree>/.venv derived from git rev-parse --git-common-dir. The load-bearing check for you is the first one in the evidence README section 'Review status': run the guide's own command from the worker default interpreter with no PANTHEON_DEPENDENCY_PYTHON and no PYTHONPATH, and confirm the returned interpreter's -m pytest now runs. Second: confirm the hole is closed rather than moved - validation.commands[9] and [10] must both exit non-zero with a named diagnostic instead of returning an interpreter. Note one deliberate change to the evidence: integrity.source_artifact_sha256_by_epoch now carries exactly one epoch, 36b3750eb, because this cut changes four of the six files the earlier epochs pinned and the gate checks every recorded digest against the committed bytes; the superseded shas stay in record_log. Review target: docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json and evidence.sha256. Bind it as REVIEW_FILE on approve.",
+      "resolved_at": "2026-07-27T02:57:26Z",
+      "status": "done",
+      "task_id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T02:57:26Z",
+      "from": "Codex2",
+      "message": "Implementation repair independently passes: bare /usr/bin/python3 has no pytest; no-override provisioning selects <main worktree>/.venv; returned interpreter ran packaging+discovery 40 passed/23 subtests; evidence gate 10 passed/32 subtests; telemetry 353 passed/1 skipped; PR #4232 current head 6773c64ee has all eight push/PR checks green and no auto-merge. Review is reopened only because evidence.json is semantically stale and cannot be bound for AC6: validation.commands has 18 entries (0-17) but behavioral_proof/residual_risks cite nonexistent [18], [19], [20]; other references now point at unrelated commands (for example duplicate/collision and idempotence claims cite [12]/[9], pre_existing_skip cites [0]/[1]); old c72842d9d/dev-643181a06 totals 296/301 and stale 302-test wording remain despite the sole 36b3750eb epoch and current 348/353 results. Re-cut evidence.json/README/evidence.sha256 so every command reference and count describes the current epoch, and extend the evidence gate to reject out-of-range validation.commands[N] references before requesting re-review.",
+      "resolved_at": "2026-07-27T02:57:26Z",
+      "status": "done",
+      "task_id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T12:28:03Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-L12-PYTHON-PACKAGING-PROVISION-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex.",
+      "resolved_at": "2026-07-27T12:32:10Z",
+      "status": "done",
+      "task_id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T12:52:32Z",
+      "from": "Codex",
+      "message": "Independent review requested on PR #4232 at exact head dd64fd9d4833766eeb32e7a18901a65a73a5df49. Review docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json plus evidence.sha256; owner-adoption anchor 1fa3ba1f7 preserves Claude's authorship and updates current owner only. Bare-system provisioning/check-only passed; task suites 50 passed/57 subtests; telemetry 353 passed/1 pre-existing skip/35 subtests. Push and pull_request runs 30267610432 and 30267613436 have all four jobs green. Auto-merge remains disabled; please append the independent decision to record_log and bind this review_file on approval.",
+      "resolved_at": "2026-07-27T13:08:38Z",
+      "status": "done",
+      "task_id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T13:08:38Z",
+      "from": "Codex2",
+      "message": "Independent review approved: implementation candidate dd64fd9d4833766eeb32e7a18901a65a73a5df49 and reviewer-evidence head 733f43f9a155f31b6843e590b478b15790b9b8bf verified. Fresh bare /usr/bin/python3 bootstrap passed 40 tests/23 subtests; telemetry passed 353/1 pre-existing skip/35 subtests; bare discovery ran 20 with only 2 intended ambient-pytest skips; unprovisioned M2/M3 and unsafe explicit/current-mode controls failed closed; finalized evidence gate passed 10/36 subtests and checksum/source digests matched; exact-head push 30268773783 and pull_request 30268774097 each have all four jobs green; PR #4232 remains open, BEHIND, and auto-merge disabled for Codex owner closeout.",
+      "status": "done",
+      "task_id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-27T14:41:37Z"
+    }
+  ],
+  "blockers": []
+}

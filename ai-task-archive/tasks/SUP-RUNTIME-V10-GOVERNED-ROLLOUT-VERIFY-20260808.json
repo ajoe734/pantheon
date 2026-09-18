@@ -1,0 +1,434 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "archived_at": "2026-08-13T02:01:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Use only scripts/sync-dev-root.sh and scripts/promote-supervisor-runtime.sh with the existing transactional rollback protocol",
+      "Do not use direct git checkout chmod manual TERM or direct live-config edits",
+      "Candidate must be immutable at merged dev source and retain no ignored __pycache__ or pyc after status-child exercise",
+      "Verify launched supervisor PID cwd runtime SHA and PYTHONDONTWRITEBYTECODE=1 plus -B argv",
+      "Require three fresh loops authoritative-shadow catchup queue-worker parity and provider baseline",
+      "Record exact candidate and rollback identities with a reviewer-ready evidence bundle",
+      "If legacy incumbent cannot satisfy identity or environment checks leave runtime unchanged record a fail-closed blocker and create a source-only follow-up through canonical dispatch",
+      "No product or fleet routing policy changes are in scope"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807"
+    ],
+    "generation": 2,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "head_sha": "80efbef03bedb1457bfc8e33ad3fd195102af75a",
+      "mode": "required_commit_status",
+      "pr": 4633,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4633",
+      "recorded_at": "2026-08-11T06:28:24Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/80efbef03bedb1457bfc8e33ad3fd195102af75a",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 52003161827,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+    "last_update": "2026-08-13T02:01:39Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Claude",
+    "phase": "Supervisor Runtime / Governed Rollout and Fleet Recovery",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "head_sha": "80efbef03bedb1457bfc8e33ad3fd195102af75a",
+      "pr": 4633
+    },
+    "review_notes_zh": [
+      "Current tag-producing bridge rerun on unchanged head after independent review: rollback snapshot reuse validates immutable identity and preserves fail-closed behavior for mismatches, symlinks, aliases, and races. diff check, 11 promotion tests, and 7 sync tests passed; PR branch CI passed."
+    ],
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Human/Ops 已授權後續由 supervisor 派工。本任務只可透過既有 transactional promotion 執行：從已合併 dev 產生 immutable candidate，驗證 PYTHONDONTWRITEBYTECODE=1、-B 與 status child 不產生 pycache。若 incumbent identity、環境或 config migration 無法綁定，必須 fail closed、保存證據並建立 source-only follow-up；不得手改 live config、直接終止 process 或手動 checkout。",
+    "title": "P0 governed rollout: safely reuse an already verified rollback snapshot on pre-CAS retry",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T13:39:57Z",
+      "from": "Codex",
+      "message": "Helper-claimed by idle Codex2 previous owner Codex becomes reviewer.",
+      "resolved_at": "2026-08-08T13:40:44Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T22:51:17Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-08-08T22:51:52Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T10:18:33Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-08-09T10:23:51Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T10:45:01Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Antigravity.",
+      "resolved_at": "2026-08-09T10:47:11Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T12:36:28Z",
+      "from": "Codex2",
+      "message": "Fail-closed f7933594 rollout evidence is committed at 50f14e39d728e445709a07163ea46d99eecd8da0 and PR #4633 now targets this exact head. Immutable candidate and post-status-child bytecode checks passed; transaction aborted before mutation on legacy brief canonicality mismatch. Signed source-only follow-up packet was receipt-admitted and canonically materialized for Claude2 / Antigravity; requesting independent review of evidence.json.",
+      "resolved_at": "2026-08-09T12:39:36Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T12:39:36Z",
+      "from": "Antigravity",
+      "message": "Independent review verified: 1) Rollout transaction safely aborted before live mutation (exit code 1) on legacy context canonicality mismatch with durable evidence 4b1dcfd46a5080b. 2) Candidate commit f7933594 identity passed immutable commit/tree invariants with zero pycache/pyc files. 3) Incumbent process PID 3816018 and live config 904830b6... remain intact and fail-closed. 4) Source-only follow-up task SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809 was admitted and materialized. Review approved.",
+      "resolved_at": "2026-08-09T12:44:40Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T17:36:15Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Claude.",
+      "resolved_at": "2026-08-09T17:37:42Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-10T13:20:41Z",
+      "from": "Codex",
+      "message": "Chair reassigned owner from Codex to Codex2: This blocked rollout verification is not a human gate, its handoff and fail-closed evidence are durable on PR #4633 head 6b3da868733563f12cbebf25ccb84307b7e68c28, and Codex2 is the offered auth-ready, unpaused target distinct from reviewer Antigravity. Resume only after successor PR #4716 is repaired, independently reviewed, and merged; preserve the transactional scripts and do not force-push or rewrite history. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-10T13:26:17Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T13:21:28Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-08-10T13:26:17Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-10T16:42:09Z",
+      "from": "Codex",
+      "message": "Chair reassigned owner from Codex to Claude: This blocked non-human-gate rescue has Claude as the supervisor-supplied target; Claude is auth-ready and healthy, and the rerun remains fail-closed until the active split-entrypoint repair is merged. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-10T16:43:31Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-10T16:42:42Z",
+      "from": "Claude",
+      "message": "Helper-claimed by idle Codex previous owner Claude becomes reviewer.",
+      "resolved_at": "2026-08-10T16:43:31Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T00:11:49Z",
+      "from": "Codex",
+      "message": "Chair reassigned owner from Codex to Codex2: The supervisor lists Codex2 as a healthy rescue target; the non-human-gate rollout failed closed before mutation with a clean candidate and unchanged PID/config, so Codex2 can safely rerun it after PR #4734 is reviewed and merged. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-11T00:14:22Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T01:27:26Z",
+      "from": "Codex2",
+      "message": "Chair reassigned owner from Codex2 to Codex: This non-human-gate blocked-owner rescue has Codex as a healthy listed fallback distinct from reviewer Claude; preserve the baseline lease-parity merge/done gate before redispatch. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-11T01:37:02Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T02:22:28Z",
+      "from": "Codex",
+      "message": "Chair reassigned owner from Codex to Codex2: The non-human-gate task has durable fail-closed evidence and names Codex2 as a healthy fallback; re-dispatch must preserve the wait for independently reviewed source-only PR #4740 before any rollout retry. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-11T02:23:34Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T06:24:23Z",
+      "from": "Human/Ops",
+      "message": "Fresh review for exact head 80efbef03bedb1457bfc8e33ad3fd195102af75a on PR #4633. Scope is rollback snapshot reuse only; targeted promotion tests 11 passed, sync tests 7 passed, and all branch CI checks passed.",
+      "resolved_at": "2026-08-11T06:25:36Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T06:25:36Z",
+      "from": "Codex2",
+      "message": "Approve fresh exact head 80efbef03bedb1457bfc8e33ad3fd195102af75a for PR #4633 after independent review and validation.",
+      "resolved_at": "2026-08-11T06:27:07Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-11T06:27:07Z",
+      "from": "Codex2",
+      "message": "Reopen only to re-record the same independently reviewed exact head through the current tag-producing canonical bridge; the old command runtime recorded status but could not materialize the required review-proof tag.",
+      "resolved_at": "2026-08-11T06:27:07Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-11T06:27:40Z",
+      "from": "Human/Ops",
+      "message": "Fresh approval through current tag-producing bridge for unchanged exact head 80efbef03bedb1457bfc8e33ad3fd195102af75a. Prior independent diff and test review remains applicable; no source change occurred.",
+      "resolved_at": "2026-08-11T06:28:24Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T06:28:24Z",
+      "from": "Codex2",
+      "message": "Approve unchanged exact head 80efbef03bedb1457bfc8e33ad3fd195102af75a through the current canonical bridge; publish immutable review proof and re-evaluate the required gate.",
+      "resolved_at": "2026-08-12T08:37:42Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-13T02:00:40Z",
+      "from": "Codex",
+      "message": "Recovery reassigned owner from Human/Ops after durable unknown_agent; planner will redispatch normally.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "to": "Claude",
+      "resolved_at": "2026-08-13T02:01:39Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-08T13:55:28Z",
+      "message": "Fail-closed: sync-dev-root promotion of 619acd04184e8d3fc3aef322d160e7c9106670ad aborted before config/PID mutation (external evidence sha256 1c252fb6a3691ac47a92e2a770782b503372b4825bb1f71031828efe8e92fe0e). Signed source-only packet sup-runtime-v10-candidate-git-identity-followup-20260808-1343 is stuck in supervisor bridge processing without receipt or canonical task materialization; no manual drain, retry, config edit, signal, checkout, or candidate deletion was performed.",
+      "owner": "Codex2",
+      "resolved_at": "2026-08-08T22:49:41Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-08T23:12:19Z",
+      "message": "Fail closed: source-only prerequisite SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808 remains in_progress and is not merged to dev. Existing governed transaction evidence and PR #4633 preserve the prior abort; do not retry live promotion until that repair is independently reviewed, merged, and a fresh governed rollout dispatch is issued.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-09T06:21:55Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T06:35:36Z",
+      "message": "Fail-closed retry at immutable candidate f5570754e6b9534893fc65744e82abe7f0ff0a74 aborted before baseline/config/signal/launch because mutable incumbent 5877b64425c8d6aede147d6cbbc6fbb9e228c259 retains four legacy generated task-brief changes. Live PID 3816018 and config SHA-256 904830b6 remained unchanged; candidate tree a910a73b stayed free of ignored bytecode after discover/status-child exercise. Follow-up SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809 is canonically todo, but signed bridge receipt failed admission on the already-governed OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809 renderer defect. Do not retry rollout or claim implementation underway until exact packet admission succeeds and the source-only legacy bootstrap repair is reviewed and merged.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-09T12:14:41Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T06:42:55Z",
+      "message": "Fail-closed rollout evidence is anchored through a4e921592. Immutable candidate f5570754 passed commit/tree/remote/Git identity and remained free of ignored bytecode after discover/status-child exercise, but transaction 2621af8274e99570 aborted before baseline/config/signal/launch because mutable incumbent 5877b644 retains four legacy generated task-brief changes; PID 3816018 and config SHA-256 904830b6 remained unchanged. Original legacy-bootstrap task SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809 is canonically todo but blocked by missing admission after partial authoritative assign. Source-only recovery task SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809 was successfully admitted with authoritative hash parity at event 13943. Wait for that bridge repair, then recover the exact original packet provenance, complete the legacy-bootstrap source repair, and separately authorize any later rollout retry.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-09T12:14:41Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Claude2"
+    },
+    {
+      "created_at": "2026-08-09T06:44:32Z",
+      "message": "Fail-closed rollout evidence is published at PR #4633 exact head a4e921592. Transaction 2621af8274e99570 stopped before baseline/config/signal/launch on four legacy generated task-brief changes; live PID/config remained unchanged and immutable f5570754 candidate stayed bytecode-clean after discovery. The exact original legacy-bootstrap packet remains canonically materialized but unadmitted. Bridge recovery task SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809 is admitted with authoritative hash parity, helper-claimed by Claude with Claude2 reviewer, and has a supervisor wake queued. Wait for that source repair and exact-provenance recovery, then the legacy-bootstrap repair, before any separately authorized rollout retry.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-09T12:14:41Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T06:46:05Z",
+      "message": "Fail-closed rollout evidence is published at PR #4633 exact head 1983dd55f. Transaction 2621af8274e99570 stopped before baseline/config/signal/launch on four legacy generated task-brief changes; live PID/config remained unchanged and immutable f5570754 candidate stayed bytecode-clean after discovery. Exact original legacy-bootstrap packet remains canonically materialized but unadmitted. Admitted bridge-recovery task SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809 was helper-claimed by Claude with Claude2 reviewer; isolated worker run claude1-1-20260809T064420Z-cc7311bc is active under supervisor authority. Wait for that source repair and exact-provenance recovery, then the legacy-bootstrap repair, before any separately authorized rollout retry.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-09T12:14:41Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T12:44:40Z",
+      "message": "Closeout blocked: PR #4633 is OPEN/BLOCKED because reviewed head 50f14e39 fails Commit trailers (subject is 73 chars; local check_commit_trailers exit 1). Repair requires an exceptional rewrite of an already-pushed, exact-head-reviewed commit followed by a fresh Antigravity independent review; no rewrite or done was performed.",
+      "owner": "Codex2",
+      "resolved_at": "2026-08-09T14:24:48Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T15:03:38Z",
+      "message": "Stale completed worker codex-20260809T124551Z-7505f21f remains retry_backoff and falsely marks this exact task actively running; release only that governed lease before reopening the merged-dev rollout.",
+      "owner": "Human/Ops",
+      "resolved_at": "2026-08-10T11:05:12Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-10T11:23:23Z",
+      "message": "Governed retry from accepted dev 963bb20cf3fe failed closed before baseline/config/signal/launch because SHA-named incumbent 5877b644 retains one historical tracked generated task brief. Evidence and receipt are pushed at 6b3da8687 / PR #4633. Source-only follow-up SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810 is admitted with authoritative SHA parity and owned by Antigravity2; wait for reviewed source merge and a separately governed rollout redispatch.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "resolved_at": "2026-08-10T13:20:41Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T11:24:54Z",
+      "message": "Governed retry from accepted dev 963bb20cf3fe failed closed before baseline/config/signal/launch because SHA-named incumbent 5877b644 retains one historical tracked generated task brief. Evidence/receipt are pushed at 6b3da8687 on PR #4633. Source-only follow-up SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810 is admitted with authoritative SHA parity, todo, and owned by Antigravity2; wait for reviewed source merge and separately governed redispatch. Publication also remains intentionally blocked: new head needs fresh independent review, and pre-existing commit 50f14e39 has a 73-character subject that fails Commit trailers; no history rewrite or force-push is authorized in this rollout task.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "resolved_at": "2026-08-10T13:20:41Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T13:29:20Z",
+      "message": "Governed retry is fail-closed pending source-only prerequisite SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810: canonical status is review; PR #4716 is open and required Commit trailers fails because commits ea7dfe311 and 9dd5d1f11 have 76-character subjects. Runtime remains unchanged; do not retry promotion until the prerequisite is independently approved and merged to dev.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-10T14:00:52Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T14:25:30Z",
+      "message": "Governed retry against accepted dev 6607b6a7 failed closed before baseline/config/signal/launch on historical incumbent __pycache__ residue. Runtime PID 2272245 and config SHA-256 8168c576 remain unchanged; candidate is Git-clean with zero bytecode. Source-only SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810 is durably admitted (receipt 757f317d, task spec df7432f6) for Antigravity2/Codex2. Wait for its reviewed protected merge and a separate supervisor rollout redispatch; do not mutate live runtime or replay the packet.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-10T15:26:33Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T15:46:11Z",
+      "message": "Governed retry from candidate 0305c861 aborted before baseline/config/signal/launch on split mutable-incumbent cwd/argv entrypoint identity. Evidence and admitted source-only task SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810 are anchored at 856afb9a2; wait for its independent review, protected merge, and a fresh supervisor dispatch before any retry.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "resolved_at": "2026-08-10T16:42:09Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T15:48:37Z",
+      "message": "Governed retry 0305c861 remains fail-closed before baseline/config/signal/launch on split mutable-incumbent cwd/argv entrypoint identity. Source-only task SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810 is admitted and in_progress with Antigravity2/Codex2. Evidence is pushed at 856afb9a2. PR #4633 Runtime mirror and Python packaging pass, but Commit trailers rejects pre-existing pushed commit 50f14e39d subject length 73; after source merge and fresh rollout evidence, final review must use a clean non-force replacement task branch/PR from current dev rather than amend or force-rewrite history.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "resolved_at": "2026-08-10T16:42:09Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T16:45:55Z",
+      "message": "Fail closed before live mutation: prerequisite split-entrypoint source task SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810 remains in review on PR #4724 at d69c3e66e543c8d290c792d07c65d843ea0cda95 and is not an ancestor of origin/dev. All source CI checks pass, but canonical independent review/merge is still required before a separately dispatched transactional retry. No sync, config edit, signal, candidate launch, or duplicate follow-up was performed.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-10T23:37:30Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T23:51:39Z",
+      "message": "Governed c2abb4fc retry failed closed before mutation on immutable-incumbent admission-lock generation mismatch. Candidate is clean and post-abort PID/config are unchanged. Source-only follow-up SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810 was admitted with authoritative parity; wait for its reviewed dev merge before a separately dispatched rollout retry.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "resolved_at": "2026-08-11T00:11:49Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "check_kind": "task_dependency",
+      "check_params": {
+        "required_status": "done",
+        "task_id": "SUP-RUNTIME-V10-BASELINE-WORKER-LEASE-PARITY-20260811"
+      },
+      "created_at": "2026-08-11T00:28:47Z",
+      "message": "e2cdc4d4 governed promotion failed closed before mutation on worker_lease_parity_and_no_duplicates; source-only task SUP-RUNTIME-V10-BASELINE-WORKER-LEASE-PARITY-20260811 is authoritatively admitted. Await its protected merge and a separately dispatched retry.",
+      "owner": "Codex2",
+      "resolution_ref": "chair_reassignment:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "resolved_at": "2026-08-11T01:27:26Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-11T02:02:07Z",
+      "message": "Governed candidate 2136f1e1 failed closed before baseline/config/signal/launch: the live 8.23 GB authoritative task-state journal changed during generic immutable-file capture. Transaction f031441af607e8bd is durable; incumbent/config and clean zero-bytecode candidate are preserved. Source-only task SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811 was processed/admitted with authoritative parity; evidence anchors 26f72dd6c and 879d93a49 are pushed. Wait for its independently reviewed dev merge before a separately dispatched rollout retry.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "resolved_at": "2026-08-11T02:22:28Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "check_kind": "task_dependency",
+      "check_params": {
+        "required_status": "done",
+        "task_id": "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811"
+      },
+      "created_at": "2026-08-11T02:26:10Z",
+      "message": "Fail closed: PR #4740 (SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811) is review_approved but not merged; its current PR head 3ae67071 differs from reviewer-bound head f348d506. Do not retry transactional promotion until the source-only task is finalized done and PR #4740 is merged into dev.",
+      "owner": "Codex2",
+      "resolved_at": "2026-08-11T03:28:37Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "waiting_for": "Antigravity2"
+    }
+  ]
+}

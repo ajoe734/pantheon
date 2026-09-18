@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "task_id": "L12-MIN-TELREC-20260808",
+  "archived_at": "2026-08-13T02:59:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Consume the Capital runtime event through the existing telemetry ingest.",
+      "Run reconciliation and persist one terminal DriftReport or IncidentCase.",
+      "Expose the terminal incident identifier for Evolution input.",
+      "Do not add unrelated incident service or infrastructure hardening."
+    ],
+    "artifacts": [
+      "services/telemetry/main.py",
+      "services/telemetry/test_l12_tel_001_durable_ingest.py",
+      "services/reconciliation-drift/consumer.py",
+      "services/reconciliation-drift/scheduler_worker.py",
+      "services/reconciliation-drift/incident_listener.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TELREC-20260808/"
+    ],
+    "depends_on": [
+      "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+      "L12-MIN-CAP-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-l12-minimum-functional-closure-20260808",
+      "documents": [
+        {
+          "kind": "MINIMUM_FUNCTIONAL_GAP_DESIGN",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4621",
+            "f56e2bc91",
+            "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+          "sourceRefs": [
+            "packet_a",
+            "pantheon-twelve-loop-minimum-functional-closure-2026-08-08"
+          ]
+        },
+        {
+          "kind": "LEGACY_DAG_RECONCILIATION",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+          "sourceRefs": [
+            "28-old-ids-zero-materialized-at-snapshot"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T09:23:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9",
+      "packet_id": "pkt-l12-minimum-functional-a-20260808-f56e2bc91",
+      "source_turn_ids": [
+        "user-explicit-l12-minimum-functional-closure-dispatch-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Consume the Capital runtime event through the existing telemetry ingest.",
+          "Run reconciliation and persist one terminal DriftReport or IncidentCase.",
+          "Expose the terminal incident identifier for Evolution input.",
+          "Do not add unrelated incident service or infrastructure hardening."
+        ],
+        "artifacts": [
+          "services/telemetry/main.py",
+          "services/telemetry/test_l12_tel_001_durable_ingest.py",
+          "services/reconciliation-drift/consumer.py",
+          "services/reconciliation-drift/scheduler_worker.py",
+          "services/reconciliation-drift/incident_listener.py",
+          "services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py",
+          "services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TELREC-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "L12-MIN-CAP-20260808"
+        ],
+        "id": "L12-MIN-TELREC-20260808",
+        "owner": "Antigravity",
+        "phase": "M1 loop closure",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Run one runtime event through telemetry and reconciliation to a terminal incident"
+      },
+      "task_spec_hash": "72d73bbdacfee280b15c66c2a25f1b1a08a4901b67b9db91612a2b7a32ebf529"
+    },
+    "generation": 1,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-MIN-TELREC-20260808",
+      "head_sha": "79d4f8ce9b9fc9f86b5eae5fd39284088b79a6a8",
+      "mode": "required_commit_status",
+      "pr": 4710,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4710",
+      "recorded_at": "2026-08-10T03:30:13Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/79d4f8ce9b9fc9f86b5eae5fd39284088b79a6a8",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51924211570,
+      "status_state": "success"
+    },
+    "id": "L12-MIN-TELREC-20260808",
+    "last_update": "2026-08-13T02:59:37Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset. Preserve merged/archive evidence; remaining product work is rematerialized as dependency-free, current-source V2 roots.",
+    "owner": "Codex2",
+    "phase": "M1 loop closure",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-MIN-TELREC-20260808",
+      "head_sha": "79d4f8ce9b9fc9f86b5eae5fd39284088b79a6a8",
+      "pr": 4710
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TELREC-20260808/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Run one runtime event through telemetry and reconciliation to a terminal incident",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T14:55:37Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-MIN-TELREC-20260808 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-08-09T10:16:41Z",
+      "status": "done",
+      "task_id": "L12-MIN-TELREC-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:16:41Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-MIN-TELREC-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:13:59Z",
+      "status": "done",
+      "task_id": "L12-MIN-TELREC-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:13:59Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-MIN-TELREC-20260808 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-10T03:10:57Z",
+      "status": "done",
+      "task_id": "L12-MIN-TELREC-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T03:23:52Z",
+      "from": "Codex2",
+      "message": "PR #4710 exact head 79d4f8ce9b9fc9f86b5eae5fd39284088b79a6a8 is ready for independent review. Evidence manifest is committed at docs/deployment/evidence/twelve-loop-gap/L12-MIN-TELREC-20260808/evidence.json. Verified 79 passed, 1 optional NATS skip; py_compile and diff check passed. Review paper-only Capital event, persisted DriftReport, and terminal_incident_id(s) handoff.",
+      "resolved_at": "2026-08-10T03:30:13Z",
+      "status": "done",
+      "task_id": "L12-MIN-TELREC-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-10T03:30:13Z",
+      "from": "Antigravity",
+      "message": "PR #4710 exact head 79d4f8ce9b9fc9f86b5eae5fd39284088b79a6a8 verified. Paper-only Capital event accepted by telemetry ingest, persisted DriftReport, terminal incident identifier exposed for Evolution input, evidence manifest committed at docs/deployment/evidence/twelve-loop-gap/L12-MIN-TELREC-20260808/evidence.json, 79 passed 1 skipped.",
+      "resolved_at": "2026-08-10T04:08:05Z",
+      "status": "done",
+      "task_id": "L12-MIN-TELREC-20260808",
+      "to": "Codex2"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-10T04:08:05Z",
+      "message": "Closeout blocked: PR #4710 merged by squash as f060e807a222daa078d32635febf439374895959, whose tree retains reviewed head 79d4f8ce9b9fc9f86b5eae5fd39284088b79a6a8, but the done gate requires the original task HEAD to be an ancestor of origin/dev and rejects squash history. Focused validation passed: 79 passed, 1 skipped; py_compile and diff checks passed. Need governed closeout-gate reconciliation for squash-merged reviewed PRs.",
+      "owner": "Codex2",
+      "status": "resolved",
+      "task_id": "L12-MIN-TELREC-20260808",
+      "waiting_for": "Human/Ops",
+      "resolved_at": "2026-08-13T02:59:37Z"
+    }
+  ]
+}

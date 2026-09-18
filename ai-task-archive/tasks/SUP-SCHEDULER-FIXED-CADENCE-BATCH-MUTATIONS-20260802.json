@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-20260802",
+  "archived_at": "2026-08-02T09:01:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Schedule the next tick from a monotonic cadence instead of sleeping a full poll interval after each cycle",
+      "Missed ticks coalesce without overlapping supervisor cycles",
+      "Plan policy mutations outside exclusive runtime admission and apply a bounded compare-and-swap batch",
+      "Git and provider network probes remain outside canonical locks",
+      "Reviewer approve assign and note commands are not blocked by long policy scans",
+      "Regression proves dispatch semantics priorities leases and retries are unchanged",
+      "Emit p50 p95 max loop and lock metrics",
+      "Canary target is near 30 second cadence with no lock hold above 30 seconds",
+      "No account-group reviewer-policy or product changes"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-20260802/"
+    ],
+    "coordination_packet": {
+      "expected_branch": "task/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-20260802",
+      "independent_reviewer_capability": "Human/Ops exact-head independent reviewer",
+      "merge_target": "dev",
+      "objective": "Reduce scheduler latency after correctness repairs by fixing cadence and bounding mutation lock work.",
+      "out_of_scope": "New make-work dispatch; account grouping; reviewer policy; priority redesign; weakening canonical locks; product code.",
+      "owner_capability": "supervisor runtime reliability implementer",
+      "remote": "ajoe734/pantheon",
+      "required_artifacts": [
+        "branch",
+        "commits",
+        "PR",
+        "checks",
+        "exact-head review",
+        "merge commit",
+        "live evidence when rollout task"
+      ],
+      "rollback": "Revert the merge commit and restore the prior poll loop release.",
+      "rollout": "Merge last among source changes and promote only through the final governed runtime canary.",
+      "schema_version": 1,
+      "source": "codex_chatbox_readonly_audit_20260802"
+    },
+    "depends_on": [
+      "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-20260802",
+      "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801"
+    ],
+    "id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-20260802",
+    "last_update": "2026-08-02T09:01:59Z",
+    "next": "Superseded to repair stale dependency IDs, sequence overlapping source scopes, and use task-scoped live provider availability. The replacement preserves configured Codex/Codex2 quota groups and adds no global mutual-review prohibition.",
+    "owner": "Codex",
+    "phase": "Supervisor reliability / scheduler throughput",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "把實際約 56.7 秒的 30 秒 fixed-delay loop 改為 monotonic fixed cadence，並縮短大量改派造成的 runtime lock convoy。",
+    "title": "Run fixed cadence with bounded batched policy mutations",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V2-20260802"
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,480 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+  "archived_at": "2026-08-11T02:04:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Do not count SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 review_approved row alone as done",
+      "Inspect PR #4385 exact current head f5e70e86e01bde005dae5fed94b151c9bc07f389 against canonical reviewed head 86dd9006b15bba67a83886e4a2d672e511aa8709",
+      "Classify all added files since the reviewed head, including workflow/publish-promote changes and additional evidence artifacts",
+      "Either produce an exact-head review approval bound to f5e70e86e01bde005dae5fed94b151c9bc07f389 or reopen/supersede with concrete changes",
+      "If approved, ensure protected merge/root-freeze and governed closeout are still required before Wave 0 dependency is satisfied",
+      "Archive evidence in this task-specific artifact directory and keep .orchestrator/config.json untouched"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#wave0-exact-head-reconcile",
+      "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+      "documents": [
+        {
+          "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+          "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+          "sourceRefs": [
+            "PR#4394",
+            "head a8c2691f35c103d8be6e51e468b9e34c81e379cf"
+          ]
+        },
+        {
+          "kind": "PR_COMMENT_EVIDENCE",
+          "path": "https://github.com/ajoe734/pantheon/pull/4385#issuecomment-5142713899",
+          "sourceRefs": [
+            "#4385 current head f5e70e86e01bde005dae5fed94b151c9bc07f389 differs from canonical reviewed 86dd9006b15bba67a83886e4a2d672e511aa8709"
+          ]
+        },
+        {
+          "kind": "PR_COMMENT_EVIDENCE",
+          "path": "https://github.com/ajoe734/pantheon/pull/4386#issuecomment-5142713897",
+          "sourceRefs": [
+            "#4386 current head 2d5f692e960a22eef7c4b6d63002996a68468079 differs from canonical reviewed 0528e5cab1df5386adfdb3113b8653411635fe86"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-31T12:11:38Z",
+      "intent": "dispatch_parallel_wave0_exact_head_reconcile_tasks",
+      "mode": "kernel_repair",
+      "packet_digest": "0d0f43f50af6a92fd7af9c0e705776978aafa8cc79e983d1f1ae4e8ed2e6f44e",
+      "packet_id": "pkt-l12-wave0-exact-head-reconcile-20260731T1213Z",
+      "source_turn_ids": [
+        "user-complete-gap-audit-and-supervisor-dispatch",
+        "codex-wave0-exact-head-mismatch-4385-4386"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Do not count SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 review_approved row alone as done",
+          "Inspect PR #4385 exact current head f5e70e86e01bde005dae5fed94b151c9bc07f389 against canonical reviewed head 86dd9006b15bba67a83886e4a2d672e511aa8709",
+          "Classify all added files since the reviewed head, including workflow/publish-promote changes and additional evidence artifacts",
+          "Either produce an exact-head review approval bound to f5e70e86e01bde005dae5fed94b151c9bc07f389 or reopen/supersede with concrete changes",
+          "If approved, ensure protected merge/root-freeze and governed closeout are still required before Wave 0 dependency is satisfied",
+          "Archive evidence in this task-specific artifact directory and keep .orchestrator/config.json untouched"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0 Exact-Head Reconcile",
+        "reviewer": "Claude2",
+        "summary": "PR #4385 current head differs from the reviewed task row head; reconcile exact-head proof before treating stale failure-streak reaper as a Wave 0 dependency.",
+        "title": "Reconcile stale failure-streak reaper exact PR head before Wave 0 closeout"
+      },
+      "task_spec_hash": "877134a7dd1daa7bf07f07590c89c6bb7e824edd3f30d8593575928ce97af5d0"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "head_sha": "4958626931bb32a7fcd07aecb1d7c82ec5f4b075",
+      "mode": "required_commit_status",
+      "pr": 4739,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4739",
+      "recorded_at": "2026-08-11T01:53:10Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/4958626931bb32a7fcd07aecb1d7c82ec5f4b075",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51994406597,
+      "status_state": "success"
+    },
+    "id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+    "last_update": "2026-08-11T02:04:34Z",
+    "next": "PR #4739 squash-merged into dev at 4d2a24200e32f9e77b01006146349e75494ae83f (approved head 4958626931bb32a7fcd07aecb1d7c82ec5f4b075); required checks Commit trailers/Runtime mirror guard/Smoke acceptance/Pantheon canonical review gate all SUCCESS at that head, and the non-required 'Audit signed canonical review (not required issuer)' diagnostic is confirmed absent from dev's required_status_checks contexts via gh api (same pattern on sibling PR #4735), so it was not a merge blocker.",
+    "owner": "Claude",
+    "phase": "Supervisor Runtime Repair / Wave 0 Exact-Head Reconcile",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "head_sha": "4958626931bb32a7fcd07aecb1d7c82ec5f4b075",
+      "pr": 4739
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "PR #4385 current head differs from the reviewed task row head; reconcile exact-head proof before treating stale failure-streak reaper as a Wave 0 dependency.",
+    "title": "Reconcile stale failure-streak reaper exact PR head before Wave 0 closeout",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T02:04:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-stale-reaper-exact-head-reconcile-20260731",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "source_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-stale-reaper-exact-head-reconcile-20260731",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+          "worker_run_id": "claude1-1-20260811T015831Z-0cda241a",
+          "queue_event_id": "evt-20260811T015817Z-efc5d90c",
+          "pid": 1904661,
+          "pid_start_ticks": 25255942,
+          "process_generation": "worker-process-generation-sha256:89144f599d979215cefc74237bfd16bdbb8466950c76b992a4364033bc65f11e"
+        }
+      },
+      "commit": "4d2a24200e32f9e77b01006146349e75494ae83f",
+      "commit_subject": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731: closeout rebind",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "closeout note in the reconciliation packet README binding",
+        "Not changing": "F1/F2 findings, path classification, verification block,",
+        "Composes with": "merged PR #4735 (squash commit 2136f1e152fb730d53a7dcc8beb8ad2e7abd5bae).",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+        "Reviewer": "Antigravity"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "ahead": 5,
+      "behind": 1,
+      "push_status": "diverged",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4d2a24200e32f9e77b01006146349e75494ae83f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T12:11:54Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-07-31T12:12:59Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:12:08Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-07-31T12:12:59Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:23:08Z",
+      "from": "Codex2",
+      "message": "PR #4395 head 607a474688566b1a62c4ec24998c4d6864d62a88 is green and auto-merge is off. Independently review docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731/evidence.json. Owner finding: PR #4385 remains at f5e70e86e01bde005dae5fed94b151c9bc07f389 but its README and evidence.json name nonexistent anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f instead of actual 9d53a94a295d71ee49aea6f4b96e47fbcfd29093; recommend reopening the subject task, not exact-head approval.",
+      "resolved_at": "2026-07-31T12:25:16Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T12:25:16Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4385 exact head reconciliation evidence in docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731/evidence.json. Confirmed F1 blocking finding: PR #4385 head f5e70e86e01bde005dae5fed94b151c9bc07f389 references nonexistent implementation anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f instead of actual commit 9d53a94a295d71ee49aea6f4b96e47fbcfd29093. PR #4385 exact head f5e70e86 is rejected for exact-head approval and requires subject task SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 to be reopened for anchor SHA correction.",
+      "resolved_at": "2026-07-31T12:31:28Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:31:28Z",
+      "from": "Codex2",
+      "message": "Closeout-only head 9b920afce5c2f5b09eb0954c3d2b708df928dd08 is pushed to PR #4395. Re-review this exact head: it only records your 2026-07-31T12:25:16Z independent decision in the task brief, README, and evidence review block; reconciliation findings and subject-task reopen requirement are unchanged. If verified, approve with REVIEW_PR=4395 and REVIEW_HEAD_SHA=9b920afce5c2f5b09eb0954c3d2b708df928dd08 so the exact-head merge gate can proceed.",
+      "resolved_at": "2026-07-31T12:33:25Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T12:33:25Z",
+      "from": "Antigravity",
+      "message": "Reviewed exact task PR #4395 head 9b920afce5c2f5b09eb0954c3d2b708df928dd08. Confirmed task brief, README, and evidence review block accurately record Antigravity's independent review decision while leaving the underlying F1 finding and subject task reopen requirement intact.",
+      "resolved_at": "2026-07-31T12:40:26Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:40:26Z",
+      "from": "Codex2",
+      "message": "Owner finalization commit f68827c8e17d6a1f081afe24f62ba85c116166e8 is pushed to PR #4395. Prior approval event is unbound and merge gate fails approval_head_binding_missing. Re-review this exact head and approve with REVIEW_PR=4395 REVIEW_HEAD_SHA=f68827c8e17d6a1f081afe24f62ba85c116166e8 REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731/evidence.json; F1 and the subject-task reopen decision remain unchanged.",
+      "resolved_at": "2026-07-31T12:42:18Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T12:42:18Z",
+      "from": "Antigravity",
+      "message": "Reviewed exact task PR #4395 head f68827c8e17d6a1f081afe24f62ba85c116166e8. Confirmed exact-head reconciliation evidence and brief update; F1 finding and subject task reopen requirement remain intact.",
+      "resolved_at": "2026-08-01T14:43:19Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T14:43:19Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "resolved_at": "2026-08-01T14:56:13Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T14:56:13Z",
+      "from": "Codex",
+      "message": "PR #4395 refreshed onto origin/dev@76bbb04b569331a81916330d1cf713d068527c89; review exact head edb1698aa6626d84039243d862dfdc33a8f87770. Reconciliation evidence and reopen_subject_task decision are unchanged: PR #4385 head f5e70e86 remains rejected until its invalid anchor is corrected and the resulting head is independently reviewed.",
+      "resolved_at": "2026-08-01T15:03:18Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T15:03:18Z",
+      "from": "Antigravity",
+      "message": "Reviewed exact task PR #4395 head edb1698aa6626d84039243d862dfdc33a8f87770 on dev@76bbb04b569331a81916330d1cf713d068527c89. Confirmed task brief, evidence, and rejection of PR #4385 head f5e70e86 remain valid while subject task reopen decision is preserved.",
+      "resolved_at": "2026-08-01T15:08:32Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:25:18Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-01T15:27:03Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:19:13Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-01T16:21:52Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T11:38:46Z",
+      "from": "Antigravity",
+      "message": "PR #4395 is approved and auto-merge is enabled with all CI checks passing. Handing off to reviewer Claude for final PR merge status verification and closeout.",
+      "resolved_at": "2026-08-06T12:11:32Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T12:11:32Z",
+      "from": "Claude",
+      "message": "Reviewer Claude reviewed PR #4395 exact head edb1698aa6626d84039243d862dfdc33a8f87770 (== origin task head == review_binding.head_sha). CONFIRMED CORRECT and not to be redone: F1 anchor proof (9d53a94a265c55af4c8d15c50ab3751f1440ac0f MISSING, 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 EXISTS); range-diff patch-equivalence b41a69c1=9d53a94a2, 86dd9006=833c3658, f5e70e86 sole added commit; path counts 18/4/5, merge-base 575040212, reviewed head NOT ancestor of f5e70e86; .orchestrator/config.json absent from 6f87a207...f5e70e86 and from this PR diff (3 in-scope files). REOPENED for two stale bindings that approval would freeze. (1) evidence.json task block still binds owner=Codex2, reviewer=Antigravity, status=review_approved, and its review block binds reviewed_task_head_sha=607a474688566b1a62c4ec24998c4d6864d62a88, but the live row is owner=Antigravity, reviewer=Claude, status=review at head edb1698aa, and commits 9b920afc/f68827c8/edb1698a modified README.md and evidence.json after that cited reviewed head - so the packet asserts review_approved for content its own cited review never covered. Rebind the task and review blocks to the current cycle (owner Antigravity, reviewer Claude, PR #4395 head edb1698aa, status review) and keep the earlier Antigravity decision as an explicit history entry. (2) The external snapshot is stale in a way that changes the recommendation: PR #4385 is now CLOSED (manifest records state OPEN, observed_at 2026-07-31T12:17:11Z), SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 is now review_approved with owner Antigravity/reviewer Claude, and the invalid anchor 9d53a94a265c is still live on origin/dev (README.md x1, evidence.json x2), so F1 was never corrected. Re-observe and restate decision.recommended_canonical_action against live state - the narrow anchor correction now needs a new PR against dev or an explicit supersede, not a push to closed PR #4385 - and refresh pull_request_snapshot plus the README Required correction section. Keep F1/F2 findings, the classification tables, and the verification block unchanged. Informational: PR #4395 is mergeStateStatus BLOCKED although all four required contexts read success at edb1698aa.",
+      "resolved_at": "2026-08-06T12:11:32Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T12:21:09Z",
+      "from": "Antigravity",
+      "message": "Rebound task/review blocks to current cycle (Antigravity/Claude at head b10ebc759), updated PR #4385 snapshot to CLOSED, and updated recommended action. Ready for reviewer Claude.",
+      "resolved_at": "2026-08-06T12:27:04Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T12:27:04Z",
+      "from": "Claude",
+      "message": "REOPEN at PR #4395 exact head edb1698aa6626d84039243d862dfdc33a8f87770 (== git ls-remote origin task branch == review_binding.head_sha == review-gate CheckRun 'reopen by Claude at edb1698aa662'). (1) BLOCKING: the remediation commit b10ebc75914b7ad71afb1481c83c8525d62ff1bb was never pushed - 'git branch -r --contains b10ebc759' is empty and origin/task/... is still edb1698aa. Its content does address my prior reopen (rebinds evidence.json task/review blocks to owner Antigravity / reviewer Claude / status review at head edb1698aa, sets pull_request_snapshot.state CLOSED, rewrites Required correction + recommended_canonical_action), but approval binds to the PR head, so approving now would freeze the manifest that still asserts owner=Codex2, reviewer=Antigravity, status=review_approved and PR #4385 state OPEN. Push b10ebc759 to origin so PR #4395 head advances, then hand off. (2) Re-observe before pushing: b10ebc759 is itself already stale. PR #4590 (head task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729) MERGED into dev at 23ae23c2185d31d2aeacafaa9b051127a6d53136 on 2026-08-06T11:57:30Z, 23 minutes before b10ebc759, and 'git diff f5e70e86e01bde005dae5fed94b151c9bc07f389 origin/dev -- docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/' is EMPTY, i.e. dev now carries the PR #4385 head content unrepaired: invalid anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f is live on origin/dev (README.md x1, evidence.json x2) and the correct anchor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 appears 0 times (cat-file re-confirms 265c MISSING / 295d EXISTS). So decision.recommended_canonical_action ('must be submitted as a new PR against dev') and README Required correction must disclose the #4590 merge and target the anchor defect already ON dev, and decision.protected_merge_still_required_after_repair=true / wave0_dependency_satisfied=false must be restated given the unrepaired content already passed protected merge and the subject row is now status=blocked (owner Antigravity, reviewer Claude) awaiting Human/Ops audit-log reconciliation for the Codex2 owner drift. Keep F1/F2 findings, classification tables and the verification block unchanged.",
+      "resolved_at": "2026-08-06T12:27:04Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T12:29:51Z",
+      "from": "Antigravity",
+      "message": "Remediation commits b10ebc759 and 6b47c4b20 pushed to origin; PR #4395 exact head advanced to 6b47c4b20. Documented PR #4590 merge into dev (commit 23ae23c2) carrying unrepaired anchor 9d53a94a265c live on dev. Handing off for Claude review.",
+      "resolved_at": "2026-08-06T12:34:16Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T12:34:16Z",
+      "from": "Claude",
+      "message": "REOPEN at PR #4395 exact head 6b47c4b20497dd6e88cf71ecd32d86f773a62b81 (== git ls-remote origin task/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731). CONTENT VERIFIED GOOD: I independently re-confirmed every claim in the rebound manifest -- PR #4385 state CLOSED; PR #4590 (head task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729) MERGED into dev at 23ae23c2185d31d2aeacafaa9b051127a6d53136 on 2026-08-06T11:57:30Z and is an ancestor of origin/dev; invalid anchor 9d53a94a265c live on origin/dev (README.md x1, evidence.json x2) and correct anchor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 0 times; cat-file 265c MISSING / 295d EXISTS; subject row SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 is status=blocked owner Antigravity reviewer Claude. My prior reopen items (1) push and (2) #4590 disclosure are both satisfied. BLOCKING (CI, not content): required check 'Commit trailers' is FAILURE at 6b47c4b20 (run 31101643966, range origin/dev..6b47c4b20) because BOTH new commits break the hard 72-char subject limit in scripts/git/check_commit_trailers.py -- 6b47c4b20 subject is 106 chars, b10ebc759 is 99. 'Commit trailers' is a required status check on dev, so PR #4395 is unmergeable at this head and approving would freeze it there. The check re-scans the WHOLE PR range, so a follow-up commit cannot clear it. REQUIRED CORRECTION: (1) git reset --soft/--mixed back to edb1698aa6626d84039243d862dfdc33a8f87770 and re-commit the identical content under subjects <=72 chars, then push with --force-with-lease; the task-id prefix is 52 chars so only 20 remain, e.g. 'SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731: anchor rebind' (65) and 'SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731: dev anchor defect' (69). Keep the existing bodies and LLM-Agent/Task-ID/Reviewer trailers verbatim. (2) In the same rewrite, stop asserting review.reviewed_task_head_sha=edb1698aa -- that is the head I reopened, so the manifest currently certifies a rejected head; point it at the rewritten head lineage under review (e.g. a final short-subject commit that sets it to its parent) or state the pushed head explicitly in review.notes. Do NOT change the F1/F2 findings, classification tables, the verification block, decision.protected_merge_still_required_after_repair=true or wave0_dependency_satisfied=false -- those are all correct. Re-verify 'Commit trailers' is green on the new head before handoff.",
+      "resolved_at": "2026-08-06T12:34:16Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T12:38:25Z",
+      "from": "Antigravity",
+      "message": "Re-committed PR #4395 changes under short subject lines (38a70d05a and 8a6176393) to clear hard 72-char limit in Commit trailers check, updated review.reviewed_task_head_sha to parent commit 38a70d05a30538a760efb79a32c74895696d744b, and force-pushed to origin task branch.",
+      "resolved_at": "2026-08-06T12:44:01Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T12:44:01Z",
+      "from": "Claude",
+      "message": "REOPEN at PR #4395 exact head 8a6176393a992e7eb3914324b714e3bdaa884bf2 (== git ls-remote origin task branch == gh pr view headRefOid). CI FIX CONFIRMED: required check 'Commit trailers' is now PASS at this head (runs 31102255393 / 31102258618); subjects are 65 and 69 chars, both under the hard 72-char limit; Python packaging provision, Runtime mirror guard and Smoke acceptance all pass. CONTENT PARITY CONFIRMED: 'git diff 6b47c4b20497dd6e88cf71ecd32d86f773a62b81..8a6176393' is exactly two hunks -- the generated task-brief Next mirror and the single reviewed_task_head_sha line -- so the F1/F2 findings, classification tables, verification block, decision.protected_merge_still_required_after_repair=true and wave0_dependency_satisfied=false are byte-identical to the content I already verified good. Live claims re-observed at this head: PR #4385 CLOSED at f5e70e86e01bde005dae5fed94b151c9bc07f389; invalid anchor 9d53a94a265c live on origin/dev (README.md x1, evidence.json x2) and correct anchor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 0 times; .orchestrator/config.json untouched across origin/dev...HEAD; evidence.json parses as valid JSON. BLOCKING (one line): review.reviewed_task_head_sha is now '38a70d05a30538a760efb79a32c74895696d744b', which is NOT A REAL COMMIT -- 'git cat-file -t' fails locally and 'gh api repos/ajoe734/pantheon/commits/38a70d05a30538a760efb79a32c74895696d744b' returns 422 'No commit found for SHA'. That bogus SHA came from my own previous reopen text, where I typed it as an illustrative example rather than a real object; the mistake is mine, but I cannot approve a manifest that certifies a nonexistent head, because F1 of this very packet is 'the evidence references a nonexistent implementation anchor'. Approving would freeze that defect into the deliverable it exists to document. REQUIRED CORRECTION (evidence.json only, single line 262): set review.reviewed_task_head_sha to the REAL parent commit 38a70d05acdb497509575ab3d8405eb9e719b1dd ('git rev-parse HEAD^'), and while editing, update review.notes[0] which still reads 'Reviewed exact task PR #4395 head edb1698aa6626d84039243d862dfdc33a8f87770' -- edb1698aa is now the branch base, not the head under review, so state the current lineage (parent 38a70d05acdb..., pushed head 8a6176393a99...) instead. Verify with 'git cat-file -t <sha>' before committing this time. Change NOTHING else: keep the F1/F2 findings, path_classification, verification block, all decision fields and the README verbatim. Commit under a subject <=72 chars (task-id prefix is 52, so ~20 remain, e.g. 'SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731: fix head sha'), push, and re-confirm 'Commit trailers' is green before handoff. NOTE: the regenerated .orchestrator/task-briefs mirror is left uncommitted in the reviewer worktree.",
+      "resolved_at": "2026-08-06T12:44:01Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T12:48:43Z",
+      "from": "Antigravity",
+      "message": "Fixed review.reviewed_task_head_sha to real parent commit 38a70d05acdb497509575ab3d8405eb9e719b1dd and updated notes[0] lineage in evidence.json. Pushed head is 2489ba3663f511cbcb17f1e9e561ae760511978a; required check 'Commit trailers' is PASS (run 31102553147) and parent commit 38a70d05acdb497509575ab3d8405eb9e719b1dd verified via git cat-file -t.",
+      "resolved_at": "2026-08-06T12:53:10Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T12:53:10Z",
+      "from": "Claude",
+      "message": "Exact-head approval bound to PR #4395 head 2489ba3663f511cbcb17f1e9e561ae760511978a (== git ls-remote origin task/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731 == gh headRefOid). Both prior reopen items are cleared: (1) required check 'Commit trailers' is now PASS at this head (all 4 required checks pass: Commit trailers, Runtime mirror guard, Smoke acceptance, Python packaging provision); the three commits are 65/69/64-char subjects, all under the 72-char limit, each carrying LLM-Agent/Task-ID/Reviewer trailers. (2) review.reviewed_task_head_sha no longer names the rejected head edb1698aa nor the nonexistent object 38a70d05a30538a760efb79a32c74895696d744b; it now names 38a70d05acdb497509575ab3d8405eb9e719b1dd, which git cat-file resolves to a real commit and git merge-base --is-ancestor confirms is an ancestor of the approved head. I re-verified every substantive claim against live state, not the manifest text: PR #4385 state CLOSED, mergedAt null, head f5e70e86e01bde005dae5fed94b151c9bc07f389; PR #4590 (head task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729) MERGED into dev at 23ae23c2185d31d2aeacafaa9b051127a6d53136 on 2026-08-06T11:57:30Z; F1 confirmed live -- git cat-file on 9d53a94a265c55af4c8d15c50ab3751f1440ac0f fails (object absent) while 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 is a commit, and the invalid anchor is still live on origin/dev (README.md x1, evidence.json x2) with the correct anchor appearing 0 times; subject row SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 is status=blocked owner Antigravity reviewer Claude, matching subject_task.canonical_status and README item 5. Every SHA cited anywhere in the manifest now resolves (607a4746, edb1698aa, 86dd9006, 833c3658, f5e70e86 all cat-file as commits); evidence.json parses as valid JSON. PR diff vs origin/dev is exactly 3 paths -- the task brief mirror plus this task's README.md and evidence.json -- with no .orchestrator/config.json change. AC1-AC6 hold, and decision.wave0_dependency_satisfied=false, protected_merge_still_required_after_repair=true, root_freeze_still_required_after_repair=true, governed_owner_closeout_still_required_after_repair=true are all correctly preserved. One residual, non-blocking and structurally unavoidable: review.notes[0] says pushed head 8a6176393a992e7eb3914324b714e3bdaa884bf2 '(== origin task head)', which is stale by exactly the one commit that fixed the head SHA field; 8a617639 is a real commit and an ancestor of the approved head, and this exact-head binding at 2489ba366 is the authoritative record. Head is now frozen; the regenerated task-brief mirror in the worktree stays uncommitted.",
+      "resolved_at": "2026-08-06T13:00:57Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T13:00:57Z",
+      "from": "Claude",
+      "message": "Owner finalized closeout checks; PR #4395 is approved and auto-merge enabled, waiting for merge into dev.",
+      "resolved_at": "2026-08-06T13:01:00Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T11:00:42Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-09T11:05:24Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T18:30:11Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Claude: The task has no human-gate fields, PR #4395 and its evidence are merged on dev, and the current blocker is stale lane state; Claude is healthy, unpaused, distinct from reviewer Codex2, and can rerun governed closeout reconciliation. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-10T18:33:11Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-10T18:36:09Z",
+      "from": "Claude",
+      "message": "PR #4395 merged into dev (squash c66013f4, matching bound approval at exact head 2489ba366). Prior approve (github_review_bridge, status_state success) is already recorded at this exact head; requesting reviewer confirm review_approved so closeout done can run. No new commits added -- head is frozen by the existing approval binding.",
+      "resolved_at": "2026-08-11T00:11:09Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T00:11:09Z",
+      "from": "Codex2",
+      "message": "Chair reassigned review from Codex2 to Antigravity: Fourteen review_ready_dispatch runs from 2026-08-10T18:38:17Z through 2026-08-10T23:56:06Z exited without advancing the merged exact head; Antigravity is auth-ready, unpaused, and distinct from owner Claude.",
+      "resolved_at": "2026-08-11T00:17:23Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T00:17:23Z",
+      "from": "Antigravity",
+      "message": "Independent review approved. Verified evidence.json and README.md in task docs directory. AC1-AC6 passed. Task reconciliation correctly requires reopening subject task SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 for anchor SHA repair on dev.",
+      "resolved_at": "2026-08-11T01:50:25Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-11T01:50:25Z",
+      "from": "Claude",
+      "message": "PR #4735 (approved head 2489ba3663f511cbcb17f1e9e561ae760511978a) merged into dev at squash commit 2136f1e152fb730d53a7dcc8beb8ad2e7abd5bae. Closeout 'done' failed the owner-reassignment trailer gate because the merged head's LLM-Agent trailer was Antigravity while the canonical row now reads owner=Claude, reviewer=Antigravity (post 2026-08-11T00:11:09Z reviewer reassignment). Opened PR #4739, head 4958626931bb32a7fcd07aecb1d7c82ec5f4b075, task/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731: a closeout-only commit appending a README Closeout note (no change to F1/F2 findings, path classification, verification block, or decision fields) with correct trailers LLM-Agent: Claude / Reviewer: Antigravity. Please approve PR #4739 at this exact head so I can merge and run done.",
+      "resolved_at": "2026-08-11T01:53:10Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T01:53:10Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4739 commit 4958626931bb32a7fcd07aecb1d7c82ec5f4b075 adds only a closeout note to README.md rebinding trailers to owner=Claude and reviewer=Antigravity, without altering F1/F2 findings, path classifications, or wave0 decision fields. PR #4735 is already merged on dev at 2136f1e152fb.",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Claude",
+      "resolved_at": "2026-08-11T02:04:35Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-01T15:08:32Z",
+      "message": "PR #4395 exact reviewed head edb1698aa6626d84039243d862dfdc33a8f87770 has successful Branch CI and Pantheon canonical review gate, but dev branch protection still lacks the Human/Ops-owned status context 'Pantheon root merge freeze 2026-07-27'. Governed auto-integrator dry-run therefore blocks on mergeStateStatus=BLOCKED. Await Human/Ops exact-head root-freeze authorization; owner must not impersonate that authority or mark done before protected merge.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-06T10:17:51Z",
+      "status": "resolved",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-06T13:01:00Z",
+      "message": "Waiting for PR #4395 to be merged into dev by GitHub/auto-integrator (required check 'Pantheon canonical review gate' pending app context match)",
+      "owner": "Antigravity",
+      "resolution_ref": "chair_reassignment:SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "resolved_at": "2026-08-10T18:30:11Z",
+      "status": "resolved",
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

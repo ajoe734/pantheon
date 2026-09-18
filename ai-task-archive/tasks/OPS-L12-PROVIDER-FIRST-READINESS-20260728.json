@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+  "archived_at": "2026-07-28T14:14:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [],
+    "artifacts": [],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Codex",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "head_sha": "0abd9c33a5872e9655bb981f7b3177eb6beb6b5d",
+      "mode": "required_commit_status",
+      "pr": 4299,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4299",
+      "recorded_at": "2026-07-28T14:06:47Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51220660274,
+      "status_state": "success"
+    },
+    "id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+    "last_update": "2026-07-28T14:14:02Z",
+    "next": "Owner closeout complete: PR #4299 exact reviewed head 0abd9c33a5872e9655bb981f7b3177eb6beb6b5d merged to dev as ba727a676856e77c7b723f33f5b9e7ceb5ce1392; checksum, JSON AC1-AC3, no-config-diff, runtime-health, 6 provider tests, and 7 supervisor tests passed. Readiness remains bounded to observation cut 2026-07-28T13:28:39Z. The sole local dirty entry is a supervisor-projected task brief metadata update created after exact-head approval and intentionally excluded from the reviewed PR.",
+    "owner": "Codex2",
+    "phase": "Unassigned",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "head_sha": "0abd9c33a5872e9655bb981f7b3177eb6beb6b5d",
+      "pr": 4299
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-20260728/evidence.json",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Verify Claude/Antigravity provider-first readiness",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-28T14:14:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-l12-provider-first-readiness-20260728",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "061408b09aa06943813c97334054bfa29b79e236",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-l12-provider-first-readiness-20260728",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "0abd9c33a5872e9655bb981f7b3177eb6beb6b5d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ba727a676856e77c7b723f33f5b9e7ceb5ce1392",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-28T13:00:12Z",
+      "from": "Codex2",
+      "message": "PR #4293 exact head 773e8446d13c9b5ccec828f4f83a43e4e2c5207a is ready for independent review. Evidence: docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-20260728/evidence.json (checksummed). Verify fresh Claude ready/live worker dispatch, Antigravity quota_reached fail-closed, continuing real L12 workers, config untouched, and 9 focused tests. Approve with REVIEW_PR=4293 REVIEW_HEAD_SHA=773e8446d13c9b5ccec828f4f83a43e4e2c5207a REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-20260728/evidence.json, then run the root merge gate if accepted.",
+      "resolved_at": "2026-07-28T13:06:26Z",
+      "status": "done",
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T13:06:26Z",
+      "from": "Codex",
+      "message": "Independent review approved PR #4293 exact head 7ea24dbf4283d2137d0ad764017f9228e7461d6b. Verified task-scoped provider readiness evidence: Claude live probe ready and real supervisor Claude worker dispatch observed; Antigravity live probe quota_reached and fail-closed without config edits; healthy real lanes continued draining work; evidence.json parses, evidence.sha256 passes, and Branch CI is green on the exact head.",
+      "resolved_at": "2026-07-28T13:08:53Z",
+      "status": "done",
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:08:53Z",
+      "from": "Codex",
+      "message": "Reopen stale approval binding after required update-branch changed PR #4293 head from 7ea24dbf4283d2137d0ad764017f9228e7461d6b to f3203ecb9fc8daa10450e20f5e9cd5c53a64ce2e. Evidence scope is unchanged; CI is green; exact-head approval must be rebound.",
+      "resolved_at": "2026-07-28T13:08:53Z",
+      "status": "done",
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:09:00Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-L12-PROVIDER-FIRST-READINESS-20260728 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Claude.",
+      "resolved_at": "2026-07-28T13:09:35Z",
+      "status": "done",
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:36:12Z",
+      "from": "Codex",
+      "message": "Review PR #4293 exact head 7c2ad997c3e42b08ee4b2a77df6ca9105992a1e1 and docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-20260728/evidence.json. Fresh live probes: Claude ready with real worker heartbeat; Antigravity quota_reached and fail-closed. Verify JSON/SHA-256 plus 10 focused tests, then bind REVIEW_PR=4293 and REVIEW_HEAD_SHA to approval or reopen with concrete findings.",
+      "resolved_at": "2026-07-28T13:45:39Z",
+      "status": "done",
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:45:39Z",
+      "from": "Claude",
+      "message": "Independent review at PR #4293 head 7c2ad997c. Integrity: sha256sum -c evidence.sha256 OK for README.md+evidence.json; evidence.json parses; PR diff is exactly the 4 declared changed_files (297 insertions, 0 deletions) with no .orchestrator/config.json change in the task worktree or command root (HEAD 061408b09 == claimed command_runtime_sha). Re-ran the focused suites myself on this head: 6 passed (test_provider_permissions.py forced-probe/Claude-refresh/Antigravity-dual-model-quota/credential-and-quota-group tests) and 7 passed (test_supervisor.py Claude lane account limit, primary Antigravity admission, antigravity fallback routing, FreshAuthProbeLaneHoldTests). Live claims corroborated from read-only runtime state, not just the owner cut: supervisor_runtime_health.py --require-watchdog reports healthy=true for pid 2082839; provider_capabilities.json (generated 12:47:23Z) shows claude auth_ready=true method claude_auth_status_refresh and antigravity auth_ready=false status quota_reached at 12:47:45Z with the exact error string in the manifest; provider_guardrails.dispatch_pauses is {} matching the manifest's explicit no-standing-pause caveat. Dispatch proof is real: worker-runtime status+heartbeat files exist for claude1-1-20260728T132644Z-1cb9d3e9 on L12-THREE-PASS-GAP-AUDIT-20260728, and supervisor log 20260728T132125Z records queue evt-20260728T132640Z-24cc26a6 started plus that run id; all three claimed continuing Codex-family workers have matching heartbeat records. AC1/AC2/AC3 hold, and the manifest is honest that the Codex-family lanes, not Antigravity, are the ones draining work. Confirmed a currently live claude1-1 worker as well. PR CI is green (commit trailers, packaging provision, runtime mirror guard, smoke acceptance); branch is 0 behind origin/dev. Nit, not blocking: verification.commands paraphrase the pytest selections instead of naming exact node ids, so I reconstructed them from the stated files and conclusions.",
+      "resolved_at": "2026-07-28T13:46:06Z",
+      "status": "done",
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T13:46:40Z",
+      "from": "Claude",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: ERROR: not found: /tmp/pantheon-worker-worktrees/pantheon/ops-l12-provider-first-readiness-20260728/.orchestrator/test_supervisor.py::DetectWorkerFailureTests::test_normalize_route",
+      "resolved_at": "2026-07-28T13:56:43Z",
+      "status": "done",
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:56:43Z",
+      "from": "Codex2",
+      "message": "Closeout-only review: inspect PR #4299 exact head 0abd9c33a5872e9655bb981f7b3177eb6beb6b5d. Confirm the diff only transcribes your prior PR #4293 approval and merged delivery into the bound task brief/README/evidence/checksum, preserves the provider observation and limitations, and records the owner rerun (6+7 passed; no config diff). Bind REVIEW_PR=4299 and REVIEW_HEAD_SHA=0abd9c33a5872e9655bb981f7b3177eb6beb6b5d on approval, or reopen with concrete findings.",
+      "resolved_at": "2026-07-28T13:58:32Z",
+      "status": "done",
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:58:32Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-L12-PROVIDER-FIRST-READINESS-20260728 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "resolved_at": "2026-07-28T14:06:47Z",
+      "status": "done",
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T14:06:47Z",
+      "from": "Codex",
+      "message": "Codex independent review approved PR #4299 exact head 0abd9c33a5872e9655bb981f7b3177eb6beb6b5d. The four-file closeout diff only transcribes Claude's earlier exact-head approval and Codex2 adoption; PR #4293 head 7c2ad997c3e42b08ee4b2a77df6ca9105992a1e1 is merged to dev as 748d5b34a8a5c23edf75a82e36d43f2ac867a459 and both PRs have green Branch CI. Independently verified README/evidence SHA-256, JSON AC1-AC3, no config diff in task or command root, healthy supervisor/watchdog, and reran 6 provider plus 7 supervisor focused tests. Approval is time-bounded to the 2026-07-28T13:28:39Z observation cut: later Claude auth_not_ready and continuing Antigravity quota_reached do not become a claim of ongoing provider readiness.",
+      "status": "done",
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "to": "Codex2",
+      "resolved_at": "2026-07-28T14:14:03Z"
+    }
+  ],
+  "blockers": []
+}

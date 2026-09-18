@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-002",
+  "archived_at": "2026-07-27T14:12:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "hosted browser probe 捕捉每頁 intended endpoint; success/degraded 測試綠; 無 seed/mock 被顯示為 live truth"
+    ],
+    "artifacts": [
+      "frontend-checkout:src/lib/bff-v1",
+      "frontend-checkout:src/management",
+      "frontend-checkout:e2e",
+      "docs/04/pantheon_management_console_gap_2026-06-30"
+    ],
+    "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+    "auto_generated": true,
+    "batch": 2,
+    "delivery_layer": "primary",
+    "depends_on": [
+      "MGMT-GAP-003"
+    ],
+    "external_delivery": {
+      "archive_doc": "docs/04/pantheon_management_console_gap_2026-06-30/archive/MGMT-GAP-002-closeout-2026-07-01.md",
+      "dev_fe_bff_integration_gate_run": "28490060533",
+      "dev_fe_deploy_run": "28490060564",
+      "hosted_deployment_commit": "41551e32432c7a7963716f9f197ee31f5fdd48a8",
+      "primary_merge_commit": "0f92b069a2523eaac8224629054dfd99db878538",
+      "primary_pr": "https://github.com/ajoe734/execute-plans/pull/124",
+      "repository_id": "execute_plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "route_audit": "70/70 management routes rendered in mock-mode; 106 source route lines and 53 nav entries inventoried",
+      "status_merge_commit": "41551e32432c7a7963716f9f197ee31f5fdd48a8",
+      "status_pr": "https://github.com/ajoe734/execute-plans/pull/126"
+    },
+    "fleet_lane": "frontend-bff-integration",
+    "id": "MGMT-GAP-002",
+    "last_update": "2026-07-01T04:56:00Z",
+    "mutates_canonical": true,
+    "next": "Closed by execute-plans PR #124 and PR #126; dev deploy 28490060564 and FE-BFF gate 28490060533 passed at 41551e32432c7a7963716f9f197ee31f5fdd48a8.",
+    "owner": "Codex",
+    "phase": "MGMT Console Production Gap / Batch 2 FE canonical reads",
+    "review_file": "docs/04/pantheon_management_console_gap_2026-06-30/archive/MGMT-GAP-002-closeout-2026-07-01.md",
+    "review_notes_zh": [
+      "execute-plans PR #124 已合併 canonical management reads，PR #126 已補最終部署狀態。",
+      "dev FE deploy 28490060564 與 FE-BFF Integration Gate 28490060533 均為 success。",
+      "mock-mode 完整重盤點 70/70 management routes rendered；此任務只關閉 canonical read wiring，不關閉 durable writes 或 studios production depth。"
+    ],
+    "reviewer": "Claude",
+    "source_ref": {
+      "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+      "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+      "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md",
+      "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
+      "route_control_raw": "docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.json",
+      "route_control_reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md"
+    },
+    "status": "done",
+    "summary_zh": "將 Data Sources、permissions、memory、consult、lineage、workflows、hooks、ranking 改接 canonical management endpoints；移除 strict live seed/mock 偽裝。",
+    "task_class": "execution",
+    "terminal_outcome": "completed",
+    "title": "Frontend canonical management read wiring"
+  },
+  "handoffs": [],
+  "blockers": []
+}

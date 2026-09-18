@@ -1,0 +1,296 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+  "archived_at": "2026-07-31T18:20:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Treat PR #4394 exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4 as the authoritative current gap specification and require its Branch CI success before implementation acceptance",
+      "Consume guarded-remediation-tasks.json without narrowing or rewriting its 28 product task contracts",
+      "Preserve loop IDs, maturity, desired and actual authority sources, evidence roots, artifact conflict rules, product-level requirements, non-goals, signoff, provider preferences, and Human/Ops-only fields",
+      "Resolve owner and reviewer from live readiness with Antigravity then Claude2 then Claude preferred; record every fallback and never claim an unavailable provider was used",
+      "Validate the complete immutable graph before mutation and fail atomically on duplicate IDs, dangling dependencies, artifact-prefix overlap, stale command root, replay, partial materialization, or canonical readback mismatch",
+      "Add validate-only, dry-run, replay, concurrent conflict, archived-dependency, readiness-fallback, atomic-failure, and exact canonical readback regression tests",
+      "Deliver through clean branch, commit, push, PR, exact-head independent review, protected merge, live command-root promotion, and a dispatcher validate-only plus dry-run proof",
+      "After live promotion, use only the program-specific dispatcher to materialize the safe G1 frontier and verify every admitted task in canonical ai-status/task-state and admission archive",
+      "Do not use the generic DevTaskPacket to bulk-materialize the 28 product tasks, do not edit .orchestrator/config.json, do not impersonate Human/Ops/root-freeze approval, and do not claim the 12 loops operational before L12-CLOSE-001 has hosted/verifier evidence"
+    ],
+    "artifacts": [
+      "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731"
+    ],
+    "depends_on": [
+      "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#guarded-remediation-dispatcher",
+      "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+      "documents": [
+        {
+          "kind": "CURRENT_THREE_PASS_GAP_AUDIT",
+          "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+          "sourceRefs": [
+            "PR#4394",
+            "exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4",
+            "three independent passes: original DAG state, current evidence replay, catalog/runtime/hosted backward audit"
+          ]
+        },
+        {
+          "kind": "PROGRAM_SPECIFIC_GUARDED_REMEDIATION_GRAPH",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+          "sourceRefs": [
+            "28 product tasks",
+            "25-task maximum safe G1 frontier",
+            "zero G1 artifact-prefix conflicts",
+            "generic DevTaskPacket product bulk materialization prohibited"
+          ]
+        },
+        {
+          "kind": "CURRENT_PROOF_REVALIDATION_BASELINE",
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731/current-proof-revalidation-baseline.json",
+          "sourceRefs": [
+            "9 missing controller contracts",
+            "16 archived evidence rows require current-proof revalidation",
+            "only L12-DIST-001 and L12-MANIFEST-001 pass both current validator and checksum"
+          ]
+        },
+        {
+          "kind": "PR_SPECIFICATION",
+          "path": "https://github.com/ajoe734/pantheon/pull/4394",
+          "sourceRefs": [
+            "exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4",
+            "Branch CI required before specification acceptance"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-31T13:49:00Z",
+      "intent": "supervisor_materialize_program_specific_l12_remediation_dispatcher",
+      "mode": "kernel_repair",
+      "packet_digest": "15bee40bd54fe7c07380563653c7cada2bf089f30549a08fa4d6730b6178353a",
+      "packet_id": "pkt-l12-guarded-remediation-dispatcher-20260731T1349Z",
+      "source_turn_ids": [
+        "user-complete-gap-audit-and-supervisor-dispatch",
+        "codex-three-pass-omission-audit-20260731T1339Z",
+        "codex-guarded-dispatch-bootstrap-20260731T1349Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Treat PR #4394 exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4 as the authoritative current gap specification and require its Branch CI success before implementation acceptance",
+          "Consume guarded-remediation-tasks.json without narrowing or rewriting its 28 product task contracts",
+          "Preserve loop IDs, maturity, desired and actual authority sources, evidence roots, artifact conflict rules, product-level requirements, non-goals, signoff, provider preferences, and Human/Ops-only fields",
+          "Resolve owner and reviewer from live readiness with Antigravity then Claude2 then Claude preferred; record every fallback and never claim an unavailable provider was used",
+          "Validate the complete immutable graph before mutation and fail atomically on duplicate IDs, dangling dependencies, artifact-prefix overlap, stale command root, replay, partial materialization, or canonical readback mismatch",
+          "Add validate-only, dry-run, replay, concurrent conflict, archived-dependency, readiness-fallback, atomic-failure, and exact canonical readback regression tests",
+          "Deliver through clean branch, commit, push, PR, exact-head independent review, protected merge, live command-root promotion, and a dispatcher validate-only plus dry-run proof",
+          "After live promotion, use only the program-specific dispatcher to materialize the safe G1 frontier and verify every admitted task in canonical ai-status/task-state and admission archive",
+          "Do not use the generic DevTaskPacket to bulk-materialize the 28 product tasks, do not edit .orchestrator/config.json, do not impersonate Human/Ops/root-freeze approval, and do not claim the 12 loops operational before L12-CLOSE-001 has hosted/verifier evidence"
+        ],
+        "artifacts": [
+          "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+          "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731"
+        ],
+        "depends_on": [
+          "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+        ],
+        "id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0 Program Dispatcher Gate",
+        "reviewer": "Claude2",
+        "summary": "Bootstrap the existing L12 program-specific dispatcher so the true supervisor can safely fan out the newly audited 28-task remediation DAG to auto workers. This bootstrap is dependency-gated on the scheduler runtime repair and is the only task sent through the generic bridge.",
+        "title": "Extend the program-specific guarded dispatcher for current-proof remediation"
+      },
+      "task_spec_hash": "8fc2d62776c02f342363719d6056737b8b8932a4a1051e5bfa7eee66d74a7246"
+    },
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "reopen",
+      "head_branch": "task/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "head_sha": "18cb8312e04a69d25ef2635f7234615bfe1c2ae6",
+      "mode": "required_commit_status",
+      "pr": 4410,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4410",
+      "recorded_at": "2026-07-31T17:36:40Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51449183145,
+      "status_state": "failure"
+    },
+    "id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+    "last_update": "2026-07-31T18:20:59Z",
+    "next": "Superseded by the canonical V2 delivery task because PR #4417 uses the matching V2 branch; no product catalog or implementation scope changed.",
+    "owner": "Human/Ops",
+    "phase": "Supervisor Runtime Repair / Wave 0 Program Dispatcher Gate",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "head_sha": "eaf521876594bb1904307b0dc33aea10995cf404",
+      "pr": 4417
+    },
+    "reviewer": "Antigravity",
+    "source_ref": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "head_sha": "eaf521876594bb1904307b0dc33aea10995cf404",
+      "pr": 4417,
+      "repository": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "Bootstrap the existing L12 program-specific dispatcher so the true supervisor can safely fan out the newly audited 28-task remediation DAG to auto workers. This bootstrap is dependency-gated on the scheduler runtime repair and is the only task sent through the generic bridge.",
+    "title": "Superseded dispatcher delivery identity",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T13:50:11Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-07-31T15:45:04Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T15:44:36Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-07-31T15:45:04Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T16:31:46Z",
+      "from": "Codex2",
+      "message": "Please independently review PR #4410 exact head 843435bc337bab9cd16606786ee3e439a617c453. All four pre-review findings are addressed at 8ca95d7488c4b79dfa7c99389cc9e999c4fb4508; latest dev was merged without changing task-owned bytes, and post-merge focused validation is 16 current plus 31 legacy tests. Verify legacy default/current explicit profile, non-Human/Ops caller, authoritative zero-partial/concurrent replay, and prepared-receipt recovery. Evidence: docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731/evidence.json. Approve only this exact head after required checks pass.",
+      "resolved_at": "2026-07-31T16:47:06Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T16:47:06Z",
+      "from": "Antigravity",
+      "message": "Independently reviewed PR #4410 exact head 843435bc337bab9cd16606786ee3e439a617c453. Verified PR #4394 exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4 binding, Branch CI 30635898120 success, 28 product task contracts, live readiness fallback resolution, pre-mutation graph validation, legacy default/explicit current profiles, caller RBAC (non-Human/Ops caller rejection under --apply), single-commit authoritative atomic transaction, zero-partial/concurrent replay, prepared-receipt recovery, compile cleanliness, 16 current plus 31 legacy pytest pass, and fail-closed live dry-run against nonterminal overlap. Manifest: docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731/evidence.json.",
+      "resolved_at": "2026-07-31T16:48:10Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T16:48:52Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "resolved_at": "2026-07-31T16:49:20Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T16:58:41Z",
+      "from": "Codex",
+      "message": "Review PR #4410 exact head 53a3cdcc70af14822c95b29460d474462ccfa981 and docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731/evidence.json. Verify immutable 28-task catalog binding, atomic journal/receipt behavior, legacy compatibility, current ownership evidence, and the expected live fail-closed BFF overlap before approval.",
+      "resolved_at": "2026-07-31T17:11:28Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:11:28Z",
+      "from": "Codex2",
+      "message": "Exact-head 53a3cdcc70af14822c95b29460d474462ccfa981 review found a fail-closed readback gap: _current_materialized_row_is_exact accepts provider_assignment_resolution containing only owner/reviewer. Full 25-task G1 reproduction returns create=0 exact=25 after deleting schema/source/readiness/catalog-default/evaluation/fallback evidence, so canonical replay and admission receipts can claim exactness without recording every fallback or proving unavailable providers were not selected. Require exact resolution-schema validation for active and archived rows, including catalog defaults, readiness/source identity, ordered owner/reviewer evaluations, selected-first-ready semantics with owner exclusion, and derived fallback lists; add full-G1 replay/readback/admission-archive regressions that reject truncated or contradictory resolution evidence; then refresh evidence and PR exact head. Independent checks otherwise passed: PR #4394 exact bytes/CI, #4406 merged, #4410 CI, 16 current tests, 31 legacy tests, evidence schema, compile, both validate-only profiles, and live dry-run failed closed on the expected BFF overlap.",
+      "resolved_at": "2026-07-31T17:11:28Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T17:25:15Z",
+      "from": "Codex",
+      "message": "PR #4410 exact head 18cb8312e04a69d25ef2635f7234615bfe1c2ae6 addresses the truncated provider-resolution readback gap. Please independently review exact schema/default/source/evaluation/owner-exclusion/fallback enforcement and the full-G1 active/archive/readback/admission regressions; bind approval to this exact PR/head and evidence manifest.",
+      "resolved_at": "2026-07-31T17:36:40Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:36:40Z",
+      "from": "Codex2",
+      "message": "PR #4410 head 18cb8312e04a69d25ef2635f7234615bfe1c2ae6 is BEHIND required dev dc5136394eb1041ceea1dcc066e55ac2179ca0e5, and canonical task truth explicitly requires fail-closed rebase/update before final approval. Owner must synchronize the task branch with current dev without force-push, resolve any integration conflicts, rerun Branch CI plus 25 current-remediation tests, 31 legacy tests with the documented origin/dev-only exclusion, compile, product-evidence schema, both validate-only profiles, exact #4394 catalog blob check, and live read-only dry-run; refresh the evidence manifest and redispatch Codex2 against the resulting exact PR head. Implementation review otherwise passed exact resolution schema/default/source/order/first-ready/owner-exclusion/fallback enforcement, full-G1 active/archive/readback/admission regressions, 14 independent corruption probes, and expected live overlap fail-closed.",
+      "resolved_at": "2026-07-31T17:36:40Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T17:44:17Z",
+      "from": "Antigravity",
+      "message": "Successfully rebased PR #4410 HEAD 3c1af232d onto origin/dev tip 1ec8ec1ec; all 25 supervisor tests and dispatcher unit tests pass, exact catalog blob check matches #4394, and dry-run execution verified clean.",
+      "resolved_at": "2026-07-31T17:44:19Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:44:19Z",
+      "from": "Antigravity",
+      "message": "Successfully rebased PR #4410 HEAD 3c1af232d onto origin/dev tip 1ec8ec1ec; all 25 supervisor tests and dispatcher unit tests pass, exact catalog blob check matches #4394, and dry-run execution verified clean.",
+      "resolved_at": "2026-07-31T17:44:20Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:44:20Z",
+      "from": "Antigravity",
+      "message": "Successfully rebased PR #4410 HEAD 3c1af232d onto origin/dev tip 1ec8ec1ec; all 25 supervisor tests and dispatcher unit tests pass, exact catalog blob check matches #4394, and dry-run execution verified clean.",
+      "resolved_at": "2026-07-31T17:54:50Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:57:52Z",
+      "from": "Antigravity",
+      "message": "Merged origin/dev into PR #4410 without force-push. Verified functional seven-file dispatcher delta is intact. All 57 pytest tests and validate-only/dry-run gates passed. New exact HEAD: cef19bc9a38232237f39315e7d053aafc97a9506.",
+      "resolved_at": "2026-07-31T17:59:44Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T18:11:27Z",
+      "from": "Human/Ops",
+      "message": "Review PR #4417 exact head eaf521876594bb1904307b0dc33aea10995cf404 against latest dev f5ca90ae5c8e9655b6fbff1dc69c776fd1a68495. Verify exact seven-path scope, byte equality to accepted 3c1af232d functional content, no L12-SIGNOFF-001/config/product-task mutation, 25 current plus 31 legacy tests with one documented baseline exclusion, catalog/schema/validate-only gates, expected live overlap fail-closed, and all GitHub jobs. Approve only this exact head or reopen with evidence.",
+      "resolved_at": "2026-07-31T18:20:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T18:12:26Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Copilot (legacy alias).",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "to": "Copilot",
+      "resolved_at": "2026-07-31T18:20:59Z"
+    }
+  ],
+  "blockers": []
+}

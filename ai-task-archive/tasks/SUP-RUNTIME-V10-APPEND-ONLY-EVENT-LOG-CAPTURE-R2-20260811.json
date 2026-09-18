@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-R2-20260811",
+  "archived_at": "2026-08-11T02:29:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start from a clean current origin/dev worktree and a new branch; do not reuse PR #4740, its branch, or either rejected commit.",
+      "Implement only the descriptor-bound task_state_event_log capture/revalidation needed to allow proven concurrent append growth while rejecting rewrite, truncation/regrowth, replacement, link, parent, permission, and runtime-boundary drift.",
+      "Do not weaken immutable capture for any launch source other than the configured external append-only event log; preserve config CAS, lock ordering, admission/lease parity, bytecode, rollback, and pre-TERM fail-closed guards.",
+      "Add and run adversarial promotion tests covering allowed append growth and every prohibited mutation; record exact-head evidence before independent review.",
+      "Every new commit subject must be at most 72 characters and include required trailers. Deliver by clean PR, independent exact-head review, required checks, and protected merge. Do not retry rollout in this task."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-R2-20260811/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-V10-BASELINE-WORKER-LEASE-PARITY-20260811"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "supervisor",
+          "bridge-governance",
+          "acceptance"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration"
+        ]
+      },
+      "audit_conversation_href": "task:SUPERVISOR-FLEET-THROUGHPUT-20260811",
+      "conversation_id": "SUPERVISOR-FLEET-THROUGHPUT-20260811",
+      "documents": [],
+      "emitted_at": "2026-08-11T02:22:28.352528Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "48067e286ab5c92bc9035117ebdae29b7635e0c6b9cc9993ac0ce54d6b8a5fd0",
+      "packet_id": "sup-root-cause-reissue-20260811-0225",
+      "source_turn_ids": [
+        "systematic-root-cause-investigation-20260811",
+        "approved-remediation-execution-20260811",
+        "clean-reissue-dedupe-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start from a clean current origin/dev worktree and a new branch; do not reuse PR #4740, its branch, or either rejected commit.",
+          "Implement only the descriptor-bound task_state_event_log capture/revalidation needed to allow proven concurrent append growth while rejecting rewrite, truncation/regrowth, replacement, link, parent, permission, and runtime-boundary drift.",
+          "Do not weaken immutable capture for any launch source other than the configured external append-only event log; preserve config CAS, lock ordering, admission/lease parity, bytecode, rollback, and pre-TERM fail-closed guards.",
+          "Add and run adversarial promotion tests covering allowed append growth and every prohibited mutation; record exact-head evidence before independent review.",
+          "Every new commit subject must be at most 72 characters and include required trailers. Deliver by clean PR, independent exact-head review, required checks, and protected merge. Do not retry rollout in this task."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-R2-20260811/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-BASELINE-WORKER-LEASE-PARITY-20260811"
+        ],
+        "id": "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-R2-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Append-only Journal Capture R2",
+        "reviewer": "Codex",
+        "summary": "Reissue the accepted technical repair after PR #4740 became permanently unmergeable: its two published commits have 101-character subjects and the full history fails Commit Trailers. Start from current origin/dev with no commits or branch ancestry copied from #4740; retain the narrow descriptor-bound append-only task-state journal contract and every immutable-launch safety gate. This task is source-only; rollout remains separately governed.",
+        "title": "Reissue append-only journal capture on a clean task branch"
+      },
+      "task_spec_hash": "84088b0f299b099ba8af9e1b1547b471a53fef119c37602c315b591a80300119"
+    },
+    "id": "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-R2-20260811",
+    "last_update": "2026-08-11T02:29:26Z",
+    "next": "PR #4740 merged into dev as 51fbd16fcbbda1ec3b232cf1800bea9da77290bc from corrected commit 3ae67071e9547fd44fb5a6ef9bfa7f8bf84e3a1d. This R2 packet was admitted from a stale pre-merge observation; superseding R2 task before implementation.",
+    "owner": "Antigravity2",
+    "phase": "Supervisor Runtime / Source-only Append-only Journal Capture R2",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Reissue the accepted technical repair after PR #4740 became permanently unmergeable: its two published commits have 101-character subjects and the full history fails Commit Trailers. Start from current origin/dev with no commits or branch ancestry copied from #4740; retain the narrow descriptor-bound append-only task-state journal contract and every immutable-launch safety gate. This task is source-only; rollout remains separately governed.",
+    "title": "Reissue append-only journal capture on a clean task branch",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811"
+  },
+  "handoffs": [],
+  "blockers": []
+}

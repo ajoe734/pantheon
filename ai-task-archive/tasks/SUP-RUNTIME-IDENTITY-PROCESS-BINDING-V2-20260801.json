@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+  "archived_at": "2026-08-02T08:25:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Enumerate supervisor candidates and require exactly one live incumbent whose full argv binds the exact canonical supervisor entrypoint and the captured live --config path; zero or multiple candidates fail closed.",
+      "Capture PID plus /proc starttime as the process generation and re-read both before every comparison; vanished, recycled, changed, unreadable, zombie, or mismatched process identity fails closed.",
+      "Bind executable, full argv, cwd realpath, cwd commit/tree, command-root environment, runtime SHA, status root, and config path to the immutable candidate/incumbent identity. A correct Python supervisor with the wrong config, cwd, commit, tree, or environment must fail.",
+      "Represent admission-lock evidence explicitly and validate the same lock generation/owner around discovery; merely observing that some process holds a lock is insufficient.",
+      "Never log full environment or secrets. Evidence may record only the allowlisted environment contract and hashes/paths needed for verification.",
+      "Add separate deterministic /proc-fixture or injected-reader tests for zero/multiple supervisors, wrong config argv, wrong entrypoint, stale PID, reused PID/starttime, deleted cwd, wrong cwd commit/tree, wrong command root/SHA/status root, unreadable proc fields, and lock-generation drift.",
+      "Include a real read-only discovery probe only if it reports the exact validations actually performed; no TERM, launch, rollback, service restart, or config mutation.",
+      "Run the focused suite plus the merged V2 root/config/Git suite and git diff --check.",
+      "Rollout is source merge only. Rollback is revert of this task merge commit.",
+      "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+      "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+      "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+      "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+      "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+      "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#v2-split-after-stale-review",
+      "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+      "documents": [
+        {
+          "kind": "SUPERSEDED_IDENTITY_MONOLITH",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-promotion-split-chain-20260801T0000Z.json",
+          "sourceRefs": [
+            "PR #4437 rejected heads 07316c73 and 77af55015",
+            "same rejected 77af55015 replayed without code changes",
+            "GitHub review comments 5148931145, 5148948795, 5149092858"
+          ]
+        },
+        {
+          "kind": "SUPERSEDED_RETRY_MONOLITH",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-progress-aware-failure-streak-retry-20260801T0116Z.json",
+          "sourceRefs": [
+            "PR #4438 rejected heads 94e3b6f3, d616beaa and 35056b71",
+            "real owner/reviewer probe returned false",
+            "15-minute owner run timed out and same trees replayed",
+            "GitHub review comments 5148942746, 5149044158, 5149078704"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T02:18:00Z",
+      "intent": "split_repeated_stale_review_monoliths_into_governed_v2_chains",
+      "mode": "kernel_repair",
+      "packet_digest": "355ad2d403cceefb30b138a1399e95d7024427643f80c7aae422463aecf1f1e0",
+      "packet_id": "pkt-sup-runtime-identity-retry-v2-split-20260801T0218Z",
+      "source_turn_ids": [
+        "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+        "human-ops-pr4437-three-exact-head-rejections",
+        "human-ops-pr4438-three-exact-head-rejections-and-timeout"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Enumerate supervisor candidates and require exactly one live incumbent whose full argv binds the exact canonical supervisor entrypoint and the captured live --config path; zero or multiple candidates fail closed.",
+          "Capture PID plus /proc starttime as the process generation and re-read both before every comparison; vanished, recycled, changed, unreadable, zombie, or mismatched process identity fails closed.",
+          "Bind executable, full argv, cwd realpath, cwd commit/tree, command-root environment, runtime SHA, status root, and config path to the immutable candidate/incumbent identity. A correct Python supervisor with the wrong config, cwd, commit, tree, or environment must fail.",
+          "Represent admission-lock evidence explicitly and validate the same lock generation/owner around discovery; merely observing that some process holds a lock is insufficient.",
+          "Never log full environment or secrets. Evidence may record only the allowlisted environment contract and hashes/paths needed for verification.",
+          "Add separate deterministic /proc-fixture or injected-reader tests for zero/multiple supervisors, wrong config argv, wrong entrypoint, stale PID, reused PID/starttime, deleted cwd, wrong cwd commit/tree, wrong command root/SHA/status root, unreadable proc fields, and lock-generation drift.",
+          "Include a real read-only discovery probe only if it reports the exact validations actually performed; no TERM, launch, rollback, service restart, or config mutation.",
+          "Run the focused suite plus the merged V2 root/config/Git suite and git diff --check.",
+          "Rollout is source merge only. Rollback is revert of this task merge commit.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801"
+        ],
+        "id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Identity V2 / 2 Process Binding",
+        "reviewer": "Human/Ops",
+        "summary": "Add only exact incumbent discovery and PID-generation binding on top of the merged immutable root/config/Git layer.",
+        "title": "Bind one incumbent supervisor process to immutable runtime identity"
+      },
+      "task_spec_hash": "9006e016c2d8dc0d74247d349e4f2c7c8b92752f720dd746013995d1d0fa1648"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "head_sha": "1db472063eb7d88d488fe76f89cb70a799b3d144",
+      "mode": "required_commit_status",
+      "pr": 4495,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4495",
+      "recorded_at": "2026-08-02T08:21:17Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51499495408,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+    "last_update": "2026-08-02T08:25:55Z",
+    "next": "Owner closeout complete: PR #4495 exact approved head 1db472063eb7d88d488fe76f89cb70a799b3d144 merged as ec52d6d687732055b75cd6ae441d3c64f00c3240; refreshed 145-test suite, py_compile, evidence JSON and artifact hashes, trailers, diff-check, pure-merge parent/byte identity, rejected-ancestry and green review/root-freeze gates verified; source-only rollout, no live mutation.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Identity V2 / 2 Process Binding",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "head_sha": "1db472063eb7d88d488fe76f89cb70a799b3d144",
+      "pr": 4495
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801/evidence.json",
+    "review_notes_zh": [
+      "Human/Ops independently re-reviewed refreshed exact head 1db472063eb7d88d488fe76f89cb70a799b3d144. It is a two-parent pure merge of previously approved process-binding head e3e63243608cf070010ff9d83c9fd0371f30b68c and current dev a385c0be5b8d4c71f6d0bd728e237b61d5eadaa4. The four task-owned files are byte-identical to e3e63243; PR diff against current dev remains exactly those four files. Prior detached-head 145-test independent validation and refreshed owner 145-test validation passed, with py_compile, evidence JSON/hash, commit trailers, diff-check, exact parent proof, rejected ancestry absence and all 8 refreshed GitHub checks green. No config, canonical state, live process/service, provider policy, reviewer policy, or quota-group change."
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Add only exact incumbent discovery and PID-generation binding on top of the merged immutable root/config/Git layer.",
+    "title": "Bind one incumbent supervisor process to immutable runtime identity",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T08:25:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-identity-process-binding-v2-20260801",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-identity-process-binding-v2-20260801",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "1db472063eb7d88d488fe76f89cb70a799b3d144",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ec52d6d687732055b75cd6ae441d3c64f00c3240",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:23:32Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:30:06Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:30:06Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-02T07:54:46Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T08:10:18Z",
+      "from": "Codex",
+      "message": "PR #4495 is ready for independent exact-head review at e3e63243608cf070010ff9d83c9fd0371f30b68c. Review evidence: docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801/evidence.json. Verified 145 tests, py_compile, diff check, trailers, and rejected ancestry; evidence remains review_pending with no live claims. Approve only with REVIEW_PR=4495 and REVIEW_HEAD_SHA=e3e63243608cf070010ff9d83c9fd0371f30b68c.",
+      "resolved_at": "2026-08-02T08:13:18Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T08:13:18Z",
+      "from": "Human/Ops",
+      "message": "Exact PR #4495 head e3e63243608cf070010ff9d83c9fd0371f30b68c independently approved; owner must finalize through governed integrator after root freeze.",
+      "resolved_at": "2026-08-02T08:20:44Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T08:20:44Z",
+      "from": "Codex",
+      "message": "Refreshed PR #4495 onto current dev with merge head 1db472063eb7d88d488fe76f89cb70a799b3d144 after the governed integrator refused the stale approved base. The four-file task payload and evidence hashes are unchanged; local 145-test suite, py_compile, diff/trailer checks passed and all 8 GitHub checks succeeded. Human/Ops must independently review and approve exact REVIEW_PR=4495 REVIEW_HEAD_SHA=1db472063eb7d88d488fe76f89cb70a799b3d144 before owner closeout.",
+      "resolved_at": "2026-08-02T08:21:17Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T08:21:17Z",
+      "from": "Human/Ops",
+      "message": "Fresh exact-head approval after pure dev refresh: PR #4495 head 1db472063eb7d88d488fe76f89cb70a799b3d144.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T08:25:56Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,118 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-guarded-remediation-dispatcher-20260731T1349Z--15bee40bd54fe7c0.json",
+  "admitted_at": "2026-07-31T13:50:06Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#guarded-remediation-dispatcher",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "CURRENT_THREE_PASS_GAP_AUDIT",
+      "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+      "sourceRefs": [
+        "PR#4394",
+        "exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4",
+        "three independent passes: original DAG state, current evidence replay, catalog/runtime/hosted backward audit"
+      ]
+    },
+    {
+      "kind": "PROGRAM_SPECIFIC_GUARDED_REMEDIATION_GRAPH",
+      "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+      "sourceRefs": [
+        "28 product tasks",
+        "25-task maximum safe G1 frontier",
+        "zero G1 artifact-prefix conflicts",
+        "generic DevTaskPacket product bulk materialization prohibited"
+      ]
+    },
+    {
+      "kind": "CURRENT_PROOF_REVALIDATION_BASELINE",
+      "path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731/current-proof-revalidation-baseline.json",
+      "sourceRefs": [
+        "9 missing controller contracts",
+        "16 archived evidence rows require current-proof revalidation",
+        "only L12-DIST-001 and L12-MANIFEST-001 pass both current validator and checksum"
+      ]
+    },
+    {
+      "kind": "PR_SPECIFICATION",
+      "path": "https://github.com/ajoe734/pantheon/pull/4394",
+      "sourceRefs": [
+        "exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4",
+        "Branch CI required before specification acceptance"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T13:49:00Z",
+  "intent": "supervisor_materialize_program_specific_l12_remediation_dispatcher",
+  "mode": "kernel_repair",
+  "packet_digest": "15bee40bd54fe7c07380563653c7cada2bf089f30549a08fa4d6730b6178353a",
+  "packet_id": "pkt-l12-guarded-remediation-dispatcher-20260731T1349Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "c0806fa13b159249be52652a0d7f80d92f41a6831d059bfaf8528216b46f2409",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-complete-gap-audit-and-supervisor-dispatch",
+    "codex-three-pass-omission-audit-20260731T1339Z",
+    "codex-guarded-dispatch-bootstrap-20260731T1349Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Treat PR #4394 exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4 as the authoritative current gap specification and require its Branch CI success before implementation acceptance",
+          "Consume guarded-remediation-tasks.json without narrowing or rewriting its 28 product task contracts",
+          "Preserve loop IDs, maturity, desired and actual authority sources, evidence roots, artifact conflict rules, product-level requirements, non-goals, signoff, provider preferences, and Human/Ops-only fields",
+          "Resolve owner and reviewer from live readiness with Antigravity then Claude2 then Claude preferred; record every fallback and never claim an unavailable provider was used",
+          "Validate the complete immutable graph before mutation and fail atomically on duplicate IDs, dangling dependencies, artifact-prefix overlap, stale command root, replay, partial materialization, or canonical readback mismatch",
+          "Add validate-only, dry-run, replay, concurrent conflict, archived-dependency, readiness-fallback, atomic-failure, and exact canonical readback regression tests",
+          "Deliver through clean branch, commit, push, PR, exact-head independent review, protected merge, live command-root promotion, and a dispatcher validate-only plus dry-run proof",
+          "After live promotion, use only the program-specific dispatcher to materialize the safe G1 frontier and verify every admitted task in canonical ai-status/task-state and admission archive",
+          "Do not use the generic DevTaskPacket to bulk-materialize the 28 product tasks, do not edit .orchestrator/config.json, do not impersonate Human/Ops/root-freeze approval, and do not claim the 12 loops operational before L12-CLOSE-001 has hosted/verifier evidence"
+        ],
+        "artifacts": [
+          "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+          "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731"
+        ],
+        "depends_on": [
+          "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+        ],
+        "id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0 Program Dispatcher Gate",
+        "reviewer": "Claude2",
+        "summary": "Bootstrap the existing L12 program-specific dispatcher so the true supervisor can safely fan out the newly audited 28-task remediation DAG to auto workers. This bootstrap is dependency-gated on the scheduler runtime repair and is the only task sent through the generic bridge.",
+        "title": "Extend the program-specific guarded dispatcher for current-proof remediation"
+      },
+      "task_spec_hash": "8fc2d62776c02f342363719d6056737b8b8932a4a1051e5bfa7eee66d74a7246"
+    }
+  ]
+}

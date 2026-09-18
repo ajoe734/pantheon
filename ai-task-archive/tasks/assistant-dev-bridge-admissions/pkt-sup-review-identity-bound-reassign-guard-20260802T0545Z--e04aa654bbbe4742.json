@@ -1,0 +1,105 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-review-identity-bound-reassign-guard-20260802T0545Z--e04aa654bbbe4742.json",
+  "admitted_at": "2026-08-02T06:18:04Z",
+  "audit_conversation_href": "codex://root/follow-original-plan-review-identity-20260802",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-follow-original-plan-review-identity-20260802",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Claude2",
+      "reviewer": "Gemini",
+      "status": "dispatched",
+      "taskId": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_REGRESSION",
+      "path": ".orchestrator/supervisor.py",
+      "sourceRefs": [
+        "PR #4414 merge dc5136394eb1041ceea1dcc066e55ac2179ca0e5",
+        "PR #4445 merge 2350e4e85c69009b52e7fbb75e621b04f83f66c9",
+        "Human/Ops reviewer was automatically replaced by Codex2 before exact-head approval"
+      ]
+    },
+    {
+      "kind": "REGRESSION_TARGET",
+      "path": "scripts/ai_status.py",
+      "sourceRefs": [
+        "Codex and Codex2 share one ChatGPT account",
+        "same-account reviewer must be rejected"
+      ]
+    },
+    {
+      "kind": "REGRESSION_TARGET",
+      "path": ".orchestrator/test_supervisor.py",
+      "sourceRefs": [
+        "bound-review reassignment and unavailable reviewer paths"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T05:45:00Z",
+  "intent": "repair_bound_review_identity_continuity_after_same_account_auto_approval",
+  "mode": "kernel_repair",
+  "packet_digest": "e04aa654bbbe4742e17dec6ec7937d8189e1e2f9bb2ef0fd6ba08c2abf403bf6",
+  "packet_id": "pkt-sup-review-identity-bound-reassign-guard-20260802T0545Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "5fc2ff0e49cc3bc5c546d9b8849db218b2eae132908535351fdca0520615b42b",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-questioned-unplanned-changes",
+    "user-authorized-supervisor-fleet-completion"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev; reference #4414 and #4445 as evidence only and do not rewrite V3 failure-record behavior.",
+          "For a task in review or review_approved with a valid exact-head review binding or pending reviewer handoff, automatic provider/lane recovery must preserve the reviewer identity; it must block or retain the handoff rather than substitute an unavailable reviewer.",
+          "The identity-equivalence policy must reject Codex/Codex2 as an owner/reviewer pair for approval or merge gating, even when their agent labels differ.",
+          "Normal unbound task reassignment remains available only to a genuinely independent reviewer lane; no broad scheduler redesign.",
+          "Regression tests reproduce #4445: owner Codex, reviewer Human/Ops, exact head binding, Human/Ops unavailable, Codex2 selectable; assert reviewer is not changed, approval cannot be created, and no merge-ready state results.",
+          "Regression tests cover a valid independent reassignment for an unbound task and forged/stale binding negatives.",
+          "Do not modify .orchestrator/config.json, live runtime JSON, retry thresholds, provider readiness policy, deployment configuration, V3 failure-record schema, or product tasks.",
+          "Use a clean governed worktree and task branch task/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802; PR target dev; run focused and complete supervisor/ai-status regressions plus diff/trailer checks.",
+          "Require Gemini exact-head review and protected merge after all checks; rollout is source merge only and rollback is revert of this follow-up merge."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/"
+        ],
+        "depends_on": [],
+        "id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+        "owner": "Claude2",
+        "phase": "Supervisor Runtime Repair / Bound Review Identity",
+        "reviewer": "Gemini",
+        "summary": "Fail closed when an exact-head review binding would lose its designated independent reviewer; reject same-account reviewer pairs.",
+        "title": "Guard bound review identity from auto reassignment"
+      },
+      "task_spec_hash": "a32f724204c52c95c7a185a647b4527d88daae35d681aa967d2ab4810928b1ff"
+    }
+  ]
+}

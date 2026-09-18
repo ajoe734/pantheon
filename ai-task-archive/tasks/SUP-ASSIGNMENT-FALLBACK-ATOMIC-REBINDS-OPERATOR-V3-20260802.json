@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V3-20260802",
+  "archived_at": "2026-08-02T09:16:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Explicit operator constraint is authoritative: keep Codex and Codex2 configured quota groups distinct and add neither hardcoded account equivalence nor a global mutual-review prohibition.",
+      "Start from current origin/dev in a clean governed task worktree. Reapply the useful PR #4496/f33ee38bb6bfc684cbb2be62e1751f54189aa6fe design under this new Task-ID; do not reuse archived status, stale approval, or the old commit trailer as delivery authority.",
+      "Plan a complete viable owner/reviewer pair before canonical mutation. Distinct configured agent identities may review one another; only task-scoped live auth/quota unavailability may trigger fallback.",
+      "Rebind owner and reviewer atomically with one governed compare-and-swap checking expected owner, reviewer, and status under the canonical lock.",
+      "Configured/preferred traversal is deterministic, bounded, and cycle-safe; catalog-locked assignments remain immutable.",
+      "Reproduce all 23 stranded unavailable-Antigravity/Codex2-reviewer todo tasks and prove each receives a complete viable pair without partial mutation.",
+      "No legal distinct pair and stale concurrent assignment/status changes both fail closed with zero canonical mutation.",
+      "Helper claim, mainline normalization, and worker-failure fallback all consume the same pair planner.",
+      "Do not edit account groups, quota groups, provider policy, config, canonical JSON by hand, live runtime, services, or the 28-task product catalog.",
+      "Run focused pair-planner tests, full supervisor regression, py_compile, evidence JSON parse, git diff --check, commit trailers, and exact-head CI. Evidence cites both stale supersessions and remains review_pending.",
+      "Deliver a clean PR to dev, exact-head Human/Ops review, governed merge, and canonical done/archive before rollout. Rollback is merge-commit revert."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/task-briefs/sup_assignment_fallback_atomic_rebinds_operator_v3_20260802.md",
+      "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V3-20260802/"
+    ],
+    "depends_on": [
+      "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+      "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/supervisor-autoworker-complete-audit-20260802#operator-account-neutral-governance-v4",
+      "conversation_id": "codex-root-supervisor-autoworker-complete-audit-20260802",
+      "documents": [
+        {
+          "kind": "EXPLICIT_OPERATOR_CONSTRAINT",
+          "path": "codex://root/supervisor-autoworker-complete-audit-20260802#operator-account-constraint",
+          "sourceRefs": [
+            "Codex and Codex2 may be different accounts",
+            "do not merge configured quota groups",
+            "do not globally prohibit Codex/Codex2 mutual review",
+            "all other supervisor/auto-worker remediation continues"
+          ]
+        },
+        {
+          "kind": "SUPERSEDED_STALE_GOVERNANCE_TASK",
+          "path": "ai-task-archive/tasks/OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-V3-20260802.json",
+          "sourceRefs": [
+            "terminal_outcome superseded",
+            "do not land PR #4401 shared-account paragraph"
+          ]
+        },
+        {
+          "kind": "INTERRUPTED_VALID_ATOMIC_WORK",
+          "path": "git-object://f33ee38bb6bfc684cbb2be62e1751f54189aa6fe",
+          "sourceRefs": [
+            "38 focused assignment tests passed before stale supersession",
+            "648 insertions and 72 deletions in supervisor/test files",
+            "implementation explicitly did not change account/quota groups"
+          ]
+        },
+        {
+          "kind": "CLOSED_PRIOR_ATOMIC_DELIVERY",
+          "path": "https://github.com/ajoe734/pantheon/pull/4496",
+          "sourceRefs": [
+            "exact head cfa2b668fcb4029de2a2bae1c8111eb9b82c0033",
+            "reuse design only under new governed Task-ID"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T08:57:00Z",
+      "intent": "land_single_dispatch_governance_without_account_equivalence_then_restore_atomic_task_scoped_fallback",
+      "mode": "kernel_repair",
+      "packet_digest": "363e5585e3af505a0ac40c9c083a056f6475b120ec2ff0cf61c67cf7abe7f4e4",
+      "packet_id": "pkt-operator-account-neutral-governance-atomic-v4-20260802T0857Z",
+      "source_turn_ids": [
+        "operator-codex-codex2-may-use-different-accounts-20260802",
+        "operator-other-remediation-continues-20260802",
+        "stale-governance-packet-second-recovery-20260802"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Explicit operator constraint is authoritative: keep Codex and Codex2 configured quota groups distinct and add neither hardcoded account equivalence nor a global mutual-review prohibition.",
+          "Start from current origin/dev in a clean governed task worktree. Reapply the useful PR #4496/f33ee38bb6bfc684cbb2be62e1751f54189aa6fe design under this new Task-ID; do not reuse archived status, stale approval, or the old commit trailer as delivery authority.",
+          "Plan a complete viable owner/reviewer pair before canonical mutation. Distinct configured agent identities may review one another; only task-scoped live auth/quota unavailability may trigger fallback.",
+          "Rebind owner and reviewer atomically with one governed compare-and-swap checking expected owner, reviewer, and status under the canonical lock.",
+          "Configured/preferred traversal is deterministic, bounded, and cycle-safe; catalog-locked assignments remain immutable.",
+          "Reproduce all 23 stranded unavailable-Antigravity/Codex2-reviewer todo tasks and prove each receives a complete viable pair without partial mutation.",
+          "No legal distinct pair and stale concurrent assignment/status changes both fail closed with zero canonical mutation.",
+          "Helper claim, mainline normalization, and worker-failure fallback all consume the same pair planner.",
+          "Do not edit account groups, quota groups, provider policy, config, canonical JSON by hand, live runtime, services, or the 28-task product catalog.",
+          "Run focused pair-planner tests, full supervisor regression, py_compile, evidence JSON parse, git diff --check, commit trailers, and exact-head CI. Evidence cites both stale supersessions and remains review_pending.",
+          "Deliver a clean PR to dev, exact-head Human/Ops review, governed merge, and canonical done/archive before rollout. Rollback is merge-commit revert."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/task-briefs/sup_assignment_fallback_atomic_rebinds_operator_v3_20260802.md",
+          "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V3-20260802/"
+        ],
+        "depends_on": [
+          "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+          "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+          "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+        ],
+        "id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V3-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor reliability / assignment fallback topology operator V3",
+        "reviewer": "Human/Ops",
+        "summary": "Recover the already-tested atomic owner/reviewer pair planner under account-neutral governance after a stale coordinator killed the valid V2 worker.",
+        "title": "Restore atomic task-scoped fallback after stale supersession"
+      },
+      "task_spec_hash": "271a3380ef5a21c718f5cbc240beba36eec9f8f045f749ffcd8da7071713170f"
+    },
+    "id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V3-20260802",
+    "last_update": "2026-08-02T09:16:14Z",
+    "next": "Replace dependency binding corrupted by the stale post-merge V5 coordinator race. The implementation objective and account-neutral constraints remain unchanged; replacement depends directly on merged PR #4499 evidence plus the valid provider/failure-streak prerequisites.",
+    "owner": "Codex",
+    "phase": "Supervisor reliability / assignment fallback topology operator V3",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Recover the already-tested atomic owner/reviewer pair planner under account-neutral governance after a stale coordinator killed the valid V2 worker.",
+    "title": "Restore atomic task-scoped fallback after stale supersession",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802"
+  },
+  "handoffs": [],
+  "blockers": []
+}

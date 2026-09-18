@@ -1,0 +1,272 @@
+{
+  "version": 1,
+  "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+  "archived_at": "2026-08-02T06:38:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Start from the merged V3 failure-record task; do not reuse or cherry-pick PR #4442.",
+      "Accept the captured governed reviewer reopen shape only when type=reopen, event_id has the canonical ai-status-event identity, task_id exactly matches, ts is strictly after failure, event.agent exactly equals reviewer_at_failure, reviewer differs from unchanged owner, and any exact-head review binding is consistent with the failure/new-head lineage.",
+      "Accept the captured governed worker commit shape only when type=worker_commit, event_id has the worker-commit identity, task_id exactly matches, ts is strictly after failure, event.agent exactly equals unchanged owner_at_failure, commit is exact lowercase 40-hex, the failure record contains an exact rejected-head baseline, and commit differs from that baseline.",
+      "If governed reviewer handoff is supported, normalize only a captured production shape with explicit independent reviewer identity and exact destination owner; an owner-to-reviewer handoff is not reviewer progress.",
+      "Reject missing task_id, agent, event_id, timestamp, failure baseline, owner/reviewer record, or exact head. Reject wrong reviewer, wrong owner, owner==reviewer, cross-task/provider, stale event, same rejected head, unverified generic commit, and malformed event identity/head.",
+      "Generic note/progress/last_update, dispatch sync, wake, worker start, test rerun, PR bind without governed reviewer action, or repeated handoff of the same head is not progress.",
+      "Return an immutable normalized progress generation binding failure generation plus event id/type/timestamp/actor/exact head when present. The pure normalizer must not mutate streaks, canonical task state, queue, workers, leases, reservations, or provider state.",
+      "Add separate deterministic tests copied from captured real ai-activity-log shapes for Human/Ops reopen and Antigravity worker_commit, plus one test for every deny row and unrelated event/streak preservation. Tests that add reviewer/owner fields not emitted by production are insufficient.",
+      "Run the complete .orchestrator/test_supervisor.py regression, captured-shape direct probes, and git diff --check.",
+      "After exact-head review and merge, hand evidence to Human/Ops. Human/Ops will supersede blocked wrapper SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801; only then may the already-governed recovery-decision task resume.",
+      "Rollout is source merge only. Rollback reverts this task and then the V3 record task.",
+      "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend any rejected PR #4442 commit.",
+      "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+      "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+      "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+      "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+      "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801/"
+    ],
+    "depends_on": [
+      "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#v3-real-shape-atomic-split",
+      "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+      "documents": [
+        {
+          "kind": "REJECTED_V2_MONOLITH_SOURCE",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-identity-retry-v2-split-20260801T0218Z.json",
+          "sourceRefs": [
+            "PR #4442 rejected heads e89d09ea/67e8ce11/85b4d860/5b2c309e/69e69ffa",
+            "captured live worker request_snapshot lacks owner/reviewer",
+            "captured ai-status reopen and worker_commit shapes fail V2 probes",
+            "Pantheon canonical review gate failure on exact head 69e69ffa"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T02:56:00Z",
+      "intent": "replace_unwired_failure_evidence_monolith_with_real_shape_atomic_tasks",
+      "mode": "kernel_repair",
+      "packet_digest": "7383294a0d4c63f067156c408dd6f69159f4df5effc29d59fa8bd38fa15aeeef",
+      "packet_id": "pkt-sup-failure-evidence-v3-atomic-20260801T0256Z",
+      "source_turn_ids": [
+        "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+        "human-ops-pr4442-real-runtime-shape-rejections"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start from the merged V3 failure-record task; do not reuse or cherry-pick PR #4442.",
+          "Accept the captured governed reviewer reopen shape only when type=reopen, event_id has the canonical ai-status-event identity, task_id exactly matches, ts is strictly after failure, event.agent exactly equals reviewer_at_failure, reviewer differs from unchanged owner, and any exact-head review binding is consistent with the failure/new-head lineage.",
+          "Accept the captured governed worker commit shape only when type=worker_commit, event_id has the worker-commit identity, task_id exactly matches, ts is strictly after failure, event.agent exactly equals unchanged owner_at_failure, commit is exact lowercase 40-hex, the failure record contains an exact rejected-head baseline, and commit differs from that baseline.",
+          "If governed reviewer handoff is supported, normalize only a captured production shape with explicit independent reviewer identity and exact destination owner; an owner-to-reviewer handoff is not reviewer progress.",
+          "Reject missing task_id, agent, event_id, timestamp, failure baseline, owner/reviewer record, or exact head. Reject wrong reviewer, wrong owner, owner==reviewer, cross-task/provider, stale event, same rejected head, unverified generic commit, and malformed event identity/head.",
+          "Generic note/progress/last_update, dispatch sync, wake, worker start, test rerun, PR bind without governed reviewer action, or repeated handoff of the same head is not progress.",
+          "Return an immutable normalized progress generation binding failure generation plus event id/type/timestamp/actor/exact head when present. The pure normalizer must not mutate streaks, canonical task state, queue, workers, leases, reservations, or provider state.",
+          "Add separate deterministic tests copied from captured real ai-activity-log shapes for Human/Ops reopen and Antigravity worker_commit, plus one test for every deny row and unrelated event/streak preservation. Tests that add reviewer/owner fields not emitted by production are insufficient.",
+          "Run the complete .orchestrator/test_supervisor.py regression, captured-shape direct probes, and git diff --check.",
+          "After exact-head review and merge, hand evidence to Human/Ops. Human/Ops will supersede blocked wrapper SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801; only then may the already-governed recovery-decision task resume.",
+          "Rollout is source merge only. Rollback reverts this task and then the V3 record task.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend any rejected PR #4442 commit.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801/"
+        ],
+        "depends_on": [
+          "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801"
+        ],
+        "id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Retry V3 / 2 Activity Normalizer",
+        "reviewer": "Human/Ops",
+        "summary": "Add only pure progress normalization over the merged v3 failure record using captured governed ai-status and worker-commit shapes.",
+        "title": "Normalize governed progress from real activity event shapes"
+      },
+      "task_spec_hash": "4d1afea80c5bf6ad3c2cfe5050e64b71aef1f6052dd51903eeb65254a5306b4d"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "head_sha": "baeed7e895f75e9f8193e86a92def6ac3210e97d",
+      "mode": "required_commit_status",
+      "pr": 4483,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4483",
+      "recorded_at": "2026-08-02T06:34:38Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51497912473,
+      "status_state": "success"
+    },
+    "id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+    "last_update": "2026-08-02T06:38:44Z",
+    "next": "Owner finalized Human/Ops exact-head approval after PR #4483 merged as 5cb03dd5ebe3ce13435c848175c5dab5450e9ea5. Verified focused 5 passed/28 subtests, captured probes 2 passed, full supervisor 491 passed/102 subtests, py_compile, evidence JSON, diff checks, and rejected PR #4442 heads absent. Preserved the reviewed four-file scope; generated dashboard, assistant-packet, and task-brief sync artifacts remain excluded.",
+    "owner": "Codex",
+    "phase": "Supervisor Retry V3 / 2 Activity Normalizer",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "head_sha": "baeed7e895f75e9f8193e86a92def6ac3210e97d",
+      "pr": 4483
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801/evidence.json",
+    "review_notes_zh": [
+      "Human/Ops exact-head review：在全新 detached worktree 核對 baeed7e895f75e9f8193e86a92def6ac3210e97d 相對 origin/dev 16135f2316541591e54cba6d58f0a80273731bc1 僅含四個宣告檔案；focused 5 passed/28 subtests、captured probes 2 passed、完整 supervisor 491 passed/102 subtests；py_compile、JSON、diff checks 與 CI 全綠；P0-1/P0-2 provider recovery 內容保留；未改 Codex/Codex2 account/quota groups 或全域 reviewer policy。"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Add only pure progress normalization over the merged v3 failure record using captured governed ai-status and worker-commit shapes.",
+    "title": "Normalize governed progress from real activity event shapes",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T06:38:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-failure-streak-activity-normalizer-v3-20260801",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-failure-streak-activity-normalizer-v3-20260801",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "baeed7e895f75e9f8193e86a92def6ac3210e97d",
+      "commit_subject": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801: revalidate",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Task-scoped normalizer evidence and exact-head handoff metadata.",
+        "Not changing": "Normalizer behavior, failure recording or consumption, provider",
+        "Composes with": "PR #4483 over origin/dev 16135f2316541591e54cba6d58f0a80273731bc1.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+        "Reviewer": "Human/Ops",
+        "Verified": "focused 5/28 subtests; captured probes 2; full 491/102 subtests; compile, JSON, diff, and rejected-head ancestry checks"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 4,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5cb03dd5ebe3ce13435c848175c5dab5450e9ea5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:26:49Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:30:50Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:30:50Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-02T04:34:28Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T04:33:45Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by Codex2 while Antigravity is dispatch-paused.",
+      "resolved_at": "2026-08-02T04:34:35Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T04:51:35Z",
+      "from": "Codex2",
+      "message": "PR #4483 is green and ready for independent exact-head review at 9c68b31a79a8dc6bb48b4eb90bf8d7192daf021d. Review evidence: docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801/evidence.json. Verify captured Human/Ops reopen and Antigravity worker_commit shapes, deny matrix, purity, and full 482-test regression; bind REVIEW_PR=4483 and REVIEW_HEAD_SHA exactly when approving.",
+      "resolved_at": "2026-08-02T05:01:10Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-02T05:01:10Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-02T05:06:49Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T05:06:49Z",
+      "from": "Codex",
+      "message": "Independent exact-head review approved for PR #4483 at 9c68b31a79a8dc6bb48b4eb90bf8d7192daf021d: captured governed reopen and worker_commit shapes match canonical activity rows; pure fail-closed normalization satisfies the allow/deny matrix without retry or state mutation; focused 5 passed with 28 subtests, captured probes 2 passed, full supervisor 482 passed with 94 subtests, compile/JSON/diff checks and visible CI passed.",
+      "resolved_at": "2026-08-02T06:26:05Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T06:26:05Z",
+      "from": "Human/Ops",
+      "message": "Invalidate the stale approval after canonical reviewer drift before task-scoped owner fallback; PR #4483 exact head 9c68b31a79a8dc6bb48b4eb90bf8d7192daf021d must be freshly composed and re-reviewed.",
+      "resolved_at": "2026-08-02T06:26:05Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T06:34:03Z",
+      "from": "Codex",
+      "message": "PR #4483 is ready for independent exact-head review at baeed7e895f75e9f8193e86a92def6ac3210e97d after non-rewriting composition with origin/dev 16135f2316541591e54cba6d58f0a80273731bc1. Pure four-file normalizer diff preserved; focused 5 passed/28 subtests, captured probes 2 passed, full supervisor 491 passed/102 subtests, compile/JSON/diff and all six rejected-head ancestry checks passed. Both visible Branch CI runs are green; auto-merge is off. Review evidence: docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801/evidence.json",
+      "resolved_at": "2026-08-02T06:34:38Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T06:34:38Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approved PR #4483 exact head baeed7e895f75e9f8193e86a92def6ac3210e97d after clean-worktree independent validation; four-file pure normalizer scope and current provider-recovery composition are intact.",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T06:38:44Z"
+    }
+  ],
+  "blockers": []
+}

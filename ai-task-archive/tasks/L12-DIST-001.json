@@ -1,0 +1,287 @@
+{
+  "version": 1,
+  "task_id": "L12-DIST-001",
+  "archived_at": "2026-07-28T18:32:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Committed normalized SourceRecord transactionally enqueues one versioned distillation job",
+      "Concurrent workers claim with lease and duplicate revised content is handled by digest",
+      "Registry failure records controller failure and durable retry or DLQ",
+      "Approved immutable artifacts remain unchanged",
+      "Crash before or after Registry write replays to one terminal draft"
+    ],
+    "actual_state_sources": [
+      "StrategySpec mutable draft",
+      "Registry terminal readback",
+      "distillation DLQ"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [
+        "L12-SRC-001"
+      ],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/source_ingestion",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-DIST-001"
+    },
+    "artifacts": [
+      "services/source_ingestion",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "2e5d18beaaeff52284bc5decdc9ac9cde0a2ef2dd365dfd6222ba628642e45d0",
+    "current_maturity": "api-only",
+    "depends_on": [
+      "L12-SRC-001"
+    ],
+    "desired_state_sources": [
+      "normalized versioned SourceRecord"
+    ],
+    "dispatch_rules": [
+      "Ack only after Registry terminal write",
+      "Do not mark sync failure successful",
+      "Preserve source and draft lineage"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001",
+    "fleet_lane": "source",
+    "github_review_bridge": {
+      "actor": "Codex",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-DIST-001",
+      "head_sha": "e91382b508b42456d75747fdf3cef92c7850d2ad",
+      "mode": "required_commit_status",
+      "pr": 4286,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4286",
+      "recorded_at": "2026-07-28T12:58:06Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51216080128,
+      "status_state": "success"
+    },
+    "human_ops_reassignment_history": [
+      {
+        "at": "2026-07-27T18:29:29Z",
+        "owner": "Codex2",
+        "previous": {
+          "last_update": "2026-07-27T17:57:05Z",
+          "next": "Independent review requested for PR #4193 exact full head 5934ed6d8e4dc797fb5dbd34a8fc9636b3acdb1c against dev base a6966b13d84430387da9c3a33fcf224c841bc5c6. Do not reuse review of d7b0817cb or earlier heads. Review the transactional version ledger/outbox/inbox, lease-token and expiry fences, truthful Registry retry/DLQ/readback, approved-artifact immutability, digest-keyed replay identity, and shared JSONL mutation lease. Evidence manifest: docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json; receipt b1afb294c12d89cbae9dfd9ab28989801f8dba9a has all required checks green; final head runs 30291362755 and 30291363747 are also green; auto-merge is disabled.",
+          "owner": "Codex2",
+          "reviewer": "Codex"
+        },
+        "reason": "canonical fleet dispatch repair: prioritize Claude/Antigravity where available; avoid config mutation",
+        "reviewer": "Claude"
+      }
+    ],
+    "id": "L12-DIST-001",
+    "last_update": "2026-07-28T18:32:49Z",
+    "loop_ids": [
+      "strategy_distillation"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Human/Ops reconciled already-merged L12-DIST-001: review_approved task brief on dev binds owner Codex2, reviewer Codex, repository ajoe734/pantheon, and reviewed delivery commit e91382b508b42456d75747fdf3cef92c7850d2ad.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No write to immutable approved artifact"
+    ],
+    "owner": "Codex2",
+    "phase": "Twelve Loop Remediation / Distillation",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "real source-to-registry service test",
+      "two-worker and revised-content test",
+      "Registry outage and replay",
+      "approved-artifact immutability"
+    ],
+    "requires_human_ops_signoff": false,
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-DIST-001",
+      "head_sha": "e91382b508b42456d75747fdf3cef92c7850d2ad",
+      "pr": 4286
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json",
+    "review_notes_zh": [
+      "精確審查 PR #4286 head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 通過：Registry payload 僅由 committed SourceRecord 與 exact request seed/evidence lineage 建構。",
+      "valid same-id note mutation 與 lost-ack replay regression 證明 payload/checksum/seed/bundle/item 一致、already_terminal、單次 write、無 DLQ。",
+      "獨立重跑 focused 115 passed；source_ingestion 760 passed, 2 skipped；Registry + StrategySpec 231 passed；schema/checksum/十條 validator/trailers/diff 與 exact-head CI 全綠。"
+    ],
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "用 versioned source digest、durable outbox/inbox、lease、retry/DLQ 取代 non-thread-safe JSONL，Registry 失敗必須 truthful degraded，不可仍記成功。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-DIST-001.md",
+    "title": "Make source-to-draft distillation transactional and replayable",
+    "wave": 2,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-28T18:32:49Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/tmp/pantheon-bff-closeout-20260728-ZgxYgy/repo",
+      "commit": "e91382b508b42456d75747fdf3cef92c7850d2ad",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": ".orchestrator/task-briefs/l12_dist_001.md",
+        "commit": "a6d56c366f7436574e6d2d241b47564558beac74",
+        "merge_target_ref": "origin/dev",
+        "merge_target_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+        "owner": "Codex2",
+        "reviewer": "Codex",
+        "canonical_reviewer": "Codex",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T16:55:08Z",
+      "from": "Codex2",
+      "message": "Independent review requested for PR #4193 exact head 883fb1d40a286b0b22f63804e11d3d1bfd1e7144 (CLEAN, mergeable, auto-merge disabled, all visible checks successful). Review receipt dd70dbc4a9bf2c1d8a0359cc7c7968d153a61326 and docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json. Verify expired-lease terminal fencing, outage replay with intervening revision preserving materialization identity, tree-identical trailer rewrite, checksum/schema/ten-rule validator pass, and that closeout replay fails only on the intentionally open independent_review risk and missing reviewer verdict. Approve only this exact head and append the formal verdict; otherwise reopen with concrete changes.",
+      "resolved_at": "2026-07-27T16:59:43Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T16:59:43Z",
+      "from": "Codex",
+      "message": "Reviewer fail-closed at 2026-07-27T17:00Z: PR #4193 exact owner handoff head 883fb1d40a286b0b22f63804e11d3d1bfd1e7144 is no longer CLEAN against dev; GitHub reports mergeStateStatus=BEHIND while dev is 4974824687ef5c3acf665fa22a4306e5d3d664f1. Do not approve stale head. Owner must merge/refresh to current dev, rerun the L12-DIST evidence/tests, update review binding to the new exact head, keep auto-merge disabled, then request review again.",
+      "resolved_at": "2026-07-27T16:59:43Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T17:57:05Z",
+      "from": "Codex2",
+      "message": "Independent review requested for PR #4193 exact full head 5934ed6d8e4dc797fb5dbd34a8fc9636b3acdb1c against dev base a6966b13d84430387da9c3a33fcf224c841bc5c6. Do not reuse review of d7b0817cb or earlier heads. Review the transactional version ledger/outbox/inbox, lease-token and expiry fences, truthful Registry retry/DLQ/readback, approved-artifact immutability, digest-keyed replay identity, and shared JSONL mutation lease. Evidence manifest: docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json; receipt b1afb294c12d89cbae9dfd9ab28989801f8dba9a has all required checks green; final head runs 30291362755 and 30291363747 are also green; auto-merge is disabled.",
+      "resolved_at": "2026-07-27T20:39:48Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T20:39:48Z",
+      "from": "Codex",
+      "message": "Review of exact PR #4193 head 5934ed6d8e4dc797fb5dbd34a8fc9636b3acdb1c failed two acceptance-critical negative probes although the focused owner suite passed 62 tests. (1) services/source_ingestion/distillation_controller.py:242-277 performs GET then non-conditional POST. A same-id Registry entry approved after the probe but before POST was overwritten from approved to draft; the tick returned success, synced_count=1, and the job became done. Replace this TOCTOU path with an atomic create-if-absent or equivalent conditional Registry write/readback that can never mutate approved or retired state, and add the actual approve-before-POST regression, not only approve-after-write-before-readback. (2) services/source_ingestion/distillation_worker.py:1323-1328 prefers the caller source_records map for versioned jobs. With committed v1 and v2 jobs plus source_records[source_id]=v2, the v1 job was processed with v2 content: job_digest sha256:a164a36d... versus processed digest sha256:03ddc056..., violating committed-snapshot lineage. Versioned jobs must always use the transactionally committed source_for_job snapshot; retain caller-map fallback only for legacy unversioned jobs, and add a two-version regression. Refresh the evidence claims/checksum and request review on the new exact full head.",
+      "resolved_at": "2026-07-27T20:39:48Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T21:21:20Z",
+      "from": "Codex2",
+      "message": "PR #4193 is ready for independent re-review at exact full head 62fecb4bb4c8f1fd55eb3ae014b7e6f746c91b50 on dev base 7f545a33bf41e5682dc67f50333c84b42f09d17e. Delivery receipt 6f87f1dad65a5849bbbff5c4958d42e50e37003e binds the nine final artifacts and has Commit trailers, Runtime mirror guard, Smoke acceptance, and Python packaging provision green; the evidence-follow-up head is also fully green. Recheck the atomic StrategySpec create-if-absent approve-before-POST fence and versioned committed-snapshot replay regressions. Owner validation: focused 65 passed; source ingestion 757 passed, 2 skipped; Registry/StrategySpec 230 passed; multiprocess proof 3/3; ProductEvidence schema, checksum, and ten-rule validator pass. Review manifest: docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json. Auto-merge remains disabled pending your verdict.",
+      "resolved_at": "2026-07-27T21:27:09Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T21:27:09Z",
+      "from": "Codex",
+      "message": "Rejected PR #4193 exact head 62fecb4bb4c8f1fd55eb3ae014b7e6f746c91b50 on dev 7f545a33bf41e5682dc67f50333c84b42f09d17e: StrategySpec register_if_absent silently returns an existing same-id StrategySpec with different content/lineage, and _make_registry_sync treats any existing draft/candidate as already_terminal without validating strategy_id, source_id, source_digest, source_event_version, distillation_job_id, seed/checksum, or expected payload. Reproduced: a second POST for reg-review-collision with seed-b/conflicting title returned HTTP 200 carrying seed-a/original title; a sync request for sha256:7a46e024d399e3987c08f3660853afeb951d63036349bc18d9ecf11f50097d1 returned already_terminal for an existing entry declaring sha256:wrong. This can ack the wrong draft and violates Ack only after Registry terminal write plus Preserve source and draft lineage. Required: retain atomic approve-before-POST immutability, but accept an existing entry as idempotent terminal only after exact expected envelope/lineage validation; conflicting same-id content must fail into durable retry/DLQ and controller degradation. Add direct StrategySpec facade conflict coverage and controller plus real-HTTP Registry lineage-collision regressions, rerun focused/source-ingestion/Registry suites, and recut receipt/evidence. Independent green validation retained: focused 65 passed; Registry/StrategySpec 230 passed; ProductEvidence schema, checksum, ten-rule validator, commit trailers, diff check, receipt/head CI all passed.",
+      "resolved_at": "2026-07-27T21:27:09Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T11:41:11Z",
+      "from": "Codex2",
+      "message": "Review PR #4286 exact full head 12ec4214ea431e74cfd4c1a222d30f8d2512f5a4 against dev base 11858f4d445565064e630cce9b89ea8b475a6598. The product implementation already merged through PR #4193 exact head 1a32aeb86e59a79a0ea7be7f3f1c36e839931f80 as 1aa7e38ae1e713d4f01e8166a821d9c5b85dbf86. Recheck both prior blockers: conflicting same-id StrategySpec registration must fail closed, and draft/candidate Registry replay must validate full expected payload and lineage before already_terminal. Owner post-merge validation: focused 113 passed; source_ingestion 758 passed, 2 skipped; Registry+StrategySpec 231 passed; ProductEvidence schema, checksum, ten-rule validator, trailers, diff check, and both final-head Branch CI runs passed. Bind REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json if approved; Human/Ops merge release is not being substituted for your independent verdict.",
+      "resolved_at": "2026-07-28T11:52:26Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T11:52:26Z",
+      "from": "Codex",
+      "message": "PR #4286 exact head 12ec4214ea431e74cfd4c1a222d30f8d2512f5a4 fails committed-replay lineage. services/source_ingestion/distillation_controller.py _build_registry_payload lines 269-272 re-resolves mutable source_dirs markdown by source_id and distills a new seed/payload instead of using RegistrySyncRequest.seed/evidence_item/evidence_bundle from the committed version. Independent negative proof with a valid same-id production note: request seed seed-a285eff0224376df and bundle evbundle-distill-3ad210a30ffa were replaced by payload seed-e3f5e05dd86a4121 and bundle evbundle-4ebd93d74c944cbe; committed title changed to the mutable note title, yet the job reported registry_synced/done. Fix every Registry payload path to derive only from the transactionally committed SourceRecord and exact request seed/evidence lineage (or persist and digest-bind any production-note bytes at admission; no fresh filesystem read during delivery/replay). Add regressions for a valid same-id note conflicting with the committed snapshot and for note mutation between outage/write-ack replay attempts, proving identical payload/checksum/source_seed_id/evidence_bundle_id and already_terminal replay rather than wrong success or DLQ. Preserve the now-passing same-id StrategySpec collision and full draft/candidate readback checks.",
+      "resolved_at": "2026-07-28T11:52:26Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T12:19:12Z",
+      "from": "Codex2",
+      "message": "Independent review requested for PR #4286 exact head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965. Current repair receipt 2ebabea2ad774dc59fe785f811025de1f6837956 binds content digest sha256:8c1591d06178fa08acb59919d7fbefe982a7071c8bf05d10943d0d8332452d16. Validation: focused 115 passed; source_ingestion 760 passed, 2 skipped; Registry plus StrategySpec 231 passed; evidence schema/checksum/ten-rule validator/trailers passed; exact-head push and PR CI checks all green. Please verify committed request lineage remains authoritative after mutable source change and lost-ack replay returns already_terminal with no duplicate write or DLQ.",
+      "resolved_at": "2026-07-28T12:30:03Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T12:30:03Z",
+      "from": "Codex",
+      "message": "Independent review approved PR #4286 exact head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965: committed SourceRecord and exact request seed/evidence lineage remain authoritative after valid same-id note mutation; lost-ack replay is payload/checksum/seed/bundle/item-identical, returns already_terminal, performs one write, and creates no DLQ. Revalidated focused 115 passed, source_ingestion 760 passed with 2 skipped, Registry plus StrategySpec 231 passed, ProductEvidence schema/checksum/ten-rule validator/trailers/diff, and all exact-head CI checks. PR #4193 merge 1aa7e38ae1e713d4f01e8166a821d9c5b85dbf86 is on dev; the newer dev-only PR #4287 touches no task artifact.",
+      "resolved_at": "2026-07-28T12:53:02Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T12:53:02Z",
+      "from": "Codex",
+      "message": "Reopen stale review_approved binding: previous approval did not bind the current PR #4286 exact head e91382b508b42456d75747fdf3cef92c7850d2ad after owner closeout composition and dev merge. Runtime scope remains reviewed; task needs exact-head approval binding before merge.",
+      "resolved_at": "2026-07-28T12:53:02Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T12:56:16Z",
+      "from": "Codex2",
+      "message": "Current PR #4286 exact head e91382b508b42456d75747fdf3cef92c7850d2ad is ready for required exact-head reapproval after owner closeout composition. Since prior approved head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965, only .orchestrator/task-briefs/l12_dist_001.md plus evidence.json/evidence.sha256 changed for approval transcription, with dev-only merges; no digest-bound runtime/test artifact changed. Exact-head checks are green. Owner reran focused acceptance: 115 passed, 3 warnings; ProductEvidence schema, companion checksum, all 10 evidence validator rules, commit trailers, and git diff --check passed. Please approve with REVIEW_PR=4286 and REVIEW_HEAD_SHA=e91382b508b42456d75747fdf3cef92c7850d2ad if accepted.",
+      "resolved_at": "2026-07-28T12:58:06Z",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T12:58:06Z",
+      "from": "Codex",
+      "message": "Independent review approved PR #4286 exact head e91382b508b42456d75747fdf3cef92c7850d2ad. I verified c1c3..e913 is current-dev merge plus owner closeout evidence/task-brief changes, origin/dev..HEAD remains L12-DIST scoped, Branch CI is green, evidence.json parses, evidence.sha256 passes from the evidence directory, and git diff --check passes. No digest-bound runtime/test artifact changed after the prior accepted repair scope.",
+      "status": "done",
+      "task_id": "L12-DIST-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-28T18:32:49Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-26T15:21:39Z",
+      "message": "PR #4193 cannot merge: pre-existing branch commit 3ba200056 (recover preempted controller WIP, authored by the earlier preempted Codex session) wrote its trailers as literal backslash-n escapes on one line, so Commit trailers reports missing LLM-Agent/Task-ID/Reviewer. It also carries a stale 'Reviewer: pending'. Implementation, acceptance proof, and evidence are complete and pushed; only publication is blocked. The commit is already on origin/task/L12-DIST-001 and not on dev, so the only repair is rewording it via rebase plus a force push to the task branch, which GIT_WORKFLOW.md gates on explicit authorization. Requesting authorization for a non-fast-forward push limited to task/L12-DIST-001, or a chair-side reword.",
+      "owner": "Claude",
+      "resolved_at": "2026-07-26T15:49:19Z",
+      "status": "resolved",
+      "task_id": "L12-DIST-001",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

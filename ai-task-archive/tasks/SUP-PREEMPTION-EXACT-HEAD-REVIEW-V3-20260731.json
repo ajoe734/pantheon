@@ -1,0 +1,314 @@
+{
+  "version": 1,
+  "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+  "archived_at": "2026-08-01T14:26:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Independently inspect PR #4399 updated exact head 6f391cfd4cde8fcee0a7f913bfe2937aba955d15, including the GitHub update-branch merge of dev, and do not reuse the prior exact-head verdict",
+      "Verify the four scheduler implementation files have no conflict-resolution drift after merging dev and still implement unified dispatch/preemption eligibility plus five-minute worker grace",
+      "Run py_compile and focused dispatch-policy/supervisor tests on the updated exact head",
+      "If and only if accepted, bind canonical review with REVIEW_PR=4399 and REVIEW_HEAD_SHA=6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+      "On any defect, reopen with exact file, line, command and required correction; do not modify or merge as reviewer",
+      "Do not edit .orchestrator/config.json and do not claim post-merge five-minute canary before official merge/live promotion"
+    ],
+    "artifacts": [
+      "PR#4399",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#scheduler-updated-exact-head-review-v3",
+      "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+      "documents": [
+        {
+          "kind": "PR_EXACT_HEAD_REVIEW_TARGET",
+          "path": "https://github.com/ajoe734/pantheon/pull/4399",
+          "sourceRefs": [
+            "updated exact head 6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+            "base dev includes #4397 merge cf6a8fed7baeb102330bf32af3f59cc347d1e92a",
+            "Branch CI rerun 30640209890"
+          ]
+        },
+        {
+          "kind": "SCHEDULER_LIVE_RESCUE_EVIDENCE",
+          "path": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+          "sourceRefs": [
+            "old exact head independently approved by Antigravity",
+            "new exact head created only by required GitHub update-branch merge of dev"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-31T14:52:06Z",
+      "intent": "supervisor_dispatch_independent_exact_head_review_after_required_update_branch",
+      "mode": "kernel_repair",
+      "packet_digest": "df4146b5d9975070fe7b25919b8d1ee16ae54877b10d7649ed7250c7fab7497f",
+      "packet_id": "pkt-sup-preemption-exact-head-review-v3-20260731T1452Z",
+      "source_turn_ids": [
+        "user-authorized-full-sequence",
+        "github-required-update-branch-4399",
+        "assistant-inbox-fail-closed-on-rescue-base-ref"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Independently inspect PR #4399 updated exact head 6f391cfd4cde8fcee0a7f913bfe2937aba955d15, including the GitHub update-branch merge of dev, and do not reuse the prior exact-head verdict",
+          "Verify the four scheduler implementation files have no conflict-resolution drift after merging dev and still implement unified dispatch/preemption eligibility plus five-minute worker grace",
+          "Run py_compile and focused dispatch-policy/supervisor tests on the updated exact head",
+          "If and only if accepted, bind canonical review with REVIEW_PR=4399 and REVIEW_HEAD_SHA=6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+          "On any defect, reopen with exact file, line, command and required correction; do not modify or merge as reviewer",
+          "Do not edit .orchestrator/config.json and do not claim post-merge five-minute canary before official merge/live promotion"
+        ],
+        "artifacts": [
+          "PR#4399",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+        "owner": "Human/Ops",
+        "phase": "Supervisor Runtime Repair / Wave 0 Updated Exact-Head Review",
+        "reviewer": "Antigravity",
+        "summary": "GitHub required #4399 to update from dev after #4397 merged. This fresh independent Antigravity review binds the newly created exact head before root freeze and merge.",
+        "title": "Re-review updated scheduler exact head after required base merge"
+      },
+      "task_spec_hash": "cb11d55c5830a87f40fc7ac31fc67db7d47d2a92a6376ff92f26915d7582118b"
+    },
+    "github": {
+      "base": "dev",
+      "head_branch": "task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "head_sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+      "pr": 4399
+    },
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "head_sha": "ed41e4f13ac55913b1ff0d902d152d930202f0c8",
+      "mode": "required_commit_status",
+      "pr": 4413,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4413",
+      "recorded_at": "2026-07-31T17:52:40Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51450101309,
+      "status_state": "success"
+    },
+    "id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+    "last_update": "2026-08-01T14:26:22Z",
+    "next": "Owner finalized merged PR #4413 exact head ed41e4f13ac55913b1ff0d902d152d930202f0c8 (merge f5ca90ae5c8e9655b6fbff1dc69c776fd1a68495); revalidated 490 tests plus 4 subtests, py_compile, PR #4399 evidence JSON, clean diff/worktree, in-sync push, and dev ancestry.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Repair / Wave 0 Updated Exact-Head Review",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "head_sha": "ed41e4f13ac55913b1ff0d902d152d930202f0c8",
+      "pr": 4413
+    },
+    "reviewer": "Antigravity",
+    "source_ref": {
+      "base": "dev",
+      "head_branch": "task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "head_sha": "ed41e4f13ac55913b1ff0d902d152d930202f0c8",
+      "pr": 4413,
+      "repository": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "GitHub required #4399 to update from dev after #4397 merged. This fresh independent Antigravity review binds the newly created exact head before root freeze and merge.",
+    "title": "Re-review updated scheduler exact head after required base merge",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-01T14:26:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-preemption-exact-head-review-v3-20260731",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "git_clean_required": true,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-preemption-exact-head-review-v3-20260731",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "ed41e4f13ac55913b1ff0d902d152d930202f0c8",
+      "commit_subject": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731: compose current dev",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "current-dev test composition and task-scoped handoff evidence.",
+        "Not changing": "scheduler runtime, dispatch policy, config, evidence manifest, or live-canary claims.",
+        "Composes with": "PR #4413, dev dc5136394, and Antigravity exact-head re-review.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+        "Reviewer": "Antigravity",
+        "Verified": "focused test; 490 tests and 4 subtests; py_compile; evidence JSON; diff check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "93e5b3d4ad0ad94f79bfe512ba3f67402da8d468",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T14:52:11Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Codex.",
+      "resolved_at": "2026-07-31T14:52:38Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T14:52:38Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops hands updated exact head 6f391cfd4cde8fcee0a7f913bfe2937aba955d15 to Antigravity for fresh independent review after required base merge.",
+      "resolved_at": "2026-07-31T14:54:46Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T14:53:31Z",
+      "from": "Human/Ops",
+      "message": "Independently verified PR #4399 updated exact head 6f391cfd4cde8fcee0a7f913bfe2937aba955d15 after merging dev. No conflict-resolution drift found across .orchestrator/dispatch_policy.py, supervisor.py, test_dispatch_policy.py, test_supervisor.py. All 486 supervisor and dispatch policy tests passed cleanly.",
+      "resolved_at": "2026-07-31T14:56:07Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T14:56:07Z",
+      "from": "Antigravity",
+      "message": "Ownership updated",
+      "resolved_at": "2026-07-31T14:56:10Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-31T14:56:18Z",
+      "from": "Human/Ops",
+      "message": "Re-review closeout only: prior tests passed, but approval must be reissued with REVIEW_PR=4399 and REVIEW_HEAD_SHA=6f391cfd4cde8fcee0a7f913bfe2937aba955d15 so Pantheon canonical review gate is posted.",
+      "resolved_at": "2026-07-31T14:58:28Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T14:57:43Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Codex.",
+      "resolved_at": "2026-07-31T16:44:42Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T16:45:37Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-31T16:54:18Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T16:54:18Z",
+      "from": "Codex2",
+      "message": "Closeout PR #4413 is ready for exact-head review at 296a8f71517469ddb2b93f913d7e1f93369d7788. Verify the task-scoped brief preserves PR #4399 head 6f391cfd4cde8fcee0a7f913bfe2937aba955d15, merged delivery 894eb813c7cb5609ae517103a727d93ba8cbd1ed, existing reviewed manifest docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json, and recorded 486-test exact-head validation; approve with REVIEW_PR=4413, REVIEW_HEAD_SHA=296a8f71517469ddb2b93f913d7e1f93369d7788, and the same REVIEW_FILE if accepted.",
+      "resolved_at": "2026-07-31T16:57:47Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T16:57:47Z",
+      "from": "Antigravity",
+      "message": ".orchestrator/test_supervisor.py::RunOnceSupervisorStateTests::test_run_once_auto_materializes_accepted_session_before_execution_dispatch failed in test_supervisor.py (AssertionError: Expected 'run' to have been called once. Called 2 times; subprocess.run captured git rev-parse call from helper). Please repair mock expectations in test_supervisor.py and return task for re-review.",
+      "resolved_at": "2026-07-31T16:57:47Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:07:42Z",
+      "from": "Codex2",
+      "message": "Required mock-isolation repair is pushed to PR #4413 exact head 243eed84a078f498dcb718ae3e5624957ad11075. The run-once test now stubs the unrelated dev-bridge inbox phase; focused regression passed, full test_supervisor.py + test_dispatch_policy.py passed (486 tests, 4 subtests), py_compile and evidence JSON checks passed. Please independently re-review this exact head.",
+      "resolved_at": "2026-07-31T17:12:58Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T17:12:58Z",
+      "from": "Antigravity",
+      "message": "Exact head 243eed84a078f498dcb718ae3e5624957ad11075 independently re-reviewed: PR #4413 test isolation repair for run-once mock is verified. Focused regression and full test_supervisor.py + test_dispatch_policy.py suite passed (486 tests, 4 subtests), py_compile passed, evidence JSON syntax verified.",
+      "resolved_at": "2026-07-31T17:13:58Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:14:31Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-31T17:21:57Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T17:21:57Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verification passed on approved PR #4413 head 243eed84a078f498dcb718ae3e5624957ad11075: 486 tests + 4 subtests, py_compile, evidence JSON, merged-scheduler no-drift, and config unchanged. Integration is waiting: required context 'Pantheon root merge freeze 2026-07-27' is absent on this head, and auto-integrator dry-run fails declared_head_branch_mismatch because task github metadata intentionally names reviewed target PR #4399 while delivery is PR #4413. Preserve this exact approved head; Human/Ops/root-gate or merge-gate metadata handling must be resolved before merge and done.",
+      "resolved_at": "2026-07-31T17:30:54Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T17:49:55Z",
+      "from": "Codex",
+      "message": "Please independently re-review PR #4413 exact head ed41e4f13ac55913b1ff0d902d152d930202f0c8 after Human/Ops-authorized rebase onto dev dc5136394eb1041ceea1dcc066e55ac2179ca0e5. Current dev already contains the required run-once inbox isolation through PR #4414; the redundant replay was removed, so the final PR delta is task-brief-only. Local validation passed: focused regression 1 passed; supervisor/dispatch suite 490 passed plus 4 subtests; py_compile, evidence JSON, trailers, config no-diff, and diff check passed. GitHub pull_request run 30652564979 and push run 30652565050 are both success (8/8 jobs). Bind only this exact head if accepted; the prior approval does not authorize it, and Human/Ops root-freeze remains separate.",
+      "resolved_at": "2026-07-31T17:52:40Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T17:52:40Z",
+      "from": "Antigravity",
+      "message": "Exact HEAD ed41e4f13ac55913b1ff0d902d152d930202f0c8 rebased on dev dc5136394eb1. Local test suite 490 passed, 4 subtests passed; py_compile clean; git diff --check clean. GitHub PR run 30652564979 & push run 30652565050 both green (8/8 jobs). Bound exact head ed41e4f13ac55913b1ff0d902d152d930202f0c8.",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731",
+      "to": "Codex",
+      "resolved_at": "2026-08-01T14:26:23Z"
+    }
+  ],
+  "blockers": []
+}

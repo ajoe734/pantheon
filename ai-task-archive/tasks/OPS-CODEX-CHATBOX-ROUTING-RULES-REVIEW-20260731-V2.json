@@ -1,0 +1,515 @@
+{
+  "version": 1,
+  "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+  "archived_at": "2026-08-13T02:01:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Inspect PR #4401 exact head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 against dev base cf6a8fed7baeb102330bf32af3f59cc347d1e92a; do not rely only on the PR description",
+      "Confirm the direct lane is limited to explicitly operator-authorized bounded component repair and preserves the specifically authorized dashboard repair case",
+      "Confirm integration and cross-system chatboxes must inspect and deduplicate read-only, write a concrete plan, emit governed task packets, wait for supervisor receipt/materialization, and monitor without implementing the same scope",
+      "Confirm the supervisor is the sole routine implementation dispatcher, registered autoworkers own implementation, extension subagents stay read-only in the integration lane, and Codex/Codex2 are not treated as independent capacity or independent reviewers",
+      "Confirm the policy does not create a parallel scheduler, bypass the existing assistant dev bridge, weaken the live repair rule, or conflict with the remaining repository delivery rules",
+      "Run git diff --check and focused policy-text checks for the one-file change, then move the task to review without changing PR #4401",
+      "The independent reviewer must inspect the exact head and, only if accepted, bind the canonical review decision to PR 4401 head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 with the governed review command",
+      "On any defect, reopen with exact section, failing check, and required correction; neither owner nor reviewer should duplicate implementation outside PR #4401",
+      "Do not impersonate Human/Ops or post the separately controlled Pantheon root merge freeze status"
+    ],
+    "artifacts": [
+      "PR#4401",
+      "AGENTS.md"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://root/chatbox-routing-rules-20260731#pr-4401-exact-head-review-rescue",
+      "conversation_id": "codex-root-chatbox-routing-rules-20260731",
+      "documents": [
+        {
+          "kind": "PR_EXACT_HEAD_REVIEW_TARGET",
+          "path": "https://github.com/ajoe734/pantheon/pull/4401",
+          "sourceRefs": [
+            "base cf6a8fed7baeb102330bf32af3f59cc347d1e92a",
+            "head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79",
+            "all Branch CI checks successful",
+            "scope root AGENTS.md only, 74 additions"
+          ]
+        },
+        {
+          "kind": "CHATBOX_ROUTING_POLICY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Direct Component Repair Lane",
+            "Integration And Coordination Lane",
+            "Single Dispatch Authority"
+          ]
+        },
+        {
+          "kind": "FAILED_SUPERVISOR_DRAIN_RECEIPT",
+          "path": ".orchestrator/assistant-dev-packets/receipts/pkt-codex-chatbox-routing-rules-review-20260731T150029Z.json",
+          "sourceRefs": [
+            "supervisor drained at 2026-07-31T15:00:39Z",
+            "materialization failed closed because installed command runtime is not merged into origin/dev"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-31T15:03:49Z",
+      "intent": "supervisor_dispatch_independent_exact_head_review_for_chatbox_routing_rules_after_runtime_binding_failure",
+      "mode": "kernel_debug",
+      "packet_digest": "7d8d1c1a81acdd0cb3e12f51f32b661eb4b5673111c8f6e26e2ad6430a8dd6c4",
+      "packet_id": "pkt-codex-chatbox-routing-rules-review-rescue-20260731T150349Z",
+      "source_turn_ids": [
+        "user-directs-write-rules-for-everyone",
+        "user-authorizes-dashboard-direct-repair-lane",
+        "user-requires-integration-work-plan-supervisor-autoworker-dispatch",
+        "codex-publishes-pr-4401-exact-head-1cc28e07",
+        "supervisor-drain-failed-installed-runtime-not-merged",
+        "temporary-live-dispatch-rescue-from-origin-dev-runtime"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Inspect PR #4401 exact head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 against dev base cf6a8fed7baeb102330bf32af3f59cc347d1e92a; do not rely only on the PR description",
+          "Confirm the direct lane is limited to explicitly operator-authorized bounded component repair and preserves the specifically authorized dashboard repair case",
+          "Confirm integration and cross-system chatboxes must inspect and deduplicate read-only, write a concrete plan, emit governed task packets, wait for supervisor receipt/materialization, and monitor without implementing the same scope",
+          "Confirm the supervisor is the sole routine implementation dispatcher, registered autoworkers own implementation, extension subagents stay read-only in the integration lane, and Codex/Codex2 are not treated as independent capacity or independent reviewers",
+          "Confirm the policy does not create a parallel scheduler, bypass the existing assistant dev bridge, weaken the live repair rule, or conflict with the remaining repository delivery rules",
+          "Run git diff --check and focused policy-text checks for the one-file change, then move the task to review without changing PR #4401",
+          "The independent reviewer must inspect the exact head and, only if accepted, bind the canonical review decision to PR 4401 head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 with the governed review command",
+          "On any defect, reopen with exact section, failing check, and required correction; neither owner nor reviewer should duplicate implementation outside PR #4401",
+          "Do not impersonate Human/Ops or post the separately controlled Pantheon root merge freeze status"
+        ],
+        "artifacts": [
+          "PR#4401",
+          "AGENTS.md"
+        ],
+        "depends_on": [],
+        "id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+        "owner": "Codex",
+        "phase": "Repository Governance / Exact-Head Review",
+        "reviewer": "Antigravity",
+        "summary": "Governed review handoff for the already published routing-policy PR. Codex validates and hands off; Antigravity independently reviews the exact head. No parallel implementation is authorized.",
+        "title": "Validate and hand off chatbox routing rules for independent review"
+      },
+      "task_spec_hash": "729221ce1ac5b398141506c8ffebafe822a7d1e5f92b2ccbec35d3d51e2b9118"
+    },
+    "generation": 1,
+    "github_review_bridge": {
+      "actor": "Claude",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "head_sha": "c9c5b9701d615afe5a08a16c7cac938f27bad584",
+      "mode": "required_commit_status",
+      "pr": 4729,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4729",
+      "recorded_at": "2026-08-10T21:53:40Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/c9c5b9701d615afe5a08a16c7cac938f27bad584",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51984392319,
+      "status_state": "success"
+    },
+    "id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+    "last_update": "2026-08-13T02:01:02Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "Repository Governance / Exact-Head Review",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "head_sha": "c9c5b9701d615afe5a08a16c7cac938f27bad584",
+      "pr": 4729
+    },
+    "review_file": "docs/reviews/ops-codex-chatbox-routing-rules-review-20260731-v2.md",
+    "review_notes_zh": [
+      "獨立審查通過 PR #4401 exact head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79",
+      "新增 chatbox 兩大工作分流（Direct Component Repair 與 Integration And Coordination Lane）及 Single Dispatch Authority 規範",
+      "22 項關鍵 policy 斷言、git diff --check 與 GH Branch CI 9 項 check runs 全數通過"
+    ],
+    "reviewer": "Claude",
+    "status": "done",
+    "summary_zh": "Governed review handoff for the already published routing-policy PR. Codex validates and hands off; Antigravity independently reviews the exact head. No parallel implementation is authorized.",
+    "title": "Validate and hand off chatbox routing rules for independent review",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T15:16:51Z",
+      "from": "Codex",
+      "message": "Independently review PR #4401 at exact head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 against base cf6a8fed7baeb102330bf32af3f59cc347d1e92a. If accepted, bind the governed review decision to this exact head; if defective, reopen with the exact section, failing check, and required correction. Do not update or implement outside PR #4401.",
+      "resolved_at": "2026-07-31T15:21:46Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T15:21:46Z",
+      "from": "Antigravity",
+      "message": "Independently reviewed PR #4401 exact head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 against base 894eb813c7cb5609ae517103a727d93ba8cbd1ed. Scope is bounded to AGENTS.md (74 additions, 0 deletions), git diff --check passed, 22 policy-text assertions verified, all 9 GitHub Branch CI check runs are green. Approved and returned to owner for closeout.",
+      "resolved_at": "2026-07-31T15:32:11Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T15:32:11Z",
+      "from": "Codex",
+      "message": "Closeout artifacts are published in PR #4405 at exact head 7546ec1cc5ffb090c5fa35f52530c63899958311. Review only the task brief and reviewer-bound evidence materialization; PR #4401 and AGENTS.md remain unchanged. If accepted, approve with REVIEW_PR=4405 and REVIEW_HEAD_SHA=7546ec1cc5ffb090c5fa35f52530c63899958311 so the canonical merge gate can integrate the task PR.",
+      "resolved_at": "2026-07-31T15:34:21Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T15:34:21Z",
+      "from": "Antigravity",
+      "message": "獨立審查通過 PR #4401 (head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79) 與 task PR #4405 (head 7546ec1cc5ffb090c5fa35f52530c63899958311)。AGENTS.md 新增規範完整，22項斷言與 Branch CI 9項 checks 全數通過。",
+      "resolved_at": "2026-07-31T15:46:28Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T15:46:28Z",
+      "from": "Codex",
+      "message": "PR #4405 refreshed onto origin/dev at exact head 92a99a02816c084347cd01b1b958851e8bd78eb7 after the integrator rejected stale head 7546ec1cc5ffb090c5fa35f52530c63899958311. Auto-merge is off; task scope remains only the brief and review evidence; git diff --check passed; 22/22 routing-policy assertions passed; PR #4401 exact head remains 1cc28e07ecaee0b03c4d26c76e05dcea31952d79. Please independently review and bind PR 4405 head 92a99a02816c084347cd01b1b958851e8bd78eb7.",
+      "resolved_at": "2026-07-31T15:50:22Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T15:50:22Z",
+      "from": "Antigravity",
+      "message": "Independently reviewed PR #4405 refreshed head 92a99a02816c084347cd01b1b958851e8bd78eb7 (rebased/merged onto origin/dev 2ddce6c25e117af9ae0f85430fe2e4b4db9fb884). Bounded scope verified: task brief and evidence notes (74 additions). All 8 GitHub Branch CI check runs for PR #4405 are green. Bound PR #4401 exact head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 verified with 22 policy assertions. Approved and returned to owner for closeout.",
+      "resolved_at": "2026-07-31T15:57:12Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T15:57:12Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verification is complete at reviewed PR #4405 head 92a99a02816c084347cd01b1b958851e8bd78eb7: task diff is bounded to the brief and reviewer-bound evidence, git diff --check passed, 24 focused routing-policy assertions passed, and all Branch CI plus canonical review checks are green. Merge remains blocked only by the separately controlled Human/Ops status 'Pantheon root merge freeze 2026-07-27'; task stays review_approved and must not move to done before exact-head merge into dev.",
+      "resolved_at": "2026-07-31T15:58:30Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T15:59:08Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.",
+      "resolved_at": "2026-07-31T16:03:40Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T16:03:40Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verification passed at exact approved PR #4405 head 92a99a02816c084347cd01b1b958851e8bd78eb7: worktree clean; PR #4401 exact patch remains AGENTS.md +74/-0; git diff --check, 22/22 policy assertions, and existing-boundary checks passed; PR #4405 CI and canonical review gate are green. Merge is blocked only by the separately controlled required status 'Pantheon root merge freeze 2026-07-27', which this task explicitly must not post or impersonate. Leave review_approved until that external gate is granted, then merge exact head and run governed done.",
+      "resolved_at": "2026-07-31T16:09:14Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T16:09:54Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-31T16:22:13Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T16:22:13Z",
+      "from": "Codex",
+      "message": "Owner closeout refreshed PR #4405 onto current dev without changing the task diff; new exact head 01a4f15d62fdfd49606a79364d2386a0402110b0. Auto-merge is revoked. git diff --check passed for both the task PR and PR #4401 exact reviewed target; 22/22 policy assertions passed. Please re-review and bind PR 4405 exact head 01a4f15d62fdfd49606a79364d2386a0402110b0; owner/reviewer assignments remain unchanged.",
+      "resolved_at": "2026-07-31T16:24:54Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T16:24:54Z",
+      "from": "Antigravity",
+      "message": "Re-reviewed PR #4405 exact head 01a4f15d62fdfd49606a79364d2386a0402110b0 onto current dev. Task diff remains unchanged (.orchestrator/task-briefs/ops_codex_chatbox_routing_rules_review_20260731_v2.md and docs/reviews/ops-codex-chatbox-routing-rules-review-20260731-v2.md), git diff --check passed, 22 policy assertions passed, PR #4401 exact head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 validated, all Branch CI checks green. Approved and bound to PR #4405 head 01a4f15d62fdfd49606a79364d2386a0402110b0.",
+      "resolved_at": "2026-07-31T16:25:26Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T16:26:34Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-31T16:49:20Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T16:49:20Z",
+      "from": "Antigravity",
+      "message": "Owner closeout revalidated PR #4401 exact head 1cc28e07 (git diff --check; AGENTS.md-only 74/0; 22/22 policy assertions) and clean PR #4405 head d0ffa07e (all 8 visible Branch CI jobs passed). PR #4405 remains OPEN/BLOCKED because its current head lacks the reviewer-bound Pantheon canonical review gate and the separately controlled Pantheon root merge freeze status. Codex2 did not impersonate Antigravity or Human/Ops; done is deferred until #4405 merges into dev.",
+      "resolved_at": "2026-07-31T16:50:10Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T16:50:45Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-31T16:56:11Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T16:56:11Z",
+      "from": "Codex",
+      "message": "Owner closeout refreshed task evidence and pushed PR #4405 head 53f79431af29065c8009e23698be1ab1ad96d64b. Please independently inspect this exact head, confirm the two-file review-only scope and preserved PR #4401 evidence, then bind re-approval to PR 4405/head 53f79431af29065c8009e23698be1ab1ad96d64b.",
+      "resolved_at": "2026-07-31T16:58:49Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T16:58:49Z",
+      "from": "Antigravity",
+      "message": "Independently inspected exact head 53f79431af29065c8009e23698be1ab1ad96d64b for PR #4405. Confirmed two-file review-only scope (.orchestrator/task-briefs/ops_codex_chatbox_routing_rules_review_20260731_v2.md and docs/reviews/ops-codex-chatbox-routing-rules-review-20260731-v2.md), preserved PR #4401 review evidence, git diff --check passed, and bound re-approval to head 53f79431af29065c8009e23698be1ab1ad96d64b.",
+      "resolved_at": "2026-07-31T17:03:25Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T17:03:25Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verified PR #4405 exact approved head 53f79431af29065c8009e23698be1ab1ad96d64b, clean worktree, git diff --check, commit trailers, reviewer manifest, and green Branch CI/canonical review gate. Merge remains blocked solely because required status 'Pantheon root merge freeze 2026-07-27' is absent; Codex is not authorized to post that separately controlled Human/Ops gate. Preserve review_approved and exact-head binding; merge and done only after Human/Ops supplies the gate.",
+      "resolved_at": "2026-07-31T17:09:58Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T17:09:58Z",
+      "from": "Antigravity",
+      "message": "Owner closeout revalidated PR #4405 exact approved head 53f79431af29065c8009e23698be1ab1ad96d64b: remote branch published, reviewer manifest present, git diff --check and required trailers pass, Branch CI plus Pantheon canonical review gate are green. Integrator dry-run remains fail-closed at mergeStateStatus=BLOCKED solely because required Human/Ops status 'Pantheon root merge freeze 2026-07-27' is absent. Preserve review_approved and exact-head binding; do not advance the PR head; merge and governed done only after Human/Ops supplies the gate.",
+      "resolved_at": "2026-07-31T17:18:36Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T17:19:18Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.",
+      "resolved_at": "2026-07-31T17:27:12Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:27:12Z",
+      "from": "Codex2",
+      "message": "PR #4405 refreshed onto origin/dev dc5136394eb1041ceea1dcc066e55ac2179ca0e5; inspect exact head dea12686ebd39ccec1e17cf1584719d2e8b6ef4f. Task diff remains the two reviewed evidence files, git diff --check and 22/22 PR #4401 policy assertions pass, and all 8 final-head Branch CI checks pass. Re-approve only this exact head if accepted.",
+      "resolved_at": "2026-07-31T17:29:59Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T17:29:59Z",
+      "from": "Antigravity",
+      "message": "Antigravity exact-head re-approval: PR #4405 head dea12686ebd39ccec1e17cf1584719d2e8b6ef4f verified on top of origin/dev dc5136394eb1041ceea1dcc066e55ac2179ca0e5. Bounded two-file task artifact scope preserved, git diff --check passed, 22 policy assertions passed, and PR #4401 head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 green.",
+      "resolved_at": "2026-07-31T17:37:35Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:37:35Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verified PR #4405 exact head dea12686ebd39ccec1e17cf1584719d2e8b6ef4f: branch is published, two-file scope is clean, git diff --check passes, 23/23 focused policy assertions pass, PR #4401 remains green, and Antigravity canonical review gate is success. Merge is fail-closed only because Human/Ops has not supplied required exact-head context 'Pantheon root merge freeze 2026-07-27'; keep review_approved and do not run done until PR #4405 merges.",
+      "resolved_at": "2026-08-01T14:47:44Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T14:47:44Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "resolved_at": "2026-08-01T15:02:59Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:02:59Z",
+      "from": "Codex",
+      "message": "Owner closeout refresh is ready for exact-head re-review: PR #4405 head a7d81424c551e257fdb4a30efdc66f5f511b4bb0 contains current origin/dev and preserves the exact two-file task scope. Re-run git diff --check, verify 22 policy assertions and PR #4401 evidence remains unchanged, then approve with REVIEW_PR=4405 REVIEW_HEAD_SHA=a7d81424c551e257fdb4a30efdc66f5f511b4bb0 and the existing review_file; on approval the integrator may merge.",
+      "resolved_at": "2026-08-01T15:06:32Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T15:26:01Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-01T15:27:03Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:19:59Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-01T16:21:52Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T12:12:28Z",
+      "from": "Antigravity",
+      "message": "Handing off task for independent review by Claude",
+      "resolved_at": "2026-08-06T12:13:46Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T17:34:00Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-09T17:35:31Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T18:30:51Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Claude: The task has no human-gate fields and can be resumed from closed PR #4401 plus committed governance artifacts; Claude is healthy, unpaused, and distinct from reviewer Codex2 for a fresh terminal reconciliation. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-10T18:32:44Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-10T18:31:34Z",
+      "from": "Claude",
+      "message": "Helper-claimed by idle Codex previous owner Claude becomes reviewer.",
+      "resolved_at": "2026-08-10T18:33:11Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-10T20:29:15Z",
+      "from": "Codex",
+      "message": "Chair reassigned owner from Codex to Codex2: This non-human-gate task is blocked by an already-pushed branch-history CI failure, with committed artifacts and PR #4729 available for a clean governed rerun; Codex2 is auth-ready, healthy, unpaused, and distinct from reviewer Claude. Any force-with-lease remains Human/Ops-gated. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-10T20:31:11Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T21:45:31Z",
+      "from": "Codex2",
+      "message": "Chair reassigned owner from Codex2 to Antigravity: Codex2 is blocked by PR #4729's inherited 73-character commit subject and missing Claude proof; the task is not a human gate, its artifacts are durable, and Antigravity is auth-ready, healthy, unpaused, and distinct from reviewer Claude for a supervisor-registered clean rerun. Any history rewrite remains Human/Ops-gated. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-10T21:46:56Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-10T21:47:18Z",
+      "from": "Antigravity",
+      "message": "Handoff chatbox routing rules exact-head review evidence (PR #4401 head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79) to independent reviewer Claude.",
+      "resolved_at": "2026-08-10T21:53:40Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-10T21:53:40Z",
+      "from": "Claude",
+      "message": "Independently reviewed PR #4401 exact head 1cc28e07e (base cf6a8fed7b, sole parent): git diff --check clean; diff confined to AGENTS.md, 74 insertions/0 deletions; content matches all 9 task acceptance items (operator-authorized Direct Component Repair lane preserving the dashboard case; Integration/Coordination lane requiring read-only inspect+dedupe, concrete plan, governed task packets, wait for supervisor receipt, monitor-only; Single Dispatch Authority naming supervisor as sole dispatcher, subagents read-only, Codex/Codex2 not independent capacity/reviewers; Live Repair Rule preserved unweakened; no parallel scheduler or assistant-dev-bridge bypass); all 9 GitHub check runs (Commit trailers x2, Python packaging provision x2, Runtime mirror guard x2, Smoke acceptance x2, Forward to orchestrator) pass on the PR #4401 head; confirmed via gh pr view that PR #4401 is CLOSED (not merged), so the review binds only the exact historical head, not current dev policy. PR #4401 cannot accept a governed review bridge write while closed, so this exact-head approval binds to the open task delivery PR #4729 at its current head c9c5b9701, which carries the reviewed evidence manifest docs/reviews/ops-codex-chatbox-routing-rules-review-20260731-v2.md.",
+      "resolved_at": "2026-08-10T21:57:28Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "to": "Antigravity"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-01T15:06:32Z",
+      "message": "Closeout blocked at PR #4405 head a7d81424c551e257fdb4a30efdc66f5f511b4bb0: commit 359be6fb24f4568ccdfa2f63dcc53f3faab59a04 has a 73-character subject, so both Commit trailers checks fail. The commit is already pushed; follow-up/revert cannot remove it from origin/dev..HEAD, and repository policy forbids amend/force-push or alternate branch/PR without explicit authorization. Human/Ops must authorize one bounded --force-with-lease history repair with a <=72-character subject, or choose an approved replacement delivery path; no force or bypass was performed.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-06T10:18:24Z",
+      "status": "resolved",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-06T12:13:46Z",
+      "message": "Reopened task was reassigned from review_approved to in_progress/Antigravity; however PR #4405 and PR #4401 are both CLOSED without merging to dev. The governed ai-status system requires an open PR to approve and merge into dev before done can be recorded. Human/Ops intervention required to reconcile merged state or re-open/PR.",
+      "owner": "Antigravity",
+      "resolution_ref": "chair_reassignment:OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "resolved_at": "2026-08-10T18:30:51Z",
+      "status": "resolved",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-10T18:47:34Z",
+      "message": "PR #4729 exact head c9c5b9701d615afe5a08a16c7cac938f27bad584 cannot enter independent review: required Commit trailers fails in Actions runs 31420311984 and 31420311318 because inherited commit 359be6fb24f4568ccdfa2f63dcc53f3faab59a04 has a 73-character subject. The gate rescans origin/dev..HEAD, so a follow-up commit cannot repair it; canonical merge policy also requires the exact task branch, so an alternate branch cannot pass. PR #4401 remains unchanged; exact-head validation passed 22/22 and refreshed evidence is pushed. Recovery requires explicit Human/Ops authorization to rebuild the existing task branch from current dev and push the corrected history with --force-with-lease, or a supervisor-issued replacement task/branch contract.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "resolved_at": "2026-08-10T20:29:15Z",
+      "status": "resolved",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "check_kind": "github_pr_ci",
+      "created_at": "2026-08-10T20:38:36Z",
+      "message": "PR #4729 cannot clear Branch CI: pushed commit 359be6fb24f4568ccdfa2f63dcc53f3faab59a04 has a 73-character subject, so the full origin/dev..HEAD trailer scan fails; the same head has no Claude review-proof tag. Exact PR #4401 validation passed (sole parent cf6a8fed7baeb102330bf32af3f59cc347d1e92a, AGENTS.md only 74/0, diff check, 22/22 policy assertions, 10 successful historical checks). Requires Human/Ops-gated force-with-lease rewrite of the registered task branch or a newly registered clean rerun branch; no auto-worker history rewrite performed.",
+      "owner": "Codex2",
+      "pr_number": 4729,
+      "resolution_ref": "chair_reassignment:OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "resolved_at": "2026-08-10T21:45:31Z",
+      "status": "resolved",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-10T21:57:28Z",
+      "message": "Waiting for PR #4729 auto-merge after rebase onto dev tip (HEAD: 8629ad7ec31c94d608bf8e6dd5a3e33fcd9f1596)",
+      "owner": "Antigravity",
+      "status": "resolved",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "waiting_for": "Claude",
+      "resolved_at": "2026-08-13T02:01:02Z"
+    }
+  ]
+}

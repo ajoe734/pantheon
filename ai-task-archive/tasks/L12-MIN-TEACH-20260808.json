@@ -1,0 +1,225 @@
+{
+  "version": 1,
+  "task_id": "L12-MIN-TEACH-20260808",
+  "archived_at": "2026-08-09T19:10:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reuse the existing preview/evaluation worker rather than build a second controller.",
+      "Run one teaching command to a persisted terminal teaching/evaluation session.",
+      "Expose the terminal session identifier for the Learning verifier.",
+      "Do not edit shared catalog or Compose in this task."
+    ],
+    "artifacts": [
+      "services/training-session/main.py",
+      "services/training-session/preview_eval_worker.py",
+      "services/training-session/tests/test_preview_eval_worker.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/"
+    ],
+    "depends_on": [
+      "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-l12-minimum-functional-closure-20260808",
+      "documents": [
+        {
+          "kind": "MINIMUM_FUNCTIONAL_GAP_DESIGN",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4621",
+            "f56e2bc91",
+            "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+          "sourceRefs": [
+            "packet_a",
+            "pantheon-twelve-loop-minimum-functional-closure-2026-08-08"
+          ]
+        },
+        {
+          "kind": "LEGACY_DAG_RECONCILIATION",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+          "sourceRefs": [
+            "28-old-ids-zero-materialized-at-snapshot"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T09:23:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9",
+      "packet_id": "pkt-l12-minimum-functional-a-20260808-f56e2bc91",
+      "source_turn_ids": [
+        "user-explicit-l12-minimum-functional-closure-dispatch-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reuse the existing preview/evaluation worker rather than build a second controller.",
+          "Run one teaching command to a persisted terminal teaching/evaluation session.",
+          "Expose the terminal session identifier for the Learning verifier.",
+          "Do not edit shared catalog or Compose in this task."
+        ],
+        "artifacts": [
+          "services/training-session/main.py",
+          "services/training-session/preview_eval_worker.py",
+          "services/training-session/tests/test_preview_eval_worker.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808"
+        ],
+        "id": "L12-MIN-TEACH-20260808",
+        "owner": "Antigravity",
+        "phase": "M1 loop closure",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Register and run the existing Teaching worker to a terminal session"
+      },
+      "task_spec_hash": "5e0a446d74d22c36f819701f57325e2991118ad6ccba6d5d38ce80e3731fe026"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-MIN-TEACH-20260808",
+      "head_sha": "dc8f9aff5f26abdb35bb2fdd30432196e2c0f4f0",
+      "mode": "required_commit_status",
+      "pr": 4673,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4673",
+      "recorded_at": "2026-08-09T18:57:36Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/dc8f9aff5f26abdb35bb2fdd30432196e2c0f4f0",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51913375011,
+      "status_state": "success"
+    },
+    "id": "L12-MIN-TEACH-20260808",
+    "last_update": "2026-08-09T19:10:57Z",
+    "next": "Owner closeout complete: PR #4673 exact reviewed head dc8f9aff5f26abdb35bb2fdd30432196e2c0f4f0 merged to dev as fbbada3f54a792ef972ff11477b0dcd7c297f736. Reverified focused worker/service tests (18 passed), full training-session suite (130 passed, 2 skipped), real vectorbt==0.26.2 terminal probe with persisted completed readback and matching terminal_session_ids, git diff --check, required GitHub checks, clean worktree, and dev ancestry. Shared catalog and Compose remain unchanged.",
+    "owner": "Codex",
+    "phase": "M1 loop closure",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-MIN-TEACH-20260808",
+      "head_sha": "dc8f9aff5f26abdb35bb2fdd30432196e2c0f4f0",
+      "pr": 4673
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Register and run the existing Teaching worker to a terminal session",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-09T19:10:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-min-teach-20260808",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-MIN-TEACH-20260808",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-min-teach-20260808",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "L12-MIN-TEACH-20260808",
+          "worker_run_id": "codex-20260809T190346Z-bba10fcf",
+          "queue_event_id": "evt-20260809T190329Z-c835fae1",
+          "pid": 158635,
+          "pid_start_ticks": 14127432,
+          "process_generation": "worker-process-generation-sha256:b7fb3a241ff899117ec645fae10eaae7dc0a73fd16bfed954c2d5362d4ddfd1a"
+        }
+      },
+      "commit": "dc8f9aff5f26abdb35bb2fdd30432196e2c0f4f0",
+      "commit_subject": "L12-MIN-TEACH-20260808: finish terminal teaching flow",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "training-session preview job intent, worker terminalization/readback, focused regression coverage, and task evidence.",
+        "Not changing": "shared loop catalog, Compose, BFF inventory, Learning verifier implementation, or persona commit authority.",
+        "Composes with": "L12-MIN-INTEGRATE-20260808 and L12-MIN-E2E-20260808.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "L12-MIN-TEACH-20260808",
+        "Reviewer": "Antigravity",
+        "Verified": "pytest training-session (130 passed, 2 skipped); focused worker/service (18 passed); real vectorbt 0.26.2 terminal probe; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/L12-MIN-TEACH-20260808",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fbbada3f54a792ef972ff11477b0dcd7c297f736",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T14:52:03Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-MIN-TEACH-20260808 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-08-09T10:13:21Z",
+      "status": "done",
+      "task_id": "L12-MIN-TEACH-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:13:21Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-MIN-TEACH-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T13:57:41Z",
+      "status": "done",
+      "task_id": "L12-MIN-TEACH-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T18:47:58Z",
+      "from": "Codex",
+      "message": "PR #4673 exact head dc8f9aff5f26abdb35bb2fdd30432196e2c0f4f0 is ready for independent review. Committed manifest: docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/evidence.json. Revalidated now: focused worker/service 18 passed; full training-session 130 passed, 2 skipped; documented vectorbt==0.26.2 dependency installed task-locally and real probe passed with persisted completed session plus matching terminal_session_ids; git diff --check passed. Please verify opt-in compatibility, fail-closed readback, and no catalog/Compose changes, then approve bound to PR 4673 and this exact head with REVIEW_FILE.",
+      "resolved_at": "2026-08-09T18:57:36Z",
+      "status": "done",
+      "task_id": "L12-MIN-TEACH-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T18:57:36Z",
+      "from": "Antigravity",
+      "message": "PR #4673 exact head dc8f9aff5f26abdb35bb2fdd30432196e2c0f4f0 independently reviewed and approved. Verified opt-in terminalize_session compatibility (default false), fail-closed readback validation, focused worker/service tests (18 passed), full training-session suite (130 passed, 2 skipped), and real vectorbt==0.26.2 probe execution with persisted completed session and matching terminal_session_ids. No catalog or Compose files modified.",
+      "status": "done",
+      "task_id": "L12-MIN-TEACH-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-09T19:10:58Z"
+    }
+  ],
+  "blockers": []
+}

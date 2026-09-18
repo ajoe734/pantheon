@@ -1,0 +1,337 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-actionable-gap-execution-20260730T163500Z--4d74a799c5e7bd5c.json",
+  "admitted_at": "2026-07-30T16:34:53Z",
+  "audit_conversation_href": "codex://root/l12-gap-execution-supervisor-dispatch-20260730",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-gap-execution-supervisor-dispatch-20260730",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "L12-FE-TRUTH-EXEC-20260730"
+    },
+    {
+      "error": null,
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-VERIFY-KNOW-EXEC-20260730"
+    },
+    {
+      "error": null,
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-VERIFY-RUNTIME-EXEC-20260730"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "L12-VERIFY-LEARN-REAL-VERIFIER-001"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "L12-VERIFY-LEARN-EXEC-20260730"
+    },
+    {
+      "error": null,
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-OBS-EXACT-HEAD-REVIEW-20260730"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "L12-HOSTED-PROOF-EXEC-20260730"
+    },
+    {
+      "error": null,
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-FINAL-CLOSEOUT-EXEC-20260730"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "GAP_AUDIT",
+      "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/POST_4380_THREE_PASS_GAP_AUDIT_2026-07-29T1314Z.md",
+      "sourceRefs": [
+        "PR#4382",
+        "head 7766d7042885230ae189ee6a71817ef44e334d59 plus 2026-07-30 repair"
+      ]
+    },
+    {
+      "kind": "EXECUTION_TASKS",
+      "path": "docs/bff/execution-tasks/2026-07-29-l12-post-4380-gap-fleet-dispatch/tasks.json",
+      "sourceRefs": [
+        "PR#4382",
+        "actionable dispatch base 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e"
+      ]
+    },
+    {
+      "kind": "EVIDENCE",
+      "path": "docs/deployment/evidence/twelve-loop-gap/L12-POST-4380-GAP-TRIPLE-AUDIT-DISPATCH-20260729/README.md",
+      "sourceRefs": [
+        "PR#4382"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-30T16:34:41Z",
+  "intent": "dispatch_execution_tasks",
+  "mode": "kernel_repair",
+  "packet_digest": "4d74a799c5e7bd5cc1a2b00eed3813a2a0c27f60063a48d2b9a23cfc71f26cfb",
+  "packet_id": "pkt-l12-actionable-gap-execution-20260730T163500Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "4b4be0a813cca1bf2a05a78a54a03a8374932081e003d45c8fb0b115b5a2a849",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-complete-gap-audit-and-supervisor-dispatch",
+    "codex-4382-actionable-task-graph-repair"
+  ],
+  "tasks": [
+    {
+      "task_id": "L12-FE-TRUTH-EXEC-20260730",
+      "task_spec": {
+        "acceptance": [
+          "Use ajoe734/execute-plans dev, not legacy front-ai-trading-system",
+          "Bind exact execute-plans commit and Pantheon BFF truth contract in evidence manifest",
+          "Prove frontend truth UI/state behavior with reviewer-readable evidence",
+          "Do not start hosted proof until reviewer approval is recorded"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-FE-TRUTH-EXEC-20260730",
+          "execute-plans:frontend truth UI/state surfaces on dev"
+        ],
+        "depends_on": [
+          "L12-TRUTH-001",
+          "PPL-ALLOC-009"
+        ],
+        "id": "L12-FE-TRUTH-EXEC-20260730",
+        "owner": "Antigravity",
+        "phase": "Twelve Loop Product Proof / Frontend Truth",
+        "reviewer": "Claude2",
+        "summary": "Frontend truth remains blocked; create the concrete execute-plans proof lane required before hosted FE/BFF proof.",
+        "title": "Implement and verify frontend truth acceptance lane"
+      },
+      "task_spec_hash": "89b569ac30e5a70e332a2d96e5357577f21fb5af2477743cace709dac267f585"
+    },
+    {
+      "task_id": "L12-VERIFY-KNOW-EXEC-20260730",
+      "task_spec": {
+        "acceptance": [
+          "Run real Source/Distillation/Alpha drill evidence, not a print-pass script",
+          "Include before/after readbacks and exact commands/results",
+          "Archive reviewer-approved evidence manifest",
+          "Do not claim all twelve loops operational from this lane alone"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-EXEC-20260730"
+        ],
+        "depends_on": [
+          "L12-DIST-001",
+          "L12-ALPHA-001",
+          "L12-TRUTH-001"
+        ],
+        "id": "L12-VERIFY-KNOW-EXEC-20260730",
+        "owner": "Claude2",
+        "phase": "Twelve Loop Product Proof / Knowledge Verifier",
+        "reviewer": "Antigravity",
+        "summary": "Backend truth is archived, so knowledge verifier proof can start immediately as an independent lane.",
+        "title": "Run real knowledge-loop verifier drill"
+      },
+      "task_spec_hash": "ad2ad44990fad68e0e6bcb6ea85d2a31607ee7b402de302b7f803b3af4c74a4c"
+    },
+    {
+      "task_id": "L12-VERIFY-RUNTIME-EXEC-20260730",
+      "task_spec": {
+        "acceptance": [
+          "Run real deployment/capital/runtime safety drill without live-capital activation",
+          "Include safety negative checks and exact readbacks",
+          "Archive reviewer-approved evidence manifest",
+          "Keep hosted/final closeout gated until this lane is accepted"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-RUNTIME-EXEC-20260730"
+        ],
+        "depends_on": [
+          "L12-CAP-001",
+          "L12-MANIFEST-001",
+          "L12-TRUTH-001"
+        ],
+        "id": "L12-VERIFY-RUNTIME-EXEC-20260730",
+        "owner": "Claude2",
+        "phase": "Twelve Loop Product Proof / Runtime Verifier",
+        "reviewer": "Antigravity",
+        "summary": "Runtime verifier proof can run in parallel with knowledge and frontend truth lanes.",
+        "title": "Run real runtime/capital/deployment verifier drill"
+      },
+      "task_spec_hash": "54e91f0cfaf79fe6297ffa0c4144e4e86cca51e6fbaaaca0f53f89861b57ae85"
+    },
+    {
+      "task_id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "task_spec": {
+        "acceptance": [
+          "Do not depend on superseded SUP-L12-FAKE-VERIFIER-GATE-20260729",
+          "Replace self-attesting print-pass behavior with real cross-service calls",
+          "Cover Teaching/Agora/Imitation/Consultation learning proof",
+          "Include before/after readbacks, tenant/RBAC negative checks, restart/DLQ proof, and no-runtime-mutation assertion",
+          "Deliver through branch, PR, checks, reviewer approval, merge, and governed evidence"
+        ],
+        "artifacts": [
+          "scripts/verify_twelve_loop_learning.py",
+          "scripts/test_verify_twelve_loop_learning.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-REAL-VERIFIER-001"
+        ],
+        "depends_on": [],
+        "id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+        "owner": "Antigravity",
+        "phase": "Twelve Loop Product Proof / Learning Verifier Rebuild",
+        "reviewer": "Claude2",
+        "summary": "Learning verifier is blocked by proof-quality defect; rebuild the verifier before the product learning lane can be accepted.",
+        "title": "Replace rejected learning verifier with real cross-service proof"
+      },
+      "task_spec_hash": "31e43456c7e8cdcf7934d622e1682ab9d8158fadfb6d75a9ee5c262dc9e0a1a9"
+    },
+    {
+      "task_id": "L12-VERIFY-LEARN-EXEC-20260730",
+      "task_spec": {
+        "acceptance": [
+          "Use the rebuilt real verifier, not the rejected self-attesting script",
+          "Archive real Teaching/Agora/Imitation/Consultation evidence",
+          "Include RBAC negative, restart/DLQ, and no-runtime-mutation checks",
+          "Reviewer approval is recorded before hosted proof starts"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-EXEC-20260730"
+        ],
+        "depends_on": [
+          "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+          "L12-TEACH-001",
+          "L12-IMIT-001",
+          "L12-CONS-001",
+          "L12-TRUTH-001"
+        ],
+        "id": "L12-VERIFY-LEARN-EXEC-20260730",
+        "owner": "Antigravity",
+        "phase": "Twelve Loop Product Proof / Learning Verifier",
+        "reviewer": "Claude2",
+        "summary": "Run the product learning proof only after the real verifier rebuild is accepted.",
+        "title": "Run accepted learning-loop verifier drill"
+      },
+      "task_spec_hash": "57507f6f512e1f19fe56fb00e0bd07eb9198da8a8b69377e63fc2cf79550bb07"
+    },
+    {
+      "task_id": "L12-OBS-EXACT-HEAD-REVIEW-20260730",
+      "task_spec": {
+        "acceptance": [
+          "Review exact PR #4364 head f3756cec99a8c44d47c075a475c25cf86a4d3171",
+          "Confirm Branch CI is green and verifier evidence uses real service boundaries",
+          "Approve or reopen with exact blocker; do not count stale f86c02a head",
+          "Archive/record governed review evidence before hosted proof starts"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-OBS-001",
+          "GitHub PR #4364 exact head f3756cec99a8c44d47c075a475c25cf86a4d3171"
+        ],
+        "depends_on": [
+          "L12-REC-001",
+          "L12-EVO-001",
+          "L12-BFF-001",
+          "L12-TRUTH-001"
+        ],
+        "id": "L12-OBS-EXACT-HEAD-REVIEW-20260730",
+        "owner": "Claude2",
+        "phase": "Twelve Loop Product Proof / Observability Review",
+        "reviewer": "Antigravity",
+        "summary": "Observability proof has a refreshed green PR head but still needs exact-head reviewer action.",
+        "title": "Complete exact-head review for observability verifier PR 4364"
+      },
+      "task_spec_hash": "59dfcd65537aa57610ff40c4192a463ebabf5081c194f463b93cc5eab56a8533"
+    },
+    {
+      "task_id": "L12-HOSTED-PROOF-EXEC-20260730",
+      "task_spec": {
+        "acceptance": [
+          "Bind exact Pantheon-owned hosted FE deployment manifest and BFF identity",
+          "Prove restart/no-duplicate/auth/tenant/safety behavior",
+          "Use current dev host/BFF, not Lovable or legacy frontend repo",
+          "Archive reviewer-approved evidence manifest"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-HOSTED-PROOF-EXEC-20260730"
+        ],
+        "depends_on": [
+          "L12-FE-TRUTH-EXEC-20260730",
+          "L12-VERIFY-KNOW-EXEC-20260730",
+          "L12-VERIFY-LEARN-EXEC-20260730",
+          "L12-VERIFY-RUNTIME-EXEC-20260730",
+          "L12-OBS-EXACT-HEAD-REVIEW-20260730"
+        ],
+        "id": "L12-HOSTED-PROOF-EXEC-20260730",
+        "owner": "Antigravity",
+        "phase": "Twelve Loop Product Proof / Hosted Proof",
+        "reviewer": "Claude2",
+        "summary": "Hosted proof starts only after frontend truth and all verifier lanes are reviewer-accepted.",
+        "title": "Prove hosted FE/BFF exact identity and safety gates"
+      },
+      "task_spec_hash": "9059935954bbf72eec6a47a2093ef898bc03ed1121f90ebc6ee71e6a63dc471d"
+    },
+    {
+      "task_id": "L12-FINAL-CLOSEOUT-EXEC-20260730",
+      "task_spec": {
+        "acceptance": [
+          "Prove every twelve-loop requirement against current authoritative evidence",
+          "Exclude stale PR heads, branch-only files, and merged PRs without governed task closeout",
+          "Record final protected closeout and reviewer approval",
+          "Only then may the system be called twelve-loop operational"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-FINAL-CLOSEOUT-EXEC-20260730",
+          "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive"
+        ],
+        "depends_on": [
+          "L12-HOSTED-PROOF-EXEC-20260730",
+          "L12-TRUTH-001",
+          "L12-SIGNOFF-001"
+        ],
+        "id": "L12-FINAL-CLOSEOUT-EXEC-20260730",
+        "owner": "Claude2",
+        "phase": "Twelve Loop Product Proof / Final Closeout",
+        "reviewer": "Antigravity",
+        "summary": "Final closeout remains gated behind hosted proof and canonical truth/signoff evidence.",
+        "title": "Perform protected final twelve-loop closeout"
+      },
+      "task_spec_hash": "804405a0282ac4e6565ef062ae0c51efc8cfdab26797650e50d85782ca16cce8"
+    }
+  ]
+}

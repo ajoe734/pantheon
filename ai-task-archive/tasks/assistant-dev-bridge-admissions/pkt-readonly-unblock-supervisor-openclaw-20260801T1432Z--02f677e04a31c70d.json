@@ -1,0 +1,218 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "supervisor.dispatch",
+      "read_only_state_audit"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator",
+      "coordinator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-readonly-unblock-supervisor-openclaw-20260801T1432Z--02f677e04a31c70d.json",
+  "admitted_at": "2026-08-01T14:29:59Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-readonly-unblock-20260801",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-WORKER-WORKTREE-SOURCE-ROOT-REFRESH-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "SUP-RETRY-BACKOFF-MISSING-WORKTREE-RECOVERY-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "SUP-CLAUDE-READONLY-PERMISSION-AUTOPASS-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "MGMT-OPENCLAW-KERNEL-REPAIR-READINESS-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "WORKFLOW_RULES",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "Integration And Coordination Lane",
+        "Single Dispatch Authority"
+      ]
+    },
+    {
+      "kind": "RUNBOOK",
+      "path": "docs/operations/management-ai-openclaw-dev-bridge.md",
+      "sourceRefs": [
+        "kernel_repair",
+        "repair-worktrees/prepare"
+      ]
+    },
+    {
+      "kind": "RUNBOOK",
+      "path": "docs/frontend/execute-plans-dev-hosting.md",
+      "sourceRefs": [
+        "Pantheon-owned dev frontend",
+        "strict BFF mode"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T14:29:53Z",
+  "intent": "generate_sa_sd_and_dispatch",
+  "mode": "kernel_repair",
+  "packet_digest": "02f677e04a31c70d23c4216f28dbe61ba87b865242e2e78b56f065d637be3143",
+  "packet_id": "pkt-readonly-unblock-supervisor-openclaw-20260801T1432Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "721476a53012221022a1edecdd5ec3d6948c370cda02892cb5b0182eaf53b9ea",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "20260801-readonly-root-cause-audit",
+    "20260801-supervisor-auto-worker-dispatch"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-WORKER-WORKTREE-SOURCE-ROOT-REFRESH-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Treat SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730 and PR #4392 as the prior implementation context, not as a dependency that prevents dispatch.",
+          "Start from current origin/dev in a clean governed task worktree and inspect PR #4392 head 4e2ebeeb0635bed484bc2cdf7e8e5ff1bcb0ea9f plus current dev before changing anything.",
+          "Refresh or supersede PR #4392 so the accepted PR is no longer BEHIND dev; preserve the source-root split and do not count stale head 4e2ebeeb0635bed484bc2cdf7e8e5ff1bcb0ea9f as current acceptance evidence.",
+          "Ensure worker worktree lifecycle uses a writable source root for git metadata and live config will set worker_worktrees.source_root=/home/lupin/pantheon-ci-deploy/dev-root after merge.",
+          "Keep config changes bounded to worker_worktrees.source_root and documented examples; do not introduce unrelated runtime, provider, or task-state changes.",
+          "Run the focused ProcessQueueDispatchGuard, DispatchStatusSync, PruneOrphanWorktrees, and PruneChairReviewWorktrees tests plus git diff --check; run the full supervisor suite or record a reviewed reason if split.",
+          "Publish evidence under docs/deployment/evidence/twelve-loop-gap/SUP-WORKER-WORKTREE-SOURCE-ROOT-REFRESH-20260801/ with exact base/head SHA, validation logs, and read-only proof that the prior .git/worktrees blocker is covered.",
+          "Push a PR to dev, wait for Branch CI, and hand off to Antigravity for independent exact-head review; owner must not self-approve.",
+          "After independent approval and root-freeze authorization, merge through the governed path, promote the live command root, set worker_worktrees.source_root in live config, restart supervisor/watchdog, and verify the first isolated worker dispatch records workspace_source_root with no .git/worktrees read-only failure."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/config.json",
+          ".orchestrator/config.example.json",
+          "docs/conventions/GIT_WORKFLOW.md",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-WORKER-WORKTREE-SOURCE-ROOT-REFRESH-20260801/"
+        ],
+        "depends_on": [],
+        "id": "SUP-WORKER-WORKTREE-SOURCE-ROOT-REFRESH-20260801",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime Repair / Worker Worktrees",
+        "reviewer": "Antigravity",
+        "summary": "Unblock the existing #4392 readonly/worktree fix by refreshing the stale/BEHIND head and carrying it through review, merge, live source-root promotion, and dispatch evidence.",
+        "title": "Refresh worker worktree source-root unblock"
+      },
+      "task_spec_hash": "e9351d8f064635e4f3f800b891a273a7ece3ac3bb3e383e9c8d68253ecab8e95"
+    },
+    {
+      "task_id": "SUP-RETRY-BACKOFF-MISSING-WORKTREE-RECOVERY-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Use the 2026-08-01 live incident as fixture context: run antigravity1-1-20260801T040439Z-d671d63d for SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 was retry_backoff with next_retry_at in the past and request_snapshot.metadata.workspace_path pointing at a missing /tmp isolated worktree.",
+          "retry_due_workers/request_for_worker must not blindly reuse stale request_snapshot.metadata.workspace_path when that path is missing; it must clear stale metadata and prepare a fresh worktree or fail the old worker and queue a fresh dispatch.",
+          "prepare_worker_workspace and reused worktree refresh must catch FileNotFoundError/OSError for missing cwd or prunable git worktree records and fail closed without aborting the whole poll_workers phase.",
+          "reconcile_runtime_on_boot must handle retry_backoff workers whose runner is missing or workspace is absent; stale leases and worker_worktree reservations must be released using runtime locks.",
+          "poll_workers must continue processing other workers when one worker worktree is missing and must not leave a task permanently invisible to redispatch.",
+          "Add regression tests for stale retry_backoff metadata, missing isolated worktree directory, prunable git worktree registration where feasible, and no retry loop/duplicate concurrent launch.",
+          "Run focused supervisor tests, python -m py_compile .orchestrator/supervisor.py, and git diff --check; publish exact evidence and captured failure/recovery notes.",
+          "Deliver via task branch, PR to dev, Branch CI, independent Codex review, and governed merge; do not hand-edit canonical task state or live runtime as the permanent fix."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-RETRY-BACKOFF-MISSING-WORKTREE-RECOVERY-20260801/"
+        ],
+        "depends_on": [],
+        "id": "SUP-RETRY-BACKOFF-MISSING-WORKTREE-RECOVERY-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Worker Retry Lifecycle",
+        "reviewer": "Codex",
+        "summary": "Permanent fix for the stale retry_backoff/missing-worktree runtime stall that required a temporary live repair on 2026-08-01.",
+        "title": "Recover retry_backoff workers with missing worktrees"
+      },
+      "task_spec_hash": "1bf3aa3d991a8aae84428d3dc4507907471a7570b8954a3de17e8c93e2d624f2"
+    },
+    {
+      "task_id": "SUP-CLAUDE-READONLY-PERMISSION-AUTOPASS-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Audit current Claude approval broker behavior and recent worker logs to identify why read-only repo/GitHub/supervisor probes still request operator permission.",
+          "Read-only tools such as Read, Grep, Glob, LS, TaskOutput, Agent read-only review, and safe status/probe commands must auto-allow without operator prompts.",
+          "Safe Bash read commands used by workers must classify allow, including git status, git fetch/ls-remote/read-only show, gh pr view/diff/checks, gh run view/list/watch readbacks, jq projections, and curl -fsS read-only probes; writes and external side effects must remain defer/deny.",
+          "Do not make a broad allow-all rule; git push, gh pr comment/merge/approve, secret reads/writes, rm, sudo, chmod 777, production deploy, and live trading/capital actions must still fail closed or require governed authority.",
+          "Clarify or fix persist_allow_by_default behavior so it does not cause repeated prompts for requests already classified allow.",
+          "Add classify/regression tests proving read-only allow and destructive deny/defer behavior; include at least one GitHub read-only command and one unsafe GitHub write command.",
+          "Publish evidence with before/after classifications and no secret disclosure; deliver through PR to dev, CI, independent Codex review, and governed merge."
+        ],
+        "artifacts": [
+          ".orchestrator/permission_broker.py",
+          ".orchestrator/config.json",
+          ".orchestrator/claude-approval-broker.mcp.json",
+          ".orchestrator/test_permission_broker.py",
+          "docs/deployment/evidence/supervisor/SUP-CLAUDE-READONLY-PERMISSION-AUTOPASS-20260801/"
+        ],
+        "depends_on": [],
+        "id": "SUP-CLAUDE-READONLY-PERMISSION-AUTOPASS-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Provider Permission Broker",
+        "reviewer": "Codex",
+        "summary": "Stop wasting operator attention on read-only approval prompts while preserving fail-closed behavior for writes and destructive actions.",
+        "title": "Auto-allow read-only Claude approval broker requests"
+      },
+      "task_spec_hash": "322abd299318fff2008bdc492ff9acecca287a44846a63377b3af39f0908a855"
+    },
+    {
+      "task_id": "MGMT-OPENCLAW-KERNEL-REPAIR-READINESS-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Use an authenticated dev admin/operator session or existing strict dev smoke harness; do not treat unauthenticated 401/404 curl probes as readiness proof.",
+          "GET /bff/assistant/mode must return 200 for the authorized session and report kernel_enabled=true, passphrase configured state, and active control-mode state.",
+          "Control mode activation must enter kernel_repair with the configured control passphrase without logging or exposing the secret.",
+          "POST /bff/assistant/repair-worktrees/prepare must reject inactive/debug mode, unauthenticated/viewer sessions, blank or blanket '.' declared_scope, and invalid repo keys.",
+          "POST /bff/assistant/repair-worktrees/prepare must succeed in kernel_repair for repo_key pantheon and execute-plans with task_id, expected_branch, merge_target, remote, and bounded declared_scope, returning clean repair metadata rooted under PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT.",
+          "The BFF must delegate to POST /api/openclaw-adapter/assistant/repair-worktrees/prepare and forward returned openclaw.repair metadata to POST /bff/management/nl/ask for write-capable repair conversations.",
+          "kernel_debug conversations must remain read-only; provider writes may only occur in the clean repair task worktree returned by prepare.",
+          "If route names, auth wiring, or hosted dev environment variables are stale, fix them in source and deploy dev once after the full batch of fixes; record exact FE/BFF/adapter commits and deployment manifest.",
+          "Publish evidence including authorized route responses, negative controls, worktree metadata, no secret disclosure, and a hosted write E2E; deliver through PR to dev, CI, independent Codex review, and governed merge/deploy."
+        ],
+        "artifacts": [
+          "services/control-plane/bff/",
+          "services/openclaw-gateway-adapter/",
+          "scripts/assistant_repair_smoke.py",
+          "scripts/smoke_openclaw_activation_ready_e2e.py",
+          "docs/operations/management-ai-openclaw-dev-bridge.md",
+          "docs/deployment/evidence/management-ai/MGMT-OPENCLAW-KERNEL-REPAIR-READINESS-20260801/"
+        ],
+        "depends_on": [],
+        "id": "MGMT-OPENCLAW-KERNEL-REPAIR-READINESS-20260801",
+        "owner": "Antigravity",
+        "phase": "Management AI / OpenClaw Repair Readiness",
+        "reviewer": "Codex",
+        "summary": "Close the Management AI/OpenClaw readonly gap by proving and repairing the authorized kernel_repair + repair-worktree prepare + NL ask write path.",
+        "title": "Verify Management AI OpenClaw kernel_repair write path"
+      },
+      "task_spec_hash": "520671c8480b498444f88707f8ce62d7a5d8272477fd68db325566b1155645e8"
+    }
+  ]
+}

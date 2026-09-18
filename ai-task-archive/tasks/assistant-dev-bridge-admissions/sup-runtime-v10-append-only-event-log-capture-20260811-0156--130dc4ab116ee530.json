@@ -1,0 +1,103 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ],
+    "id": "Codex",
+    "roles": [
+      "auto-worker"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-runtime-v10-append-only-event-log-capture-20260811-0156--130dc4ab116ee530.json",
+  "admitted_at": "2026-08-11T01:59:39Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "sourceRefs": [
+        "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260811T015131265881Z-1862171.json",
+        "sha256:f031441af607e8bd9631e4b08b34315a417209f9223c515ff8fb40aeb452ee9e",
+        "candidate:2136f1e152fb730d53a7dcc8beb8ad2e7abd5bae",
+        "candidate-tree:b0bfa846ac2848f9c01e0ab36a46ea1c1b250946",
+        "incumbent:0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "incumbent-pid:1795141",
+        "incumbent-starttime-ticks:25169594",
+        "live-config-sha256:54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+        "event-log:/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl",
+        "event-log-device:2049",
+        "event-log-inode:2186507",
+        "event-log-size-at-readback:8232800658",
+        "failure:Governed launch task_state_event_log changed during capture",
+        "prerequisite-pr:4737"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-11T01:56:00Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "130dc4ab116ee530f9a089f476ad2e5a03d1894858637f8d4a64d9f6b6d49e69",
+  "packet_id": "sup-runtime-v10-append-only-event-log-capture-20260811-0156",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "b0d5ddf442d44ad4ef82e85074f272d5837fc92c9fb421588879b25c3c7409f5",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "promotion-evidence-20260811T015131265881Z-1862171",
+    "post-abort-readback-20260811T0155Z",
+    "append-only-event-log-dedupe-20260811T0156Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce transaction f031441af607e8bd9631e4b08b34315a417209f9223c515ff8fb40aeb452ee9e: exact accepted candidate 2136f1e1/tree b0bfa846 and immutable incumbent 0bd7cf88 are clean and launch-bound, but promotion stops before baseline, config, signal, launch, or rollback because the external authoritative task-state event log changes while capture_regular_file reads its full 8.23 GB content.",
+          "Diagnose the precise contract needed for task_state_store.event_log. It is an external, writable, append-only authoritative journal, not an immutable launch source. Keep the configured absolute path, parent-directory identity, regular-file mode, single-link requirement, device/inode identity, writable checks, outside-command-runtime boundary, and config binding fail closed.",
+          "Implement a bounded descriptor-based journal capture and revalidation that permits only proven append growth during capture. It must reject truncation, prefix/content rewrite, same-size mutation, truncate-and-regrow, inode or path replacement, symlink or hard-link substitution, parent-component drift, permission drift, non-regular files, and movement inside the command runtime before TERM.",
+          "Do not weaken OSLaunchFilesystem.capture_regular_file for supervisor.py, ai-status.sh, ai_status.py, the interpreter, config, or any other immutable launch source. The append-only behavior must be explicit and limited to task_state_event_log, with a summary/revalidation identity sufficient to prove the same journal is still bound at the transaction boundary.",
+          "Add focused adversarial tests for concurrent append acceptance, multi-append growth, stable empty and large journals, prefix overwrite, same-size rewrite, truncation/regrowth, inode/path/parent swap, symlink/hard-link, mode/link-count drift, unwritable journal/parent, and event-log placement inside the candidate. Prove every invalid case aborts before config mutation or process signalling.",
+          "Run the complete promotion suite and any directly affected task-state/status tests. Commit a task-scoped evidence manifest before independent review and bind the exact reviewed head through the normal task PR into dev.",
+          "Preserve immutable candidate cleanliness, config CAS, promotion-lock ordering, restart-intent-before-TERM, process-generation and admission-lock checks, worker-lease parity, PYTHONDONTWRITEBYTECODE=1 and python -B launch, status-child bytecode proof, three fresh-loop gates, authoritative-shadow catch-up, provider baseline, and rollback identity/cleanup.",
+          "Keep this task source-only: no live config/state edit, direct process signal, worker termination, runtime promotion, candidate/incumbent mutation or deletion, canonical-state edit outside governed commands, scheduler/fleet-routing policy change, provider/account change, or rollout retry. A retry requires a separately dispatched task after protected source merge."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-BASELINE-WORKER-LEASE-PARITY-20260811"
+        ],
+        "id": "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Append-only Journal Capture",
+        "reviewer": "Claude2",
+        "summary": "The governed 2136f1e1 retry remained fail-closed because immutable-file capture reads the live 8.23 GB append-only task-state journal and rejects legitimate concurrent append growth. Add a narrowly typed, descriptor-bound journal capture that allows only proven appends while retaining every path, inode, prefix, permission, transaction, and runtime safety gate; leave rollout to a later dispatch.",
+        "title": "Capture the live task-state journal coherently for promotion"
+      },
+      "task_spec_hash": "8b2e0c21e71c01c12a58eb82c6f2b197b86c2ef8a2baf630df072ffcec66b66a"
+    }
+  ]
+}

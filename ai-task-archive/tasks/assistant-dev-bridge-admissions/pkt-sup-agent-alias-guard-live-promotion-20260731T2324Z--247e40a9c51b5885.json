@@ -1,0 +1,108 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-agent-alias-guard-live-promotion-20260731T2324Z--247e40a9c51b5885.json",
+  "admitted_at": "2026-07-31T23:23:32Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#alias-guard-live-promotion",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "MERGED_PR",
+      "path": "https://github.com/ajoe734/pantheon/pull/4430",
+      "sourceRefs": [
+        "exact approved head 20d68997d9da7854b6c5bd9cdb198186bdb79b83",
+        "merge commit 012dab969455e7146f2437159d7d38fc5904a195"
+      ]
+    },
+    {
+      "kind": "RUNTIME_HANDOFF_CONTRACT",
+      "path": "docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/handoff/swap-supervisor.sh",
+      "sourceRefs": [
+        "origin/dev contains governed intentional-restart and admission-lock handoff",
+        "archived task SUP-COMMAND-RUNTIME-REFRESH-001"
+      ]
+    },
+    {
+      "kind": "LIVE_READBACK",
+      "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "sourceRefs": [
+        "pre-promotion config sha256 728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
+        "incumbent command root commit cbb36ff1fe385f3bc2690124ff22d8edc0056896",
+        "accepted origin/dev commit 012dab969455e7146f2437159d7d38fc5904a195"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T23:22:36Z",
+  "intent": "supervisor_dispatch_alias_guard_live_promotion",
+  "mode": "kernel_repair",
+  "packet_digest": "247e40a9c51b5885d6ee3d19914d4ba190e6a08943a64863e7fa25879304b0df",
+  "packet_id": "pkt-sup-agent-alias-guard-live-promotion-20260731T2324Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "d62b780e41f777d38548f65c4a1e200560085133296de143ec83a2381538ed98",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+    "alias-guard-pr-4430-merge-012dab969455",
+    "live-root-lag-cbb36ff1-readback"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Preflight exact accepted source commit 012dab969455e7146f2437159d7d38fc5904a195 contains PR #4430 alias reassignment guard; incumbent live command root is cbb36ff1fe385f3bc2690124ff22d8edc0056896 or record and justify a newer accepted ancestor before any mutation.",
+          "Declared runtime scope is only immutable command-root preparation, serialized supervisor handoff, rollback/readback, and evidence under docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/. Do not modify product code, scheduler policy, task catalog, canonical task JSON, queue JSON, services other than the supervisor, or any config.",
+          "Capture the live config bytes before promotion and enforce sha256 728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc before and after. Do not run sync-dev-root.sh, check_config_drift.py --fix, or any config writer.",
+          "Prepare or verify a clean immutable Pantheon command root for exact commit 012dab969455e7146f2437159d7d38fc5904a195 with matching commit/tree and origin; do not reset or patch /home/lupin/pantheon-ci-deploy/dev-root and do not use the dirty shared status root as a delivery worktree.",
+          "Before mutation, prove exactly one live supervisor and capture PID, cmdline, cwd, start time, heartbeat, active worker leases, queue lease parity, duplicate-task check, runtime-admission lock state, and authoritative event projection equality. If discovery, lease safety, or projection is unsafe, block without mutation.",
+          "Use the governed intentional-restart plus runtime-admission-lock handoff contract from SUP-COMMAND-RUNTIME-REFRESH-001. Revalidate incumbent PID identity under the lock immediately before TERM; preserve active worker leases and prevent duplicate dispatch.",
+          "Keep exact rollback to the captured cbb36ff1fe385f3bc2690124ff22d8edc0056896 incumbent runtime (or the recorded newer incumbent) available. If replacement launch, heartbeat, authoritative projection, lease parity, or provider readiness fails, automatically restore the incumbent and record both failure and rollback evidence.",
+          "Post-promotion prove one supervisor PID whose cwd/command source is exact 012dab969455e7146f2437159d7d38fc5904a195, at least three fresh successful supervisor loops, caught-up authoritative projection with equal hashes, worker/queue lease parity, no duplicate task IDs, and unchanged config sha256.",
+          "Post-promotion probe Antigravity provider readiness and record that the selected live primary is Gemini when available; do not change provider configuration or claim Claude/GPT readiness while its shared weekly quota/auth lane is unavailable.",
+          "Deliver the immutable evidence through clean branch task/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731, PR to dev, required checks, exact-head independent Human/Ops review, merge, and governed task closeout. Runtime promotion is not complete from a local snapshot alone.",
+          "Out of scope: reopening SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731, materializing the 25-task G1 frontier, changing L12 ownership, hosted deployment, or L12-CLOSE-001. Those begin only after this task has live readback."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/"
+        ],
+        "depends_on": [
+          "SUP-AGENT-ALIAS-REASSIGN-GUARD-20260731"
+        ],
+        "id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime / Alias Guard Live Promotion",
+        "reviewer": "Human/Ops",
+        "summary": "Supervisor-dispatched Antigravity runtime promotion only. Expected branch task/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731, clean governed worktree, merge target dev. Owner capability: supervisor runtime deployment and readback. Reviewer capability: independent Human/Ops exact-head/runtime evidence validation.",
+        "title": "Promote merged alias reassignment guard into live supervisor runtime"
+      },
+      "task_spec_hash": "af41d1214e3bfbc5f973d2397def480540be2d5254538eac0f2af0f11f2adc53"
+    }
+  ]
+}

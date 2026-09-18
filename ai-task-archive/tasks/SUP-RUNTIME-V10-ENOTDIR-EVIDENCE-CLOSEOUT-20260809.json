@@ -1,0 +1,258 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+  "archived_at": "2026-08-11T18:49:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Start from current origin/dev in a clean task worktree and preserve the already-merged ENOTDIR source code unchanged.",
+      "Read the canonical task row and GitHub proof for SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808. Treat PR #4642 head ebf8afe08bf5353db9f158acc496c03b5c4766a8, merge fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, and canonical reviewer Codex2 decision approve as immutable source facts; fail closed on any mismatch.",
+      "Update the original committed evidence manifest so its task owner, reviewer, decision, review_approved state, exact reviewed head, PR, merge commit, required checks, and validation truth agree with the canonical/GitHub records. Preserve an append-only correction note explaining why the pre-review placeholder was stale.",
+      "Create the correction task's own review evidence under docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809/ in the same pre-review commit. Do not add or edit evidence after approval.",
+      "Validate JSON parsing, task/reviewer/head/PR/merge invariants, git diff --check, and the focused ENOTDIR regression slice without changing source files.",
+      "Commit with required trailers, push the exact task branch, open a PR to dev, obtain fresh independent Codex2 exact-head review with REVIEW_FILE bound to the correction-task evidence, wait for every required check, and merge through the protected flow.",
+      "After merge, read back origin/dev and prove the original evidence file contains the canonical independent decision. Mark this correction task done and hand the original blocked task to Human/Ops for governed reconcile_merged_done; do not mutate the original task row by editing JSON.",
+      "Rollback is a normal revert of the correction PR; no runtime rollback is applicable because this task changes evidence only."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch",
+          "integration.plan"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent",
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-two-blocker-dev-closeout-20260809",
+      "documents": [
+        {
+          "kind": "MERGED_ENOTDIR_EVIDENCE",
+          "path": "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4642",
+            "reviewed head ebf8afe08bf5353db9f158acc496c03b5c4766a8",
+            "merge fee6f738a58b82ccc269ed8481ddc5a1a7a68b85",
+            "canonical task blocker recorded 2026-08-09T05:47:01Z"
+          ]
+        },
+        {
+          "kind": "CLOSEOUT_RULE",
+          "path": ".orchestrator/skills/task-closeout-finalization.md",
+          "sourceRefs": [
+            "Review Evidence Manifest Rule",
+            "reconcile_merged_done recovery rules"
+          ]
+        },
+        {
+          "kind": "MINIMUM_FUNCTIONAL_SUCCESSOR_PLAN",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+          "sourceRefs": [
+            "PR #4621",
+            "pkt-l12-minimum-functional-a-20260808-f56e2bc91",
+            "pkt-l12-minimum-functional-b-20260808-f56e2bc91"
+          ]
+        },
+        {
+          "kind": "LEGACY_DAG_RECONCILIATION",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+          "sourceRefs": [
+            "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+            "late materialization of L12-VERIFY-LEARN-REAL-VERIFIER-001",
+            "fresh governed dry-run failure L12-CONTROLLER-TEACH-20260731 <-> L12-MIN-TEACH-20260808"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-09T06:00:36Z",
+      "intent": "close_two_merged_but_blocked_delivery_gaps",
+      "mode": "kernel_repair",
+      "packet_digest": "10c73f05ddc28f134e678ef5a36b6739930605572b54753038fcb206cef9fb3f",
+      "packet_id": "pkt-two-blocker-dev-closeout-20260809T060036Z",
+      "source_turn_ids": [
+        "user-asked-why-two-tasks-stuck",
+        "codex-readonly-two-task-root-cause-20260809",
+        "user-authorized-complete-and-merge-dev-20260809"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev in a clean task worktree and preserve the already-merged ENOTDIR source code unchanged.",
+          "Read the canonical task row and GitHub proof for SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808. Treat PR #4642 head ebf8afe08bf5353db9f158acc496c03b5c4766a8, merge fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, and canonical reviewer Codex2 decision approve as immutable source facts; fail closed on any mismatch.",
+          "Update the original committed evidence manifest so its task owner, reviewer, decision, review_approved state, exact reviewed head, PR, merge commit, required checks, and validation truth agree with the canonical/GitHub records. Preserve an append-only correction note explaining why the pre-review placeholder was stale.",
+          "Create the correction task's own review evidence under docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809/ in the same pre-review commit. Do not add or edit evidence after approval.",
+          "Validate JSON parsing, task/reviewer/head/PR/merge invariants, git diff --check, and the focused ENOTDIR regression slice without changing source files.",
+          "Commit with required trailers, push the exact task branch, open a PR to dev, obtain fresh independent Codex2 exact-head review with REVIEW_FILE bound to the correction-task evidence, wait for every required check, and merge through the protected flow.",
+          "After merge, read back origin/dev and prove the original evidence file contains the canonical independent decision. Mark this correction task done and hand the original blocked task to Human/Ops for governed reconcile_merged_done; do not mutate the original task row by editing JSON.",
+          "Rollback is a normal revert of the correction PR; no runtime rollback is applicable because this task changes evidence only."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809/"
+        ],
+        "depends_on": [],
+        "id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime / Evidence Closeout Repair",
+        "reviewer": "Codex2",
+        "summary": "Repair only the committed evidence truth for the already-reviewed and merged ENOTDIR source change. Bind the original canonical Codex2 approval, PR #4642 exact head, protected merge, and validation in a fresh correction PR whose own evidence is present before review. Do not change promotion code or live runtime.",
+        "title": "Correct ENOTDIR review evidence and close merged delivery"
+      },
+      "task_spec_hash": "9f7ec3f8b6cd9d57c435c3c9c9581e2aff7bb76c27ad381c984103fc538e1ab3"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+      "head_sha": "e542fc9950839dbc2441f05bc3bb1fbcc7c34370",
+      "mode": "required_commit_status",
+      "pr": 4760,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4760",
+      "recorded_at": "2026-08-11T18:44:02Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/e542fc9950839dbc2441f05bc3bb1fbcc7c34370",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 52048026133,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+    "last_update": "2026-08-11T18:49:54Z",
+    "next": "Finalized evidence closeout repair: PR #4760 merged to dev (42cd4d58f2906832cda269311c683d463cb631cc), evidence verified on origin/dev.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime / Evidence Closeout Repair",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+      "head_sha": "e542fc9950839dbc2441f05bc3bb1fbcc7c34370",
+      "pr": 4760
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809/evidence.json",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Repair only the committed evidence truth for the already-reviewed and merged ENOTDIR source change. Bind the original canonical Codex2 approval, PR #4642 exact head, protected merge, and validation in a fresh correction PR whose own evidence is present before review. Do not change promotion code or live runtime.",
+    "title": "Correct ENOTDIR review evidence and close merged delivery",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T18:49:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-enotdir-evidence-closeout-20260809",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+        "source_sha": "9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-enotdir-evidence-closeout-20260809",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+          "worker_run_id": "antigravity1-1-20260811T184616Z-e6bbbb59",
+          "queue_event_id": "evt-20260811T184511Z-f0d3cc1f",
+          "pid": 49236,
+          "pid_start_ticks": 31302418,
+          "process_generation": "worker-process-generation-sha256:b1355c4186ca1b68558b0a7347b0ae9e07f30f11b38d47c808c800676e8a1d0f"
+        }
+      },
+      "commit": "42cd4d58f2906832cda269311c683d463cb631cc",
+      "commit_subject": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809: correct evidence (#4760)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "* SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809": "anchor evidence",
+        "Owned layer": "Correct docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json (task.reviewer=Codex2) and update docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809/evidence.json owner (Antigravity) and summary.",
+        "Not changing": "The original merged ENOTDIR source, promotion runtime scripts, live configuration, or original task row status.",
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+        "Reviewer": "Codex",
+        "Verified": "69 focused ENOTDIR/gitfile/mutable tests passing; git diff --check clean; JSON validation clean",
+        "Composes with": "Fresh exact-head review by Codex and PR auto-merge flow."
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "42cd4d58f2906832cda269311c683d463cb631cc",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T18:13:22Z",
+      "from": "Codex",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused previous owner Codex becomes reviewer.",
+      "resolved_at": "2026-08-11T18:15:08Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-11T18:20:38Z",
+      "from": "Claude",
+      "message": "Opened PR #4760 (task/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809 -> dev) at head 8c52185a528f12c889747a63c5137d35837e56e2. Corrected docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json to record the already-approved (Codex2, refs/tags/pantheon-review/approve/ebf8afe08bf5353db9f158acc496c03b5c4766a8) and already-merged (PR #4642, merge fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, ancestor of dev, all required checks green) outcome via an append-only correction block; added this task's own pre-review evidence at docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809/evidence.json. Verified: 69 focused ENOTDIR/gitfile/mutable regression tests passed; git diff --check passed. Did not touch promotion source, live runtime, or the original task row (still status=blocked, waiting_for=Human/Ops as designed). Ready for Codex exact-head review with REVIEW_PR=4760 REVIEW_HEAD_SHA=8c52185a528f12c889747a63c5137d35837e56e2.",
+      "resolved_at": "2026-08-11T18:22:57Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T18:22:15Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Antigravity.",
+      "resolved_at": "2026-08-11T18:27:16Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T18:27:16Z",
+      "from": "Codex",
+      "message": "PR #4760 head 8c52185a528f12c889747a63c5137d35837e56e2 passes JSON parsing, git diff --check, PR #4642 head/merge/check proof, Codex2 approval-tag proof, and 69 focused ENOTDIR/gitfile/mutable tests. Reopen because the corrected original manifest still has task.reviewer=Claude2 while the immutable approval actor and review.reviewer are Codex2, and task.status=reviewed_and_merged instead of the required review_approved state. Also refresh the correction task evidence owner from Claude to current canonical owner Antigravity (reviewer remains Codex) and update its correction_applied.after summary. Commit all evidence fixes before requesting a fresh exact-head review; do not change promotion source/runtime or add evidence after approval.",
+      "resolved_at": "2026-08-11T18:27:16Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T18:36:55Z",
+      "from": "Antigravity",
+      "message": "PR #4760 head e542fc9950839dbc2441f05bc3bb1fbcc7c34370 pushed and ready for independent review with REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809/evidence.json.",
+      "resolved_at": "2026-08-11T18:44:02Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T18:44:02Z",
+      "from": "Codex",
+      "message": "Approved PR #4760 exact head e542fc9950839dbc2441f05bc3bb1fbcc7c34370: diff is task brief plus two evidence JSON files only and leaves promotion/runtime source unchanged; PR #4642 head ebf8afe08bf5353db9f158acc496c03b5c4766a8 merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, and the Codex2 approve tag peels to that head; all #4642 required checks are green; independent validation passed 69 focused tests with 288 deselected, JSON invariants, and git diff --check.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+      "to": "Antigravity",
+      "resolved_at": "2026-08-11T18:49:55Z"
+    }
+  ],
+  "blockers": []
+}

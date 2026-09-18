@@ -1,0 +1,342 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "supervisor-runtime",
+      "fleet-dispatch",
+      "deployment"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator",
+      "integration-coordinator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-supervisor-authority-v2-cutover-20260811T150843Z--1dae7fbc85c31410.json",
+  "admitted_at": "2026-08-11T15:19:55Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-supervisor-authority-v2-20260811",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "SUP-AUTHORITY-V2-TASK-STORE-20260811"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-AUTHORITY-V2-LIFECYCLE-REVIEW-20260811"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811"
+    },
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811"
+    },
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "GOVERNANCE",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "Integration And Coordination Lane",
+        "Single Dispatch Authority",
+        "Completion Definition For Repo Changes"
+      ]
+    },
+    {
+      "kind": "CURRENT_IMPLEMENTATION",
+      "path": ".orchestrator/supervisor.py",
+      "sourceRefs": [
+        "run_once",
+        "dispatch_ready_tasks",
+        "process_queue",
+        "persist_task_reassignment",
+        "chair_reassignment_triage_needed_for_task"
+      ]
+    },
+    {
+      "kind": "CURRENT_IMPLEMENTATION",
+      "path": ".orchestrator/rewrite/task_state_store.py",
+      "sourceRefs": [
+        "append_state_commit",
+        "load_snapshot",
+        "full-state journal"
+      ]
+    },
+    {
+      "kind": "CURRENT_IMPLEMENTATION",
+      "path": "scripts/ai_status.py",
+      "sourceRefs": [
+        "command_start",
+        "command_reopen",
+        "command_approve",
+        "command_done",
+        "canonical task-state lock"
+      ]
+    },
+    {
+      "kind": "CURRENT_IMPLEMENTATION",
+      "path": "scripts/promote_supervisor_runtime.py",
+      "sourceRefs": [
+        "PromotionTransaction",
+        "mutable incumbent compatibility",
+        "rollback"
+      ]
+    },
+    {
+      "kind": "HISTORICAL_NONAUTHORITATIVE_PLAN",
+      "path": "docs/02-architecture/SUPERVISOR_REWRITE_PLAN.md",
+      "sourceRefs": [
+        "retain useful findings only",
+        "do not preserve dual paths"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-11T15:08:43Z",
+  "intent": "replace_conflicting_supervisor_control_paths",
+  "mode": "supervisor_architecture_governed_delivery",
+  "packet_digest": "1dae7fbc85c31410e339ec68a992fc2f46df94a5ced0798136240dbe23480f40",
+  "packet_id": "pkt-supervisor-authority-v2-cutover-20260811T150843Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "141ad00eff1aada4e0057d7e0f9dda4dc87b2a156d4ef3c0b47bb03e228cec7d",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-approved-authoritative-supervisor-spec-20260811",
+    "operator-approved-complete-implementation-20260811",
+    "function-level-call-path-and-deletion-map-20260811"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Write the approved architecture as the sole authoritative specification: responsibilities, lifecycle, invariants, failure semantics, deletion map, acceptance budgets, rollout and rollback. Historical incidents are validation cases, not constraints that preserve old mechanisms.",
+          "Replace full-board-per-event hot storage with a compact current-head snapshot plus append-only transition deltas. Append and fsync the delta before atomically replacing the head; crash recovery may replay only the tail after the head sequence.",
+          "Freeze the existing multi-gigabyte journal as a read-only archive with exact byte length, final sequence, journal SHA and projected state SHA. Bind the v2 genesis record to that archive identity; never delete historical evidence during migration.",
+          "Normal reads must not mmap, hash or parse the archived journal. Full chain verification is startup/offline verification and may not execute inside a scheduling tick or canonical mutation.",
+          "Keep one task-state lock and one transaction API. Reject nonterminal task loss, invalid deltas, sequence conflicts, corrupted tails and stale head CAS.",
+          "Delete the v1 full-state append/replay/checkpoint hot path and its obsolete tests in the same PR. Do not retain a production feature flag or automatic fallback to v1.",
+          "Add migration, corruption, crash-boundary and constant-hot-read-cost tests using a synthetic large legacy journal. Report gross deletions, additions and remaining production callers.",
+          "Deliver from a clean task worktree to dev with required trailers, focused and full task-store validation, independent exact-head review and required checks."
+        ],
+        "artifacts": [
+          "docs/02-architecture/supervisor-authority-v2.md",
+          ".orchestrator/rewrite/task_state_store.py",
+          ".orchestrator/rewrite/test_task_state_store.py",
+          "scripts/verify_task_state_store.py",
+          "scripts/test_verify_task_state_store.py",
+          "scripts/migrate_task_state_store_v2.py",
+          "scripts/test_migrate_task_state_store_v2.py"
+        ],
+        "depends_on": [
+          "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811"
+        ],
+        "id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+        "owner": "Codex2",
+        "phase": "Supervisor Authority V2 / Task Store",
+        "reviewer": "Codex",
+        "summary": "Land the approved simple authority model and remove the 8.65 GB full-state journal from every hot read while preserving an auditable archive and deterministic crash recovery.",
+        "title": "Establish the authoritative supervisor v2 specification and delta task store"
+      },
+      "task_spec_hash": "a29f8e83152d4cab119b043079721c1f858626d78695b9ae7105215eb0428e23"
+    },
+    {
+      "task_id": "SUP-AUTHORITY-V2-LIFECYCLE-REVIEW-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Make the v2 task machine the only production lifecycle authority used by every ai-status command and supervisor mutation. Allowed transitions are create to todo, execution_started to in_progress, submit to review, changes_requested to in_progress, exact-head approve to review_approved, finalize to done, structured block/unblock and audited cancel/supersede.",
+          "Treat ready as derived eligibility, not stored lifecycle. Replace quarantined lifecycle use with structured blocked or runtime waiting reason as specified. Account auth and quota pauses must not mutate task lifecycle.",
+          "Separate immutable task scope, dependency and acceptance provenance from mutable audited owner/reviewer routing. Catalog materialization must not permanently freeze routing fields.",
+          "Run GitHub discovery, evidence lookup and review bridge calls outside task-state and runtime locks. Commit only a short exact task-generation, reviewer, PR and head CAS transaction; timeout or stale evidence leaves canonical lifecycle unchanged.",
+          "Finalize must consume already-recorded approval evidence and must not perform network I/O inside the canonical transaction.",
+          "Delete direct status assignment in command_start, command_progress, command_reopen, command_handoff, command_approve and command_done; delete restore_approved and all duplicate transition ladders after callers move to the machine.",
+          "Add an invariant test that fails if subprocess, GitHub or provider network calls execute while canonical or runtime exclusive locks are held. Cover invalid transitions, exact-head races, reviewer fallback, reassignment and crash boundaries.",
+          "No rewrite versus legacy feature flag or exception fallback may remain. Deliver by clean PR, independent exact-head review and required checks."
+        ],
+        "artifacts": [
+          ".orchestrator/rewrite/task_machine.py",
+          ".orchestrator/rewrite/test_task_machine.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "scripts/git/github_review_bridge.py",
+          "scripts/git/test_github_review_bridge.py"
+        ],
+        "depends_on": [
+          "SUP-AUTHORITY-V2-TASK-STORE-20260811"
+        ],
+        "id": "SUP-AUTHORITY-V2-LIFECYCLE-REVIEW-20260811",
+        "owner": "Codex",
+        "phase": "Supervisor Authority V2 / Lifecycle and Review",
+        "reviewer": "Codex2",
+        "summary": "Replace permissive direct task-row mutations with one real lifecycle authority, mutable audited routing, and exact-head review evidence acquired outside short canonical transactions.",
+        "title": "Make one task lifecycle and move review I/O outside canonical transactions"
+      },
+      "task_spec_hash": "02d89971a1b6990b3eac5e24b7db9112c794d60443c5822f53a8ad6991e35d6a"
+    },
+    {
+      "task_id": "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Build one pure deterministic DispatchPlan from one task head, one runtime snapshot and one cached account-health snapshot. It alone decides dependency readiness, actor role, assignment, capacity, priority and dispatch generation.",
+          "Normal and claim-agent operation must consume the same plan. Review and finalize are ordinary roles in the same planner; routine reviewer or owner fallback must not wait for chair.",
+          "Use explicit enabled state plus global, account and agent capacities. Zero always means zero; it may never be clamped to one or treated as unlimited. Normalize provider aliases before planning and use one health record per real auth/quota account.",
+          "Fill every safe available slot until there is no runnable task or no eligible capacity. Never exceed shared account caps, duplicate a task generation, preempt a valid execution lease or bypass Human/Ops and reviewer-independence gates.",
+          "Keep chair only for explicit governance exceptions. Provider unavailability, quota retry, routine reassignment and deterministic worker recovery are not chair decisions.",
+          "Replace current dispatch_ready_tasks, task_execution_dispatch_candidate, higher_priority_ready_task_exists and assignment planning callers with the one planner. Delete dispatch_priority_for_task, current_dispatch_event_key, agent_has_dispatchable_primary_work, chair_reassignment_triage_needed_for_task and rewrite/legacy flags and fallbacks.",
+          "Replace worker_matches_current_assignment routing guesses with exact execution-lease generation validation. scripts/explain_dispatch.py must call the same planner and return the first real rejection reason.",
+          "Test multiple runnable roots, review/finalize priority, true dependency chains, owner/reviewer failover, shared quota, auth recovery, disabled and zero capacity, legacy ready migration, catalog routing changes, Human/Ops gates and full-slot utilization within two fast ticks.",
+          "Do not copy PR #4755's blanket removal of admission checks or task_assignment_is_catalog_locked returning False. Replace the authority boundary and delete the conflicting paths. Deliver by clean PR, independent exact-head review and required checks."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/rewrite/concurrency.py",
+          ".orchestrator/rewrite/provider_health.py",
+          "scripts/explain_dispatch.py",
+          ".orchestrator/test_explain_dispatch.py"
+        ],
+        "depends_on": [
+          "SUP-AUTHORITY-V2-LIFECYCLE-REVIEW-20260811"
+        ],
+        "id": "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811",
+        "owner": "Antigravity",
+        "phase": "Supervisor Authority V2 / Scheduler and Routing",
+        "reviewer": "Codex2",
+        "summary": "Implement one work-conserving scheduler and one capacity model, then delete all independently re-derived eligibility, routine chair routing and legacy fallback paths.",
+        "title": "Replace duplicate dispatch ladders with one work-conserving scheduler"
+      },
+      "task_spec_hash": "2868fc325680317f120ce779fe559fca28832842a4afedc92d7839ddf85cbfa0"
+    },
+    {
+      "task_id": "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Keep exactly two stored leases: a short delivery lease for one durable intent attempt and an execution lease binding task generation, role, actor, workspace, PID start ticks, process generation, heartbeat and progress.",
+          "Reduce process_queue to delivery mechanics: claim an approved intent, prepare workspace, launch outside state locks and commit a short launch result CAS. It must not re-decide assignment, chair, dependency, capacity or task failure policy.",
+          "Use one Recovery reconciler that maps each observed discrepancy to one action. Cover intent without process, process before launch ack, exited worker, stale progress, orphan lifecycle, stale queue receipt, reassignment generation and terminal completion.",
+          "Provider/account failure releases or retries a delivery attempt without increasing task failure streak. Apply one bounded policy per failure class: transient retry, account rotation, task reroute or structured task block; never all simultaneously.",
+          "Retain exact PID generation, confirm-kill, worktree isolation, durable launch intent and evidence-backed ownerless recovery. Delete active_worker_governance_lease_decision, duplicate queue/worker/task eligibility and legacy worker-kill fallback.",
+          "Keep signed bridge packets, atomic materialization and authoritative readback. Replace receipt plus claim plus retry plus rearm evidence-chain accretion with one durable packet state and append-only attempts without weakening signature, replay or partial-materialization guarantees.",
+          "Run crash injection before intent, after intent, after spawn, before launch ack, after canonical CAS, during retry and during terminal cleanup. Prove no duplicate process, false in_progress, lost review worker or permanent packet starvation.",
+          "Report and remove obsolete delivery, lease, failure-streak and bridge-rearm code and tests in the same PR. No legacy feature switch remains. Deliver by clean PR, independent exact-head review and required checks."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/runtime_state.py",
+          ".orchestrator/rewrite/worker_lifecycle.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py"
+        ],
+        "depends_on": [
+          "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811"
+        ],
+        "id": "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811",
+        "owner": "Codex2",
+        "phase": "Supervisor Authority V2 / Delivery and Recovery",
+        "reviewer": "Antigravity",
+        "summary": "Make queue delivery mechanical, execution ownership exact, and recovery singular so one failure cannot trigger queue retry, provider pause, reassignment, chair and task failure concurrently.",
+        "title": "Separate durable delivery, execution leases and one recovery reconciler"
+      },
+      "task_spec_hash": "1ee51280ef34660d448d5e6016d92b03db20a6328d6846bd5eddeb61c985b8a2"
+    },
+    {
+      "task_id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Report runtime identity, liveness, readiness and scheduling progress as separate dimensions. Exact command root, source commit, config hash and PID generation are identity; process and singleton ownership are liveness; task head, queue and provider registry access are readiness; cycle budget, dispatch latency and runnable-backlog service are progress.",
+          "Remove the process_alive or lock_held healthy shortcut. A held lock cannot compensate for a mismatched or dead exact runtime process, and a fresh heartbeat cannot compensate for stalled scheduling progress.",
+          "Retain PromotionTransaction locking, exact process termination, config CAS, immutable candidate launch, three fresh-loop verification, known-good rollback and durable transaction evidence.",
+          "Require immutable active incumbent and immutable known-good rollback roots. Delete mutable incumbent bootstrap, split-entrypoint compatibility, legacy task-brief drift, pycache residue, legacy environment and admission-lock churn branches and their allow_legacy switches after focused provenance tests prove the supported contract.",
+          "Promotion postchecks must consume the four-dimensional health contract, exact process generation, task projection, worker/queue/lease parity and provider baseline. Rollback must prove the same contract.",
+          "Add failure injection at every promotion state, PID reuse, lock orphan, stale heartbeat, correct heartbeat with no scheduling progress, wrong runtime root, candidate launch failure and rollback launch failure.",
+          "Delete obsolete migration classes, helpers, flags and tests in the same PR and report gross/net production line change. Deliver by clean PR, independent exact-head review and required checks."
+        ],
+        "artifacts": [
+          "scripts/supervisor_runtime_health.py",
+          "scripts/test_supervisor_runtime_health.py",
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py"
+        ],
+        "depends_on": [
+          "SUP-AUTHORITY-V2-TASK-STORE-20260811"
+        ],
+        "id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+        "owner": "Codex",
+        "phase": "Supervisor Authority V2 / Health and Rollout Source",
+        "reviewer": "Antigravity",
+        "summary": "Keep the useful transactional rollout core, make health distinguish identity from progress, and remove one-time mutable incumbent compatibility from the permanent runtime.",
+        "title": "Make supervisor health truthful and retire rollout migration branches"
+      },
+      "task_spec_hash": "9c910af63140180dd06cbfef3a01a28a3c9eac0a356a7b8dff87a366eeca94ca"
+    },
+    {
+      "task_id": "OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Verify all five exact merge commits are ancestors of current origin/dev with independent exact-head approvals and required checks. Record a single program baseline and actual gross deletion, additions and net production reduction; explain any deviation from the estimated 12000 to 18000 deleted and 8000 to 12000 net production reduction.",
+          "Run the complete task-store, lifecycle, review, scheduler, provider, queue, worker, bridge, health and promotion suites plus cross-component end-to-end and failure-injection matrices from one clean exact origin/dev runtime candidate.",
+          "Prove no production legacy flags, duplicate task-status writers, direct task-row status assignments, duplicate eligibility ladders, routine chair failover, lock-held external I/O, v1 hot journal replay or mutable rollout branches remain.",
+          "Capture live preflight identity, config, head sequence, archived journal anchor, provider account health, capacities, queue, workers, two lease types, runnable roots, cycle metrics and rollback root without changing live state.",
+          "Use only the immutable PromotionTransaction to switch to the exact origin/dev runtime. On failure use its normal rollback; never patch the command root, task state, queue, capacity, credentials or process by hand.",
+          "Verify exact PID generation and source/config identity, singleton ownership, at least three fresh loops, caught-up task head, provider baseline, no duplicate leases, no false in_progress and no pending bridge partial materialization.",
+          "With runnable synthetic or existing governed canaries, prove available slots fill within two fast ticks, review and finalize dispatch through the same planner, account caps are respected, slow GitHub/provider maintenance does not suppress local scheduling, and runtime lock p95 is below one second while hot scheduling p95 is below five seconds.",
+          "Publish only redacted evidence and hashes from a clean evidence branch, obtain fresh independent exact-head review, merge to dev, and observe at least one healthy post-evidence-merge loop before canonical completion."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811/"
+        ],
+        "depends_on": [
+          "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811",
+          "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811"
+        ],
+        "id": "OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811",
+        "owner": "Codex2",
+        "phase": "Supervisor Authority V2 / Integration and Live Cutover",
+        "reviewer": "Codex",
+        "summary": "Compose the five source deliveries, execute end-to-end and fault tests, perform immutable live promotion with normal rollback authority, and prove the simplified scheduler actually fills safe capacity.",
+        "title": "Integrate, promote and prove supervisor authority v2 live"
+      },
+      "task_spec_hash": "49235caa01c26b63856d4fe7625e957f9e988b5879ed191ff142d98153c53b08"
+    }
+  ]
+}

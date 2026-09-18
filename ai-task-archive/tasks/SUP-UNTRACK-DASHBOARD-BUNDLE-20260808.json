@@ -1,0 +1,181 @@
+{
+  "version": 1,
+  "task_id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+  "archived_at": "2026-08-08T10:32:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "dashboard-bundle.json and docs-site/dashboard-bundle.json must no longer be tracked on dev -- both are already in .gitignore.",
+      "Verified live: this untrack unblocks PR #4389 (Runtime mirror guard correctly refuses any PR whose diff touches these generated paths",
+      "regardless of add/modify/delete)."
+    ],
+    "artifacts": [
+      "dashboard-bundle.json",
+      "docs-site/dashboard-bundle.json"
+    ],
+    "depends_on": [],
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "head_sha": "76c854311986eac169a216b3cf216efc10cad4ec",
+      "mode": "required_commit_status",
+      "pr": 4622,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4622",
+      "recorded_at": "2026-08-08T10:26:37Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/76c854311986eac169a216b3cf216efc10cad4ec",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51880161246,
+      "status_state": "success"
+    },
+    "id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+    "last_update": "2026-08-08T10:32:32Z",
+    "next": "PR #4622 merged reviewed head 76c854311986eac169a216b3cf216efc10cad4ec into dev at 0f2ab06f8de5be84ad18862d5f55a1fd65266324; verified origin/dev no longer tracks dashboard-bundle.json or docs-site/dashboard-bundle.json, ignore coverage remains, python3 scripts/test_check_staged_generated_files.py (4 tests), python3 scripts/test_release_hardening.py, and git diff --check origin/dev...HEAD passed.",
+    "owner": "Codex",
+    "phase": "Supervisor Dispatch Reliability",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "head_sha": "76c854311986eac169a216b3cf216efc10cad4ec",
+      "pr": 4622
+    },
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Untrack generated dashboard-bundle.json from dev",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-08T10:32:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/claude-1002/-home-lupin-pantheon/2aa7998c-b94d-4f58-9f72-94b05e83b830/scratchpad/worktrees/sup-untrack-dashboard-bundle",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/claude-1002/-home-lupin-pantheon/2aa7998c-b94d-4f58-9f72-94b05e83b830/scratchpad/worktrees/sup-untrack-dashboard-bundle",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+          "worker_run_id": "codex-20260808T102729Z-05d94a2a",
+          "queue_event_id": "evt-20260808T102724Z-4febade2",
+          "pid": 2406882,
+          "pid_start_ticks": 2389775,
+          "process_generation": "worker-process-generation-sha256:f39217ae8518ee772d0508a0d2ee73c6c31097a02d05e2c6c2c5caca754c2a75"
+        }
+      },
+      "commit": "76c854311986eac169a216b3cf216efc10cad4ec",
+      "commit_subject": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808: anchor guard exception",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Runtime mirror guard handling for the two tracked dashboard bundle",
+        "Not changing": "the generated-runtime policy or protection for additions,",
+        "Composes with": "existing untrack commit e7f5cabc1 and PR #4622 into dev.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+        "Reviewer": "Antigravity",
+        "Verified": "python3 scripts/test_check_staged_generated_files.py; python3 scripts/test_release_hardening.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0f2ab06f8de5be84ad18862d5f55a1fd65266324",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T09:43:13Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-UNTRACK-DASHBOARD-BUNDLE-20260808 away from unavailable lane Claude, Claude2 (disabled, paused, sidecar-only, or auth-down); owner Claude -> Antigravity, reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-08-08T09:44:26Z",
+      "status": "done",
+      "task_id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T09:43:36Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by idle Codex previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-08-08T09:44:26Z",
+      "status": "done",
+      "task_id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T09:52:10Z",
+      "from": "Codex",
+      "message": "PR #4622 is ready for independent review at exact head 76c854311986eac169a216b3cf216efc10cad4ec. Scope: remove the two previously tracked ignored dashboard bundles and permit only their pure D diff records in Runtime mirror guard; additions, modifications, renames, and every other generated path remain blocked. Verified locally with python3 scripts/test_check_staged_generated_files.py; python3 scripts/test_release_hardening.py; git diff --name-status origin/dev...HEAD piped through the guard. GitHub Branch CI (trailers, Runtime mirror guard, packaging, smoke) is green.",
+      "resolved_at": "2026-08-08T09:53:46Z",
+      "status": "done",
+      "task_id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T09:53:46Z",
+      "from": "Antigravity",
+      "message": "PR #4622 Head 76c854311986eac169a216b3cf216efc10cad4ec passed independent reviewer verification: untracked deleted dashboard-bundle.json and docs-site/dashboard-bundle.json, updated check_staged_generated_files.py to permit pure D deletions for these 2 specific paths in diff mode while blocking additions/modifications/other generated paths, verified unit tests (test_check_staged_generated_files.py, test_release_hardening.py) and live branch CI green.",
+      "resolved_at": "2026-08-08T10:15:49Z",
+      "status": "done",
+      "task_id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T10:15:49Z",
+      "from": "Codex",
+      "message": "Current PR #4622 head 76c854311986eac169a216b3cf216efc10cad4ec added the reviewed guard exception after the prior approval, so its exact-head review-proof tag is absent and the canonical review gate fails. Local verification passed: git diff --check; python3 scripts/test_check_staged_generated_files.py; python3 scripts/test_release_hardening.py. Please independently review this exact head and run governed approve; no owner/reviewer reassignment requested.",
+      "resolved_at": "2026-08-08T10:19:07Z",
+      "status": "done",
+      "task_id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T10:19:07Z",
+      "from": "Antigravity",
+      "message": "Exact-head 76c854311986eac169a216b3cf216efc10cad4ec reviewed and approved. Untracked existing dashboard-bundle.json runtime outputs and updated runtime mirror guard check with strict diff-name-status exception tests. Verification passed: python3 scripts/test_check_staged_generated_files.py; python3 scripts/test_release_hardening.py.",
+      "resolved_at": "2026-08-08T10:23:51Z",
+      "status": "done",
+      "task_id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T10:24:01Z",
+      "from": "Codex",
+      "message": "Exact reviewed code remains unchanged at 76c854311986eac169a216b3cf216efc10cad4ec. Owner verification passed: git diff --check origin/dev...HEAD; python3 scripts/test_check_staged_generated_files.py (4 tests); python3 scripts/test_release_hardening.py. Please approve via governed command with REVIEW_PR=4622 REVIEW_HEAD_SHA=76c854311986eac169a216b3cf216efc10cad4ec REVIEW_HEAD_BRANCH=task/SUP-UNTRACK-DASHBOARD-BUNDLE-20260808 REVIEW_BASE=dev.",
+      "resolved_at": "2026-08-08T10:26:37Z",
+      "status": "done",
+      "task_id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T10:26:37Z",
+      "from": "Antigravity",
+      "message": "Reviewed PR #4622 (HEAD 76c854311986eac169a216b3cf216efc10cad4ec against dev). Verified untrack of dashboard-bundle.json and docs-site/dashboard-bundle.json, --diff-name-status exception in check_staged_generated_files.py, git diff --check origin/dev...HEAD clean, test_check_staged_generated_files.py (4 tests) & test_release_hardening.py passed.",
+      "status": "done",
+      "task_id": "SUP-UNTRACK-DASHBOARD-BUNDLE-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-08T10:32:33Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,330 @@
+{
+  "version": 1,
+  "task_id": "L12-EVO-001",
+  "archived_at": "2026-07-28T15:29:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "All monitored artifacts have numeric drawdown and approved expected baselines",
+      "Evolution actor tenant and active-decision uniqueness are authoritative and tenant-scoped",
+      "Every supported approved action writes a durable dispatch outbox",
+      "Decision becomes executed only after real downstream terminal receipt",
+      "Retry DLQ replay cooldown and compensation survive restart and duplicate triggers"
+    ],
+    "actual_state_sources": [
+      "EvolutionDecision",
+      "durable action outbox",
+      "research deployment or runtime terminal receipt"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/governance/evolution_controller_contract.md",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/governance/evolution_decision.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/evolution",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/incidents",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/postmortems",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-EVO-001"
+    },
+    "artifacts": [
+      "services/evolution",
+      "services/incidents",
+      "services/postmortems",
+      "services/control-plane/governance/evolution_decision.py",
+      "services/control-plane/governance/evolution_controller_contract.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "b54154511251eaec678595fbdf67d050df479ee580dccb2e59fd06dae0b0952e",
+    "current_maturity": "api-only",
+    "depends_on": [
+      "L12-TEL-001",
+      "L12-REC-001"
+    ],
+    "desired_state_sources": [
+      "resolved IncidentCase and published Postmortem",
+      "threshold and daily sweep policy",
+      "approved EvolutionDecision"
+    ],
+    "dispatch_rules": [
+      "Do not mark submitted or stub action executed",
+      "Preserve cooldown and one-active decision",
+      "Use governance gates for runtime-affecting actions"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001",
+    "fleet_lane": "evolution",
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-EVO-001",
+      "head_sha": "27956cb1c1001d6ebe1acd99cb5c79902a930d18",
+      "mode": "required_commit_status",
+      "pr": 4302,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4302",
+      "recorded_at": "2026-07-28T15:20:34Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51226189616,
+      "status_state": "success"
+    },
+    "human_ops_reassignment_history": [
+      {
+        "at": "2026-07-27T18:29:29Z",
+        "owner": "Codex2",
+        "previous": {
+          "last_update": "2026-07-27T17:57:23Z",
+          "next": "Resumed from anchors 2c95bc3/160ae649/31f146505; shared tenant authority, durable API-worker backend, strict auth, real Research receipts, restart and cross-replica replay race proofs are present. Auditing remaining worker health/graceful-stop and task evidence before review.",
+          "owner": "Codex2",
+          "reviewer": "Codex"
+        },
+        "reason": "canonical fleet dispatch repair: prioritize Claude/Antigravity where available; avoid config mutation",
+        "reviewer": "Claude"
+      }
+    ],
+    "human_ops_repair_history": [
+      {
+        "action": "compose_latest_dev_and_revalidate",
+        "at": "2026-07-27T19:07:55Z",
+        "head_sha": "d300f4eb5ba33616771068908eefe19a8f82cafa",
+        "validation": [
+          "json.tool evidence",
+          "sha256sum -c evidence.sha256",
+          "check_commit_trailers --skip-merge",
+          "git diff --check",
+          "87 focused pytest tests"
+        ]
+      }
+    ],
+    "id": "L12-EVO-001",
+    "last_update": "2026-07-28T15:29:31Z",
+    "loop_ids": [
+      "evolution"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized merged PR #4302 at 9f7f95e1a10a46248a81b26159e373f75525222f from reviewed exact head 27956cb1c1001d6ebe1acd99cb5c79902a930d18 with Codex2 review bound to the committed evidence manifest; revalidated 446 scoped tests, ProductEvidence schema/checksums, ten-rule validator, compileall, Compose config, commit trailers, and git diff.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No direct unapproved production mutation"
+    ],
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Evolution",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "positive threshold candidate",
+      "tenant cooldown and active-lock race",
+      "crash-after-approval dispatch recovery",
+      "real downstream and compensation readback"
+    ],
+    "requires_human_ops_signoff": false,
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-EVO-001",
+      "head_sha": "27956cb1c1001d6ebe1acd99cb5c79902a930d18",
+      "pr": 4302
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json",
+    "reviewer": "Codex2",
+    "source_ref": {
+      "base": "dev",
+      "head_sha": "d300f4eb5ba33616771068908eefe19a8f82cafa",
+      "pr": 4267,
+      "url": "https://github.com/ajoe734/pantheon/pull/4267"
+    },
+    "status": "done",
+    "summary_zh": "補齊 drawdown/approved baseline，將 actor/tenant 與 single-active constraint 權威化，所有 supported action 經 durable outbox 到真實 downstream receipt，不再 synthetic executed/stub。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-EVO-001.md",
+    "title": "Human/Ops ownership correction: PR #4285 is now composed to current dev at exact head 0fc918b747cf38262360b6045dadd25f157ed9d9 with all visible checks green. Return owner to Codex for real owner handoff; reviewer Codex2 must review exact head 0fc918b. Root freeze remains withheld until governed approve binds REVIEW_PR=4285 REVIEW_HEAD_SHA=0fc918b747cf38262360b6045dadd25f157ed9d9.",
+    "wave": 2,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-28T15:29:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-l12-evo-001-compose-20260727",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-EVO-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "061408b09aa06943813c97334054bfa29b79e236",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-l12-evo-001-compose-20260727",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "27956cb1c1001d6ebe1acd99cb5c79902a930d18",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/L12-EVO-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9f7f95e1a10a46248a81b26159e373f75525222f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T13:43:39Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-EVO-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex.",
+      "resolved_at": "2026-07-26T15:22:52Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T18:40:02Z",
+      "from": "Codex2",
+      "message": "PR #4267 head 0835242762f447a6b636214a76b80438adfe3f79 is pushed with auto-merge enabled and all visible checks green. Owner reran 431 scoped tests plus compileall, Compose config, schema, checksums, and diff check. Please independently review docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json and the implementation; approve with this REVIEW_FILE or reopen with concrete changes. No hosted activation is claimed.",
+      "resolved_at": "2026-07-27T19:08:28Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T19:07:55Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops composed PR #4267 onto origin/dev 5a2fc69a3b432e0d1bc528981d66a2ee32defa71 and pushed exact head d300f4eb5ba33616771068908eefe19a8f82cafa. Validation: json.tool evidence, sha256sum -c evidence.sha256, check_commit_trailers --range origin/dev..HEAD --skip-merge, git diff --check, and 87 focused evolution/governance pytest tests passed. Claude review must bind this new head; do not reuse review against 0835242762f447a6b636214a76b80438adfe3f79.",
+      "resolved_at": "2026-07-27T20:42:57Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T20:42:57Z",
+      "from": "Codex",
+      "message": "Exact-head d300f4eb5ba33616771068908eefe19a8f82cafa fails acceptance 1. Read-only reproduction: assess_input_coverage([eligible paper artifact with no drawdown/baseline], thresholds=[]) returns thresholds_considered=[], metrics=[], gaps=[], complete=true and coverage_complete=true. Because load_thresholds() returns [] for missing/malformed/all-disabled config, GET /api/evolution/input-coverage and run_tick can silently report complete coverage without checking numeric drawdown or an approved expected baseline. Fix this path fail-closed (including a diagnostic), add regression tests for empty/missing/malformed/all-disabled threshold config through assess_input_coverage and run_tick/API as applicable, then recut exact-head evidence/reviewer metadata for Codex and re-handoff. Existing validation independently rerun: 87 focused tests pass; docker compose config, git diff --check, trailers, evidence checksums and PR checks pass, but no current test covers this false-green case.",
+      "resolved_at": "2026-07-27T20:42:57Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T21:14:15Z",
+      "from": "Codex2",
+      "message": "PR #4267 is current at 6a534392c81d0eca58d08f289f3a9e1dd033e992 with all GitHub checks green. Review docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json against the tenant authority, fail-closed threshold coverage, durable outbox, real terminal receipt, restart/replay/cooldown/compensation proofs; 440 scoped tests and all ancillary gates passed.",
+      "resolved_at": "2026-07-27T21:21:06Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T21:21:06Z",
+      "from": "Codex",
+      "message": "PR #4267 head 6a534392 review failed on two acceptance blockers. First, services/evolution/main.py:1978-2003 maps a real terminal failed receipt to ExecutionStatus.FAILED and still calls decision.execute. Isolated reviewer reproduction returned HTTP 200 with decision_state=executed, execution_status=failed, compensation_count=0, and outbox_status=pending. This contradicts the committed evidence that downstream failure leaves the decision approved, dead-letters the intent, and records one durable compensation. Require the direct execute path to preserve approved state on failure, converge through idempotent DLQ/compensation handling, and add regression coverage for this direct-route branch plus outbox convergence. Second, root Compose resolves EVOLUTION_AUTH_MODE=disabled and an empty token for both evolution API and worker at docker-compose.yml:1662 and related worker/scheduler settings, while main.py:246-249 and the evidence claim Compose token authority. In disabled mode list/get and supplied tenant identity are not authenticated, so tenant authority is not fail-closed in the delivered default stack. Require authenticated token mode by default or an equivalent fail-closed tenant authority, aligned worker/scheduler configuration, Compose assertions, and corrected evidence. Independent validation otherwise passed: 440 scoped tests, evidence schema/checksums, compileall, Compose config, diff check, commit trailers, and nine GitHub checks.",
+      "resolved_at": "2026-07-27T21:21:06Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T21:36:15Z",
+      "from": "Codex",
+      "message": "Repair ready for independent review at PR #4267 exact head 0e6a1f5d18c309d197fe222101d4b4d19c8c7b99. Direct failed-receipt execution now preserves approved state, records one durable compensation before CAS-settling the dispatch outbox to DLQ, and duplicate direct calls converge idempotently; root Compose API/dispatcher/scheduler now default to shared token-authenticated pantheon-default tenant authority. Current-dev validation: 441 scoped tests passed with 5 known warnings; compileall, docker compose config, diff check, commit trailers, evidence schema/checksums, and all 9 GitHub checks passed. Review manifest: docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json.",
+      "resolved_at": "2026-07-27T21:38:05Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T11:37:59Z",
+      "from": "Codex",
+      "message": "Owner closeout evidence is committed and pushed in PR #4285 exact head 3c3a9baf28a7a465d3d853270be9d5481fd561c3. Review docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json against receipt 0d40d19678d1b153c873ad663d9e2e6027e3a5e2 and merged implementation PR #4267/64e7c1fbb586bf1f3b3ca624c1e5290dfa0144e0. Owner validation: 446 scoped pytest, compileall, Compose config, schema/checksum, receipt CI, and all ten fail-closed evidence rules pass. If approving, append the formal Codex2 verdict through a reviewed evidence commit and bind REVIEW_FILE via governed approve; otherwise reopen with concrete exact-head findings.",
+      "resolved_at": "2026-07-28T14:19:21Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T14:40:50Z",
+      "from": "Codex",
+      "message": "Owner handoff ready: independently review PR #4285 exact head 0fc918b747cf38262360b6045dadd25f157ed9d9 against docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json. All visible Branch CI checks are green; do not approve a different head. On approval bind REVIEW_PR=4285 REVIEW_HEAD_SHA=0fc918b747cf38262360b6045dadd25f157ed9d9 and REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json. Root freeze remains withheld until governed approval succeeds.",
+      "resolved_at": "2026-07-28T14:50:42Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T14:50:42Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review passed for PR #4285 at 0fc918b747cf38262360b6045dadd25f157ed9d9. Verified merged implementation PR #4267/fbf01b97 -> 64e7c1fbb is in ancestry; all 8 visible exact-head checks green; 446 scoped tests passed; ProductEvidence schema, companion checksum, ten-rule validator, and 20 source digests at receipt plus exact head passed; compileall, Compose config, commit trailers, and diff check passed. Acceptance spot-check confirms fail-closed numeric/approved baselines, tenant-scoped authoritative single-active decisions, durable approval outbox, execution only on real terminal Research receipt, and restart-safe retry/DLQ/replay/compensation convergence. Bound the committed task evidence manifest.",
+      "resolved_at": "2026-07-28T15:02:34Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T15:02:34Z",
+      "from": "Codex",
+      "message": "PR #4302 exact head ce52c14dd710159d277ef611c6f8adc671bc456b contains only the governed Codex2 verdict transcription and resealed checksum required by the done guard. ProductEvidence schema, checksum, ten-rule validator, authoritative loop done guardrail, and diff check pass; prior 446 scoped tests remain green. Please independently review this exact head, approve with REVIEW_PR=4302 and REVIEW_HEAD_SHA=ce52c14dd710159d277ef611c6f8adc671bc456b, then run auto_integrator.",
+      "resolved_at": "2026-07-28T15:06:36Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T15:12:50Z",
+      "from": "Codex",
+      "message": "PR #4302 exact head 27956cb1c1001d6ebe1acd99cb5c79902a930d18 is the evidence-only closeout follow-up after merged reviewed head 0fc918b747cf38262360b6045dadd25f157ed9d9. All 8 visible Branch CI checks pass; ProductEvidence schema, companion checksum, ten-rule validator, live governed-task guardrail, commit trailers, and diff check pass. Please independently verify and approve with REVIEW_PR=4302 REVIEW_HEAD_SHA=27956cb1c1001d6ebe1acd99cb5c79902a930d18 REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json so canonical review and root merge gates can bind the current head.",
+      "resolved_at": "2026-07-28T15:20:34Z",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T15:20:34Z",
+      "from": "Codex2",
+      "message": "Codex2 independent exact-head review approved PR #4302 at 27956cb1c1001d6ebe1acd99cb5c79902a930d18. Verified evidence-only two-file patch; merged PR #4267/fbf01b97 -> 64e7c1fbb and reviewed PR #4285/0fc918b ancestry; all 8 visible exact-head checks green; 446 scoped tests passed; ProductEvidence schema, companion checksum, ten-rule validator, governed live-task done guardrail, 20 source digests at receipt/current head, compileall, Compose config, commit trailers, and diff check passed. Acceptance spot-check confirms fail-closed numeric approved baselines, tenant-authoritative single-active decisions, durable approval outbox, real terminal Research receipt gating, and restart-safe retry/DLQ/replay/compensation convergence. Bound committed task evidence manifest.",
+      "status": "done",
+      "task_id": "L12-EVO-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-28T15:29:31Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,244 @@
+{
+  "version": 1,
+  "task_id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+  "archived_at": "2026-07-31T15:43:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Treat PR #4399 head a924a6f3c0c54982d7efe145750cc99c57bc7f2e as the implementation under review; do not create a parallel rewrite unless exact-head review finds a concrete defect",
+      "Verify the 486-test result and actual 13:01Z replay evidence, then complete canonical exact-head review",
+      "Require PR #4397 legacy seen-event normalization to be merged/live-promoted before fleet canary acceptance",
+      "Move #4399 through protected merge only when authorized; do not impersonate Human/Ops or root-freeze approval",
+      "After merge, promote the exact merged code to the live command root and verify supervisor/watchdog restart or reload from authoritative state",
+      "Run a real auto-worker canary and record task ID, lane, run ID, PID, start/end timestamps, scan logs, and survival beyond the five-minute grace unless it reaches a legitimate terminal state",
+      "Prove provider-ineligible, cooldown-blocked, and failure-loop-blocked tasks cannot priority-preempt the canary",
+      "Do not edit .orchestrator/config.json and do not release Wave D/E before governed canary closeout"
+    ],
+    "artifacts": [
+      "PR#4399",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+    ],
+    "depends_on": [
+      "SUP-SEEN-EVENT-KEYS-NONNULL-20260731"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#scheduler-runtime-gate",
+      "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+      "documents": [
+        {
+          "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+          "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+          "sourceRefs": [
+            "PR#4394",
+            "head 3154ef5205d3e527018a459f43cff88385b93bdf",
+            "13:25Z scheduler root-cause addendum"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_GRAPH",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json",
+          "sourceRefs": [
+            "updated_at 2026-07-31T13:25:39Z",
+            "Wave 0 runtime prerequisites #4397 and #4399"
+          ]
+        },
+        {
+          "kind": "PR",
+          "path": "https://github.com/ajoe734/pantheon/pull/4399",
+          "sourceRefs": [
+            "exact head a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+            "486 tests pass",
+            "Branch CI success",
+            "ready but mergeStateStatus=BLOCKED"
+          ]
+        },
+        {
+          "kind": "PR_DEPENDENCY",
+          "path": "https://github.com/ajoe734/pantheon/pull/4397",
+          "sourceRefs": [
+            "exact head fd67904e2c1adb7256d4d9d9dc618105346be424",
+            "Branch CI and canonical review success",
+            "open/BLOCKED and not live-promoted"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-31T13:32:00Z",
+      "intent": "supervisor_review_merge_live_promote_scheduler_runtime_gate",
+      "mode": "kernel_repair",
+      "packet_digest": "d6fd610f6bbd67e8a088fc5022028e9804ddbf90a9e52e5e47a6e3737d4aa29c",
+      "packet_id": "pkt-l12-scheduler-runtime-gate-20260731T1332Z",
+      "source_turn_ids": [
+        "user-complete-gap-audit-and-supervisor-dispatch",
+        "codex-scheduler-runtime-gate-20260731T1332Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Treat PR #4399 head a924a6f3c0c54982d7efe145750cc99c57bc7f2e as the implementation under review; do not create a parallel rewrite unless exact-head review finds a concrete defect",
+          "Verify the 486-test result and actual 13:01Z replay evidence, then complete canonical exact-head review",
+          "Require PR #4397 legacy seen-event normalization to be merged/live-promoted before fleet canary acceptance",
+          "Move #4399 through protected merge only when authorized; do not impersonate Human/Ops or root-freeze approval",
+          "After merge, promote the exact merged code to the live command root and verify supervisor/watchdog restart or reload from authoritative state",
+          "Run a real auto-worker canary and record task ID, lane, run ID, PID, start/end timestamps, scan logs, and survival beyond the five-minute grace unless it reaches a legitimate terminal state",
+          "Prove provider-ineligible, cooldown-blocked, and failure-loop-blocked tasks cannot priority-preempt the canary",
+          "Do not edit .orchestrator/config.json and do not release Wave D/E before governed canary closeout"
+        ],
+        "artifacts": [
+          "PR#4399",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+        ],
+        "depends_on": [
+          "SUP-SEEN-EVENT-KEYS-NONNULL-20260731"
+        ],
+        "id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0 Scheduler Gate",
+        "reviewer": "Claude2",
+        "summary": "Review and close out the existing #4399 architecture fix. It makes preemption and dispatch share the same eligibility ladder and protects new workers for five minutes; live acceptance waits for #4397 and a real canary.",
+        "title": "Govern exact-head scheduler eligibility fix through live canary"
+      },
+      "task_spec_hash": "6c755adf7f4eb60ebb4bb019541afbfe8205caf6c073414eebcb74315dd4d4aa"
+    },
+    "github": {
+      "base": "dev",
+      "head_branch": "task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "head_sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+      "pr": 4399
+    },
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "head_sha": "0dd5d2e7c55904f099599f3c104e8f6431e04d16",
+      "mode": "required_commit_status",
+      "pr": 4406,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4406",
+      "recorded_at": "2026-07-31T15:39:17Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51442198804,
+      "status_state": "success"
+    },
+    "id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+    "last_update": "2026-07-31T15:43:54Z",
+    "next": "Owner closeout complete: PR #4399 merged as 894eb813 and live under immutable supervisor PID 669007; task evidence PR #4406 exact head 0dd5d2e7 merged as 2ddce6c2 with Antigravity approval and bound evidence.json. Revalidated 5 focused eligibility/grace tests, product-evidence schema, py_compile, git diff --check, clean worktree, merged ancestry, and live root/PID identity; retained declared live provider/cooldown coverage caveats.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Repair / Wave 0 Scheduler Gate",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "head_sha": "0dd5d2e7c55904f099599f3c104e8f6431e04d16",
+      "pr": 4406
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "Review and close out the existing #4399 architecture fix. It makes preemption and dispatch share the same eligibility ladder and protects new workers for five minutes; live acceptance waits for #4397 and a real canary.",
+    "title": "Govern exact-head scheduler eligibility fix through live canary",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-31T15:43:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-preemption-eligibility-rFznPM/repo",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-894eb813c7cb-live",
+        "source_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-preemption-eligibility-rFznPM/repo",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-894eb813c7cb-live"
+      },
+      "commit": "0dd5d2e7c55904f099599f3c104e8f6431e04d16",
+      "commit_subject": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731: close live gate",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief and task-scoped product evidence manifest.",
+        "Not changing": "scheduler implementation, .orchestrator/config.json, provider routing, Wave D/E, or the auxiliary canary task's reviewer decision.",
+        "Composes with": "PR #4397, merged PR #4399, and SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "Reviewer": "Antigravity",
+        "Verified": "486 tests + 4 subtests; 5 focused tests; py_compile; product schema; closeout truth replay; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2ddce6c25e117af9ae0f85430fe2e4b4db9fb884",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T13:32:17Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-07-31T15:01:49Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T15:01:49Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops hands canonical scheduler task to Antigravity for exact-head code approval on PR #4399 head 6f391cfd4cde8fcee0a7f913bfe2937aba955d15. The reviewed code has 486 passing tests; post-merge live promotion and five-minute canary remain owner closeout work after review_approved.",
+      "resolved_at": "2026-07-31T15:03:50Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T15:01:54Z",
+      "from": "Human/Ops",
+      "message": "Verified PR #4399 (OPEN, MERGEABLE, 8/8 green checks: trailers, mirror guard, packaging, smoke acceptance). Code in supervisor.py & dispatch_policy.py unifies preemption & dispatch eligibility ladder, adds 5-min stability grace (priority_preemption_grace_seconds), respects cooldown and failure streak triage. Verified local tests pass: pytest test_supervisor.py test_dispatch_policy.py (486 passed, 4 subtests passed).",
+      "resolved_at": "2026-07-31T15:36:37Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T15:36:37Z",
+      "from": "Codex",
+      "message": "Review closeout PR #4406 exact head 0dd5d2e7c55904f099599f3c104e8f6431e04d16. Evidence binds merged/live #4399, immutable supervisor PID 669007, watchdog status=0, real 361s canary, focused exclusion tests, and declared live-coverage caveats. Owner/reviewer unchanged.",
+      "resolved_at": "2026-07-31T15:39:17Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T15:39:17Z",
+      "from": "Antigravity",
+      "message": "Reviewed PR #4406 exact head 0dd5d2e7c55904f099599f3c104e8f6431e04d16 and evidence.json. Merged PR #4399 (894eb813), immutable live supervisor PID 669007, 361s real canary run codex-20260731T151146Z-323146a8, focused tests, and live coverage caveats verified.",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "to": "Codex",
+      "resolved_at": "2026-07-31T15:43:55Z"
+    }
+  ],
+  "blockers": []
+}

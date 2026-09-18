@@ -1,0 +1,103 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator",
+      "integration-coordinator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-bridge-partial-assign-recovery-r2-20260809T0800Z--2550441b0c4bf093.json",
+  "admitted_at": "2026-08-09T08:02:24Z",
+  "audit_conversation_href": "task:SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "ASSISTANT_DEV_BRIDGE_REPLACEMENT_PLAN",
+      "path": "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809/evidence.json",
+      "sourceRefs": [
+        "supersedes-task:SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809",
+        "supersedes-pr:4658",
+        "failed-packet:pkt-two-blocker-dev-closeout-20260809T060036Z",
+        "failed-packet:sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0629",
+        "incident:RELIABLE-TASK-001-live-audit-test-contamination"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-09T08:00:00Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "2550441b0c4bf09384c240fdea9bd0ef7c18492f6bcf3ca4629f01137ad02b00",
+  "packet_id": "pkt-bridge-partial-assign-recovery-r2-20260809T0800Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "a7f01c8486bca67ecb4a1d0352c97ba804a687245e7f8dcf5d75d1d4e5d0d5da",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "review-rejection-streak-4",
+    "failure-quarantine-streak-2",
+    "blocked-owner-rescue-no-eligible-target",
+    "live-audit-test-contamination-20260809T0753Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809",
+      "task_spec": {
+        "acceptance": [
+          "Start from a clean current origin/dev worktree on the declared R2 branch; do not reuse PR #4658, its branch, or any commit from the rejected implementation history.",
+          "Add a supported operator CLI/API action on the queue or drain command for recovering one exact packet id from failed storage. The action must run under the bridge queue/drain lock and must not require an operator to move or edit queue, failed, receipt, replay, canonical-state, or admission files.",
+          "Fail closed when the exact id has any conflicting pending, processing, processed, receipt, admission, or replay record; when the signed packet digest or task-spec hash differs; when provenance differs; or when a replacement packet id is used for an already materialized task.",
+          "After any nonzero governed assign, perform authoritative governed task show/readback. Continue to admission only when the complete task spec and original signed provenance exactly match. If authoritative readback is missing, unavailable, malformed, or mismatched, create no admission and do not replay. In governed mode, never fall back to repository-local derived task files.",
+          "Make the exact-id recovery crash-consistent and idempotent across claim expiry, duplicate invocations, and a crash after canonical assign but before admission. Keep signed actor, source conversation and turns, documents, owner, reviewer, packet digest, and task-spec hash bound end to end.",
+          "Move all bridge reliability tests onto explicit isolated temporary status roots and audit paths. No test may read or write /home/lupin/pantheon/ai-activity-log.jsonl, canonical runtime state, or the live bridge inbox. Add a regression that snapshots those live paths and proves the focused suite creates no RELIABLE-TASK-001 or other live audit entries.",
+          "Record the 2026-08-09 test-contamination incident in evidence: 55 RELIABLE-TASK-001 assign rows were observed, 11 byte-identical duplicate copies were temporarily removed under the audit lock with recoverable /tmp backups, and 44 unique contamination rows remain for a separate governed cleanup decision. Do not mutate those live rows from this source task.",
+          "Add focused tests for exact failed-leaf recovery, lock/collision rejection, packet digest and task-spec mismatch, provenance mismatch, replacement-id rejection, nonzero assign followed by exact authoritative readback, unavailable/malformed governed show, absence of local fallback, crash/retry idempotency, and admission durability.",
+          "Run the focused bridge test suites, CLI tests, repository-required static checks, git diff --check, and JSON validation. Produce complete pre-review evidence bound to the exact head before requesting review.",
+          "Use concise commits with every subject at most 72 characters and required trailers. Push only the clean R2 branch, open a PR to dev, obtain fresh independent Codex2 exact-head approval with REVIEW_FILE binding, wait for all required checks, and merge through the protected flow.",
+          "After merge, exact-id recovery of the legacy rollout packet and the two-closeout packet, runtime promotion, and downstream task execution remain separate governed operations. Rollback is a normal revert followed by the governed runtime promotion path."
+        ],
+        "artifacts": [
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/dev_bridge_admission.py",
+          "services/control-plane/bff/assistant/tests/dev_bridge_test_support.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+          "scripts/queue_assistant_dev_task_packet.py",
+          "scripts/drain_assistant_dev_task_packet_inbox.py",
+          "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809/"
+        ],
+        "depends_on": [],
+        "id": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime / Source-only Assistant Bridge Recovery R2",
+        "reviewer": "Codex2",
+        "summary": "Replace the rejected and blocked first implementation with a clean source-only repair. The bridge must recover an exact signed packet from failed storage through a supported lock-protected command, verify authoritative task readback after any nonzero assignment, preserve exact signed provenance, and keep tests isolated from the live Pantheon activity audit.",
+        "title": "Replace partial-assign recovery with governed exact-id replay"
+      },
+      "task_spec_hash": "6404d6d3f15afc630ba9614d6a861d42e67dc1dfdc04ea6260407ccd94c60593"
+    }
+  ]
+}

@@ -1,0 +1,346 @@
+{
+  "version": 1,
+  "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+  "archived_at": "2026-08-13T02:01:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start only after every source dependency is merged, independently exact-head reviewed, canonically archived, and present in the exact dev candidate SHA.",
+      "Promote only through the existing transactional gate-before-switch path; do not patch dev-root, directly restart a service, or switch to an unreviewed tree.",
+      "Record prior and candidate runtime SHA, config hash, PID/start ticks, command root, provider homes, account/quota groups, task snapshot, queue snapshot, and rollback target without exposing credentials.",
+      "Prove Codex and Codex2 remain distinct configured account/quota groups and retain the repository reviewer policy; no same-account assumption or global mutual-review ban is introduced.",
+      "With a sanitized isolated fixture or current live evidence, prove an incompatible provider-local models cache is quarantined outside locks, a fresh probe runs once, actual usage-limit output becomes quota_reached with sanitized reset time, and auth.json/key material is untouched.",
+      "While Codex is quota-blocked, prove only eligible task-scoped owner/reviewer pairs can atomically fall back to healthy Codex2; dependencies, priority, capacity, cooldown, failure-loop, chair triage, exact-head review and active leases remain unchanged.",
+      "Prove stale auth cache readmission, explicit Human/Ops reviewer preservation, healthy governance handoff, and resume PID/starttime/process-generation refresh on the promoted runtime.",
+      "Observe at least ten fresh cycles and report median, p95, maximum, cadence overshoot, lock-hold, queue-to-start, duplicate-probe, duplicate-dispatch, and worker-heartbeat evidence; fixed cadence must not busy-loop or add a full sleep after cycle work.",
+      "Run negative canaries for revoked auth, quota without reset, timeout, ambiguous cache path, overlapping task artifacts, reused PID, and stale exact-head review; all remain fail closed without consuming unrelated workers.",
+      "Automatically roll back on any source, config, lock, lease, queue, provider, reviewer, cadence, or dispatch invariant failure and prove the prior runtime resumes for at least three cycles.",
+      "Commit only exact canary/rollback evidence through a clean PR to dev, obtain exact-head Human/Ops review, merge, and canonical archive."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802/"
+    ],
+    "block_reason": {
+      "kind": "legacy_task_quarantine",
+      "required_action": "operator_reopen_after_diagnosis"
+    },
+    "depends_on": [
+      "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802",
+      "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/supervisor-autoworker-full-audit-20260802#scheduler-live-canary-v9",
+      "conversation_id": "codex-root-supervisor-autoworker-full-audit-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Pantheon supervisor is the only routine implementation dispatcher",
+            "Codex and Codex2 may be different accounts and remain distinct configured quota groups",
+            "Live rollout must use the governed gate-before-switch path with rollback"
+          ]
+        },
+        {
+          "kind": "LIVE_SCHEDULER_EVIDENCE",
+          "path": ".orchestrator/logs/supervisor-watchdog-restart-20260801T154745Z.log",
+          "sourceRefs": [
+            "Observed live cycles remain approximately 51 to 80 seconds despite configured short polling",
+            "Each cycle adds a full interval after serial provider, repository, canonical-state, and evidence work",
+            "Queue-to-start latency and lock convoying make auto-workers appear slow even when slots are free"
+          ]
+        },
+        {
+          "kind": "MERGED_DEPENDENCY",
+          "path": "ai-task-archive/tasks/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802.json",
+          "sourceRefs": [
+            "merge d15eb5266b911116d6f0c92ea33e1e5d6a2bb532",
+            "healthy worker leases and resumed process generation are protected"
+          ]
+        },
+        {
+          "kind": "MERGED_DEPENDENCY",
+          "path": "ai-task-archive/tasks/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801.json",
+          "sourceRefs": [
+            "PR 4491 merge a385c0be5b8d4c71f6d0bd728e237b61d5eadaa4",
+            "newer task evidence can consume stale missing-process streaks without global threshold weakening"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T14:44:00Z",
+      "intent": "complete_supervisor_scheduler_quota_fallback_and_live_canary_chain",
+      "mode": "kernel_repair",
+      "packet_digest": "a5167f4743330b0994e7aa32c4386917a3d687753d5565b97632d383e3166d5a",
+      "packet_id": "pkt-sup-scheduler-and-live-canary-v9-20260802T1446Z",
+      "source_turn_ids": [
+        "operator-complete-auto-worker-quota-fallback-audit",
+        "operator-preserve-distinct-codex-accounts"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start only after every source dependency is merged, independently exact-head reviewed, canonically archived, and present in the exact dev candidate SHA.",
+          "Promote only through the existing transactional gate-before-switch path; do not patch dev-root, directly restart a service, or switch to an unreviewed tree.",
+          "Record prior and candidate runtime SHA, config hash, PID/start ticks, command root, provider homes, account/quota groups, task snapshot, queue snapshot, and rollback target without exposing credentials.",
+          "Prove Codex and Codex2 remain distinct configured account/quota groups and retain the repository reviewer policy; no same-account assumption or global mutual-review ban is introduced.",
+          "With a sanitized isolated fixture or current live evidence, prove an incompatible provider-local models cache is quarantined outside locks, a fresh probe runs once, actual usage-limit output becomes quota_reached with sanitized reset time, and auth.json/key material is untouched.",
+          "While Codex is quota-blocked, prove only eligible task-scoped owner/reviewer pairs can atomically fall back to healthy Codex2; dependencies, priority, capacity, cooldown, failure-loop, chair triage, exact-head review and active leases remain unchanged.",
+          "Prove stale auth cache readmission, explicit Human/Ops reviewer preservation, healthy governance handoff, and resume PID/starttime/process-generation refresh on the promoted runtime.",
+          "Observe at least ten fresh cycles and report median, p95, maximum, cadence overshoot, lock-hold, queue-to-start, duplicate-probe, duplicate-dispatch, and worker-heartbeat evidence; fixed cadence must not busy-loop or add a full sleep after cycle work.",
+          "Run negative canaries for revoked auth, quota without reset, timeout, ambiguous cache path, overlapping task artifacts, reused PID, and stale exact-head review; all remain fail closed without consuming unrelated workers.",
+          "Automatically roll back on any source, config, lock, lease, queue, provider, reviewer, cadence, or dispatch invariant failure and prove the prior runtime resumes for at least three cycles.",
+          "Commit only exact canary/rollback evidence through a clean PR to dev, obtain exact-head Human/Ops review, merge, and canonical archive."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802/"
+        ],
+        "depends_on": [
+          "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+          "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802",
+          "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+          "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+          "SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802"
+        ],
+        "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+        "owner": "Codex2",
+        "phase": "Supervisor governed live promotion / integrated V9 canary",
+        "reviewer": "Human/Ops",
+        "summary": "Transactionally promote the full repair chain and prove fast cadence plus distinct-account quota fallback without weakening governance.",
+        "title": "Promote and prove scheduler, quota fallback, lease, and reviewer invariants"
+      },
+      "task_spec_hash": "2a6c7d329d675e2fe7e6567f288be070ac7c70aa698e4c58f032d782d56d7398"
+    },
+    "generation": 1,
+    "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+    "last_update": "2026-08-13T02:01:28Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Claude",
+    "phase": "Supervisor governed live promotion / integrated V9 canary",
+    "resume_status": "in_progress",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "Transactionally promote the full repair chain and prove fast cadence plus distinct-account quota fallback without weakening governance.",
+    "title": "Promote and prove scheduler, quota fallback, lease, and reviewer invariants",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-04T01:07:10Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-04T01:13:49Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-07T12:26:10Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-07T12:26:49Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T13:13:55Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-07T13:26:32Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:21:02Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Codex2: The blocked task has no human-gate/non-dispatchable classification and its immutable packet names Codex2 as owner; Codex2 is now auth-ready, unpaused, recently exercised, and distinct from the required Human/Ops reviewer. The reassignment restores ownership but does not bypass live-promotion or Human/Ops gates. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-08T14:28:30Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T03:44:20Z",
+      "from": "Codex2",
+      "message": "Chair reassigned owner from Codex2 to Antigravity: Codex2 was blocked by a non-fast-forward failure at 2026-08-08T14:35:45Z; PR #4522 and committed artifacts are durable, and supplied fallback Antigravity is auth-ready, unpaused, and distinct from reviewer Codex. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-09T03:45:12Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T15:09:35Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-09T15:41:00Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T14:03:29Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Codex: The supervisor surfaced this blocked non-human-gate task with Codex as a viable rescue target; Codex is auth-ready, unpaused, recently successful, and distinct from reviewer Codex2, so a fresh owner dispatch can clear the stale Codex wait without weakening review independence. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-10T14:05:06Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-10T16:41:41Z",
+      "from": "Codex",
+      "message": "Chair reassigned owner from Codex to Claude: This blocked non-human-gate rescue has Claude as the supervisor-supplied target; Claude is auth-ready and healthy, so supervisor may re-admit it after the split-entrypoint prerequisite while preserving its history-repair gate. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-10T16:43:31Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-11T00:06:22Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Antigravity.",
+      "resolved_at": "2026-08-11T00:08:21Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T01:51:47Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Claude: This non-human-gate blocked owner lane lists Claude as its healthy fallback; Claude is auth-ready and unpaused, and is distinct from current reviewer Codex2, so the supervisor can safely return the task to todo for a fresh handoff. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-11T01:52:41Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-11T06:42:23Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Antigravity.",
+      "resolved_at": "2026-08-11T06:42:54Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T15:34:23Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Claude: The task is a non-human blocked-owner rescue with resumable PR artifacts; Claude's 2026-08-11T15:23:41Z live probe is healthy, dispatch_pauses is empty, and reviewer Codex2 remains distinct. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-11T15:35:40Z",
+      "status": "done",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "to": "Claude"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-02T19:48:13Z",
+      "message": "NO-GO preflight for candidate 0343e4b76f446735a9ee35a4a4977c33ea7b696e: live watchdog config pins the mutable dev-root entrypoint, so the transaction cannot construct an immutable incumbent identity or governed candidate/rollback launch contract. No intent, TERM, config change, cache quarantine, credential read, or candidate launch occurred; the incumbent remained healthy for seven post-preflight loops. Evidence anchor 72083ca02e494bd83afbd6b61c22f9bda49aa10d is published in PR #4522. A separately governed bootstrap repair must atomically reconcile the config target and mutable-root incumbent without watchdog bypass, then this canary must be redispatched.",
+      "owner": "Codex2",
+      "resolved_at": "2026-08-06T10:20:06Z",
+      "status": "resolved",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-06T12:05:18Z",
+      "message": "NO-GO preflight hard gate: live watchdog command remains bound to mutable dev-root entrypoint (/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py), failing incumbent_supervisor_process_identity_immutable preflight. Requires separate governed bootstrap repair to update live watchdog target before canary can be promoted.",
+      "owner": "Antigravity",
+      "resolution_ref": "chair_reassignment:SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "resolved_at": "2026-08-08T14:21:02Z",
+      "status": "resolved",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-08T14:34:37Z",
+      "message": "Live promotion remains held: SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808 owns the current candidate rollout and is blocked until its signed follow-up receives a supervisor receipt and canonical task materialization; this V9 redispatch performed no live mutation. Reconcile the exact-head Human/Ops gate before later redispatch.",
+      "owner": "Codex2",
+      "resolution_ref": "chair_reassignment:SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "resolved_at": "2026-08-09T03:44:20Z",
+      "status": "resolved",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T03:45:48Z",
+      "message": "V9 live canary promotion cannot proceed until successor rollout tasks (SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808 and its prerequisite SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808) are unquarantined, repaired, merged to dev, and authorized via governed dispatch.",
+      "owner": "Antigravity",
+      "resolution_ref": "chair_reassignment:SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "resolved_at": "2026-08-10T14:03:29Z",
+      "status": "resolved",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "waiting_for": "Codex"
+    },
+    {
+      "created_at": "2026-08-10T14:20:23Z",
+      "message": "Clean candidate 6607b6a706b59670009965375e0a5dd6b5824fcf was not launched: the separately governed V10 transaction aborted before baseline/config/signal/launch/rollback on historical bytecode in immutable incumbent 5877b64425c8d6aede147d6cbbc6fbb9e228c259 (external evidence sha256 bbd2b6f09587225682b5ac90070a49f14f72eb230cde154c6ae9f2943fe377ec). V9 issued no duplicate promotion or provider dispatch. Anchor d9b621e9f is pushed on PR #4522. Wait for SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810 to be admitted, exact-head reviewed, merged and archived, then a successful separately governed V10 rollout; Human/Ops must also reconcile immutable exact-head reviewer acceptance versus canonical Codex2 before V9 review.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "resolved_at": "2026-08-10T16:41:41Z",
+      "status": "resolved",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T14:22:52Z",
+      "message": "Clean candidate 6607b6a706b59670009965375e0a5dd6b5824fcf was not launched: V10 transaction aborted before baseline/config/signal/launch/rollback on historical bytecode in immutable incumbent 5877b64425c8d6aede147d6cbbc6fbb9e228c259 (external evidence sha256 bbd2b6f09587225682b5ac90070a49f14f72eb230cde154c6ae9f2943fe377ec). V9 issued no duplicate promotion/provider dispatch; incumbent PID 2272245 and config sha256 8168c57646339d510499dafa7f02f5f7a7aa7f24c2d05e23c68e698f6dc6662e remain unchanged. Anchor d9b621e9f is pushed on PR #4522, but its 85-character subject fails the 72-character Commit trailers limit; policy forbids amending a pushed commit, so chair-approved exact branch reconstruction is also required before review. Wait for SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810 admission/review/merge/archive and successful V10 rollout; Human/Ops must reconcile immutable exact-head reviewer acceptance versus canonical Codex2.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "resolved_at": "2026-08-10T16:41:41Z",
+      "status": "resolved",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T14:23:51Z",
+      "message": "Clean candidate 6607b6a706b59670009965375e0a5dd6b5824fcf was not launched: V10 transaction aborted before baseline/config/signal/launch/rollback on historical bytecode in immutable incumbent 5877b64425c8d6aede147d6cbbc6fbb9e228c259 (external evidence sha256 bbd2b6f09587225682b5ac90070a49f14f72eb230cde154c6ae9f2943fe377ec). V9 issued no duplicate promotion/provider dispatch; incumbent PID 2272245 and config sha256 8168c57646339d510499dafa7f02f5f7a7aa7f24c2d05e23c68e698f6dc6662e remain unchanged. SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810 is now canonically admitted as Antigravity2/Codex2 todo; wait for its exact-head review, merge/archive and a successful separately governed V10 rollout. Anchor d9b621e9f is pushed on PR #4522, but its 85-character subject fails the 72-character Commit trailers limit; policy forbids amending a pushed commit, so chair-approved exact branch reconstruction is required before V9 review. Human/Ops must also reconcile immutable exact-head reviewer acceptance versus canonical Codex2.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "resolved_at": "2026-08-10T16:41:41Z",
+      "status": "resolved",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "check_kind": "task_dependency",
+      "check_params": {
+        "required_status": "done",
+        "task_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808"
+      },
+      "created_at": "2026-08-10T16:51:24Z",
+      "message": "V9 revalidated 2026-08-10: prior source blockers (pycache/legacy residue) merged and archived, but SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810 PR #4724 is still open for exact-head review and SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808 is in_progress and holds the only active promotion lease. V9 remains an observer; no promotion/canary transaction attempted. Anchor commit ff8887a64, PR #4522.",
+      "owner": "Claude",
+      "resolution_ref": "chair_reassignment:SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "resolved_at": "2026-08-11T01:51:47Z",
+      "status": "resolved",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "waiting_for": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T01:56:37Z",
+      "message": "Revalidated: split-entrypoint PR #4724 is done/archived and merged into dev (ancestor of origin/dev tip 8b7624999). But SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808 (owner Codex, reviewer Claude) is in_progress and actively mid-transaction on a governed rollout retry right now (next note updated 2026-08-11T01:51:12Z: starting transactional rollout retry via sync-dev-root). V9 must not duplicate a live promotion while a sibling task holds the active lease; ran only a read-only --discover-only preflight against this task worktree, no mutation performed. Waiting on that sibling task to complete/release the lease and on Chair/Human/Ops reviewer-gate reconciliation.",
+      "owner": "Claude",
+      "resolution_ref": "chair_reassignment:SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "resolved_at": "2026-08-11T15:34:23Z",
+      "status": "resolved",
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

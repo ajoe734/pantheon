@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+  "archived_at": "2026-08-11T11:12:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "No implementation is restarted for tasks that already have merged delivery PRs.",
+      "Each referenced task has exact merged evidence, independent review evidence, and canonical task state reaches done or a truthful nonterminal blocker.",
+      "L12-BFF-001 active-without-worker mismatch is eliminated by redispatch or formal closeout.",
+      "L12-FLEET-WORKER-OUTCOME-001 orphaned task-worktree artifact blocker is resolved without absorbing unrelated state."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/closeout-reconcile"
+    ],
+    "auto_created_by": "l12_three_pass_gap_audit_20260728",
+    "depends_on": [
+      "L12-GAP-MERGE-QUEUE-20260728"
+    ],
+    "id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+    "last_update": "2026-08-11T11:12:48Z",
+    "next": "Superseded because dependency L12-GAP-MERGE-QUEUE-20260728 is archived with terminal_outcome=superseded and can never satisfy dispatch; successor rematerializes the same closeout-only scope against completed SUP-L12-OPEN-PR-DRAIN-20260729. Do not restart implementation.",
+    "owner": "Human/Ops",
+    "phase": "Unassigned",
+    "reviewer": "Codex",
+    "source_ref": {
+      "base": "dev",
+      "head_sha": "a80e725617c2fc607128bf0d517fa037103041b3",
+      "merge_commit": "77ae23f09c5f4f855dd9b5c16625b4c36bf0d955",
+      "pr": 4288,
+      "url": "https://github.com/ajoe734/pantheon/pull/4288"
+    },
+    "status": "done",
+    "summary_zh": "核對已合併但非終態的 L12 rows；只使用精確 PR/merge 與獨立審查證據，禁止重做 implementation。",
+    "task_class": "execution",
+    "title": "Reconcile merged nonterminal L12 rows to canonical done/archive",
+    "terminal_outcome": "superseded",
+    "superseded_by": "L12-GAP-CLOSEOUT-RECONCILE-V2-20260811"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-28T12:55:49Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-GAP-CLOSEOUT-RECONCILE-20260728 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-07-28T12:56:16Z",
+      "status": "done",
+      "task_id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:08:54Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-GAP-CLOSEOUT-RECONCILE-20260728 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-07-28T13:09:35Z",
+      "status": "done",
+      "task_id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:58:26Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-GAP-CLOSEOUT-RECONCILE-20260728 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "resolved_at": "2026-07-28T13:59:10Z",
+      "status": "done",
+      "task_id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T16:09:41Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-GAP-CLOSEOUT-RECONCILE-20260728 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-07-28T16:19:09Z",
+      "status": "done",
+      "task_id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T03:52:24Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-GAP-CLOSEOUT-RECONCILE-20260728 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-08T03:57:41Z",
+      "status": "done",
+      "task_id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T14:21:21Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-GAP-CLOSEOUT-RECONCILE-20260728 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-08T14:27:57Z",
+      "status": "done",
+      "task_id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+      "to": "Codex2"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-28T12:54:52Z",
+      "message": "Exact reconciliation evidence is anchored at 74f560750, but dependency L12-GAP-MERGE-QUEUE-20260728 was preempted to todo; L12-BFF-001 remains in_progress without a live worker; and this wrapper lease correctly rejects child-task lifecycle mutations. Codex2 must resume merge-queue/DIST/BFF owner closeout or coordinate truthful child blockers before this wrapper can satisfy acceptance. No implementation was restarted.",
+      "owner": "Codex",
+      "resolved_at": "2026-07-28T16:05:56Z",
+      "status": "resolved",
+      "task_id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+      "waiting_for": "Codex2"
+    }
+  ]
+}

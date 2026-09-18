@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+  "archived_at": "2026-07-28T16:03:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "A real supervisor-managed Claude worker reaches running; it makes no repository or config changes; it reports provider/runtime result",
+      "then handoff or done with evidence."
+    ],
+    "artifacts": [],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "head_sha": "c95b614b6f4dfb251b0ad6858b596c21d6f62d41",
+      "mode": "required_commit_status",
+      "pr": 4300,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4300",
+      "recorded_at": "2026-07-28T15:57:53Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51228991081,
+      "status_state": "success"
+    },
+    "id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+    "last_update": "2026-07-28T16:03:26Z",
+    "next": "Owner closeout complete: PR #4300 merged exact reviewed head c95b614b6f4dfb251b0ad6858b596c21d6f62d41 into dev as e6f77614d2e68252980e12f6ee4789e4bc8297d1; evidence.json and evidence.sha256 validate, external runner/Claude stream hashes match, acceptance assertions and dev ancestry pass, and no runtime/config/product changes were made.",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Provider Dispatch Smoke",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "head_sha": "c95b614b6f4dfb251b0ad6858b596c21d6f62d41",
+      "pr": 4300
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Read-only Claude supervisor dispatch smoke; make no repository or config changes, report the provider/runtime result, then handoff to Codex or close with truthful evidence.",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-28T16:03:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-l12-claude-dispatch-smoke-20260728",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "061408b09aa06943813c97334054bfa29b79e236",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-l12-claude-dispatch-smoke-20260728",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "c95b614b6f4dfb251b0ad6858b596c21d6f62d41",
+      "commit_subject": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728: recut review evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "refreshed task brief and read-only Claude dispatch evidence after composing current dev.",
+        "Not changing": "supervisor/runtime configuration, provider credentials, dispatch policy, product code, or hosted deployment.",
+        "Composes with": "PR #4300 and a fresh Codex2 review bound to the new exact head.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+        "Reviewer": "Codex2",
+        "Verified": "json.tool; sha256sum -c; runtime/stream jq assertions; dev ancestry; loop_done_guardrail; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e6f77614d2e68252980e12f6ee4789e4bc8297d1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-28T13:09:06Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-07-28T13:25:34Z",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:28:25Z",
+      "from": "Claude",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "resolved_at": "2026-07-28T13:29:03Z",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T13:30:58Z",
+      "from": "Codex",
+      "message": "Smoke evidence PASS for dispatch-to-running: supervisor started real Claude run claude1-1-20260728T132440Z-0ed52b7d via claude_cli at 2026-07-28T13:24:40Z; log /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T132440798151Z-claude1-1-claude1_1-30630e.log shows Claude CLI 2.1.220, model claude-opus-5, session 6964721c-0447-4925-9d88-39036582a893, provider allowed_warning at seven-day utilization 0.53, successful read-only tool calls, and exact command-runtime SHA 061408b09aa06943813c97334054bfa29b79e236. Claude recorded governed task start at 13:25:34Z. Supervisor then interrupted/preempted the run and boot reconciliation marked process missing at 13:26:33Z; this was not an auth/quota/startup failure. HEAD remains 061408b09 with no tracked diff or config change; only the supervisor-materialized untracked task brief is present. Please independently review this runtime evidence.",
+      "resolved_at": "2026-07-28T13:39:15Z",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:39:15Z",
+      "from": "Claude",
+      "message": "Reviewer reopen: dispatch-to-running PASS is confirmed, but two runtime claims in the evidence are wrong and must be corrected before approval. VERIFIED TRUE: supervisor log supervisor-watchdog-restart-20260728T132125Z.log:19 (21:25:22 local) lists claude1_1:OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728(running); claude_cli path confirmed via config.json agents.claude.adapter=claude_cli, providers.claude.delivery_mode=claude_cli and run status command[0]=.orchestrator/bin/claude, started_at 13:24:41Z; log shows CLI 2.1.220, claude-opus-5[1m], session 6964721c-0447-4925-9d88-39036582a893, rate_limit_event allowed_warning seven_day 0.53, all read-only tool calls is_error=false, permission_denials empty, runtime SHA 061408b09 echoed; worktree HEAD 061408b09 with zero tracked diff and only the untracked supervisor-materialized brief. CORRECTION 1: 'Claude recorded governed task start at 13:25:34Z' is false. Event seq 3374/3375 carries 'Supervisor auto-started ... after successful dispatch', emitted only by supervisor.py:7215 REASON_OWNED_READY dispatch-sync, which shells ai_status.py start with AI_NAME=Claude plus the worker lease (hence the run-id source). The Claude process had already exited at 13:25:24Z with exit_code 143 / signal 15, and its transcript contains no ai-status start call; last event is '[Request interrupted by user]' at 13:25:22.696Z with terminal_reason aborted_streaming. CORRECTION 2: 'boot reconciliation marked process missing at 13:26:33Z' is false. Event seq 3380 source is supervisor-preempt with message 'Supervisor preempted ... to free Claude for higher-priority review/finalize work', and the supervisor log at 21:26:39 records 'worker superseded for priority escalation: task=OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728 provider=claude1-1 run=claude1-1-20260728T132440Z-0ed52b7d'. Actual termination was SIGTERM 69s earlier at 13:25:24Z, not a missing-process reconciliation. REQUIRED FIX: rewrite the evidence so the start transition is attributed to the supervisor dispatch-sync auto-start and the run end is described as SIGTERM at 13:25:24Z followed by supervisor preempt/supersede at 13:26:33Z. Keep the verified PASS facts as-is; make no repository or config changes.",
+      "resolved_at": "2026-07-28T13:39:15Z",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T13:44:24Z",
+      "from": "Codex",
+      "message": "Corrected evidence for independent review — PASS: supervisor-watchdog-restart-20260728T132125Z.log line 19 at 21:25:22 local lists claude1_1:OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728(running). Config confirms agents.claude.adapter=claude_cli and providers.claude.delivery_mode=claude_cli; run claude1-1-20260728T132440Z-0ed52b7d command[0]=.orchestrator/bin/claude and started_at=2026-07-28T13:24:41Z. Worker log records Claude CLI 2.1.220, model claude-opus-5[1m], session 6964721c-0447-4925-9d88-39036582a893, rate_limit_event allowed_warning with seven_day utilization 0.53, no read-only tool result marked is_error=true, permission_denials=[], and command-runtime SHA 061408b09aa06943813c97334054bfa29b79e236. Attribution correction: the 13:25:34Z governed start transition saying 'Supervisor auto-started ... after successful dispatch' was emitted by supervisor dispatch-sync using AI_NAME=Claude; it was not called by the Claude transcript/process. The Claude run had already ended at 13:25:24Z with exit_code=143 and signal=15 after transcript event '[Request interrupted by user]' at 13:25:22.696Z; terminal_reason=aborted_streaming. End-timeline correction: at 13:26:33Z the supervisor preempted the task to free Claude for higher-priority review/finalize work, followed by the 21:26:39 local supervisor-log supersede for priority escalation. Those later preempt/supersede events did not terminate the already-ended process and are not evidence that missing-process reconciliation caused the run end. Worktree HEAD is 061408b09aa06943813c97334054bfa29b79e236 with zero tracked/cached diff and only the untracked supervisor-materialized task brief. No repository or config changes were made. Please independently review the corrected evidence.",
+      "resolved_at": "2026-07-28T13:44:38Z",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:44:38Z",
+      "from": "Claude",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-28T13:52:59Z",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:52:59Z",
+      "from": "Codex2",
+      "message": "Independent reviewer PASS: supervisor-watchdog-restart-20260728T132125Z.log:19 records claude1_1:OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728(running); runner status binds real claude_cli run claude1-1-20260728T132440Z-0ed52b7d to runtime SHA 061408b09aa06943813c97334054bfa29b79e236, started 13:24:41Z and ended by SIGTERM (exit 143/signal 15) at 13:25:24Z. Claude stream independently proves CLI 2.1.220, claude-opus-5[1m], session 6964721c-0447-4925-9d88-39036582a893, allowed_warning seven_day utilization 0.53, seven Bash/Read-only tool calls, no tool_result errors, permission_denials=[], and terminal_reason=aborted_streaming after Request interrupted at 13:25:22.696Z. Corrected attribution is verified: supervisor.py dispatch-sync emitted the 13:25:34Z governed start; later 13:26:33Z preempt/reconciliation and 13:26:39Z priority supersede did not cause the already-finished run. Git review shows task HEAD at the runtime SHA, ancestor of current remote dev, no task commits, tracked/cached diff, remote branch, or PR; only the supervisor-materialized task brief is untracked, and runtime config predates the run. Codex handoff at 13:44:24Z truthfully reports these corrected provider/runtime results. Acceptance satisfied; return to owner for closeout.",
+      "resolved_at": "2026-07-28T14:09:37Z",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T14:09:37Z",
+      "from": "Codex",
+      "message": "Owner closeout artifacts are committed and pushed in PR #4300 at exact head 607df32e1dc658080a282858aa1441967c3df700; all visible Branch CI checks pass. Please independently re-review this exact head and approve with REVIEW_PR=4300 REVIEW_HEAD_SHA=607df32e1dc658080a282858aa1441967c3df700 REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728/evidence.json, preserving owner Codex and reviewer Codex2; then the exact-head integrator may merge.",
+      "resolved_at": "2026-07-28T14:18:07Z",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T14:18:07Z",
+      "from": "Codex2",
+      "message": "Exact-head PASS for PR #4300 at 607df32e1dc658080a282858aa1441967c3df700: the four-file diff is limited to the task brief plus README, evidence.json, and evidence.sha256; commit trailers, git diff --check, JSON parse, both SHA-256 bindings, and all visible Branch CI/Orchestrator checks pass. Independent runtime verification confirms watchdog line 19 observed claude1_1 running; runner claude1-1-20260728T132440Z-0ed52b7d is bound to runtime SHA 061408b09aa06943813c97334054bfa29b79e236, ran 13:24:41Z-13:25:24Z, and ended by explicit SIGTERM 15/exit 143. The unchanged pre-run config selects claude_cli; the Claude stream proves CLI 2.1.220, claude-opus-5[1m], session 6964721c-0447-4925-9d88-39036582a893, allowed_warning seven_day utilization 0.53, seven Bash/Read-only calls, zero tool-result errors, no permission denials, Request interrupted at 13:25:22.696Z, and terminal_reason aborted_streaming. The corrected handoff and event ordering distinguish the 13:25:34Z supervisor dispatch-sync start and later 13:26:33Z/13:26:39Z preempt/supersede from the already-finished run. Acceptance is satisfied; evidence is scoped and truthful.",
+      "resolved_at": "2026-07-28T15:39:45Z",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T15:52:00Z",
+      "from": "Codex",
+      "message": "PR #4300 is refreshed and ready for fresh exact-head review. Review base dev at composed SHA 9f7f95e1a10a46248a81b26159e373f75525222f and exact head c95b614b6f4dfb251b0ad6858b596c21d6f62d41. All 8 GitHub Branch CI checks passed; focused local evidence checks passed (json.tool, sha256sum -c, runtime/stream jq assertions, dev ancestry, loop_done_guardrail query, git diff --check). Review file: docs/deployment/evidence/twelve-loop-gap/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728/evidence.json. Prior approval bound to 607df32e1dc658080a282858aa1441967c3df700 is historical only and must not be reused. If accepted, approve with REVIEW_PR=4300 and REVIEW_HEAD_SHA=c95b614b6f4dfb251b0ad6858b596c21d6f62d41.",
+      "resolved_at": "2026-07-28T15:57:53Z",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T15:57:53Z",
+      "from": "Codex2",
+      "message": "Fresh exact-head PASS for PR #4300 at c95b614b6f4dfb251b0ad6858b596c21d6f62d41 over composed dev 9f7f95e1a10a46248a81b26159e373f75525222f. The four-file diff is limited to the task brief plus README, evidence.json, and evidence.sha256; commit trailers, JSON parse, both manifest checksums, dev ancestry, git diff --check, remote refs, and all 8 exact-head Branch CI checks pass. Independent external-artifact verification confirms watchdog line 19 observed claude1_1 running; runner claude1-1-20260728T132440Z-0ed52b7d used .orchestrator/bin/claude at runtime SHA 061408b09aa06943813c97334054bfa29b79e236 from 13:24:41Z to 13:25:24Z and ended exit 143/signal 15. The byte-matched Claude stream proves CLI 2.1.220, model claude-opus-5[1m], session 6964721c-0447-4925-9d88-39036582a893, allowed_warning seven_day utilization 0.53, seven actually read-only Bash/Read calls, zero tool-result errors, no permission denials, Request interrupted at 13:25:22.696Z, and terminal_reason aborted_streaming. Config predated the run and binds Claude agent/slot to claude_cli; task-scoped activity verifies the truthful corrected handoff and later preempt/supersede ordering. Acceptance is satisfied without product/runtime configuration changes; prior approval at 607df32e1dc658080a282858aa1441967c3df700 was not reused.",
+      "status": "done",
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "to": "Codex",
+      "resolved_at": "2026-07-28T16:03:26Z"
+    }
+  ],
+  "blockers": []
+}

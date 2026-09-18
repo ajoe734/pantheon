@@ -1,0 +1,94 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "supervisor-runtime",
+      "acceptance",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator",
+      "integration-coordinator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-runtime-v10-rollback-collision-safe-destination-20260810T1812Z--2879d9b9dbcc7474.json",
+  "admitted_at": "2026-08-10T18:14:14Z",
+  "audit_conversation_href": "task:SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_PROMOTION_COLLISION_BLOCKER",
+      "path": "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.json",
+      "sourceRefs": [
+        "blocker-event:evidence-anchor:22fef42bab2f3db48baaf095566b5ced5d4c70e5",
+        "candidate:37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+        "incumbent-commit:0305c861f54c4082060120afdfbc012622e5ac0a",
+        "existing-destination:/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
+        "merged-source:PR-4726:37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-10T18:13:22Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "2879d9b9dbcc74748d9acd30e446a5cc35da106a8f9155066382959a70acb0d0",
+  "packet_id": "pkt-sup-runtime-v10-rollback-collision-safe-destination-20260810T1812Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "8472c88cdf8a2cc300169b18ec782e30d20f1c0321ef01c0d67090b23bb3b0bd",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "promotion-blocker:existing-0305-rollback-root",
+    "merged-source:PR-4726:37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+    "parent-evidence:22fef42bab2f3db48baaf095566b5ced5d4c70e5"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the current governed blocker with candidate 37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d and mutable incumbent commit 0305c861f54c4082060120afdfbc012622e5ac0a: bootstrap preparation must fail closed when the direct rollback destination already exists at a different root/device/inode, before admission lock, restart intent, config write, signal, or launch.",
+          "Implement only a narrow collision-safe rollback destination contract that can produce a fresh immutable rollback runtime without deleting, moving, overwriting, or guessing-reusing the existing 0305c861 destination; preserve canonical commit/tree/origin/config/cleanliness identity and prove candidate-versus-rollback path/device/inode separation.",
+          "If a dedicated rollback-runtime parent or equivalent identity namespace is introduced, bind it explicitly in the governed launch/config contract, keep it outside the live status/event roots, and fail closed on missing, ambiguous, symlinked, pre-existing, or identity-mismatched destinations.",
+          "Preserve all existing fail-closed gates: incumbent PID/cwd/argv binding, config CAS and unchanged predecessor bytes, runtime-admission lock ordering, lease parity, authoritative projection equality, provider baseline, three fresh loops, bytecode self-rejection, and automatic rollback.",
+          "Add focused regression coverage for the existing different-root 0305 collision, fresh collision-safe destination creation, candidate/rollback identity separation, symlink or pre-existing destination rejection, and rollback readback; run the complete promotion suite, focused tests, and git diff --check.",
+          "Change only the declared scripts, focused tests, and task evidence. Do not run promotion, signal, restart, delete, move, or overwrite any live/existing command runtime; do not edit live config/state/queues, dev-root, provider/account routing, or canonical task state. Parent live promotion remains a separate supervisor dispatch after this source merge.",
+          "Deliver from a clean task/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810 branch through protected PR to dev, required checks, independent Codex2 exact-head review, merge, and governed done closeout."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810"
+        ],
+        "id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Collision-safe Rollback Destination",
+        "reviewer": "Codex2",
+        "summary": "Repair the next narrow rollback-materialization collision discovered after PR #4726: keep the existing different-root 0305 runtime untouched and provide a deterministic, independently verified fresh rollback identity for the governed promotion transaction.",
+        "title": "Make rollback materialization collision-safe without root reuse"
+      },
+      "task_spec_hash": "f17956bd5bf469b822e9762613348aabeb13a1577425d3fe7883df63e6fa12fa"
+    }
+  ]
+}

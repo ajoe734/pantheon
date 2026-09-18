@@ -1,0 +1,227 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-runtime-promotion-split-chain-20260801T0000Z--0fe55babcfb9777e.json",
+  "admitted_at": "2026-08-01T00:01:41Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#runtime-promotion-split-chain",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-PROMOTION-IDENTITY-GUARD-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "INCIDENT_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.json",
+      "sourceRefs": [
+        "deleted task-worktree cwd incident",
+        "manual Human/Ops rollback",
+        "persistent 012dab runtime recovery"
+      ]
+    },
+    {
+      "kind": "SUPERSEDED_MONOLITH_PACKET",
+      "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-promotion-auto-rollback-guard-20260731T2335Z.json",
+      "sourceRefs": [
+        "PR #4433 rejected heads fa91abfd, 165779d0 and 3d679cc0",
+        "repeated worker exits before complete implementation"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T00:01:25.395559Z",
+  "intent": "split_failed_monolith_into_governed_sequential_runtime_promotion_tasks",
+  "mode": "kernel_repair",
+  "packet_digest": "0fe55babcfb9777e6a4f6b55424994d38be2341fab000e2fe81cb8c594f78c5a",
+  "packet_id": "pkt-sup-runtime-promotion-split-chain-20260801T0000Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "0477316f40b56e85a89aa376f5e70d0e2165277096f254e4f9c4085ede51c963",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+    "human-ops-pr4433-exact-head-rejection-3d679cc",
+    "antigravity-repeated-evidence-only-handoffs"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Read the authoritative paths from live config paths.status_file and paths.state_file; missing paths, unreadable JSON, missing required fields, or stale snapshots fail closed.",
+          "Snapshot the actual state schema: supervisor.pid, lifecycle, last_heartbeat_at, last_successful_loop_at, last_loop_started_at, last_loop_finished_at, last_loop_error and supervisor.task_state_shadow.",
+          "Require task_state_shadow mode authoritative, ok true, caught_up true, no last_error, and projected_state_sha256 exactly equal expected_state_sha256.",
+          "Snapshot state.workers, state.queue and state.worker_worktrees.leases; prove one active worker per task, queue-to-worker lease identity parity, no orphan active lease and no duplicate active task ID.",
+          "Validate readiness for providers required by active leases and enabled dispatch lanes. Explicitly unavailable lanes may remain unavailable only when no active lease depends on them and the preflight/postcheck readiness baseline is unchanged.",
+          "Expose deterministic pure functions or typed snapshots so later transaction code can compare preflight, candidate and rollback observations without reading fallback paths.",
+          "Add fixtures using the current live schema and negative tests for missing config paths, projection not ok, not caught up, hash mismatch, stale loop, duplicate worker, lease mismatch, orphan queue lease and required provider not ready.",
+          "Run the focused suite plus relevant read-only supervisor state and ai_status projection regression; no process signals and no live runtime action.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Work only in a clean governed task worktree on the exact task branch, target dev, and keep unrelated or generated task-brief changes out of commits.",
+          "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; push, open a correctly titled PR to dev, wait for all checks, and require exact-head Human/Ops review before merge.",
+          "Rollout is source merge only. Rollback is revert of this task merge commit."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801/"
+        ],
+        "depends_on": [],
+        "id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Promotion / 1 State Snapshot",
+        "reviewer": "Human/Ops",
+        "summary": "Bounded replacement for the over-broad PR #4433 task. Implement only the read-only live state snapshot and invariant layer from current origin/dev; do not implement process termination, launch, rollback, or live promotion.",
+        "title": "Build live-schema supervisor promotion snapshots and invariants"
+      },
+      "task_spec_hash": "d744f288c20203ac3e72b472adbfa5a20fd052db2d28f0605c3dce97e70a2982"
+    },
+    {
+      "task_id": "SUP-RUNTIME-PROMOTION-IDENTITY-GUARD-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Candidate root must resolve under /home/lupin/pantheon-ci-deploy/command-runtimes/<40-hex-commit>; reject /tmp, worker worktrees, deleted cwd, symlink escape, mutable aliases and basename-to-HEAD mismatch.",
+          "Require origin remote ajoe734/pantheon, exact candidate commit contained in current accepted origin/dev, and capture exact HEAD commit plus tracked tree. Reject staged, modified or disallowed untracked entries; allow only enumerated runtime-generated files without treating the worktree as globally clean.",
+          "Capture live config bytes and SHA before handoff and verify byte identity on every later check. Never invoke config drift fix or a config writer.",
+          "Discover exactly one incumbent supervisor bound to the live config and capture pid, starttime, executable, full cmdline, cwd, commit, tree and launch environment contract under admission lock; stale or reused PID fails closed.",
+          "Define the governed interpreter, cwd, scrubbed environment and durable stdout/stderr log contract by composing with sync-dev-root, command-runtime refresh, watchdog intent and status-command runtime pinning.",
+          "Discover-only must run the full preflight and demonstrably reject a temporary reviewer worktree that the superseded PR #4433 accepted.",
+          "Add deterministic tests for out-of-prefix root, symlink escape, deleted root, dirty tree, wrong remote, commit not on origin/dev, commit/tree mismatch, multiple supervisors and stale/reused PID.",
+          "No TERM, launch, rollback or live promotion in this task.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Work only in a clean governed task worktree on the exact task branch, target dev, and keep unrelated or generated task-brief changes out of commits.",
+          "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; push, open a correctly titled PR to dev, wait for all checks, and require exact-head Human/Ops review before merge.",
+          "Rollout is source merge after dependency merge. Rollback is revert of this task merge commit."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/promote-supervisor-runtime.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-IDENTITY-GUARD-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801"
+        ],
+        "id": "SUP-RUNTIME-PROMOTION-IDENTITY-GUARD-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Promotion / 2 Identity Guard",
+        "reviewer": "Human/Ops",
+        "summary": "Add only candidate-root, git identity, process identity, config-byte capture and governed launch-contract validation on top of the merged snapshot task.",
+        "title": "Enforce persistent command-runtime and exact process identity"
+      },
+      "task_spec_hash": "28ab9336ba2024b1c5998cdd68111048820ccf7bb9df25ed5ed8a214521ad036"
+    },
+    {
+      "task_id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Use an explicit transaction state machine with idempotent lock ownership. Under the runtime-admission lock revalidate exact incumbent identity, state snapshot and config bytes immediately before recording intent and TERM.",
+          "Record watchdog intentional restart with the actual incumbent PID and exact candidate commit, terminate only that captured identity, and launch with the governed interpreter, cwd, environment and durable logs.",
+          "Candidate acceptance requires the exact launched PID/starttime/root/commit/tree and at least three distinct fresh successful loops after launch from that PID, with unchanged config and every snapshot invariant passing each time.",
+          "Any launch, identity, timeout or postcheck failure reacquires or retains the same governed admission protocol without self-deadlock, records the actual candidate PID, terminates only the verified bad candidate and restores the captured incumbent root and launch contract.",
+          "Rollback success requires a new verified rollback PID, exact incumbent commit/tree, at least three fresh successful loops, projection equality, worker/queue parity, provider baseline and byte-identical config. Return nonzero and write durable rolled-back evidence.",
+          "Rollback launch or rollback postcheck failure must still return nonzero with durable rollback_failed evidence that includes the original failure, rollback failure, PIDs, roots, commits, trees and config hashes.",
+          "Tests inject candidate launch failure, missing heartbeat, wrong candidate cwd, wrong commit, wrong tree, projection mismatch, lease mismatch, duplicate worker, provider not ready, config drift, rollback launch failure, rollback config drift and self-lock reentry.",
+          "No live promotion in implementation or tests.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Work only in a clean governed task worktree on the exact task branch, target dev, and keep unrelated or generated task-brief changes out of commits.",
+          "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; push, open a correctly titled PR to dev, wait for all checks, and require exact-head Human/Ops review before merge.",
+          "Rollout is source merge after dependency merge. Rollback is revert of this task merge commit."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/promote-supervisor-runtime.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-IDENTITY-GUARD-20260801"
+        ],
+        "id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Promotion / 3 Transaction",
+        "reviewer": "Human/Ops",
+        "summary": "Implement the explicit swap and rollback state machine using the two merged invariant layers. Tests use mocks/fixtures only and must never signal the live PID.",
+        "title": "Implement transactional supervisor swap with automatic rollback"
+      },
+      "task_spec_hash": "1455ce7cdea2293296299b60b2d13d2a58e0e23cb437c3199b735520d830773b"
+    },
+    {
+      "task_id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Review the complete architecture across sync-dev-root, command-runtime refresh helpers, watchdog intentional restart, status-command runtime pinning, task-worktree cleanup, authoritative projection, worker and queue leases and provider readiness; document the failure chain from the deleted-cwd incident and how each invariant closes it.",
+          "Run a deterministic matrix covering successful promotion plus every negative required by the three predecessor tasks. Tests use fixtures/mocks only and prove the live supervisor PID is never signalled.",
+          "Run focused promotion tests, watchdog deployment contract tests and the full relevant supervisor and ai_status regression. Record exact commands, counts and outputs; no claimed test count may disagree with collected output.",
+          "Evidence must state review pending until Human/Ops approval and must not self-write review_approved. Runtime evidence defaults outside executable source and cannot dirty a candidate command root.",
+          "Create one clean integration PR from current dev with correct title/body and only this task ancestry; every commit and PR body uses the exact Task-ID, LLM-Agent Antigravity, Reviewer Human/Ops and validation trailers.",
+          "Close polluted PR #4433 only after the clean integration PR exists and links the supersession. Do not reuse or approve any prior #4433 head.",
+          "All repository checks and root merge-freeze status must be green on the exact reviewed head before Human/Ops approval and protected merge.",
+          "After merge, do not promote live automatically. Hand off the merged helper to SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731 as the resolved rollback-contract dependency and use the next already-governed runtime promotion as canary.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Work only in a clean governed task worktree on the exact task branch, target dev, and keep unrelated or generated task-brief changes out of commits.",
+          "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; push, open a correctly titled PR to dev, wait for all checks, and require exact-head Human/Ops review before merge.",
+          "Rollout: merge source, then separate Human/Ops-governed live canary with gate-before-switch. Rollback: revert the integration and predecessor merge commits in reverse order; live canary rollback restores its captured incumbent."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/promote-supervisor-runtime.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801"
+        ],
+        "id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Promotion / 4 Qualification",
+        "reviewer": "Human/Ops",
+        "summary": "Perform the final architecture integration and qualification, retire polluted PR #4433, and produce the exact reviewed source contract for the next governed live canary.",
+        "title": "Integrate and qualify the supervisor promotion transaction"
+      },
+      "task_spec_hash": "4a2dad053f94012fcbf325c68e5f7180c6cf99d9d1668079161f4d1228319dd6"
+    }
+  ]
+}

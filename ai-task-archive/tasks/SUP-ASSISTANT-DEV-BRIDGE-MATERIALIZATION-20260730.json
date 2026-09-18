@@ -1,0 +1,424 @@
+{
+  "version": 1,
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+  "archived_at": "2026-07-31T19:21:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "A queued DevTaskPacket is drained by the supervisor tick path, not by a manual Codex subagent workflow",
+      "Every dispatched task appears in canonical ai-status.json and task-state event/checkpoint readback",
+      "A receipt/admission record cannot report success when canonical task materialization is missing",
+      "Regression covers activity-log-only false positive dispatch",
+      "No .orchestrator/config.json edit is required"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      ".orchestrator/supervisor.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-supervisor-bridge-materialization-20260730",
+      "conversation_id": "codex-root-l12-supervisor-bridge-materialization-20260730",
+      "documents": [
+        {
+          "kind": "EXECUTION_TASK_GRAPH",
+          "path": "docs/bff/execution-tasks/2026-07-29-l12-post-4380-gap-fleet-dispatch/tasks.json",
+          "sourceRefs": [
+            "PR#4382",
+            "HEAD ca00f813f4e6a5dfcfb2cf402ebba425a034d03e"
+          ]
+        },
+        {
+          "kind": "GAP_AUDIT",
+          "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/POST_4380_THREE_PASS_GAP_AUDIT_2026-07-29T1314Z.md",
+          "sourceRefs": [
+            "activity-log-only dispatch finding 2026-07-30T16:35:14Z"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-30T16:44:11Z",
+      "intent": "dispatch_supervisor_bridge_materialization_repair",
+      "mode": "kernel_repair",
+      "packet_digest": "c1333ce91499a1ab77db0ddfe47eded662a7880a03252db28cca582aeb3e8ec3",
+      "packet_id": "pkt-supervisor-bridge-materialization-20260730T1644Z",
+      "source_turn_ids": [
+        "user-supervisor-not-codex-subagents",
+        "codex-wave0-bridge-materialization"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "A queued DevTaskPacket is drained by the supervisor tick path, not by a manual Codex subagent workflow",
+          "Every dispatched task appears in canonical ai-status.json and task-state event/checkpoint readback",
+          "A receipt/admission record cannot report success when canonical task materialization is missing",
+          "Regression covers activity-log-only false positive dispatch",
+          "No .orchestrator/config.json edit is required"
+        ],
+        "artifacts": [
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          ".orchestrator/supervisor.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"
+        ],
+        "depends_on": [],
+        "id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Dev Bridge",
+        "reviewer": "Claude2",
+        "summary": "Repair the assistant dev bridge so supervisor-visible canonical task-state readback, not receipt text alone, is the success gate before auto-worker execution tasks are considered accepted.",
+        "title": "Repair supervisor DevTaskPacket materialization readback"
+      },
+      "task_spec_hash": "4dff94adbd025aa532c13b00fb2baa246e2cd0fd6d48942a8063105fedfdddc2"
+    },
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "head_sha": "e3f1c8974fccf6a1dfc9d26c8d60dcea713030b3",
+      "mode": "required_commit_status",
+      "pr": 4411,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4411",
+      "recorded_at": "2026-07-31T17:03:56Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51447286969,
+      "status_state": "success"
+    },
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+    "last_update": "2026-07-31T19:21:54Z",
+    "next": "Reconciled original dev-bridge task from merged evidence at 4f0d613a292457d83a78aeeee09440691fa222e8 and verified squash delivery commit 314e02f2b922f75c6aa25f200b6f326fb674a24c on origin/dev.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Dev Bridge",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "head_sha": "e3f1c8974fccf6a1dfc9d26c8d60dcea713030b3",
+      "pr": 4411
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730/evidence.json",
+    "reviewer": "Human/Ops",
+    "source_ref": {
+      "base": "dev",
+      "head_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "head_sha": "e3f1c8974fccf6a1dfc9d26c8d60dcea713030b3",
+      "pr": 4411,
+      "repository": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "Repair the assistant dev bridge so supervisor-visible canonical task-state readback, not receipt text alone, is the success gate before auto-worker execution tasks are considered accepted.",
+    "title": "Repair supervisor DevTaskPacket materialization readback",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-31T19:21:54Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/home/lupin/pantheon-ci-deploy/dev-root-e62935877c0e-live",
+      "commit": "314e02f2b922f75c6aa25f200b6f326fb674a24c",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e62935877c0e05b2144844887935868650d0698a",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": "docs/deployment/evidence/twelve-loop-gap/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730/merged-closeout.md",
+        "commit": "4f0d613a292457d83a78aeeee09440691fa222e8",
+        "merge_target_ref": "origin/dev",
+        "merge_target_sha": "e62935877c0e05b2144844887935868650d0698a",
+        "owner": "Antigravity",
+        "reviewer": "Human/Ops",
+        "canonical_reviewer": "Human/Ops",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-30T16:44:44Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-07-30T16:58:13Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-30T17:16:05Z",
+      "from": "Codex2",
+      "message": "PR #4390 is ready for independent review at exact head d8e51bbb744cb69c35e0b98bb2be3c78719880b8. Evidence: docs/deployment/evidence/twelve-loop-gap/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730/evidence.json. Verified 159 assistant tests and 143 bridge/task-state tests. Please verify the activity-only false-positive negative control and canonical journal/projection readback, record the independent decision in the manifest, then approve this exact head with REVIEW_PR=4390 and REVIEW_HEAD_SHA=d8e51bbb744cb69c35e0b98bb2be3c78719880b8.",
+      "resolved_at": "2026-07-30T17:18:44Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-30T17:18:44Z",
+      "from": "Antigravity",
+      "message": "PR #4390 head d8e51bbb744cb69c35e0b98bb2be3c78719880b8 independently verified. 159 assistant tests + 143 bridge/task-state tests pass. Confirmed activity-only negative control rejects non-journaled dispatch and canonical readback gate enforces strict materialization before admission.",
+      "resolved_at": "2026-07-30T17:25:04Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-30T17:25:04Z",
+      "from": "Codex2",
+      "message": "Closeout commit f72d45dd516b9eff30f937b6bde760a2b572ae72 records your existing approval in the task brief and evidence manifest only; reviewed implementation is unchanged from d8e51bbb744cb69c35e0b98bb2be3c78719880b8. Please verify the three-file closeout diff and approve exact PR #4390 head f72d45dd516b9eff30f937b6bde760a2b572ae72 with REVIEW_PR=4390 and REVIEW_HEAD_SHA=f72d45dd516b9eff30f937b6bde760a2b572ae72.",
+      "resolved_at": "2026-07-30T17:27:27Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-30T17:27:27Z",
+      "from": "Antigravity",
+      "message": "PR #4390 head f72d45dd516b9eff30f937b6bde760a2b572ae72 independently verified. 159 assistant tests + 143 bridge/task-state tests pass. Confirmed activity-only negative control rejects non-journaled dispatch and canonical readback gate enforces strict materialization before admission.",
+      "resolved_at": "2026-07-30T17:27:51Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-30T17:28:19Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-30T17:35:00Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-30T17:35:00Z",
+      "from": "Codex",
+      "message": "PR #4390 closeout-only head 9261ac916d69ebf5f32a870e3551feeef64063c4 is pushed and ready for exact-head confirmation. Reviewed implementation d8e51bbb7 is unchanged; new diff only records Codex finalization ownership in the task brief and evidence README. Owner reran py_compile, 143 bridge/task-state tests, 159 assistant tests, JSON validation, and git diff --check successfully. Please approve with REVIEW_PR=4390 and REVIEW_HEAD_SHA=9261ac916d69ebf5f32a870e3551feeef64063c4, then run auto_integrator.",
+      "resolved_at": "2026-07-30T17:37:27Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-30T17:37:27Z",
+      "from": "Antigravity",
+      "message": "PR #4390 head 9261ac916d69ebf5f32a870e3551feeef64063c4 independently verified. 29 test_dev_bridge_reliability tests pass cleanly on provisioned interpreter. Implementation d8e51bbb7 materializes DevTaskPacket into canonical task-state and rejects false-positive activity-log-only dispatch; closeout-only head 9261ac916 records finalization ownership update in task brief and evidence README without touching implementation.",
+      "resolved_at": "2026-07-30T17:42:25Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-30T17:42:25Z",
+      "from": "Codex",
+      "message": "Owner closeout is complete at PR #4390 head f13748e14145f432c4d8897e945552aef899c1a7. Implementation remains d8e51bbb7; final commits only record the governed review/finalization handoff and verified brief. Please approve this exact head with REVIEW_PR=4390 and REVIEW_HEAD_SHA=f13748e14145f432c4d8897e945552aef899c1a7 so auto_integrator may merge.",
+      "resolved_at": "2026-07-30T17:45:28Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-30T17:45:28Z",
+      "from": "Antigravity",
+      "message": "PR #4390 head f13748e14145f432c4d8897e945552aef899c1a7 verified. All 159 assistant tests pass cleanly. Activity-log-only false positive controls verified and exact canonical task-state readback gate approved for merge.",
+      "resolved_at": "2026-07-30T17:46:04Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-30T17:46:31Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-30T17:50:58Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-30T17:50:58Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verification passed: 29 dev-bridge reliability tests, py_compile, and evidence JSON validation. PR #4390 head f13748e14145 has green Branch CI and Antigravity canonical review gate, but auto-integrator is fail-closed at mergeStateStatus=BLOCKED because required Pantheon root merge freeze 2026-07-27 status is absent; keep review_approved and do not run done until Human/Ops supplies the exact-head root gate and PR merges.",
+      "resolved_at": "2026-07-30T18:01:17Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-30T18:01:18Z",
+      "from": "Antigravity",
+      "message": "Owner closeout reverified PR #4390 exact head f13748e14145: 29 dev-bridge reliability tests passed; py_compile and evidence JSON validation passed. Branch CI and Pantheon canonical review gate are green, but required status 'Pantheon root merge freeze 2026-07-27' is absent, so GitHub reports OPEN/BLOCKED. Keep review_approved; Human/Ops must supply the exact-head root gate and PR must merge before Codex2 runs done.",
+      "resolved_at": "2026-07-30T18:01:51Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-30T18:02:19Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-30T18:05:51Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-30T18:05:51Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verification passed: py_compile, 29/29 dev bridge reliability tests, evidence JSON, git diff/check, and all PR #4390 CI/review contexts are green at exact head f13748e14145f432c4d8897e945552aef899c1a7. Merge remains fail-closed only because required Human/Ops context 'Pantheon root merge freeze 2026-07-27' is absent on that head; task stays review_approved and done is intentionally withheld.",
+      "resolved_at": "2026-07-30T18:12:09Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-30T18:12:09Z",
+      "from": "Antigravity",
+      "message": "Owner closeout revalidation at exact pushed head f13748e14145f432c4d8897e945552aef899c1a7 passed: py_compile, 29 dev-bridge reliability tests, 3 supervisor-contract tests, evidence JSON, post-review diff check, and implementation-unchanged check; worktree is clean and all PR #4390 CI/review contexts are green. Merge and done remain intentionally withheld because required Human/Ops context 'Pantheon root merge freeze 2026-07-27' is absent.",
+      "resolved_at": "2026-07-30T18:13:11Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-30T18:13:41Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-30T18:19:12Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T16:20:34Z",
+      "from": "Codex2",
+      "message": "PR #4390 refreshed with origin/dev d07dfd620 and exact head 93dddc1436eeb57256480523837f6e1b888ec77a; branch is clean and 0 behind. Post-merge local verification: py_compile PASS; authoritative bridge/task-state suite 143 passed in 26.89s; assistant plus supervisor contract suite 159 passed in 23.77s. GitHub Branch CI PR run 30646537223 and push run 30646537934 both succeeded. Please perform bound review on this exact head; after approval Human/Ops must rebind the root-freeze gate before integration.",
+      "resolved_at": "2026-07-31T16:22:37Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T16:22:37Z",
+      "from": "Antigravity",
+      "message": "PR #4390 exact head 93dddc1436eeb57256480523837f6e1b888ec77a independently reviewed and approved. Merged origin/dev d07dfd620 tip is clean and 0 behind. py_compile PASS; 143 bridge/task-state tests + 159 assistant/supervisor contract tests pass. GitHub Branch CI PR run 30646537223 and push run 30646537934 both green.",
+      "resolved_at": "2026-07-31T16:22:48Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T16:23:15Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-31T16:49:44Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T16:49:44Z",
+      "from": "Codex",
+      "message": "PR #4411 is task-brief-only and CI-green. Please bind exact head 9a27c37debb7024ca64abedbf631f2df8c3daecb with REVIEW_PR=4411 and REVIEW_HEAD_SHA, preserve the existing owner/reviewer, then merge with the merge method so the reviewed delivery remains an ancestor of dev.",
+      "resolved_at": "2026-07-31T16:52:36Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T16:52:36Z",
+      "from": "Antigravity",
+      "message": "Verified exact head 9a27c37debb7024ca64abedbf631f2df8c3daecb on PR #4411 (task-brief-only closeout restoring dev merge-commit ancestry over squash commit 314e02f2b922f75c6aa25f200b6f326fb674a24c). Python py_compile passed and test_dev_bridge_reliability.py passed. Approved for owner finalization.",
+      "resolved_at": "2026-07-31T16:52:53Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T16:53:41Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-31T16:58:37Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T16:58:37Z",
+      "from": "Codex2",
+      "message": "Closeout commit e3f1c8974fccf6a1dfc9d26c8d60dcea713030b3 only syncs task brief owner/dispatch note after automatic Codex2 reassignment; reviewed implementation and evidence are unchanged. py_compile passed and Dev Bridge reliability suite is 29 passed. Please bind exact-head review to PR #4411.",
+      "resolved_at": "2026-07-31T17:03:56Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T17:03:56Z",
+      "from": "Antigravity",
+      "message": "Verified exact head e3f1c8974fccf6a1dfc9d26c8d60dcea713030b3 on task branch (PR #4411). DevTaskPacket canonical readback implementation (PR #4390) remains fully intact and verified; py_compile passed and 32 dev bridge reliability & supervisor contract tests passed.",
+      "resolved_at": "2026-07-31T17:08:19Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:08:19Z",
+      "from": "Antigravity",
+      "message": "Owner closeout reverified approved head e3f1c8974fccf6a1dfc9d26c8d60dcea713030b3: py_compile passed and 32 focused dev bridge reliability plus supervisor contract tests passed. PR #4411 Branch CI and Antigravity canonical review gate are green, but merge remains blocked solely by missing Human/Ops required status 'Pantheon root merge freeze 2026-07-27'. The post-review supervisor-generated task-brief dispatch summary remains deliberately uncommitted so the exact-head approval is not invalidated. Keep review_approved; do not run done until Human/Ops grants the root gate and PR #4411 merges into dev.",
+      "resolved_at": "2026-07-31T17:09:17Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T17:09:58Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "resolved_at": "2026-07-31T17:15:35Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T18:44:39Z",
+      "from": "Antigravity",
+      "message": "Closed redundant PR #4411 without altering implementation/config. Implementation PR #4390 head 93dddc1436eeb57256480523837f6e1b888ec77a merged into dev as 314e02f2b922f75c6aa25f200b6f326fb674a24c and is live in runtime 98760e3d1e6be1318ee769848195d8a5a14f0230. Worktree clean, handed off exact head to Human/Ops.",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "to": "Human/Ops",
+      "resolved_at": "2026-07-31T19:21:54Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-30T18:19:12Z",
+      "message": "PR #4390 exact reviewed head f13748e14145f432c4d8897e945552aef899c1a7 passes canonical review gate, required CI, py_compile, 29 reliability tests, and 159 assistant tests, but GitHub mergeStateStatus remains BLOCKED: required context 'Pantheon root merge freeze 2026-07-27' is absent and branch protection requires one approving GitHub review. Human/Ops must bind the root-freeze context to this exact head and use the authorized protected-merge path; Codex2 must not impersonate that role or run done before merge.",
+      "owner": "Codex2",
+      "resolved_at": "2026-07-31T16:12:16Z",
+      "status": "resolved",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-31T17:15:35Z",
+      "message": "PR #4411 exact reviewed head e3f1c8974fccf6a1dfc9d26c8d60dcea713030b3 has all Branch CI and Pantheon canonical review gate checks green, and focused closeout validation passed (32 tests plus py_compile), but dev branch protection still lacks required exact-head context 'Pantheon root merge freeze 2026-07-27'. Human/Ops must supply that context; then merge PR #4411 with the exact reviewed head and redispatch Codex owner for governed done. The supervisor-refreshed task-brief owner diff remains intentionally uncommitted so it cannot invalidate the approved exact head.",
+      "owner": "Codex",
+      "resolved_at": "2026-07-31T17:31:55Z",
+      "status": "resolved",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

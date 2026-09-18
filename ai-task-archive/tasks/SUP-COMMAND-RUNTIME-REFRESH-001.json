@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+  "archived_at": "2026-07-27T17:23:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Candidate commit is exact accepted dev with required checks and contains the merged supervisor truth repair",
+      "Installed command root commit and tree exactly match the candidate and retain the existing live config byte for byte",
+      "Refresh is serialized after active workers drain or their leases are safely preserved with no duplicate dispatch",
+      "Supervisor PID replacement and command runtime handoff are proven without manual task board edits",
+      "Authoritative event projection shadow caught_up and queue worker lease parity pass after refresh",
+      "Rollback to the prior installed root is tested and available",
+      "Deployment evidence branch commit push PR checks Codex2 review merge and archive complete"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001"
+    ],
+    "depends_on": [
+      "SUP-WORKER-TRUTH-RECONCILE-001"
+    ],
+    "id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+    "last_update": "2026-07-27T17:23:01Z",
+    "next": "Owner closeout complete: PR #4257 exact Codex2-reviewed head 1882c71b6f57c3d5161f045c6923b1b735ca559e merged to dev as 4580fc5d19b5bff8c0014006324c56d6368ec5dc; canonical review gate exact_head_approved and all required checks passed. Owner reran ai-status 144/144, ReviewApprovedWorkflow 30/30, runtime-pin 7/7, py_compile, manifest assertions, git diff check, and read-only live verification of sole PID 500973 at candidate 29054ab270d552a56ed071cedf3f45150e948b6a with byte-identical config, queue-owner parity, no duplicate task ids, and authoritative projection hashes equal.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Delivery",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-COMMAND-RUNTIME-REFRESH-001",
+      "head_sha": "1882c71b6f57c3d5161f045c6923b1b735ca559e",
+      "pr": 4257
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "在 supervisor truth 修復合併後，將 governed command runtime 更新到精確 accepted dev；重用既有 config，不改 config，不中斷 active lease，保留 rollback。",
+    "title": "Refresh installed supervisor command runtime safely",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T17:23:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-command-runtime-refresh-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-COMMAND-RUNTIME-REFRESH-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5",
+        "source_sha": "29054ab270d552a56ed071cedf3f45150e948b6a",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-command-runtime-refresh-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5"
+      },
+      "commit": "1882c71b6f57c3d5161f045c6923b1b735ca559e",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/SUP-COMMAND-RUNTIME-REFRESH-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4580fc5d19b5bff8c0014006324c56d6368ec5dc",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T12:27:39Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-COMMAND-RUNTIME-REFRESH-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex.",
+      "resolved_at": "2026-07-27T12:32:10Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T15:30:08Z",
+      "from": "Codex",
+      "message": "Review bootstrap PR #4254 exact head 144df711232ebf161c43262172088393252a1806: governed REVIEW_PR/REVIEW_HEAD_SHA recording, runtime-pin test isolation, and snapshot identity only. autoMergeRequest is null; do not merge or approve a different head. Final accepted-dev install, rollback drill, and final evidence require a second review after this bootstrap merges.",
+      "resolved_at": "2026-07-27T15:36:57Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T15:36:57Z",
+      "from": "Codex2",
+      "message": "PR #4254 exact head 144df711232ebf161c43262172088393252a1806 is not approvable yet. Required fixes: (1) git diff --check origin/dev...HEAD exits 2 because bootstrap-approval-binding.md lines 6-8 contain trailing whitespace, while both the evidence table and PR body claim the check is clean; remove the whitespace and rerun/record the exact check. (2) Isolate the new REVIEW_PR, REVIEW_HEAD_SHA, REVIEW_BASE, and REVIEW_HEAD_BRANCH inputs in test_ai_status fixtures: with those variables inherited, ReviewApprovedWorkflowTests.test_approve_without_a_binding_warns_but_still_approves fails and writes the inherited binding. Add a deterministic regression covering inherited REVIEW_* cleanup/no-binding behavior. Preserve autoMergeRequest=null, push the corrected task branch, verify all checks, and re-handoff with the new full head SHA. Independent positives already verified on this head: 141 ai-status tests, 29 approval tests, 7 runtime-pin tests, compile, and the read-only snapshot identifies only PID 4138635 at configured root with projection caught_up.",
+      "resolved_at": "2026-07-27T15:36:57Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T15:44:55Z",
+      "from": "Codex",
+      "message": "PR #4254 exact head 5d1f069dc902c0692310879c02fedad4bc131b68 is corrected and ready for independent review. Removed evidence trailing whitespace; git diff --check origin/dev...HEAD exits 0; isolated inherited REVIEW_PR/REVIEW_HEAD_SHA/REVIEW_BASE/REVIEW_HEAD_BRANCH and added deterministic no-binding regression. Local validation: 142 ai-status, 30 approval workflow, 7 runtime-pin, compile. All visible Branch CI checks passed. autoMergeRequest remains null; review and approve only this full head SHA.",
+      "resolved_at": "2026-07-27T15:52:51Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T15:52:51Z",
+      "from": "Codex2",
+      "message": "Bootstrap review approved for PR #4254 exact head 5d1f069dc902c0692310879c02fedad4bc131b68 only: remote head matches, PR is CLEAN with autoMergeRequest=null and all visible Branch CI checks successful; independent reruns passed ai-status 142, ReviewApprovedWorkflow 30, runtime-pin 7, py_compile, and git diff --check. Read-only live snapshot confirmed sole supervisor PID 4138635 at configured 6692d51c root, active worker runtime/lease parity, and authoritative projection caught_up with equal hashes. This is not final runtime-refresh acceptance: owner must merge the exact bootstrap head, install the accepted binding runtime without config changes, execute rollback/roll-forward proof, replace the legacy partial evidence, and request the documented final Codex2 exact-head review.",
+      "resolved_at": "2026-07-27T16:21:57Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T16:21:57Z",
+      "from": "Codex",
+      "message": "Final runtime proof is ready on PR #4257 exact head dcadf09109d919e35bef078b061faea70b3df7a4. Auto-merge is disabled; PR is CLEAN and all 8 visible Branch CI checks passed. Independently verify the live sole supervisor at candidate 29054ab270d552a56ed071cedf3f45150e948b6a, unchanged config hash, refresh/rollback/roll-forward snapshots, lease/queue parity, and authoritative projection. Approve only this exact head with REVIEW_PR=4257 REVIEW_HEAD_SHA=dcadf09109d919e35bef078b061faea70b3df7a4 REVIEW_BASE=dev REVIEW_HEAD_BRANCH=task/SUP-COMMAND-RUNTIME-REFRESH-001 REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/evidence.json.",
+      "resolved_at": "2026-07-27T16:22:15Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T16:22:15Z",
+      "from": "Codex",
+      "message": "Final runtime proof is ready on PR #4257 exact head dcadf09109d919e35bef078b061faea70b3df7a4. Auto-merge is disabled; PR is CLEAN and all 8 visible Branch CI checks passed. Independently verify the live sole supervisor at candidate 29054ab270d552a56ed071cedf3f45150e948b6a, unchanged config hash, refresh/rollback/roll-forward snapshots, lease/queue parity, and authoritative projection. Approve only this exact head with REVIEW_PR=4257 REVIEW_HEAD_SHA=dcadf09109d919e35bef078b061faea70b3df7a4 REVIEW_BASE=dev REVIEW_HEAD_BRANCH=task/SUP-COMMAND-RUNTIME-REFRESH-001 REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/evidence.json.",
+      "resolved_at": "2026-07-27T16:32:59Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T16:32:59Z",
+      "from": "Codex2",
+      "message": "Exact head dcadf09109d919e35bef078b061faea70b3df7a4 is not approvable: PR #4257 has all 8 visible checks successful and auto-merge disabled, but GitHub currently reports mergeStateStatus=BEHIND/mergeable_state=behind against dev after PR #4258 advanced origin/dev to 6ae436c546942df1ba0a762d7167b456dfedabc8. Refresh the task branch from current dev without changing the proven live candidate, push the new full head, keep auto-merge disabled, wait for all checks, update the task brief exact SHA/CLEAN evidence, and re-handoff for a fresh exact-head review. Independent positives already verified: sole live PID 500973 at candidate 29054ab270d552a56ed071cedf3f45150e948b6a; config sha256 adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e unchanged; live worker/queue parity and projection pass; tests 142/142, 30/30, and 7/7 pass.",
+      "resolved_at": "2026-07-27T16:32:59Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T16:58:47Z",
+      "from": "Codex",
+      "message": "PR #4257 exact remote head 1882c71b6f57c3d5161f045c6923b1b735ca559e is CLEAN/MERGEABLE against dev 4974824687ef5c3acf665fa22a4306e5d3d664f1; autoMergeRequest=null and all 8 visible exact-head checks completed SUCCESS. Refresh used normal merges only; no rebase/force push. Local validation passed ai-status 144/144, ReviewApprovedWorkflow 30/30, runtime-pin 7/7, py_compile, manifest parse, and diff check. Read-only live recheck preserved sole supervisor PID 500973 at accepted candidate 29054ab270d552a56ed071cedf3f45150e948b6a, byte-identical config sha256 adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e, live worker/queue parity, and equal authoritative projection hashes. Independently review only this exact head and, if accepted, approve with REVIEW_PR=4257 REVIEW_HEAD_SHA=1882c71b6f57c3d5161f045c6923b1b735ca559e REVIEW_BASE=dev REVIEW_HEAD_BRANCH=task/SUP-COMMAND-RUNTIME-REFRESH-001 REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/evidence.json. Keep auto-merge disabled.",
+      "resolved_at": "2026-07-27T17:07:25Z",
+      "status": "done",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T17:07:25Z",
+      "from": "Codex2",
+      "message": "Independent review passed for PR #4257 exact head 1882c71b6f57c3d5161f045c6923b1b735ca559e against dev 4974824687ef5c3acf665fa22a4306e5d3d664f1: MERGEABLE, auto-merge disabled, no force-push event, and all 8 visible exact-head checks successful. Verified candidate 29054ab270d552a56ed071cedf3f45150e948b6a is accepted dev ancestry with exact tree and merged supervisor-truth/approval-binding delivery; raw refresh, rollback, and roll-forward PID/config/lease/queue/projection invariants pass; live read-only recheck preserved sole PID 500973 at exact candidate HEAD/tree with config sha256 adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e, 5/5 worker/queue parity, no duplicate task ids, and equal authoritative hashes. Independent validation: ai-status 144/144, ReviewApprovedWorkflow 30/30, runtime-pin 7/7, py_compile, manifest assertions, artifact hash/merge identity, and git diff check.",
+      "status": "done",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-27T17:23:02Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-26T23:30:02Z",
+      "message": "Stage 1 installed and merged the accepted candidate, but delivery is not complete. Live supervisor swap is blocked pending explicit operator authorization and a fresh repair PR that adds automatic rollback when new launch/verification fails and revalidates the captured incumbent PID identity (pid, cmdline, cwd, start time) under the runtime-admission lock before TERM. Do not execute swap-supervisor.sh and do not manually kill or start workers.",
+      "owner": "Human/Ops",
+      "resolved_at": "2026-07-27T15:13:17Z",
+      "status": "resolved",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

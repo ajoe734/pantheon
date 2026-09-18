@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+  "archived_at": "2026-08-09T06:15:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the exact bootstrap failure against a mutable linked worktree whose only tracked drift is an orchestrator-regenerated .orchestrator/task-briefs/*.md file.",
+      "Choose and document a source-only boundary that either prevents runtime task-brief generation from dirtying the mutable command checkout or safely separates provenance-verified generated task-brief drift from governed launch-source identity; do not broadly ignore tracked drift.",
+      "Continue to reject any tracked change to supervisor, watchdog, promotion, status-command, config-provisioning, or other governed launch sources, plus symlink, gitfile, Git identity, index, and staged drift hazards.",
+      "Prove the immutable candidate guard, mutable gitfile binding, config CAS, transaction ordering, rollback, and bytecode self-rejection suites remain green with a committed pre-review evidence manifest.",
+      "Perform no live config edit, direct process signal, manual checkout/reset/stash, candidate deletion, runtime promotion, supervisor scheduling change, or fleet-routing policy change; any later rollout is a separately authorized governed task."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "schema",
+          "acceptance"
+        ],
+        "id": "Codex",
+        "roles": [
+          "auto-worker"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "documents": [
+        {
+          "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+          "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+          "sourceRefs": [
+            "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T225515388905Z-3787166.json",
+            "sha256:0b60885dcf2e0434e92c3ae02b0478dce800ca8ff0330a5f7ba9a87d1d50c33b",
+            "mutable-drift:.orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T22:58:00Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "6da251453041fbb8019c431a5bbdc5e2924e0adc0a4bb7b16b705af7641b53fd",
+      "packet_id": "sup-runtime-v10-mutable-tracked-drift-followup-20260808-2255",
+      "source_turn_ids": [
+        "promotion-evidence-20260808T225515388905Z-3787166",
+        "candidate-discover-20260808T225631Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the exact bootstrap failure against a mutable linked worktree whose only tracked drift is an orchestrator-regenerated .orchestrator/task-briefs/*.md file.",
+          "Choose and document a source-only boundary that either prevents runtime task-brief generation from dirtying the mutable command checkout or safely separates provenance-verified generated task-brief drift from governed launch-source identity; do not broadly ignore tracked drift.",
+          "Continue to reject any tracked change to supervisor, watchdog, promotion, status-command, config-provisioning, or other governed launch sources, plus symlink, gitfile, Git identity, index, and staged drift hazards.",
+          "Prove the immutable candidate guard, mutable gitfile binding, config CAS, transaction ordering, rollback, and bytecode self-rejection suites remain green with a committed pre-review evidence manifest.",
+          "Perform no live config edit, direct process signal, manual checkout/reset/stash, candidate deletion, runtime promotion, supervisor scheduling change, or fleet-routing policy change; any later rollout is a separately authorized governed task."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808/"
+        ],
+        "depends_on": [],
+        "id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+        "owner": "Codex2",
+        "phase": "Supervisor Runtime / Source-only Mutable Bootstrap Repair",
+        "reviewer": "Codex",
+        "summary": "The authorized 5877b644 rollout retry failed closed before mutation because bootstrap mutable-incumbent validation rejects one tracked task brief that the orchestrator itself regenerated in the active dev-root. Repair only the source boundary and regression fixtures; do not weaken governed launch-source identity or touch live runtime.",
+        "title": "Repair mutable bootstrap handling of generated tracked drift"
+      },
+      "task_spec_hash": "1deaeb0e9a319156a433587811f71f91ade8f93c67acb8370ea72162214f3729"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "head_sha": "10c5ba3fcf44209d2ec33cf2478a72b3a86fa048",
+      "mode": "required_commit_status",
+      "pr": 4648,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4648",
+      "recorded_at": "2026-08-09T06:09:35Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/10c5ba3fcf44209d2ec33cf2478a72b3a86fa048",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51899688638,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+    "last_update": "2026-08-09T06:15:21Z",
+    "next": "Owner closeout complete: PR #4648 exact reviewed head 10c5ba3fcf44209d2ec33cf2478a72b3a86fa048 merged to dev as f5570754e6b9534893fc65744e82abe7f0ff0a74. Owner verification: focused supervisor boundary 6 passed; mutable promotion guards 3 passed; watcher 9 passed; git diff --check passed; promotion source/config task diff empty. Reviewer-bound evidence remains docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808/evidence.json. Source merge only; no live config, process, promotion, scheduling, or fleet mutation.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime / Source-only Mutable Bootstrap Repair",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "head_sha": "10c5ba3fcf44209d2ec33cf2478a72b3a86fa048",
+      "pr": 4648
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "The authorized 5877b644 rollout retry failed closed before mutation because bootstrap mutable-incumbent validation rejects one tracked task brief that the orchestrator itself regenerated in the active dev-root. Repair only the source boundary and regression fixtures; do not weaken governed launch-source identity or touch live runtime.",
+    "title": "Repair mutable bootstrap handling of generated tracked drift",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-09T06:15:21Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-mutable-tracked-drift-followup-20260808",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-mutable-tracked-drift-followup-20260808",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+          "worker_run_id": "codex-20260809T061021Z-f4dc6a74",
+          "queue_event_id": "evt-20260809T061001Z-7acdd318",
+          "pid": 2990693,
+          "pid_start_ticks": 9486929,
+          "process_generation": "worker-process-generation-sha256:1dde5a012cebb5ddd05f482be680e06027de16d2912a02ebb166b523c3689f15"
+        }
+      },
+      "commit": "10c5ba3fcf44209d2ec33cf2478a72b3a86fa048",
+      "commit_subject": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808: final evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "final pre-review evidence for the watcher queue injection, command-root cleanliness, isolated worktree materialization, and unchanged promotion guards.",
+        "Not changing": "promotion policy, runtime config, live processes, scheduling, task-state governance, or fleet routing.",
+        "Composes with": "anchor c8e5eb51a, origin/dev 4b93f8100, Codex2 exact-head review, and the governed task PR merge gate.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+        "Reviewer": "Codex2",
+        "Verified": "promotion 235 passed; supervisor 622 passed + 162 subtests; watcher 9 passed; focused 6 passed; mutable guards 3 passed; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f5570754e6b9534893fc65744e82abe7f0ff0a74",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T23:14:24Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-08-08T23:15:26Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:27:30Z",
+      "from": "Codex",
+      "message": "PR #4648 exact head 2213f74f423bd633874f69006776f8afb16f72ba is ready for independent review. Bind REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808/evidence.json. Verify supervisor queue/build no longer materialize command-root briefs, isolated worktree fallback still renders context, promotion tracked-drift rejection is unchanged, promotion suite is 235 passed, and no live/runtime/fleet mutation is present. Full supervisor suite: 618 passed + 162 subtests; two disclosed origin/dev-only Antigravity2 config expectation failures are outside this task diff.",
+      "resolved_at": "2026-08-09T04:11:24Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T04:13:24Z",
+      "from": "Codex",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused previous owner Codex becomes reviewer.",
+      "resolved_at": "2026-08-09T04:14:05Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T04:19:22Z",
+      "from": "Codex2",
+      "message": "Reject exact head 2213f74f: supervisor.run_once(watch=True) invokes watch_events._run_scan_locked, whose event loop still calls watch_events.queue_delivery_event; absent context_files there falls back to materializing common.execution_context_files and can dirty the mutable command checkout. Route the watcher queue path through the same pure context builder (or inject an equivalent non-materializing queue function), and add an end-to-end run_once/watch regression proving a missing tracked task brief is never written in the command root while isolated worktree materialization still occurs. Re-run promotion suite and focused/full affected supervisor tests; refresh the committed evidence manifest before re-review.",
+      "resolved_at": "2026-08-09T04:19:22Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:34:13Z",
+      "from": "Codex",
+      "message": "PR #4648 exact head 4333ccb7ea65f34811d711a7464a642ff498ba21 is ready for independent review. Verify run_once(watch=True) injects the pure queue callback, common.execution_context_files is never called on the supervisor watch path, missing briefs remain absent from the command root but materialize in the isolated worker worktree, promotion/runtime config remain unchanged, and review the committed manifest at docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808/evidence.json. Final validation: promotion 235 passed; supervisor 622 passed + 162 subtests; watcher 9 passed; focused 6 passed; mutable guards 3 passed.",
+      "resolved_at": "2026-08-09T04:36:15Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T05:53:07Z",
+      "from": "Codex",
+      "message": "PR #4648 is ready for fresh exact-head review at 10c5ba3fcf44209d2ec33cf2478a72b3a86fa048. Human/Ops-authorized bounded subject rewrite changed only c8e5eb51a->6af97e306 and 4333ccb7e->10c5ba3fc; old/new head trees are identical (8b6c0c713faf505075aa71732f8c82caee7a5963), merge base remains 4b93f8100, and commit bodies/identities are preserved. New-head Branch CI passed commit trailers, runtime mirror, Python packaging, and smoke acceptance for both push and PR runs. Review the committed manifest at docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808/evidence.json and issue a fresh exact-head decision/tag; no source or evidence contents changed.",
+      "resolved_at": "2026-08-09T06:09:35Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T06:09:35Z",
+      "from": "Codex2",
+      "message": "Exact head 10c5ba3fcf44209d2ec33cf2478a72b3a86fa048 (PR #4648) independently reviewed: run_once injects the pure queue wrapper; queue and request fallbacks avoid command-root materialization; missing briefs materialize only in isolated worker worktrees. Promotion/config source diff is empty and linked-worktree tracked task-brief drift remains fail-closed. Independent validation: promotion 235 passed; supervisor 622 passed plus 162 subtests; watcher 9 passed; focused boundary 6 passed; mutable guards 3 passed.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-09T06:15:22Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-09T04:36:15Z",
+      "message": "PR #4648 head 4333ccb7ea65f34811d711a7464a642ff498ba21 fails Commit trailers because pushed task commits c8e5eb51a and 4333ccb7e have 75/73-character subjects. All trailers and tests are valid, but the range gate cannot be repaired by an additive commit. Repository policy forbids force-push recovery without explicit authorization; waiting for Human/Ops to authorize a lease-checked history rewrite with shortened subjects, or direct an alternative close/delete/recreate recovery.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-09T05:36:35Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "task_id": "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811",
+  "archived_at": "2026-08-13T02:01:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Keep exactly two stored leases: a short delivery lease for one durable intent attempt and an execution lease binding task generation, role, actor, workspace, PID start ticks, process generation, heartbeat and progress.",
+      "Reduce process_queue to delivery mechanics: claim an approved intent, prepare workspace, launch outside state locks and commit a short launch result CAS. It must not re-decide assignment, chair, dependency, capacity or task failure policy.",
+      "Use one Recovery reconciler that maps each observed discrepancy to one action. Cover intent without process, process before launch ack, exited worker, stale progress, orphan lifecycle, stale queue receipt, reassignment generation and terminal completion.",
+      "Provider/account failure releases or retries a delivery attempt without increasing task failure streak. Apply one bounded policy per failure class: transient retry, account rotation, task reroute or structured task block; never all simultaneously.",
+      "Retain exact PID generation, confirm-kill, worktree isolation, durable launch intent and evidence-backed ownerless recovery. Delete active_worker_governance_lease_decision, duplicate queue/worker/task eligibility and legacy worker-kill fallback.",
+      "Keep signed bridge packets, atomic materialization and authoritative readback. Replace receipt plus claim plus retry plus rearm evidence-chain accretion with one durable packet state and append-only attempts without weakening signature, replay or partial-materialization guarantees.",
+      "Run crash injection before intent, after intent, after spawn, before launch ack, after canonical CAS, during retry and during terminal cleanup. Prove no duplicate process, false in_progress, lost review worker or permanent packet starvation.",
+      "Report and remove obsolete delivery, lease, failure-streak and bridge-rearm code and tests in the same PR. No legacy feature switch remains. Deliver by clean PR, independent exact-head review and required checks."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/runtime_state.py",
+      ".orchestrator/rewrite/worker_lifecycle.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py"
+    ],
+    "depends_on": [
+      "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "supervisor-runtime",
+          "fleet-dispatch",
+          "deployment"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration-coordinator"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-supervisor-authority-v2-20260811",
+      "documents": [
+        {
+          "kind": "GOVERNANCE",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Integration And Coordination Lane",
+            "Single Dispatch Authority",
+            "Completion Definition For Repo Changes"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "run_once",
+            "dispatch_ready_tasks",
+            "process_queue",
+            "persist_task_reassignment",
+            "chair_reassignment_triage_needed_for_task"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/rewrite/task_state_store.py",
+          "sourceRefs": [
+            "append_state_commit",
+            "load_snapshot",
+            "full-state journal"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/ai_status.py",
+          "sourceRefs": [
+            "command_start",
+            "command_reopen",
+            "command_approve",
+            "command_done",
+            "canonical task-state lock"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/promote_supervisor_runtime.py",
+          "sourceRefs": [
+            "PromotionTransaction",
+            "mutable incumbent compatibility",
+            "rollback"
+          ]
+        },
+        {
+          "kind": "HISTORICAL_NONAUTHORITATIVE_PLAN",
+          "path": "docs/02-architecture/SUPERVISOR_REWRITE_PLAN.md",
+          "sourceRefs": [
+            "retain useful findings only",
+            "do not preserve dual paths"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T15:08:43Z",
+      "intent": "replace_conflicting_supervisor_control_paths",
+      "mode": "supervisor_architecture_governed_delivery",
+      "packet_digest": "1dae7fbc85c31410e339ec68a992fc2f46df94a5ced0798136240dbe23480f40",
+      "packet_id": "pkt-supervisor-authority-v2-cutover-20260811T150843Z",
+      "source_turn_ids": [
+        "operator-approved-authoritative-supervisor-spec-20260811",
+        "operator-approved-complete-implementation-20260811",
+        "function-level-call-path-and-deletion-map-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Keep exactly two stored leases: a short delivery lease for one durable intent attempt and an execution lease binding task generation, role, actor, workspace, PID start ticks, process generation, heartbeat and progress.",
+          "Reduce process_queue to delivery mechanics: claim an approved intent, prepare workspace, launch outside state locks and commit a short launch result CAS. It must not re-decide assignment, chair, dependency, capacity or task failure policy.",
+          "Use one Recovery reconciler that maps each observed discrepancy to one action. Cover intent without process, process before launch ack, exited worker, stale progress, orphan lifecycle, stale queue receipt, reassignment generation and terminal completion.",
+          "Provider/account failure releases or retries a delivery attempt without increasing task failure streak. Apply one bounded policy per failure class: transient retry, account rotation, task reroute or structured task block; never all simultaneously.",
+          "Retain exact PID generation, confirm-kill, worktree isolation, durable launch intent and evidence-backed ownerless recovery. Delete active_worker_governance_lease_decision, duplicate queue/worker/task eligibility and legacy worker-kill fallback.",
+          "Keep signed bridge packets, atomic materialization and authoritative readback. Replace receipt plus claim plus retry plus rearm evidence-chain accretion with one durable packet state and append-only attempts without weakening signature, replay or partial-materialization guarantees.",
+          "Run crash injection before intent, after intent, after spawn, before launch ack, after canonical CAS, during retry and during terminal cleanup. Prove no duplicate process, false in_progress, lost review worker or permanent packet starvation.",
+          "Report and remove obsolete delivery, lease, failure-streak and bridge-rearm code and tests in the same PR. No legacy feature switch remains. Deliver by clean PR, independent exact-head review and required checks."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/runtime_state.py",
+          ".orchestrator/rewrite/worker_lifecycle.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py"
+        ],
+        "depends_on": [
+          "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811"
+        ],
+        "id": "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811",
+        "owner": "Codex2",
+        "phase": "Supervisor Authority V2 / Delivery and Recovery",
+        "reviewer": "Antigravity",
+        "summary": "Make queue delivery mechanical, execution ownership exact, and recovery singular so one failure cannot trigger queue retry, provider pause, reassignment, chair and task failure concurrently.",
+        "title": "Separate durable delivery, execution leases and one recovery reconciler"
+      },
+      "task_spec_hash": "1ee51280ef34660d448d5e6016d92b03db20a6328d6846bd5eddeb61c985b8a2"
+    },
+    "generation": 1,
+    "id": "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811",
+    "last_update": "2026-08-13T02:01:51Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Authority V2 / Delivery and Recovery",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Make queue delivery mechanical, execution ownership exact, and recovery singular so one failure cannot trigger queue retry, provider pause, reassignment, chair and task failure concurrently.",
+    "title": "Separate durable delivery, execution leases and one recovery reconciler",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-12T03:14:53Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:45:17Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:01:51Z"
+    }
+  ],
+  "blockers": []
+}

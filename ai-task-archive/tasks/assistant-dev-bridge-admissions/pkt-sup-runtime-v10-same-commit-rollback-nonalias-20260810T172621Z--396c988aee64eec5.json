@@ -1,0 +1,89 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "supervisor-runtime",
+      "acceptance",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-runtime-v10-same-commit-rollback-nonalias-20260810T172621Z--396c988aee64eec5.json",
+  "admitted_at": "2026-08-10T17:32:44Z",
+  "audit_conversation_href": "task:SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_PROMOTION_BLOCKER",
+      "path": "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.md",
+      "sourceRefs": [
+        "ai-activity-log.jsonl#ai-status-event-39644a96e5f4a098733df78bd009a371f8b9731ce571be2c64c4dfe901e6fd63",
+        "candidate:0305c861f54c4082060120afdfbc012622e5ac0a",
+        "merged-source:8b77e779efed6a3a8eea574969c4374a78e22c1e",
+        "blocker:Candidate runtime equals the rollback runtime"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-10T17:26:21.492204Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "396c988aee64eec5a13147ff982828a1283fefa7edc987465254af5e91c3c8aa",
+  "packet_id": "pkt-sup-runtime-v10-same-commit-rollback-nonalias-20260810T172621Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "ec15f9e6bbd68e7d8132d07bc84ef1ec6603da5c341a1dea1c0bb65539b2c81c",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "ai-status-event-39644a96e5f4a098733df78bd009a371f8b9731ce571be2c64c4dfe901e6fd63",
+    "merge:PR-4724:8b77e779efed6a3a8eea574969c4374a78e22c1e",
+    "promotion-blocker:same-commit-rollback"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the 2026-08-10 fail-closed blocker on clean candidate 0305c861f54c4082060120afdfbc012622e5ac0a where materialized rollback resolves to the same runtime root and the helper rejects Candidate runtime equals the rollback runtime before admission-lock, config, signal, or launch.",
+          "Implement only the narrow source-level rollback identity materialization needed to keep candidate and rollback roots distinct and immutable for same-SHA or split-root incumbent bootstrap; reject missing, ambiguous, or same-root rollback identities rather than guessing.",
+          "Preserve all existing fail-closed gates: immutable candidate identity, incumbent PID/cwd/argv binding, config CAS, admission-lock ordering, lease parity, authoritative projection equality, provider baseline, three fresh loops, bytecode self-rejection, and automatic rollback; do not weaken or broadly ignore any gate.",
+          "Add focused regression coverage for the same-SHA rollback collision, split-root incumbent provenance, and candidate-versus-rollback identity separation; run the complete promotion test suite, focused tests, and git diff --check.",
+          "Change only the declared scripts, focused tests, and task evidence. Do not run promotion, signal or restart services, edit live config/state/queues, sync or patch dev-root, modify provider/account routing, or manually edit canonical task state.",
+          "Deliver from a clean task/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810 branch through protected PR to dev, required checks, independent Codex2 exact-head review, merge, and governed done closeout; the parent live promotion remains a separate supervisor dispatch after this source merge."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810/"
+        ],
+        "depends_on": [],
+        "id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Rollback Identity Repair",
+        "reviewer": "Codex2",
+        "summary": "Source-only repair for the exact rollback materialization collision discovered by the governed alias-guard live-promotion preflight. Keep the live runtime untouched and make the candidate/rollback identity contract explicit and independently testable.",
+        "title": "Repair same-SHA rollback identity materialization for supervisor promotion"
+      },
+      "task_spec_hash": "9c9a2a11ab68df236a9dbcf8928b767cf499985f7ff0bbd506d100cafebd2ff4"
+    }
+  ]
+}

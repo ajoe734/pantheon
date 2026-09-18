@@ -1,0 +1,142 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt_pantheon_batch_architecture_20260727_platform_002--31f038a34d77a3ec.json",
+  "admitted_at": "2026-07-27T14:16:50Z",
+  "audit_conversation_href": "codex://thread/pantheon-batch-architecture-20260727",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-thread-pantheon-batch-architecture-20260727",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "OPS-PUBLISH-ENGINE-UNIFICATION-001"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNBOOK",
+      "path": "docs/deployment/nonprod-ci-cd.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "RUNBOOK",
+      "path": "docs/frontend/execute-plans-dev-hosting.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "ARCHITECTURE",
+      "path": "docs/orchestrator-state-plane-redesign.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "CONTRACT",
+      "path": "docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/06_compatibility_manifest_and_hash_rules.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "CONTRACT",
+      "path": "docs/contracts/agora/dev-compatibility-manifest.json",
+      "sourceRefs": []
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-27T14:16:02Z",
+  "intent": "dispatch_execution_tasks",
+  "mode": "kernel_repair",
+  "packet_digest": "31f038a34d77a3ecdf0c864e2d193da3c71196d12f85e495174f04fc4ceaa33a",
+  "packet_id": "pkt_pantheon_batch_architecture_20260727_platform_002",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "7e72a023ca50df5e20d524a4a2ce7b50d66054f120e32cae95fbe2773ef00b05",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-do-the-plan-20260727",
+    "codex-architecture-audit-20260727"
+  ],
+  "tasks": [
+    {
+      "task_id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "task_spec": {
+        "acceptance": [
+          "Both pantheon and execute-plans use one equivalent publish helper contract; no early-closing consumer such as head may surface SIGPIPE/141 under set -euo pipefail.",
+          "A deterministic many-tag regression reproduces the old git for-each-ref | head failure and proves repeated publish cuts are stable and idempotent.",
+          "Publish workflows no longer dispatch a dev deployment for candidates that cannot pass the exact accepted FE/BFF pair admission gate.",
+          "Frontend changes are made only in /home/lupin/code/execute-plans on base dev; no execute-plans source is copied into pantheon.",
+          "All changes go through task branches, PRs, visible checks, review, merge, and evidence; no hosted deployment is run for each intermediate fix."
+        ],
+        "artifacts": [
+          "scripts/git/nightly_publish.sh",
+          ".github/workflows/nightly-publish-cut.yml",
+          "execute-plans:scripts/git/nightly_publish.sh",
+          "execute-plans:.github/workflows/*publish*",
+          "docs/deployment/evidence/release-platform/OPS-PUBLISH-ENGINE-UNIFICATION-001"
+        ],
+        "depends_on": [],
+        "id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+        "owner": "Codex",
+        "phase": "Release Platform / Publish Cut",
+        "reviewer": "Claude",
+        "summary": "Fix the duplicated nightly publish implementation as a platform contract, including SIGPIPE/141 and inadmissible publish-to-deploy dispatch behavior.",
+        "title": "Unify nightly publish cut engine across Pantheon and execute-plans"
+      },
+      "task_spec_hash": "35699677ce33a685b46852f7c8464c94908dbb33d4cfcb53d4392bcad7a4a187"
+    },
+    {
+      "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "task_spec": {
+        "acceptance": [
+          "Keep the exact FE/BFF compatibility manifest fail-closed; do not relax the gate or simply advance the manifest to latest dev.",
+          "Introduce a single cross-repo candidate coordinator that qualifies a BFF candidate off the live path, builds/tests the FE against that exact BFF identity, and records an immutable pair ledger/artifact.",
+          "Acquire one shared dev environment lease before switch and perform FE+BFF switch as an atomic or compensated transaction with explicit rollback evidence.",
+          "Separate contract/capability compatibility from runtime exact pair identity so future backend publish cuts cannot deadlock against a live-only FE gate.",
+          "Frontend repo work targets ajoe734/execute-plans dev from /home/lupin/code/execute-plans only; Pantheon repo owns backend/controller/runbook changes.",
+          "Validation covers offline controller tests, GitHub workflow admission behavior, rollback path, and one final hosted write E2E only after the batch is complete."
+        ],
+        "artifacts": [
+          "docs/deployment/nonprod-ci-cd.md",
+          "scripts/deploy_nonprod_vm.sh",
+          "scripts/agora_compat_manifest.py",
+          ".github/workflows/nonprod-deploy.yml",
+          "execute-plans:.github/workflows/pantheon-integration-gate.yml",
+          "execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml",
+          "execute-plans:scripts/release-candidate.mjs",
+          "docs/deployment/evidence/release-platform/OPS-CROSS-REPO-RELEASE-CONTROLLER-001"
+        ],
+        "depends_on": [
+          "OPS-PUBLISH-ENGINE-UNIFICATION-001"
+        ],
+        "id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+        "owner": "Antigravity",
+        "phase": "Release Platform / Exact Pair Controller",
+        "reviewer": "Claude",
+        "summary": "Replace independent backend/frontend publish clocks with an exact-pair release controller and rollback-safe dev switch transaction.",
+        "title": "Build exact-pair cross-repo dev release controller"
+      },
+      "task_spec_hash": "1e476552f20fc8e9d8b304431adbbdb5e64f531cee655a973109066f994c60e1"
+    }
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-codex-chatbox-routing-rules-review-rescue-20260731T150349Z--7d8d1c1a81acdd0c.json",
+  "admitted_at": "2026-07-31T15:03:49Z",
+  "audit_conversation_href": "codex://root/chatbox-routing-rules-20260731#pr-4401-exact-head-review-rescue",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-chatbox-routing-rules-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "PR_EXACT_HEAD_REVIEW_TARGET",
+      "path": "https://github.com/ajoe734/pantheon/pull/4401",
+      "sourceRefs": [
+        "base cf6a8fed7baeb102330bf32af3f59cc347d1e92a",
+        "head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79",
+        "all Branch CI checks successful",
+        "scope root AGENTS.md only, 74 additions"
+      ]
+    },
+    {
+      "kind": "CHATBOX_ROUTING_POLICY",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "Direct Component Repair Lane",
+        "Integration And Coordination Lane",
+        "Single Dispatch Authority"
+      ]
+    },
+    {
+      "kind": "FAILED_SUPERVISOR_DRAIN_RECEIPT",
+      "path": ".orchestrator/assistant-dev-packets/receipts/pkt-codex-chatbox-routing-rules-review-20260731T150029Z.json",
+      "sourceRefs": [
+        "supervisor drained at 2026-07-31T15:00:39Z",
+        "materialization failed closed because installed command runtime is not merged into origin/dev"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T15:03:49Z",
+  "intent": "supervisor_dispatch_independent_exact_head_review_for_chatbox_routing_rules_after_runtime_binding_failure",
+  "mode": "kernel_debug",
+  "packet_digest": "7d8d1c1a81acdd0cb3e12f51f32b661eb4b5673111c8f6e26e2ad6430a8dd6c4",
+  "packet_id": "pkt-codex-chatbox-routing-rules-review-rescue-20260731T150349Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "39be883bd8d13c7706b76b2f83c549ad3b8080a877d227d52113749f77d6026b",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-directs-write-rules-for-everyone",
+    "user-authorizes-dashboard-direct-repair-lane",
+    "user-requires-integration-work-plan-supervisor-autoworker-dispatch",
+    "codex-publishes-pr-4401-exact-head-1cc28e07",
+    "supervisor-drain-failed-installed-runtime-not-merged",
+    "temporary-live-dispatch-rescue-from-origin-dev-runtime"
+  ],
+  "tasks": [
+    {
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "task_spec": {
+        "acceptance": [
+          "Inspect PR #4401 exact head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 against dev base cf6a8fed7baeb102330bf32af3f59cc347d1e92a; do not rely only on the PR description",
+          "Confirm the direct lane is limited to explicitly operator-authorized bounded component repair and preserves the specifically authorized dashboard repair case",
+          "Confirm integration and cross-system chatboxes must inspect and deduplicate read-only, write a concrete plan, emit governed task packets, wait for supervisor receipt/materialization, and monitor without implementing the same scope",
+          "Confirm the supervisor is the sole routine implementation dispatcher, registered autoworkers own implementation, extension subagents stay read-only in the integration lane, and Codex/Codex2 are not treated as independent capacity or independent reviewers",
+          "Confirm the policy does not create a parallel scheduler, bypass the existing assistant dev bridge, weaken the live repair rule, or conflict with the remaining repository delivery rules",
+          "Run git diff --check and focused policy-text checks for the one-file change, then move the task to review without changing PR #4401",
+          "The independent reviewer must inspect the exact head and, only if accepted, bind the canonical review decision to PR 4401 head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 with the governed review command",
+          "On any defect, reopen with exact section, failing check, and required correction; neither owner nor reviewer should duplicate implementation outside PR #4401",
+          "Do not impersonate Human/Ops or post the separately controlled Pantheon root merge freeze status"
+        ],
+        "artifacts": [
+          "PR#4401",
+          "AGENTS.md"
+        ],
+        "depends_on": [],
+        "id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+        "owner": "Codex",
+        "phase": "Repository Governance / Exact-Head Review",
+        "reviewer": "Antigravity",
+        "summary": "Governed review handoff for the already published routing-policy PR. Codex validates and hands off; Antigravity independently reviews the exact head. No parallel implementation is authorized.",
+        "title": "Validate and hand off chatbox routing rules for independent review"
+      },
+      "task_spec_hash": "729221ce1ac5b398141506c8ffebafe822a7d1e5f92b2ccbec35d3d51e2b9118"
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt_pantheon_batch_architecture_20260727_bridge_001--a70fa73ef1210fb8.json",
+  "admitted_at": "2026-07-27T14:18:27Z",
+  "audit_conversation_href": "codex://thread/pantheon-batch-architecture-20260727",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-thread-pantheon-batch-architecture-20260727",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNBOOK",
+      "path": "docs/operations/management-ai-openclaw-dev-bridge.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "RUNBOOK",
+      "path": "docs/deployment/management-ai-dev-kernel-control-mode.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "ARCHITECTURE",
+      "path": "docs/orchestrator-state-plane-redesign.md",
+      "sourceRefs": []
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-27T14:18:27Z",
+  "intent": "dispatch_execution_tasks",
+  "mode": "kernel_repair",
+  "packet_digest": "a70fa73ef1210fb8bad8db1daec94acc7658c8e83f7eaf575c231cfaeb5fb068",
+  "packet_id": "pkt_pantheon_batch_architecture_20260727_bridge_001",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "58c4b014c56586fa47fe97b81783e23f4966a077a4e0b3363effc58fea118449",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-do-the-plan-20260727",
+    "codex-dev-bridge-diagnosis-20260727"
+  ],
+  "tasks": [
+    {
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the live failure where supervisor assistant_dev_bridge.last_result reports ModuleNotFoundError: No module named pydantic while a pending packet remains undrained.",
+          "Reproduce the local drain failure where signed bridge dispatch using a non-operator actor makes ai_status.py assign fail with status command lease required for auto worker.",
+          "Define the correct signed DevTaskPacket actor/admission contract: repo-local verified bridge assignment must not require an auto-worker lease, and untrusted direct worker mutations must still require leases.",
+          "Supervisor auto drain processes a fresh signed packet into processed plus a durable assistant-dev-bridge admission record without manual drain.",
+          "Regression tests cover import path/dependency availability, actor/lease behavior, replay safety, and exact materialized task provenance.",
+          "Repair is delivered through task branch, PR, visible checks, Codex2 review, merge, and then safe runtime refresh sequencing; no manual task-board JSON edits."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "scripts/ai_status.py",
+          "scripts/drain_assistant_dev_task_packet_inbox.py",
+          "scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py",
+          "docs/deployment/evidence/supervisor/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001"
+        ],
+        "depends_on": [],
+        "id": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime / Dev Bridge Reliability",
+        "reviewer": "Codex2",
+        "summary": "Fix the dev bridge reliability defects discovered while dispatching the release-platform batch: supervisor auto drain stayed unavailable on pydantic import, and local drain failed because bridge actor identity was treated as an auto worker without ORCH_RUN_ID.",
+        "title": "Repair supervisor DevTaskPacket drain and bridge actor admission"
+      },
+      "task_spec_hash": "ccaed9e4e2f714be4abe9fb45b60373c48a21b2d7a0d16996d78c09341ef8d2c"
+    }
+  ]
+}

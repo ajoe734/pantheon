@@ -1,0 +1,196 @@
+{
+  "version": 1,
+  "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+  "archived_at": "2026-08-02T09:14:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Explicit operator constraint is authoritative: Codex and Codex2 may use different accounts. Do not hardcode shared-account equivalence, merge their quota groups, treat them as one capacity lane, or globally prohibit mutual review.",
+      "Preserve and land the other useful PR #4401 governance rules: direct-component repair versus integration/coordination classification, supervisor-only routine implementation dispatch, governed task packets, no parallel chatbox implementation fleet, no direct pantheon-ci-deploy/dev-root patching, and the narrow temporary live-repair exception.",
+      "Replace the stale Codex/Codex2 paragraph with account-neutral text: configured agent identities remain distinct; account/quota/reviewer eligibility follows current configuration and task-scoped live auth/quota evidence, never a global hardcoded equivalence or disqualification.",
+      "Start from current origin/dev in a clean governed task worktree. Do not use the dirty shared checkout as delivery authority and do not merge the exact stale PR #4401 policy patch.",
+      "After the corrected replacement PR exists, close or supersede PR #4401 and stale evidence PR #4405 with links; do not delete branches or history.",
+      "Scope is AGENTS.md plus this task brief/review evidence only. Do not modify supervisor code, config, provider policy, canonical JSON, runtime state, product code, services, deployment, or the 28-task catalog.",
+      "Add deterministic policy assertions covering every retained governance clause plus the absence of shared-account, quota-group collapse, and global mutual-review-ban language.",
+      "Run git diff --check, policy assertions, commit-trailer validation, and all exact-head GitHub checks. Evidence remains review_pending until Human/Ops exact-head approval.",
+      "Deliver a clean task branch and PR to dev, independent Human/Ops exact-head review, governed merge, and canonical done/archive. Rollback is merge-commit revert."
+    ],
+    "artifacts": [
+      "AGENTS.md",
+      ".orchestrator/task-briefs/ops_codex_chatbox_routing_rules_operator_v4_20260802.md",
+      "docs/reviews/ops-codex-chatbox-routing-rules-operator-v4-20260802.md"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/supervisor-autoworker-complete-audit-20260802#operator-account-neutral-governance-v4",
+      "conversation_id": "codex-root-supervisor-autoworker-complete-audit-20260802",
+      "documents": [
+        {
+          "kind": "EXPLICIT_OPERATOR_CONSTRAINT",
+          "path": "codex://root/supervisor-autoworker-complete-audit-20260802#operator-account-constraint",
+          "sourceRefs": [
+            "Codex and Codex2 may be different accounts",
+            "do not merge configured quota groups",
+            "do not globally prohibit Codex/Codex2 mutual review",
+            "all other supervisor/auto-worker remediation continues"
+          ]
+        },
+        {
+          "kind": "SUPERSEDED_STALE_GOVERNANCE_TASK",
+          "path": "ai-task-archive/tasks/OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-V3-20260802.json",
+          "sourceRefs": [
+            "terminal_outcome superseded",
+            "do not land PR #4401 shared-account paragraph"
+          ]
+        },
+        {
+          "kind": "INTERRUPTED_VALID_ATOMIC_WORK",
+          "path": "git-object://f33ee38bb6bfc684cbb2be62e1751f54189aa6fe",
+          "sourceRefs": [
+            "38 focused assignment tests passed before stale supersession",
+            "648 insertions and 72 deletions in supervisor/test files",
+            "implementation explicitly did not change account/quota groups"
+          ]
+        },
+        {
+          "kind": "CLOSED_PRIOR_ATOMIC_DELIVERY",
+          "path": "https://github.com/ajoe734/pantheon/pull/4496",
+          "sourceRefs": [
+            "exact head cfa2b668fcb4029de2a2bae1c8111eb9b82c0033",
+            "reuse design only under new governed Task-ID"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T08:57:00Z",
+      "intent": "land_single_dispatch_governance_without_account_equivalence_then_restore_atomic_task_scoped_fallback",
+      "mode": "kernel_repair",
+      "packet_digest": "363e5585e3af505a0ac40c9c083a056f6475b120ec2ff0cf61c67cf7abe7f4e4",
+      "packet_id": "pkt-operator-account-neutral-governance-atomic-v4-20260802T0857Z",
+      "source_turn_ids": [
+        "operator-codex-codex2-may-use-different-accounts-20260802",
+        "operator-other-remediation-continues-20260802",
+        "stale-governance-packet-second-recovery-20260802"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Explicit operator constraint is authoritative: Codex and Codex2 may use different accounts. Do not hardcode shared-account equivalence, merge their quota groups, treat them as one capacity lane, or globally prohibit mutual review.",
+          "Preserve and land the other useful PR #4401 governance rules: direct-component repair versus integration/coordination classification, supervisor-only routine implementation dispatch, governed task packets, no parallel chatbox implementation fleet, no direct pantheon-ci-deploy/dev-root patching, and the narrow temporary live-repair exception.",
+          "Replace the stale Codex/Codex2 paragraph with account-neutral text: configured agent identities remain distinct; account/quota/reviewer eligibility follows current configuration and task-scoped live auth/quota evidence, never a global hardcoded equivalence or disqualification.",
+          "Start from current origin/dev in a clean governed task worktree. Do not use the dirty shared checkout as delivery authority and do not merge the exact stale PR #4401 policy patch.",
+          "After the corrected replacement PR exists, close or supersede PR #4401 and stale evidence PR #4405 with links; do not delete branches or history.",
+          "Scope is AGENTS.md plus this task brief/review evidence only. Do not modify supervisor code, config, provider policy, canonical JSON, runtime state, product code, services, deployment, or the 28-task catalog.",
+          "Add deterministic policy assertions covering every retained governance clause plus the absence of shared-account, quota-group collapse, and global mutual-review-ban language.",
+          "Run git diff --check, policy assertions, commit-trailer validation, and all exact-head GitHub checks. Evidence remains review_pending until Human/Ops exact-head approval.",
+          "Deliver a clean task branch and PR to dev, independent Human/Ops exact-head review, governed merge, and canonical done/archive. Rollback is merge-commit revert."
+        ],
+        "artifacts": [
+          "AGENTS.md",
+          ".orchestrator/task-briefs/ops_codex_chatbox_routing_rules_operator_v4_20260802.md",
+          "docs/reviews/ops-codex-chatbox-routing-rules-operator-v4-20260802.md"
+        ],
+        "depends_on": [],
+        "id": "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+        "owner": "Codex",
+        "phase": "Repository governance / operator-aligned dispatch authority source of truth",
+        "reviewer": "Human/Ops",
+        "summary": "Land the useful single-supervisor dispatch and chatbox coordination rules while removing the stale hardcoded Codex/Codex2 shared-account and review-disqualification claim.",
+        "title": "Land account-neutral single-dispatch chatbox governance"
+      },
+      "task_spec_hash": "992215c7c8eb36d2b3c94b3e37fcead2afe6a271fbc3fb833e6b2ab05f2ba387"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+      "head_sha": "d40b73adabec3eba27f6fa111586fc956d7bfe74",
+      "mode": "required_commit_status",
+      "pr": 4499,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4499",
+      "recorded_at": "2026-08-02T09:12:29Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51500286010,
+      "status_state": "success"
+    },
+    "id": "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+    "last_update": "2026-08-02T09:14:49Z",
+    "next": "Superseded because PR #4499 exact head d40b73adabec3eba27f6fa111586fc956d7bfe74 conflicts with the authoritative repository AGENTS.md shared-account and independent-review rule and has a failed Pantheon canonical review gate. Replacement task was admitted through signed assistant dev bridge receipt pkt-ops-chatbox-dispatch-authority-restore-v5-20260802T0915Z; do not merge #4499.",
+    "owner": "Codex",
+    "phase": "Repository governance / operator-aligned dispatch authority source of truth",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+      "head_sha": "d40b73adabec3eba27f6fa111586fc956d7bfe74",
+      "pr": 4499
+    },
+    "review_file": "docs/reviews/ops-codex-chatbox-routing-rules-operator-v4-20260802.md",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Land the useful single-supervisor dispatch and chatbox coordination rules while removing the stale hardcoded Codex/Codex2 shared-account and review-disqualification claim.",
+    "title": "Land account-neutral single-dispatch chatbox governance",
+    "terminal_outcome": "superseded",
+    "superseded_by": "OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V5-20260802"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T09:08:23Z",
+      "from": "Codex",
+      "message": "Corrected replacement PR #4499 is ready for independent exact-head review at d40b73adabec3eba27f6fa111586fc956d7bfe74. Exact three-file scope; local diff/policy/trailer/runtime-mirror gates passed; all 8 GitHub checks passed; auto-merge is off. Review manifest: docs/reviews/ops-codex-chatbox-routing-rules-operator-v4-20260802.md. Approve only with REVIEW_PR=4499 and REVIEW_HEAD_SHA=d40b73adabec3eba27f6fa111586fc956d7bfe74.",
+      "resolved_at": "2026-08-02T09:08:47Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T09:08:47Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head review approves PR #4499 at d40b73adabec3eba27f6fa111586fc956d7bfe74. The operator explicitly directed that Codex/Codex2 may use different accounts, so no shared-account equivalence, quota collapse, or global mutual-review ban may be encoded; all other single-dispatch governance proceeds. Independent three-file scope, positive/negative policy assertions, trailers, diff, stale ancestry, and 8 GitHub checks passed. Earlier stale comments asserting no operator direction are superseded.",
+      "resolved_at": "2026-08-02T09:08:55Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T09:08:55Z",
+      "from": "Human/Ops",
+      "message": "Rejected exact head d40b73adabec3eba27f6fa111586fc956d7bfe74 despite 8 green checks: AGENTS.md and its deterministic assertions reverse the currently authoritative rule that Codex and Codex2 share one ChatGPT account and are not independent capacity/review identities. Restore that paragraph, remove the unsupported account-neutral operator claim, update brief/evidence/assertions, push a new head, and request fresh exact-head review. Preserve the single-supervisor dispatch rules.",
+      "resolved_at": "2026-08-02T09:08:55Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T09:12:00Z",
+      "from": "Codex",
+      "message": "Review PR #4499 exact head d40b73adabec3eba27f6fa111586fc956d7bfe74. Owner revalidated the exact three-file scope, 29 required/6 forbidden policy assertions, diff checks, and commit trailers; all 8 exact-head CI checks pass. The prior reopen contradicts the signed operator constraint that Codex/Codex2 remain distinct and account/quota/reviewer eligibility follows current configuration plus task-scoped live evidence. If approved, bind REVIEW_FILE=docs/reviews/ops-codex-chatbox-routing-rules-operator-v4-20260802.md REVIEW_PR=4499 REVIEW_HEAD_SHA=d40b73adabec3eba27f6fa111586fc956d7bfe74.",
+      "resolved_at": "2026-08-02T09:12:29Z",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T09:12:29Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head review approves PR #4499 at d40b73adabec3eba27f6fa111586fc956d7bfe74. The signed operator direction is authoritative: Codex/Codex2 remain distinct; do not merge quota groups or globally prohibit mutual review. Exact three-file scope, policy assertions, trailers, diff checks, and all CI checks passed.",
+      "status": "done",
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T09:14:49Z"
+    }
+  ],
+  "blockers": []
+}

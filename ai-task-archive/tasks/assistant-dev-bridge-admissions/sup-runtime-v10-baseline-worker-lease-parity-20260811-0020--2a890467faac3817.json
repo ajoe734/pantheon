@@ -1,0 +1,101 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ],
+    "id": "Codex2",
+    "roles": [
+      "auto-worker"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-runtime-v10-baseline-worker-lease-parity-20260811-0020--2a890467faac3817.json",
+  "admitted_at": "2026-08-11T00:25:07Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-BASELINE-WORKER-LEASE-PARITY-20260811"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "sourceRefs": [
+        "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260811T001549145527Z-1114870.json",
+        "sha256:79fa5e1abe5fdd3e2a0c1c2aed75e389d1565537980310f6a8ea0b7abfe77079",
+        "candidate:e2cdc4d4d00ff43d3e57bd569a37a405ae6cda77",
+        "candidate-tree:c876ddbd8d7907a1808c6f386c78ac38214af4c3",
+        "incumbent:0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "incumbent-pid:3301275",
+        "incumbent-starttime-ticks:22907439",
+        "live-config-sha256:54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+        "failure:worker_lease_parity_and_no_duplicates",
+        "observed-reason:missing_lease_owner:evt-20260811T001918Z-80259225",
+        "prerequisite-pr:4734"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-11T00:20:00Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "2a890467faac3817b685c5b3a3e26afc59044fa14f326fb4537932b055a523c4",
+  "packet_id": "sup-runtime-v10-baseline-worker-lease-parity-20260811-0020",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "5be61036f72890a63e7a719b2f43a1d4c6210f077ea66c08c793640b86c47971",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "promotion-evidence-20260811T001549145527Z-1114870",
+    "post-abort-readback-20260811T0019Z",
+    "read-only-worker-lease-parity-extract-20260811T0020Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-BASELINE-WORKER-LEASE-PARITY-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce transaction 79fa5e1abe5fdd3e2a0c1c2aed75e389d1565537980310f6a8ea0b7abfe77079: clean accepted candidate e2cdc4d4/tree c876ddbd and immutable incumbent 0bd7cf88 pass identity/bytecode preflight but promotion stops before config, signal, launch, or rollback on worker_lease_parity_and_no_duplicates.",
+          "Diagnose the publication boundary that can expose a started queue event without its lease_owner (the read-only diagnostic observed evt-20260811T001918Z-80259225 before the following loop completed its owner binding). Distinguish a genuine state corruption from a snapshot race using durable event/run/worker evidence; do not assert that this later observation was the exact earlier transaction snapshot without proof.",
+          "Keep worker_lease_parity_and_no_duplicates fail-closed for every real inconsistency: duplicate active workers, missing worker, missing lease owner, mismatched run/event/task, orphan lease, and invalid retry lineage must continue to reject before TERM. Do not add a broad ignore, time-only exemption, manual lease deletion, or runtime-state cleanup workaround.",
+          "Make queue/worker/lease state publication or promotion baseline capture coherent by an explicit bounded, provenance-checked mechanism. Prove a concurrently transitioning but ultimately valid dispatch cannot produce a torn eligible snapshot, while sustained malformed started events remain rejected and observable with their exact reasons.",
+          "Add focused supervisor and promotion adversarial tests for interleavings, missing lease owner, duplicate workers, orphan leases, cross-event/task mismatch, retry lineage corruption, and a clean coherent snapshot. Run the complete relevant supervisor and promotion suites, then commit a task-scoped evidence manifest before independent review.",
+          "Preserve immutable candidate cleanliness, config CAS, promotion-lock ordering, restart-intent-before-TERM, exact process-generation signalling, PYTHONDONTWRITEBYTECODE=1 and python -B launch, status-child bytecode proof, three fresh-loop gates, authoritative-shadow catch-up, provider baseline, rollback identity/cleanup, and all existing immutable-incumbent guards.",
+          "Keep this task source-only: no live config/state edit, direct process signal, worker termination, runtime promotion, candidate/incumbent mutation or deletion, canonical-state edit outside governed commands, scheduler/fleet-routing policy change, provider/account change, or rollout retry. A retry requires a separately dispatched task after protected source merge."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-BASELINE-WORKER-LEASE-PARITY-20260811/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810"
+        ],
+        "id": "SUP-RUNTIME-V10-BASELINE-WORKER-LEASE-PARITY-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Worker Lease Parity",
+        "reviewer": "Claude2",
+        "summary": "The governed e2cdc4d4 promotion remained fail-closed before mutation because the strict parity baseline can observe a started event before lease ownership is coherently published. Repair only the bounded source publication/snapshot boundary, retain every parity rejection, and leave live rollout to a later governed task.",
+        "title": "Make worker-lease parity capture coherent for governed promotion"
+      },
+      "task_spec_hash": "96527bddc6af7143218530cadfea6d86463af2ad229d8e1c89e8bb54d4405f18"
+    }
+  ]
+}

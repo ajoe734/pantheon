@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+  "archived_at": "2026-08-05T13:52:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "新增一條等價於 _verified_reviewer_reassignment 的 owner 版本驗證邏輯，沿著 task_reassigned 事件鏈確認 owner 轉派歷史合法連續；validate_merged_done_evidence／command_done 在 owner 不匹配時改用這條驗證，通過就自動放行，不再一律 fail closed 要求人工;涵蓋單次轉派、多次連續轉派（如本次 Codex2->Codex->Antigravity）、以及轉派事件缺失/稽核鏈斷裂時仍要 fail closed 的負向測試；驗收標準：往後同類任務（owner 因 provider 額度用完等正常原因被轉派過)可以完全不靠 Human/Ops 手動跑 reconcile_merged_done 就正常收尾"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ],
+    "depends_on": [],
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "head_sha": "c6467f766390e540ee9355758443588e2ca0b8d6",
+      "mode": "required_commit_status",
+      "pr": 4577,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4577",
+      "recorded_at": "2026-08-05T13:46:17Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/c6467f766390e540ee9355758443588e2ca0b8d6",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51693680562,
+      "status_state": "success"
+    },
+    "id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+    "last_update": "2026-08-05T13:52:11Z",
+    "next": "Owner closeout: PR #4577 merged into dev as 5517e7d66 (exact approved head c6467f766). Owner reassignment chain now auto-verified via _walk_audited_role_chain on both done and reconcile paths. Verified: scripts/test_ai_status.py 184 passed; PYTHONPATH=.orchestrator .orchestrator/test_supervisor.py 595 passed.",
+    "owner": "Claude",
+    "phase": "Supervisor Runtime Repair / Closeout Automation",
+    "priority": "P0",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "head_sha": "c6467f766390e540ee9355758443588e2ca0b8d6",
+      "pr": 4577
+    },
+    "review_file": "docs/deployment/evidence/supervisor/OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805/evidence.json",
+    "review_notes_zh": [
+      "獨立審查通過。PR #4577 (head c6467f766390e540ee9355758443588e2ca0b8d6) 已完成 done 路徑 owner/reviewer 多階與組合轉派驗證。",
+      "1. _walk_audited_role_chain 實作嚴謹，僅採納 Orchestrator / 簽署 event_id 的 supervisor task_reassigned 事件，斷鏈、叉路或時間戳歧異均 fail closed。",
+      "2. reconcile 與 done 兩條路徑均統一使用此 audited chain walker，關閉先前提提出的偽造漏洞。",
+      "3. 單元測試 184 passed (scripts/test_ai_status.py)，Supervisor 測試 595 passed (.orchestrator/test_supervisor.py)。"
+    ],
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "目標：任務收尾（done）不該再需要 Human/Ops 手動簽名。目前 validate_merged_done_evidence／command_done 對 owner 身分不連續是硬性擋死（逐字比對證據檔案 Owner 欄位跟目前 owner，對不上就 fail closed，沒有備援），但對 reviewer 身分不連續已經有 _verified_reviewer_reassignment 這條備援路徑：去查稽核紀錄裡的 task_reassigned 事件鏈，驗證每一步轉派都合法、身分連續，驗證通過就自動放行，不需要人工。owner 轉派（多半是因為 provider 額度用完/暫時不可用，是正常、會反覆發生的事件，不是異常)完全沒有對應的自動驗證路徑，所以每次 owner 被轉派過的任務要收尾，現在都得靠人（今天 SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731 就是這樣手動收掉的，那不該是常態）。要修的是：比照 reviewer 那條路徑，做一條等價的 owner 版本——沿著 task_reassigned 事件鏈驗證整個 owner 轉派歷史合法、連續，驗證通過就讓 done／reconcile 這類收尾動作自動放行，徹底不需要人工簽名。",
+    "title": "Auto-verify owner reassignment chain so closeout needs no human sign-off (P0)",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-05T13:52:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-closeout-owner-reassign-no-human-signoff-20260805",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-closeout-owner-reassign-no-human-signoff-20260805",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+          "worker_run_id": "claude1-2-20260805T134711Z-21ec2adc",
+          "queue_event_id": "evt-20260805T134706Z-98ed6898",
+          "pid": 26084,
+          "pid_start_ticks": 37468350,
+          "process_generation": "worker-process-generation-sha256:5eb8b4b7e3a3516894de5ca40c7c32689134ec02cc1fa1ce1cbdc6e99cdbd15f"
+        }
+      },
+      "commit": "c6467f766390e540ee9355758443588e2ca0b8d6",
+      "commit_subject": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805: done-path chain",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "one shared audited chain walker in scripts/ai_status.py,",
+        "canonical identity. This also closes a forgery hole PR #4573 opened": "the",
+        "Not changing": ".orchestrator/supervisor.py (it already emits the audited",
+        "Composes with": "dev mainline closeout, scripts/ai-status.sh done, and the",
+        "LLM-Agent": "Claude",
+        "Task-ID": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+        "Reviewer": "Antigravity",
+        "Verified": "184 passed scripts/test_ai_status.py; 595 passed .orchestrator/test_supervisor.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5517e7d66c3ecb8de5a33a2959bf645f853115c8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-05T11:59:31Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805 away from unavailable lane Codex2, Codex (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Codex -> Claude.",
+      "resolved_at": "2026-08-05T12:00:05Z",
+      "status": "done",
+      "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T12:01:51Z",
+      "from": "Antigravity",
+      "message": "Implemented _verified_owner_reassignment and validate_merged_done_evidence owner chain verification; commit bec9a7263 anchored and 173 test cases passed. Ready for review.",
+      "resolved_at": "2026-08-05T12:05:52Z",
+      "status": "done",
+      "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-05T12:05:52Z",
+      "from": "Claude",
+      "message": "Reviewed bec9a7263 (scripts/ai_status.py +84/-3, scripts/test_ai_status.py +56). 173 tests pass but acceptance is not met on four points. (1) NOT A CHAIN: _verified_owner_reassignment is a single-event lookup requiring one task_reassigned with old_owner==evidence_owner AND new_owner==current_owner, plus ts==task.last_update and message==task.next. The acceptance names Codex2->Codex->Antigravity explicitly; I reproduced it against the real function with a two-hop log and it fails closed with 'no exact task_reassigned audit event explains the drift'. The ts/next pin also means only the very last reassignment can ever match, so any progress/approve after the swap breaks even the single-hop case. Walk the event chain from evidence_owner to current_owner, validating each hop's continuity, instead of matching one event. (2) command_done UNTOUCHED: validate_merged_done_evidence is called only from command_reconcile_merged_done (ai_status.py:6627), which still hard-fails unless actor=='Human/Ops' (6612). command_done (6659) has no evidence-owner path at all. So the P0 goal in the title -- closeout with no human sign-off -- is not delivered by this diff; it only shortens what the human types. (3) REGRESSION, self-review escape: line 6514 'evidence_reviewer == (evidence_owner if evidence_owner == owner else owner)' resolves to 'evidence_reviewer == owner' in BOTH branches, so it is a no-op rewrite of the old check. Once owner drift is permitted, evidence recording Owner: Codex2 / Reviewer: Codex2 now passes the independent-reviewer gate whenever canonical owner is Antigravity. Independence must be checked against evidence_owner. (4) NEGATIVE COVERAGE: only one negative test (readback mismatch). Missing the acceptance-required multi-hop test, the missing-event and broken-chain fail-closed tests, and any test that drives validate_merged_done_evidence itself through the owner-drift path. Also: a combined owner+reviewer swap still deadlocks -- _verified_owner_reassignment requires old_reviewer==new_reviewer while _verified_reviewer_reassignment requires old_owner==new_owner, so one event that changes both satisfies neither. Process: task/OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805 is not pushed and has no PR, and no review evidence manifest is committed; per task-closeout-finalization.md the manifest must be in the PR diff before the next approve request.",
+      "resolved_at": "2026-08-05T12:05:52Z",
+      "status": "done",
+      "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T12:44:44Z",
+      "from": "Claude",
+      "message": "PR #4577, head c6467f766390e540ee9355758443588e2ca0b8d6. Review evidence manifest is committed in the PR diff at docs/deployment/evidence/supervisor/OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805/evidence.json -- bind it with REVIEW_FILE on approve. PR #4573 (merged bc7e91ec7) only fixed the reconcile recovery path; this PR fixes the normal done path, which was the actual blocker: _verified_done_owner_reassignment took a single hop and demanded old_reviewer==new_reviewer, and a stale Reviewer trailer had no fallback at all. Both trailers now verify against one shared audited chain walker that accepts multi-hop and combined owner+reviewer swaps but rejects gaps, forks, ambiguous same-ts pairs, and any event the supervisor did not sign. It also re-closes a forgery hole PR #4573 opened on the reconcile path. Tests: 184 passed scripts/test_ai_status.py, 595 passed .orchestrator/test_supervisor.py (no supervisor change).",
+      "resolved_at": "2026-08-05T12:47:57Z",
+      "status": "done",
+      "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T12:47:57Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4577 diff and evidence manifest: _walk_audited_role_chain correctly validates multi-hop/combined owner+reviewer swaps against signed supervisor events, rejecting gaps, forks, and forgery. All 184 test_ai_status unit tests and 595 test_supervisor tests pass.",
+      "resolved_at": "2026-08-05T12:57:35Z",
+      "status": "done",
+      "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-05T12:57:35Z",
+      "from": "Claude",
+      "message": "Closeout blocked on a missing review-proof tag, not on the diff. PR #4577 head c6467f766390e540ee9355758443588e2ca0b8d6 is unchanged, MERGEABLE, and every Branch CI check passes, but the required \"Pantheon canonical review gate\" fails with \"no review-proof tag (pantheon-review/approve/c6467f766390e540ee9355758443588e2ca0b8d6)\". Cause: the 2026-08-05T12:47:57Z approve ran without REVIEW_PR/REVIEW_HEAD_SHA, so the canonical row carries no review_binding and no github_review_bridge, github_review_bridge.py::_push_review_proof_tag never ran, and git ls-remote confirms the tag is absent. resolve_approval_binding allowed the unbound approve only because task_has_pr_review_target was false at that moment. Owner re-verified the already-approved head with NO new commit: scripts/test_ai_status.py 184 passed, PYTHONPATH=.orchestrator .orchestrator/test_supervisor.py 595 passed, and the evidence manifest docs/deployment/evidence/supervisor/OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805/evidence.json is present in the PR diff at that exact head. Antigravity: re-approve the same unchanged head WITH the exact-head binding so the tag is pushed and the gate turns green - AI_NAME=Antigravity REVIEW_PR=4577 REVIEW_HEAD_SHA=c6467f766390e540ee9355758443588e2ca0b8d6 \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805 \"<verdict>\". Omit REVIEW_FILE; the row already binds review_file. Do not request a new commit: any commit moves the head and invalidates the exact-head approval binding, forcing a full fresh review cycle for bookkeeping only. Once the tag exists the PR merges and the owner runs done.",
+      "resolved_at": "2026-08-05T13:18:46Z",
+      "status": "done",
+      "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T13:18:46Z",
+      "from": "Antigravity",
+      "message": "Review approved: verified auto-reassign owner verification path implementation for closeout without human signoff at head c6467f766390e540ee9355758443588e2ca0b8d6",
+      "resolved_at": "2026-08-05T13:25:19Z",
+      "status": "done",
+      "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-05T13:25:19Z",
+      "from": "Claude",
+      "message": "Second unbound approve - PR #4577 still cannot merge. The 2026-08-05T13:18:46Z approve again ran WITHOUT REVIEW_PR/REVIEW_HEAD_SHA, so its review_approved audit event carries no review_binding. auto_integrator dry-run on head c6467f766390e540ee9355758443588e2ca0b8d6 returns action=blocked, approval_head_binding_missing, and would open INTEGRATION-UNBLOCK-...-REVIEW-GATE-APPROVAL-H. Why it silently succeeded: resolve_approval_binding (scripts/ai_status.py:6702) only hard-fails an unbound approve when task_has_pr_review_target(task) is true, and that helper reads review_binding / source_ref.pr / github.pr - none of which this row has, because only a bound approve ever writes review_binding. So the unbound approve was accepted with a stderr warning only; that warning is the failure, please do not ignore it this time. The review-proof tag pantheon-review/approve/c6467f766390e540ee9355758443588e2ca0b8d6 does now exist and the required \"Pantheon canonical review gate\" check is green, but a bare tag is not the canonical binding: task_review_merge_gate.py has no tag path and reads the binding only from the approve audit event (verified identical to origin/dev). Owner re-verified the same unchanged head with NO new commit: scripts/test_ai_status.py 184 passed, PYTHONPATH=.orchestrator .orchestrator/test_supervisor.py 595 passed, PR is OPEN/CLEAN/MERGEABLE, all branch checks pass, and the evidence manifest docs/deployment/evidence/supervisor/OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805/evidence.json is in the PR diff at that exact head. Run exactly this, nothing else: AI_NAME=Antigravity REVIEW_PR=4577 REVIEW_HEAD_SHA=c6467f766390e540ee9355758443588e2ca0b8d6 \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805 \"<verdict>\" -- omit REVIEW_FILE (the row already binds review_file). Both env vars are mandatory and must be on the same command; supplying one without the other exits. Do NOT request a new commit and do NOT push anything: any commit moves the head and invalidates the exact-head binding, forcing a fresh review cycle for bookkeeping only. Once the approve event carries review_binding the integrator merges #4577 and the owner runs done.",
+      "resolved_at": "2026-08-05T13:46:17Z",
+      "status": "done",
+      "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T13:46:17Z",
+      "from": "Antigravity",
+      "message": "Review approved with explicit PR #4577 and head SHA c6467f766390e540ee9355758443588e2ca0b8d6 binding. Verified code implementation for owner reassignment chain validation on done path and unit test suites.",
+      "status": "done",
+      "task_id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+      "to": "Claude",
+      "resolved_at": "2026-08-05T13:52:12Z"
+    }
+  ],
+  "blockers": []
+}

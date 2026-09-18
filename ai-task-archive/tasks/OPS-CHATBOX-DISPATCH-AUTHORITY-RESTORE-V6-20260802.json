@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V6-20260802",
+  "archived_at": "2026-08-02T10:00:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start from current origin/dev after merged PR #4499 c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65 and merged PR #4501 66621e3484a690921032d93e26ec2c9867708d2a; use a clean governed task worktree and PR target dev.",
+      "Restore the exact active repository rule that Codex and Codex2 currently share one ChatGPT account and must not be treated as independent capacity or independent review identities.",
+      "Preserve the single routine implementation dispatcher rule: chatboxes coordinate and the Pantheon supervisor dispatches auto-workers; Codex extension subagents remain read-only for coordination work.",
+      "Remove only contradictory account-neutral language introduced by PR #4499; preserve unrelated AGENTS.md rules and do not redesign provider, quota, scheduler, or task policy.",
+      "Add deterministic policy evidence proving the direct-repair lane, integration/coordination lane, single-dispatch authority, supervisor receipt requirement, no direct dev-root patching, and exact Codex/Codex2 shared-account paragraph.",
+      "Do not edit config, canonical task state, runtime JSON, provider credentials, product code, catalog, deployment, or services.",
+      "Run policy assertions, git diff --check, exact scope/trailer checks, and require independent exact-head Human/Ops approval before merge.",
+      "Rollout is documentation authority merge; rollback is revert only if a later explicit repository-level operator decision replaces the shared-account fact with verified evidence."
+    ],
+    "artifacts": [
+      "AGENTS.md",
+      "docs/deployment/evidence/supervisor/OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V6-20260802/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-invalid-4501-governance-recovery-20260802",
+      "conversation_id": "codex-root-l12-three-pass-gap-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "current active instruction: Codex and Codex2 share one ChatGPT account",
+            "single Pantheon supervisor dispatch authority"
+          ]
+        },
+        {
+          "kind": "FALSE_TERMINAL_EVIDENCE",
+          "path": "ai-task-archive/tasks/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802.json",
+          "sourceRefs": [
+            "archived 2026-08-02T09:45:53Z as superseded without implementation"
+          ]
+        },
+        {
+          "kind": "MERGED_UNSAFE_BASE",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "PR #4501 head 931e1df08880bd3fa0818de373187cfdc4d9db51",
+            "merge 66621e3484a690921032d93e26ec2c9867708d2a"
+          ]
+        },
+        {
+          "kind": "THREE_PASS_GAP_AUDIT",
+          "path": "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md",
+          "sourceRefs": [
+            "PR #4494 merge 0a2bd446952936998996ba6ecc89b1cbacd55bce"
+          ]
+        },
+        {
+          "kind": "IMMUTABLE_28_TASK_CATALOG",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+          "sourceRefs": [
+            "sha256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+            "G1=25 G2=2 G3=1"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T09:50:00Z",
+      "intent": "restore_governance_and_correct_invalid_assignment_review_identity_merge",
+      "mode": "kernel_repair",
+      "packet_digest": "c9250f846e0cc407f9f9bf7f98c2fba866db36a502db81d06444f59c770ab9c8",
+      "packet_id": "pkt-sup-review-identity-recovery-after-invalid-merge-20260802T0950Z",
+      "source_turn_ids": [
+        "user-requires-supervisor-autoworker-dispatch",
+        "user-requires-three-pass-gap-audit",
+        "invalid-4501-merge-and-false-identity-supersession"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev after merged PR #4499 c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65 and merged PR #4501 66621e3484a690921032d93e26ec2c9867708d2a; use a clean governed task worktree and PR target dev.",
+          "Restore the exact active repository rule that Codex and Codex2 currently share one ChatGPT account and must not be treated as independent capacity or independent review identities.",
+          "Preserve the single routine implementation dispatcher rule: chatboxes coordinate and the Pantheon supervisor dispatches auto-workers; Codex extension subagents remain read-only for coordination work.",
+          "Remove only contradictory account-neutral language introduced by PR #4499; preserve unrelated AGENTS.md rules and do not redesign provider, quota, scheduler, or task policy.",
+          "Add deterministic policy evidence proving the direct-repair lane, integration/coordination lane, single-dispatch authority, supervisor receipt requirement, no direct dev-root patching, and exact Codex/Codex2 shared-account paragraph.",
+          "Do not edit config, canonical task state, runtime JSON, provider credentials, product code, catalog, deployment, or services.",
+          "Run policy assertions, git diff --check, exact scope/trailer checks, and require independent exact-head Human/Ops approval before merge.",
+          "Rollout is documentation authority merge; rollback is revert only if a later explicit repository-level operator decision replaces the shared-account fact with verified evidence."
+        ],
+        "artifacts": [
+          "AGENTS.md",
+          "docs/deployment/evidence/supervisor/OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V6-20260802/"
+        ],
+        "depends_on": [],
+        "id": "OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V6-20260802",
+        "owner": "Antigravity",
+        "phase": "Governance Source Repair",
+        "reviewer": "Human/Ops",
+        "summary": "Repair the source-of-truth instructions that another coordinator incorrectly superseded, preventing repeated unsafe Codex/Codex2 mutual-review approvals.",
+        "title": "Restore single-dispatch and shared-account repository authority after invalid supersession"
+      },
+      "task_spec_hash": "06a8a5e47b49ce2c846b1cfe24582e53bbbe454bc4c06841bc49213dc02598d2"
+    },
+    "id": "OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V6-20260802",
+    "last_update": "2026-08-02T10:00:25Z",
+    "next": "Operator explicitly rejected this scope: Codex and Codex2 may use different accounts. Do not merge quota groups, hardcode account equivalence, or impose a global mutual-review ban. Preserve PR #4499 account-neutral governance and continue only task-scoped live auth/quota fallback work.",
+    "owner": "Codex",
+    "phase": "Governance Source Repair",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Repair the source-of-truth instructions that another coordinator incorrectly superseded, preventing repeated unsafe Codex/Codex2 mutual-review approvals.",
+    "title": "Restore single-dispatch and shared-account repository authority after invalid supersession",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}
