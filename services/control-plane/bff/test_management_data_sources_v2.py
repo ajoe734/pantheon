@@ -20,10 +20,20 @@ import uuid
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.console_gap.datasources import create_datasources_router
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.management_read_models.router import _default_snapshot_meta
+from services.control_plane.bff.models import utc_now
 from services.control_plane.bff.source_management_client import (
     SourceManagementClient,
     SourceManagementClientError,
@@ -362,6 +372,25 @@ class FakeSourceManagementClient(SourceManagementClient):
         return {"receipt": rcp}
 
 
+def _mounted_client(client_holder: Dict[str, Any]) -> TestClient:
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(
+        create_datasources_router(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            snapshot_meta=_default_snapshot_meta,
+            utc_now=utc_now,
+            get_source_management_client=lambda: client_holder["client"],
+            bff_error=bff_error,
+        )
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    client.source_management_client_holder = client_holder  # type: ignore[attr-defined]
+    return client
+
+
 @pytest.fixture
 def fake_client() -> FakeSourceManagementClient:
     return FakeSourceManagementClient()
@@ -369,12 +398,7 @@ def fake_client() -> FakeSourceManagementClient:
 
 @pytest.fixture
 def bff_client(fake_client: FakeSourceManagementClient) -> TestClient:
-    original_client = bff_main.source_management_client
-    bff_main.source_management_client = fake_client
-    try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
-    finally:
-        bff_main.source_management_client = original_client
+    return _mounted_client({"client": fake_client})
 
 
 # ==============================================================================
@@ -625,7 +649,7 @@ def test_get_command_receipt_endpoint(bff_client: TestClient, fake_client: FakeS
 
 def test_service_unconfigured_returns_503(bff_client: TestClient) -> None:
     unconfigured_client = SourceManagementClient(base_url="")
-    bff_main.source_management_client = unconfigured_client
+    bff_client.source_management_client_holder["client"] = unconfigured_client  # type: ignore[attr-defined]
     body = {"expectedRevision": 1, "reason": "Validate when service down"}
     resp = bff_client.post("/bff/management/data-sources/src-twse-01/actions/validate", json=body, headers=OPERATOR_HEADERS)
     assert resp.status_code == 503
