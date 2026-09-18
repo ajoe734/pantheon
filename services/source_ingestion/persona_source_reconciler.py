@@ -9,7 +9,9 @@ drifted, so repeated ticks do not append duplicate JSONL records.
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
@@ -17,10 +19,11 @@ from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 from jsonschema import Draft7Validator
 
 from .configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
-from .connectors import SourceConnector, SourceConnectorProvider, SourceEvidenceError
+from .connectors import SourceConnector, SourceConnectorProvider, SourceEvidenceError, SourceRecord
 from .connectors.dev_paper_simulation import (
     DEV_PAPER_SIMULATION_CONNECTOR_ID,
     DevPaperUsEquitySimulationAdapter,
+    _most_recent_completed_daily_close,
     is_dev_environment,
 )
 from .connectors.finmind_taiwan import FINMIND_TAIWAN_DATASETS, FinMindTaiwanDatasetAdapter
@@ -30,6 +33,35 @@ from .connectors.taiwan_official import (
     TaiwanOfficialMarketDatasetAdapter,
 )
 from .ingest_manager import IngestManager
+from .requirement_state import LatestMarketSnapshotStore
+
+_orig_simulation_records_from_now = DevPaperUsEquitySimulationAdapter.records_from_now
+
+
+def _bootstrap_simulation_records_from_now(
+    self: DevPaperUsEquitySimulationAdapter,
+    *,
+    symbols: Sequence[str] | None = None,
+    trace_id: str = "",
+) -> tuple[SourceRecord, ...]:
+    now = self.clock()
+    t_close = _most_recent_completed_daily_close(now)
+    # Emit T (today's close) first so records[0] has event_time == t_close
+    records_t = _orig_simulation_records_from_now(self, symbols=symbols, trace_id=trace_id)
+    # Emit T-1 (previous daily close) so snapshot receives at least 2 closes for market admission
+    prev_clock = lambda: t_close - timedelta(seconds=1)
+    prev_adapter = DevPaperUsEquitySimulationAdapter(
+        connector_id=self.connector_id,
+        symbols=self.symbols,
+        source_metadata=self.source_metadata,
+        connector_metadata=self.connector_metadata,
+        clock=prev_clock,
+    )
+    records_prev = _orig_simulation_records_from_now(prev_adapter, symbols=symbols, trace_id=trace_id)
+    return tuple(records_t) + tuple(records_prev)
+
+
+DevPaperUsEquitySimulationAdapter.records_from_now = _bootstrap_simulation_records_from_now
 
 
 class _RequirementLike(Protocol):
@@ -208,11 +240,27 @@ class SourceProvisioningReconciler:
         schedule_store: JsonlConnectorScheduleStore,
         controller_name: str = DEFAULT_CONTROLLER_NAME,
         provider_factories: Mapping[str, ProviderFactory] | None = None,
+        snapshot_store: LatestMarketSnapshotStore | None = None,
     ) -> None:
         self.manager = manager
         self.connector_store = connector_store
         self.schedule_store = schedule_store
         self.controller_name = controller_name
+        self.snapshot_store = snapshot_store
+        if self.snapshot_store is None and hasattr(connector_store, "path"):
+            candidate_paths = [
+                connector_store.path.parent / "latest_market_snapshots.jsonl",
+                connector_store.path.parent / "latest-market-snapshots.jsonl",
+            ]
+            chosen_path = candidate_paths[0]
+            for p in candidate_paths:
+                if p.exists():
+                    chosen_path = p
+                    break
+            try:
+                self.snapshot_store = LatestMarketSnapshotStore(chosen_path)
+            except Exception:
+                self.snapshot_store = None
         self.provider_factories: dict[str, ProviderFactory] = {
             "tw-finmind-datasets": lambda connector_id: FinMindTaiwanDatasetAdapter(connector_id=connector_id),
             TW_OFFICIAL_CONNECTOR_ID: lambda connector_id: TaiwanOfficialMarketDatasetAdapter(connector_id=connector_id),
@@ -527,6 +575,32 @@ class SourceProvisioningReconciler:
         payload["metadata"] = metadata
         return SourceConnector.from_dict(payload)
 
+    def _ensure_dev_paper_snapshot(self, plan: ProvisionedConnectorPlan) -> None:
+        """Seed fresh simulation snapshot into LatestMarketSnapshotStore if missing, stale, or < 2 closes."""
+        if self.snapshot_store is None:
+            return
+        now_dt = datetime.now(timezone.utc)
+        factory = self.provider_factories.get(DEV_PAPER_SIMULATION_CONNECTOR_ID)
+        adapter = factory(DEV_PAPER_SIMULATION_CONNECTOR_ID) if factory else DevPaperUsEquitySimulationAdapter()
+        symbols = getattr(adapter, "symbols", ("SPY",))
+        for symbol in symbols:
+            existing = self.snapshot_store.get(symbol)
+            needs_seed = True
+            if existing is not None and len(existing.points) >= 2:
+                try:
+                    ev_dt = datetime.fromisoformat(str(existing.event_time).replace("Z", "+00:00"))
+                    if 0 <= (now_dt - ev_dt).total_seconds() <= 86400:
+                        needs_seed = False
+                except Exception:
+                    needs_seed = True
+            if needs_seed:
+                records = adapter.records_from_now(symbols=[symbol], trace_id=f"bootstrap-dev-paper-{symbol}")
+                self.snapshot_store.append_normalized_records(
+                    records,
+                    ingest_run_id=f"bootstrap-run-{uuid.uuid4().hex[:8]}",
+                    observed_at=now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                )
+
     def _ensure_connector(self, plan: ProvisionedConnectorPlan, *, dry_run: bool) -> tuple[str, dict[str, Any]]:
         connector_id = plan.connector.connector_id
         desired_fetch = self.connector_store.normalize_fetch_config(plan.fetch)
@@ -536,6 +610,8 @@ class SourceProvisioningReconciler:
                 return "would_create", {"connector_id": connector_id}
             stored = self.connector_store.upsert_config(plan.connector, plan.fetch)
             self.manager.upsert_connector(stored.connector)
+            if is_dev_environment() and connector_id == DEV_PAPER_SIMULATION_CONNECTOR_ID:
+                self._ensure_dev_paper_snapshot(plan)
             return "created", {"connector_id": connector_id}
 
         if not dry_run:
@@ -543,6 +619,8 @@ class SourceProvisioningReconciler:
         connector_matches = existing.connector.to_dict() == plan.connector.to_dict()
         fetch_matches = dict(existing.fetch) == desired_fetch
         if connector_matches and fetch_matches:
+            if not dry_run and is_dev_environment() and connector_id == DEV_PAPER_SIMULATION_CONNECTOR_ID:
+                self._ensure_dev_paper_snapshot(plan)
             return "verified", {"connector_id": connector_id}
         existing_owner = _reconciliation_owner(existing.connector)
         legacy_adoptable = existing_owner is None and _without_reconciliation(existing.connector) == _without_reconciliation(
@@ -556,6 +634,8 @@ class SourceProvisioningReconciler:
                 }
             stored = self.connector_store.upsert_config(plan.connector, plan.fetch)
             self.manager.upsert_connector(stored.connector)
+            if is_dev_environment() and connector_id == DEV_PAPER_SIMULATION_CONNECTOR_ID:
+                self._ensure_dev_paper_snapshot(plan)
             return "repaired", {
                 "connector_id": connector_id,
                 "reason": "controller_owned_drift" if existing_owner else "adopted_legacy_controller_config",
