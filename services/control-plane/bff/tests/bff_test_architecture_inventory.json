@@ -26,6 +26,11 @@
     "test_ask_001_sessions_contract.py",
     "test_ask_003_committee_lifecycle.py",
     "test_ask_004_memo_publish_contract.py",
+    "test_bff_consol_008_fixture_pack_a.py",
+    "test_bff_consol_009_fixture_pack_b.py",
+    "test_bff_consol_010_fixture_pack_c.py",
+    "test_bff_consol_016_detail_smoke_a.py",
+    "test_bff_consol_017_detail_smoke_b.py",
     "test_bff_performance_ranking_read_model_contract.py",
     "test_bff_v5_loop_sentinel_contract.py",
     "test_cw01_consult_request_contract.py",
@@ -70,7 +75,7 @@
   },
   "main_by_layer": {
     "adapter": 2,
-    "application": 21,
+    "application": 16,
     "composition": 9,
     "hosted": 1,
     "router": 17
@@ -78,8 +83,8 @@
   "disposition_summary": {
     "ALLOWLIST": 15,
     "DECOUPLED": 303,
-    "MIGRATED": 27,
-    "PLANNED": 39
+    "MIGRATED": 32,
+    "PLANNED": 34
   },
   "tests": [
     {
@@ -484,22 +489,22 @@
     {
       "file": "test_bff_consol_008_fixture_pack_a.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "test_bff_consol_009_fixture_pack_b.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "test_bff_consol_010_fixture_pack_c.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
@@ -512,15 +517,15 @@
     {
       "file": "test_bff_consol_016_detail_smoke_a.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "test_bff_consol_017_detail_smoke_b.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
@@ -2771,13 +2776,8 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 29,
+  "live_scan_non_whitelisted_main_importer_ceiling": 24,
   "live_scan_non_whitelisted_main_importers": [
-    "test_bff_consol_008_fixture_pack_a.py",
-    "test_bff_consol_009_fixture_pack_b.py",
-    "test_bff_consol_010_fixture_pack_c.py",
-    "test_bff_consol_016_detail_smoke_a.py",
-    "test_bff_consol_017_detail_smoke_b.py",
     "test_bff_mgmt_ai_persistence_2026_06_03.py",
     "test_bff_mgmt_common_filters.py",
     "test_bff_mgmt_ops_006_operator_actions_contract.py",

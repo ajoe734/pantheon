@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -22,8 +21,9 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.tests.conftest import build_consolidated_cross_cutting_app
+from services.control_plane.bff.tools_integrations.service import SSE_CHANNEL_CATALOG
 
 
 HEADERS = {"Authorization": "Bearer op-2:operator"}
@@ -193,31 +193,11 @@ class FixturePackCTestReadPorts(ReadSurfacePorts):
 
 @contextmanager
 def _fresh_pack_c_client() -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_mcp_servers = dict(bff_main._MCP_SERVER_REGISTRY)
-        original_mcp_tools = dict(bff_main._MCP_TOOL_REGISTRY)
-        original_tools = dict(bff_main._TOOL_REGISTRY)
-        original_skills = dict(bff_main._SKILL_REGISTRY)
-        try:
-            bff_main.read_store = FixturePackCTestReadPorts(
-                allow_local_snapshot_fallback=True,
-            )
-            bff_main._MCP_SERVER_REGISTRY.clear()
-            bff_main._MCP_TOOL_REGISTRY.clear()
-            bff_main._TOOL_REGISTRY.clear()
-            bff_main._SKILL_REGISTRY.clear()
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original_store
-            bff_main._MCP_SERVER_REGISTRY.clear()
-            bff_main._MCP_SERVER_REGISTRY.update(original_mcp_servers)
-            bff_main._MCP_TOOL_REGISTRY.clear()
-            bff_main._MCP_TOOL_REGISTRY.update(original_mcp_tools)
-            bff_main._TOOL_REGISTRY.clear()
-            bff_main._TOOL_REGISTRY.update(original_tools)
-            bff_main._SKILL_REGISTRY.clear()
-            bff_main._SKILL_REGISTRY.update(original_skills)
+    store = FixturePackCTestReadPorts(
+        allow_local_snapshot_fallback=True,
+    )
+    app = build_consolidated_cross_cutting_app(read_surface=store)
+    yield TestClient(app, raise_server_exceptions=False)
 
 
 def _payload_records(payload: dict) -> list[dict]:
@@ -274,7 +254,7 @@ def test_fixture_pack_c_channels_align_with_sse_catalog() -> None:
     payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     channels = payload["datasets"]["channels"]
     for channel_id, channel in channels.items():
-        assert channel_id in bff_main.SSE_CHANNEL_CATALOG
+        assert channel_id in SSE_CHANNEL_CATALOG
         assert channel["sse_topic"] == f"bff.{channel_id}"
 
 

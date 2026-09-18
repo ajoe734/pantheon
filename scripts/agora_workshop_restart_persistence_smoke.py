@@ -17,8 +17,30 @@ from typing import Any, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 BFF_ROOT = ROOT / "services" / "control-plane" / "bff"
-if str(BFF_ROOT) not in sys.path:
-    sys.path.insert(0, str(BFF_ROOT))
+if str(ROOT) in sys.path:
+    sys.path.remove(str(ROOT))
+if str(BFF_ROOT) in sys.path:
+    sys.path.remove(str(BFF_ROOT))
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(BFF_ROOT))
+
+# Isolate agora subpackages so loading durable stores does not eagerly
+# trigger router/worker/fastapi imports in standalone environments.
+if "agora.governance" not in sys.modules:
+    import types
+
+    _gov_pkg = types.ModuleType("agora.governance")
+    _gov_pkg.__path__ = [str(BFF_ROOT / "agora" / "governance")]
+    _gov_pkg.__package__ = "agora.governance"
+    sys.modules["agora.governance"] = _gov_pkg
+
+if "agora.strategy_workshop" not in sys.modules:
+    import types
+
+    _sw_pkg = types.ModuleType("agora.strategy_workshop")
+    _sw_pkg.__path__ = [str(BFF_ROOT / "agora" / "strategy_workshop")]
+    _sw_pkg.__package__ = "agora.strategy_workshop"
+    sys.modules["agora.strategy_workshop"] = _sw_pkg
 
 from agora.governance.store import (  # noqa: E402
     BACKEND_ENV as GOVERNANCE_BACKEND_ENV,
