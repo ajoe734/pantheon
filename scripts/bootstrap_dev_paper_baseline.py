@@ -15,8 +15,10 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -127,6 +129,115 @@ def _post_json(
         raw = response.read()
         body = json.loads(raw.decode("utf-8")) if raw else {}
         return int(response.status), body if isinstance(body, dict) else {}
+
+
+def _get_json(
+    url: str,
+    *,
+    headers: Mapping[str, str] | None = None,
+    timeout_seconds: float = 30,
+) -> tuple[int, dict[str, Any]]:
+    request_headers = {
+        "Accept": "application/json",
+        **dict(headers or {}),
+    }
+    request = urllib.request.Request(
+        url,
+        headers=request_headers,
+        method="GET",
+    )
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout_seconds)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        body = json.loads(raw.decode("utf-8")) if raw else {}
+        return int(exc.code), body if isinstance(body, dict) else {}
+    with response:
+        raw = response.read()
+        body = json.loads(raw.decode("utf-8")) if raw else {}
+        return int(response.status), body if isinstance(body, dict) else {}
+
+
+def ensure_dev_market_snapshot_ready(
+    *,
+    source_ingest_url: str,
+    symbol: str = "SPY",
+    timeout_seconds: float = 60.0,
+    poll_seconds: float = 2.0,
+    request_timeout_seconds: float = 10.0,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Wait until an admissible, fresh market snapshot is available for symbol.
+
+    On a fresh host that has never ingested the dev synthetic connector, this
+    waits for the snapshot to appear and be admissible before paper baseline
+    creation proceeds.
+    The wait is strictly bounded. If timeout expires, it raises BootstrapError
+    explicitly naming the missing market snapshot and reason rather than a
+    generic readback failure.
+    """
+    deadline = monotonic() + timeout_seconds
+    snapshot_url = (
+        f"{source_ingest_url.rstrip('/')}/api/source-ingest/snapshots/latest"
+        f"?symbol={urllib.parse.quote(symbol, safe='')}"
+    )
+    last_reason = "market_snapshot_not_found"
+    last_detail = f"snapshot for {symbol} was not found"
+
+    while True:
+        status, body = _get_json(snapshot_url, timeout_seconds=request_timeout_seconds)
+        if status == 200 and isinstance(body, dict):
+            closes = body.get("closes")
+            if closes and isinstance(closes, Sequence) and not isinstance(closes, (str, bytes)) and len(closes) >= 2:
+                ev_str = str(body.get("event_time") or "")
+                is_fresh = True
+                if ev_str:
+                    try:
+                        ev_dt = datetime.fromisoformat(ev_str.replace("Z", "+00:00"))
+                        now_dt = datetime.now(timezone.utc)
+                        age_sec = (now_dt - ev_dt).total_seconds()
+                        if age_sec > 86400:
+                            is_fresh = False
+                            last_reason = "market_input_stale"
+                            last_detail = f"snapshot event_time {ev_str} is stale ({age_sec:.1f}s > 86400s)"
+                        elif age_sec < 0:
+                            is_fresh = False
+                            last_reason = "market_input_invalid"
+                            last_detail = f"snapshot event_time {ev_str} is in the future"
+                    except Exception as exc:
+                        is_fresh = False
+                        last_reason = "market_input_invalid"
+                        last_detail = f"invalid event_time {ev_str}: {exc}"
+                if is_fresh:
+                    return body
+            else:
+                last_reason = "market_input_insufficient"
+                count = len(closes) if isinstance(closes, Sequence) and not isinstance(closes, (str, bytes)) else 0
+                last_detail = f"snapshot has {count} closes, requires >= 2"
+        elif status == 404:
+            last_reason = "market_snapshot_not_found"
+            last_detail = f"HTTP 404: snapshot for symbol {symbol!r} not found in source-ingest"
+            try:
+                _post_json(
+                    f"{source_ingest_url.rstrip('/')}/api/source-ingest/run-scheduled",
+                    {"max_concurrency": 1},
+                    timeout_seconds=request_timeout_seconds,
+                )
+            except Exception:
+                pass
+        else:
+            last_reason = f"http_{status}"
+            last_detail = f"source-ingest responded with HTTP {status}: {body}"
+
+        if monotonic() >= deadline:
+            raise BootstrapError(
+                f"timed out waiting for admissible market snapshot for symbol {symbol!r}: "
+                f"{last_reason} ({last_detail})"
+            )
+
+        sleep(poll_seconds)
+
 
 
 def _login(base_url: str, *, request_timeout_seconds: float) -> str:
@@ -242,11 +353,30 @@ def ensure_paper_baseline(
     timeout_seconds: float,
     poll_seconds: float,
     request_timeout_seconds: float,
+    source_ingest_url: str | None = None,
+    market_symbol: str = "SPY",
+    market_input_timeout_seconds: float = 60.0,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     assert_dev_paper_boundary()
+    env = environ if environ is not None else os.environ
+    effective_source_url = (
+        source_ingest_url
+        or env.get("SOURCE_MANAGEMENT_API_URL")
+        or env.get("PANTHEON_SOURCE_INGEST_URL")
+    )
+    if effective_source_url:
+        ensure_dev_market_snapshot_ready(
+            source_ingest_url=effective_source_url,
+            symbol=market_symbol,
+            timeout_seconds=market_input_timeout_seconds,
+            poll_seconds=poll_seconds,
+            request_timeout_seconds=request_timeout_seconds,
+            monotonic=monotonic,
+            sleep=sleep,
+        )
     token = _login(base_url, request_timeout_seconds=request_timeout_seconds)
     payload = {
         "name": name,
@@ -496,6 +626,198 @@ def ensure_paper_baseline(
         sleep(poll_seconds)
 
 
+def run_self_tests() -> int:
+    """Run regression self-tests covering market snapshot readiness paths.
+
+    Covers:
+    1. Steady-state path: snapshot is already fresh and admissible -> returns immediately.
+    2. Never-ingested first-run path: 404 initially, triggers run-scheduled, succeeds when fresh snapshot appears.
+    3. Missing snapshot timeout: bounds wait and names missing snapshot symbol and reason code.
+    4. Insufficient closes: < 2 closes is rejected and named.
+    5. Stale snapshot: event_time > 86400s is rejected and named.
+    6. Future snapshot: event_time in future is rejected and named.
+    7. Integration with ensure_paper_baseline under effective_source_url.
+    """
+    from unittest.mock import patch
+
+    this_module = sys.modules[__name__]
+    tests_run = 0
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    valid_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-test-001",
+        "symbol": "SPY",
+        "event_time": now_iso,
+        "observed_at": now_iso,
+        "closes": [500.0, 501.5],
+        "lineage": {"source": "simulation"},
+        "source_ref": "source-ingest://snapshots/snap-test-001",
+    }
+
+    # Test 1: Steady-state path (already fresh)
+    with patch.object(this_module, "_get_json", return_value=(200, valid_snapshot)):
+        res = ensure_dev_market_snapshot_ready(
+            source_ingest_url="http://mock-source:8097",
+            symbol="SPY",
+            timeout_seconds=5.0,
+            poll_seconds=0.01,
+        )
+        assert res["snapshot_id"] == "snap-test-001"
+        assert res["symbol"] == "SPY"
+        assert len(res["closes"]) == 2
+        tests_run += 1
+
+    # Test 2: Never-ingested first-run path (404 initially, then appears)
+    responses_first_run = [
+        (404, {"detail": {"code": "market_snapshot_not_found", "symbol": "SPY"}}),
+        (200, valid_snapshot),
+    ]
+    post_calls = []
+
+    def fake_post_json(url, payload=None, **kwargs):
+        post_calls.append((url, payload))
+        return 200, {"status": "ok"}
+
+    with patch.object(this_module, "_get_json", side_effect=responses_first_run), \
+         patch.object(this_module, "_post_json", side_effect=fake_post_json):
+        res = ensure_dev_market_snapshot_ready(
+            source_ingest_url="http://mock-source:8097",
+            symbol="SPY",
+            timeout_seconds=5.0,
+            poll_seconds=0.01,
+        )
+        assert res["snapshot_id"] == "snap-test-001"
+        assert len(post_calls) >= 1
+        assert "run-scheduled" in post_calls[0][0]
+        tests_run += 1
+
+    # Test 3: Missing snapshot timeout names symbol and reason
+    mock_clock = [0.0]
+
+    def fake_mono():
+        mock_clock[0] += 10.0
+        return mock_clock[0]
+
+    with patch.object(this_module, "_get_json", return_value=(404, {})), \
+         patch.object(this_module, "_post_json", return_value=(200, {})):
+        try:
+            ensure_dev_market_snapshot_ready(
+                source_ingest_url="http://mock-source:8097",
+                symbol="SPY",
+                timeout_seconds=5.0,
+                poll_seconds=0.01,
+                monotonic=fake_mono,
+                sleep=lambda _: None,
+            )
+            raise AssertionError("Expected BootstrapError on missing snapshot timeout")
+        except BootstrapError as exc:
+            assert "symbol 'SPY'" in str(exc), f"Expected symbol in error: {exc}"
+            assert "market_snapshot_not_found" in str(exc), f"Expected reason in error: {exc}"
+            tests_run += 1
+
+    # Test 4: Insufficient closes rejected (< 2 closes)
+    one_close_snapshot = dict(valid_snapshot, closes=[500.0])
+    mock_clock = [0.0]
+    with patch.object(this_module, "_get_json", return_value=(200, one_close_snapshot)):
+        try:
+            ensure_dev_market_snapshot_ready(
+                source_ingest_url="http://mock-source:8097",
+                symbol="SPY",
+                timeout_seconds=5.0,
+                poll_seconds=0.01,
+                monotonic=fake_mono,
+                sleep=lambda _: None,
+            )
+            raise AssertionError("Expected BootstrapError on insufficient closes")
+        except BootstrapError as exc:
+            assert "symbol 'SPY'" in str(exc)
+            assert "market_input_insufficient" in str(exc)
+            tests_run += 1
+
+    # Test 5: Stale snapshot rejected (event_time > 86400s)
+    stale_iso = "2020-01-01T00:00:00Z"
+    stale_snapshot = dict(valid_snapshot, event_time=stale_iso)
+    mock_clock = [0.0]
+    with patch.object(this_module, "_get_json", return_value=(200, stale_snapshot)):
+        try:
+            ensure_dev_market_snapshot_ready(
+                source_ingest_url="http://mock-source:8097",
+                symbol="SPY",
+                timeout_seconds=5.0,
+                poll_seconds=0.01,
+                monotonic=fake_mono,
+                sleep=lambda _: None,
+            )
+            raise AssertionError("Expected BootstrapError on stale snapshot")
+        except BootstrapError as exc:
+            assert "symbol 'SPY'" in str(exc)
+            assert "market_input_stale" in str(exc)
+            tests_run += 1
+
+    # Test 6: Future snapshot rejected
+    future_iso = "2099-01-01T00:00:00Z"
+    future_snapshot = dict(valid_snapshot, event_time=future_iso)
+    mock_clock = [0.0]
+    with patch.object(this_module, "_get_json", return_value=(200, future_snapshot)):
+        try:
+            ensure_dev_market_snapshot_ready(
+                source_ingest_url="http://mock-source:8097",
+                symbol="SPY",
+                timeout_seconds=5.0,
+                poll_seconds=0.01,
+                monotonic=fake_mono,
+                sleep=lambda _: None,
+            )
+            raise AssertionError("Expected BootstrapError on future snapshot")
+        except BootstrapError as exc:
+            assert "symbol 'SPY'" in str(exc)
+            assert "market_input_invalid" in str(exc)
+            tests_run += 1
+
+    # Test 7: Integration in ensure_paper_baseline with effective_source_url
+    dev_env = {
+        "PANTHEON_ENV": "dev",
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID": "op-a",
+        "PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET": "op-sec",
+        "SOURCE_MANAGEMENT_API_URL": "http://source-ingest:8097",
+    }
+    bff_responses = [
+        (200, {"access_token": "token-1", "meta": {"identity": "operator_a"}}),
+        (201, {
+            "data": {"id": "p-1", "state": "paper_running", "capitalMode": "paper"},
+            "meta": {
+                "provisioning_state": "succeeded",
+                "provisioning_step": "done",
+                "runtime_id": "rt-1",
+                "runtime_binding_id": "rb-1",
+                "live_capital_side_effects": False,
+            },
+        }),
+    ]
+    with patch.dict(os.environ, dev_env, clear=True), \
+         patch.object(this_module, "_get_json", return_value=(200, valid_snapshot)), \
+         patch.object(this_module, "_post_json", side_effect=bff_responses):
+        res = ensure_paper_baseline(
+            base_url="http://127.0.0.1:8001",
+            name=DEFAULT_NAME,
+            idempotency_key=DEFAULT_IDEMPOTENCY_KEY,
+            timeout_seconds=30.0,
+            poll_seconds=0.1,
+            request_timeout_seconds=5.0,
+        )
+        assert res["status"] == "ok"
+        assert res["persona_id"] == "p-1"
+        tests_run += 1
+
+    print(json.dumps({
+        "status": "passed",
+        "tests_run": tests_run,
+        "suite": "bootstrap_dev_paper_baseline_self_test",
+    }, indent=2))
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
@@ -504,11 +826,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeout-seconds", type=float, default=420)
     parser.add_argument("--poll-seconds", type=float, default=5)
     parser.add_argument("--request-timeout-seconds", type=float, default=180)
+    parser.add_argument(
+        "--source-ingest-url",
+        default=os.getenv("SOURCE_MANAGEMENT_API_URL", os.getenv("PANTHEON_SOURCE_INGEST_URL", "")),
+        help="Base URL for source ingestion service to verify market snapshot readiness",
+    )
+    parser.add_argument(
+        "--market-symbol",
+        default="SPY",
+        help="Market symbol required for the dev paper baseline",
+    )
+    parser.add_argument(
+        "--market-input-timeout-seconds",
+        type=float,
+        default=60.0,
+        help="Maximum wait time for admissible market snapshot before paper baseline creation",
+    )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="Run self-tests verifying first-run and steady-state bootstrap paths",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.self_test:
+        return run_self_tests()
     try:
         result = ensure_paper_baseline(
             base_url=args.base_url,
@@ -517,6 +862,9 @@ def main(argv: list[str] | None = None) -> int:
             timeout_seconds=max(1, args.timeout_seconds),
             poll_seconds=max(0.1, args.poll_seconds),
             request_timeout_seconds=max(1, args.request_timeout_seconds),
+            source_ingest_url=args.source_ingest_url or None,
+            market_symbol=args.market_symbol,
+            market_input_timeout_seconds=max(1, args.market_input_timeout_seconds),
         )
     except (BootstrapError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(json.dumps({"status": "error", "message": str(exc)}, sort_keys=True), file=sys.stderr)
@@ -527,3 +875,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

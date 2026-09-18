@@ -1,0 +1,76 @@
+{
+  "task_id": "DEV-PAPER-MARKET-INPUT-BOOTSTRAP-CORRECTIVE-001",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "status": "implementation_ready_for_review",
+  "summary": "Fix startup ordering deadlock where dev synthetic market connector dev-paper-us-equity-simulation cannot bootstrap inside a single deploy window. On fresh hosted dev VMs, dev-paper-us-equity-simulation has never ingested; candidate containers boot; paper baseline creates persona/binding; paper_fleet_reconciler sees unadmitted/stale/missing market snapshot and immediately pauses binding; BFF marks provisioning_failed; baseline aborts after ~55s; deploy rolls back containers before background ingest ever completes. Fixed by: (1) adding market_input_bootstrap_grace_seconds (default 120s in dev) to paper_fleet_reconciler so binding pause is deferred while within bootstrap window, (2) ensuring DevPaperUsEquitySimulationAdapter emits >= 2 daily closes (T-1, T) and persona_source_reconciler seeds LatestMarketSnapshotStore on dev reconciliation, (3) adding ensure_dev_market_snapshot_ready in bootstrap_dev_paper_baseline.py to wait for a fresh admissible snapshot before persona creation, with bounded timeout explicitly naming the missing snapshot symbol and reason code upon expiry, (4) setting PANTHEON_MARKET_INPUT_BOOTSTRAP_GRACE_SECONDS in nonprod-deploy.yml, and (5) providing self-contained regression tests covering first-run and steady-state paths.",
+  "root_cause_analysis": {
+    "problem": "Deadlock during nonprod deploy paper baseline verification on fresh dev VM.",
+    "mechanism": [
+      "1. On a fresh host, dev-paper-us-equity-simulation has never ingested, so LatestMarketSnapshotStore has either no entry or an old 09-13 frozen snapshot from prior exercises.",
+      "2. When nonprod-deploy boots candidate containers, bootstrap_dev_paper_baseline.py immediately begins persona creation and runtime binding reservation.",
+      "3. paper_fleet_reconciler evaluated market admission on the newly active binding immediately without any startup grace period. When admission failed, it immediately transitioned binding to paused with market_input_stale/market_input_missing.",
+      "4. BFF persona provisioning detected the paused binding and transitioned to terminal provisioning_failed in ~55s.",
+      "5. The client script aborted with failure, triggering nonprod-deploy rollback and container teardown before source-ingest-scheduler could complete its first tick.",
+      "6. In addition, DevPaperUsEquitySimulationAdapter previously only emitted 1 close, but admit_market_snapshot requires minimum_closes >= 2, which would have rejected the snapshot as market_input_insufficient even when ingested."
+    ]
+  },
+  "code_fix": {
+    "files_changed": [
+      "scripts/bootstrap_dev_paper_baseline.py",
+      "services/source_ingestion/persona_source_reconciler.py",
+      "services/paper_fleet_reconciler/paper_fleet_reconciler.py",
+      ".github/workflows/nonprod-deploy.yml",
+      "docs/deployment/evidence/DEV-PAPER-MARKET-INPUT-BOOTSTRAP-CORRECTIVE-001/evidence.json"
+    ],
+    "details": [
+      "services/paper_fleet_reconciler/paper_fleet_reconciler.py: Added market_input_bootstrap_grace_seconds parameter (default 120s when PANTHEON_ENV=='dev', 0s in test/prod environments or configured by PANTHEON_MARKET_INPUT_BOOTSTRAP_GRACE_SECONDS). If an active binding's market admission check fails within this grace window (0 <= (now - effective_at) < grace_seconds), pause transition is deferred and worker spawn is deferred.",
+      "services/source_ingestion/persona_source_reconciler.py: Extended DevPaperUsEquitySimulationAdapter.records_from_now to emit at least 2 daily closes (T-1, T), satisfying minimum_closes >= 2 in admit_market_snapshot. Added snapshot_store auto-detection in SourceProvisioningReconciler.__init__ and _ensure_dev_paper_snapshot in _ensure_connector to seed fresh simulation records into LatestMarketSnapshotStore if missing, stale, or < 2 closes during dev reconciliation.",
+      "scripts/bootstrap_dev_paper_baseline.py: Added _get_json and ensure_dev_market_snapshot_ready to wait for an admissible snapshot before paper baseline creation when effective_source_url is present. Bounded timeout raises BootstrapError naming missing snapshot symbol and reason code (market_snapshot_not_found, market_input_insufficient, market_input_stale). Added --source-ingest-url, --market-symbol, --market-input-timeout-seconds, and --self-test CLI flags. Built in 7 self-tests.",
+      ".github/workflows/nonprod-deploy.yml: Added PANTHEON_MARKET_INPUT_BOOTSTRAP_GRACE_SECONDS: '120' to the paper_bootstrap step."
+    ]
+  },
+  "verification": {
+    "commands": [
+      "python3 scripts/bootstrap_dev_paper_baseline.py --self-test",
+      "pytest scripts/test_bootstrap_dev_paper_baseline.py",
+      "pytest services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_dev_paper_simulation.py",
+      "pytest services/paper_fleet_reconciler/test_paper_fleet_reconciler.py -k 'not TestRedisFencedLeaderLease'",
+      "python3 -m py_compile scripts/bootstrap_dev_paper_baseline.py services/source_ingestion/persona_source_reconciler.py services/paper_fleet_reconciler/paper_fleet_reconciler.py"
+    ],
+    "results": {
+      "self_tests": "7 passed (steady-state fresh snapshot, never-ingested first-run path, missing snapshot timeout naming symbol & reason, insufficient closes rejection, stale snapshot rejection, future snapshot rejection, integration in ensure_paper_baseline)",
+      "existing_bootstrap_tests": "20 passed in scripts/test_bootstrap_dev_paper_baseline.py",
+      "source_ingestion_tests": "33 passed in test_persona_source_reconciler.py and test_dev_paper_simulation.py",
+      "paper_fleet_reconciler_tests": "60 passed in test_paper_fleet_reconciler.py (2 Redis tests deselected)",
+      "py_compile": "All files compiled cleanly without errors"
+    }
+  },
+  "acceptance_checklist": [
+    {
+      "item": "a first deploy onto a host that has never ingested the dev synthetic connector still reaches a fresh admissible market snapshot before the paper baseline gives up",
+      "status": "met",
+      "evidence": "ensure_dev_market_snapshot_ready waits for the snapshot to be ready and triggers scheduled ingest; SourceProvisioningReconciler seeds fresh simulation records into LatestMarketSnapshotStore; paper_fleet_reconciler grants 120s bootstrap grace period preventing premature binding pause."
+    },
+    {
+      "item": "the wait for that first ingest is bounded and its expiry names the missing snapshot rather than a generic readback failure",
+      "status": "met",
+      "evidence": "ensure_dev_market_snapshot_ready enforces strict timeout (default 60s) and raises BootstrapError with 'timed out waiting for admissible market snapshot for symbol {symbol}: {last_reason} ({last_detail})'."
+    },
+    {
+      "item": "no fabricated or backdated snapshot is written to satisfy the freshness rule",
+      "status": "met",
+      "evidence": "DevPaperUsEquitySimulationAdapter uses genuine simulation records computed relative to the current clock with is_real=false, provenance=simulation, and actual daily close timestamps."
+    },
+    {
+      "item": "the paper baseline step completes end to end on hosted dev under lease",
+      "status": "met_pending_deploy",
+      "evidence": "Code paths verified and covered by unit/integration tests; paper_bootstrap step in nonprod-deploy configured with 120s grace period; requires the deploy run to execute under lease on hosted dev."
+    },
+    {
+      "item": "regression tests cover the never-ingested first-run path and the already-fresh steady-state path",
+      "status": "met",
+      "evidence": "scripts/bootstrap_dev_paper_baseline.py --self-test exercises Test 1 (already-fresh steady-state path) and Test 2 (never-ingested first-run 404 path), along with timeout, stale, insufficient closes, and integration paths (7 tests total)."
+    }
+  ]
+}
