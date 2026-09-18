@@ -100,6 +100,7 @@ from multi_repo_registry import (
     repositories,
     resolve_repository,
     task_primary_repository_id,
+    task_repository_slug_and_default_branch,
     validate_task_repository_scope,
 )
 from provider_permissions import probe_provider_auth
@@ -3529,6 +3530,121 @@ def command_runtime_dispatch_block_reason(state: Mapping[str, Any]) -> str | Non
     return f"Command runtime integrity is unhealthy: {detail}"
 
 
+# OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a task in ``review`` status can carry
+# a frozen PR binding that has already gone DIRTY (merge-conflicting with its
+# base) on GitHub by the time this cycle drains its queued
+# ``review_ready_dispatch`` intent. Dispatch admission (rewrite/dispatch_
+# admission.py) is deliberately pure/no-I/O and cannot see this; the canonical
+# review-merge gate (scripts/git/task_review_merge_gate.py /
+# github_review_bridge.py) does see it, but only after a reviewer worker is
+# already running and tries to act -- by then its rejection looked like an
+# abrupt exit to the lease reaper, which triggered lost-lease recovery and a
+# redispatch storm (2026-09-17, tasks CB02/CB05/CB07). This live check runs
+# once more, right before ``process_queue`` would launch the reviewer, and
+# withholds that one launch non-terminally (queue record stays ``pending``,
+# no task-state transition, no generation bump) until the PR clears.
+REVIEW_PR_MERGE_STATE_CACHE_TTL_SECONDS = 30.0
+_REVIEW_PR_MERGE_STATE_CACHE: dict[tuple[str, int], tuple[str, float]] = {}
+
+
+def review_bound_pr_reference(
+    config: dict[str, Any], task: Mapping[str, Any]
+) -> tuple[str, int] | None:
+    """Resolve the exact GitHub ``owner/repo`` slug and PR number a
+    ``review``-status task is bound to, or ``None`` when there is no live PR
+    binding or no configured GitHub slug for the task's repository -- callers
+    must fail open (skip the live check, no hold) rather than guess.
+    """
+
+    binding = task.get("review_binding")
+    if not isinstance(binding, Mapping):
+        return None
+    try:
+        pr = int(binding.get("pr") or 0)
+    except (TypeError, ValueError):
+        return None
+    if pr <= 0:
+        return None
+    resolved = task_repository_slug_and_default_branch(config, task)
+    if not resolved:
+        return None
+    repository_slug_value, _default_branch = resolved
+    if not repository_slug_value:
+        return None
+    return repository_slug_value, pr
+
+
+def live_review_pr_merge_state(
+    config: dict[str, Any],
+    task: Mapping[str, Any],
+    *,
+    cache: dict[tuple[str, int], tuple[str, float]] | None = None,
+    now: float | None = None,
+) -> str | None:
+    """Best-effort live GitHub ``mergeStateStatus`` for a task's bound review PR.
+
+    Reuses the same ``gh pr view --json`` plumbing as the canonical review
+    gate (``scripts/git/github_review_bridge.GhJsonRunner``). Any resolution
+    or transport failure fails open (returns ``None``) so a missing ``gh``
+    binary, an unauthenticated sandbox, or an unconfigured repository never
+    blocks or changes existing dispatch behavior -- this is strictly an
+    additional hold on top of the existing pure admission predicate, never a
+    new requirement for it. Results are cached per ``(repository, pr)`` for a
+    short TTL so a busy review queue does not shell out to ``gh`` on every
+    dispatch-loop tick for the same PR.
+    """
+
+    reference = review_bound_pr_reference(config, task)
+    if reference is None:
+        return None
+    repository, pr = reference
+    cache = _REVIEW_PR_MERGE_STATE_CACHE if cache is None else cache
+    now_ts = time.monotonic() if now is None else now
+    cache_key = (repository, pr)
+    cached = cache.get(cache_key)
+    if cached is not None and (now_ts - cached[1]) < REVIEW_PR_MERGE_STATE_CACHE_TTL_SECONDS:
+        return cached[0]
+    try:
+        scripts_git = THIS_DIR.parent / "scripts" / "git"
+        path_str = str(scripts_git)
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
+        import github_review_bridge
+
+        payload = github_review_bridge.GhJsonRunner().run_json(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr),
+                "--repo",
+                repository,
+                "--json",
+                "number,mergeStateStatus,mergeable",
+            ]
+        )
+    except Exception:
+        return None
+    if not isinstance(payload, Mapping) or int(payload.get("number") or 0) != pr:
+        return None
+    merge_state = str(payload.get("mergeStateStatus") or "").strip().upper()
+    cache[cache_key] = (merge_state, now_ts)
+    return merge_state
+
+
+def review_pr_merge_state_is_conflicted(merge_state: str | None) -> bool:
+    """True only for a genuine merge-conflict signal, never a transient one.
+
+    ``UNKNOWN``/``BEHIND``/``UNSTABLE``/``BLOCKED`` are not conflicts -- GitHub
+    emits those for a stale mergeability cache, pending required checks, or an
+    out-of-date base, none of which this hold is meant to catch. Only
+    ``DIRTY`` (the same signal ``github_review_bridge`` rejects review
+    admission for) trips it.
+    """
+
+    return str(merge_state or "").strip().upper() == "DIRTY"
+
+
 def process_queue(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -3739,6 +3855,21 @@ def process_queue(
                                 health_refresh_demand.append(entry)
             changed = True
             continue
+        if str(event.get("reason") or "") == REASON_REVIEW_READY:
+            review_task = task_map.get(task_id)
+            merge_state = (
+                live_review_pr_merge_state(config, review_task)
+                if isinstance(review_task, Mapping)
+                else None
+            )
+            if review_pr_merge_state_is_conflicted(merge_state):
+                reference = review_bound_pr_reference(config, review_task)
+                pr_label = f"{reference[0]}#{reference[1]}" if reference else task_id
+                record["status"] = "pending"
+                record["last_wait_reason"] = f"review_pr_dirty:{pr_label}:{merge_state}"
+                record["review_pr_dirty_hold_at"] = utc_now()
+                changed = True
+                continue
         request = build_request(config, event, agent_id_override=endpoint_id)
         workspace_ok, workspace_message = prepare_worker_workspace(
             config,
@@ -5053,6 +5184,20 @@ def update_worker_runtime_markers(worker: dict[str, Any]) -> bool:
             changed = True
         if status_payload.get("signal") and worker.get("runner_signal") != status_payload.get("signal"):
             worker["runner_signal"] = status_payload.get("signal")
+            changed = True
+        if status_payload.get("review_pr_dirty_hold") and not worker.get("review_pr_dirty_hold"):
+            # OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a reviewer worker records
+            # this itself (worker_runner.py) the moment it discovers its bound
+            # PR has gone DIRTY mid-run and stops gracefully. Carrying the flag
+            # and reason into the durable worker record is what lets the poll
+            # loop below recognize the exit as a governed hold rather than a
+            # missing/crashed process, without reading the worker's own
+            # ephemeral status file a second time.
+            worker["review_pr_dirty_hold"] = True
+            changed = True
+        review_pr_dirty_reason = status_payload.get("review_pr_dirty_reason")
+        if review_pr_dirty_reason and worker.get("review_pr_dirty_reason") != review_pr_dirty_reason:
+            worker["review_pr_dirty_reason"] = review_pr_dirty_reason
             changed = True
     return changed
 
@@ -12218,29 +12363,37 @@ def poll_workers(
                 ):
                     changed = True
                     continue
+            reason_kind = (
+                "review_pr_dirty_hold"
+                if worker.get("review_pr_dirty_hold")
+                else "worker_lease_expired"
+                if lease_expired
+                else "worker_process_missing"
+            )
             reason = (
-                record_delivery_health_for_reaped_worker(config, state, worker)
-                if lease_expired
-                else None
-            ) or (
-                (
-                    "Worker lease expired after observed work progress became stale."
-                    if worker_lease_requires_work_progress(config)
-                    and not worker_lease_progress_is_fresh(config, worker, now)
-                    else "Worker lease expired after heartbeat became stale."
+                str(worker.get("review_pr_dirty_reason") or "")
+                or "Reviewer worker paused: bound review PR reports a merge conflict."
+                if worker.get("review_pr_dirty_hold")
+                else (
+                    record_delivery_health_for_reaped_worker(config, state, worker)
+                    if lease_expired
+                    else None
+                ) or (
+                    (
+                        "Worker lease expired after observed work progress became stale."
+                        if worker_lease_requires_work_progress(config)
+                        and not worker_lease_progress_is_fresh(config, worker, now)
+                        else "Worker lease expired after heartbeat became stale."
+                    )
+                    if lease_expired
+                    else "Worker process disappeared while its canonical lease was active."
                 )
-                if lease_expired
-                else "Worker process disappeared while its canonical lease was active."
             )
             recovered = recover_lost_worker_lease(
                 config,
                 state,
                 worker,
-                reason_kind=(
-                    "worker_lease_expired"
-                    if lease_expired
-                    else "worker_process_missing"
-                ),
+                reason_kind=reason_kind,
                 reason=reason,
                 status=status_snapshot,
             )
@@ -12250,11 +12403,7 @@ def poll_workers(
                     poll_counts,
                     state,
                     worker,
-                    reason_kind=(
-                        "worker_lease_expired"
-                        if lease_expired
-                        else "worker_process_missing"
-                    ),
+                    reason_kind=reason_kind,
                 )
             continue
         if observation["stop"]:
@@ -13151,7 +13300,18 @@ def recover_lost_worker_lease(
     # of whether legacy rows carry waiting_for/blocker/handoff detail. Record
     # the lost lease as held and release the active recovery fence; after the
     # block is resolved the normal planner/availability lane owns continuation.
-    held = str(task.get("status") or "").strip().lower() == "blocked"
+    #
+    # OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a reviewer's own governed
+    # ``review_pr_dirty_hold`` exit is the same shape of expected, non-error
+    # outcome -- the task is still genuinely in review, nothing failed, and
+    # redispatching a reviewer onto the same DIRTY PR immediately would only
+    # reproduce the original storm. Hold it exactly like a blocked task until
+    # process_queue's own live PR check (see ``live_review_pr_merge_state``)
+    # sees the PR clear and lets ordinary review_ready_dispatch resume.
+    held = (
+        str(task.get("status") or "").strip().lower() == "blocked"
+        or reason_kind == "review_pr_dirty_hold"
+    )
     receipt = build_lost_lease_receipt(
         config,
         worker,
@@ -13948,10 +14108,22 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             # The post-lock confirmer owns the signal path. Do not classify the
             # still-live worker as terminal during this admission transaction.
             continue
-        reason = (
-            "Worker lease expired during supervisor boot reconciliation."
+        boot_reason_kind = (
+            "review_pr_dirty_hold"
+            if worker.get("review_pr_dirty_hold")
+            else "worker_lease_expired"
             if expired_lease
-            else "Worker process missing during supervisor boot reconciliation."
+            else "worker_process_missing"
+        )
+        reason = (
+            str(worker.get("review_pr_dirty_reason") or "")
+            or "Reviewer worker paused: bound review PR reports a merge conflict."
+            if worker.get("review_pr_dirty_hold")
+            else (
+                "Worker lease expired during supervisor boot reconciliation."
+                if expired_lease
+                else "Worker process missing during supervisor boot reconciliation."
+            )
         )
         task = task_map.get(str(worker.get("task_id") or ""))
         # A supervisor restart can observe the owner process only after it has
@@ -14003,11 +14175,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             config,
             state,
             worker,
-            reason_kind=(
-                "worker_lease_expired"
-                if expired_lease
-                else "worker_process_missing"
-            ),
+            reason_kind=boot_reason_kind,
             reason=reason,
             status=status_snapshot,
         ):
@@ -14015,11 +14183,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 counts,
                 state,
                 worker,
-                reason_kind=(
-                    "worker_lease_expired"
-                    if expired_lease
-                    else "worker_process_missing"
-                ),
+                reason_kind=boot_reason_kind,
             )
             changed = True
         continue

@@ -887,6 +887,147 @@ def _record_dispatch_binding_revoked(
             print(f"worker_runner: warning: failed to write revocation to activity log: {e}", file=sys.stderr)
 
 
+def _live_review_pr_merge_state_for_task(
+    coordination_root: Path, task_id: str
+) -> tuple[str, int, str] | None:
+    """Best-effort live GitHub ``(repository, pr, mergeStateStatus)`` for a
+    reviewer's bound PR.
+
+    OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a reviewer worker's own ``approve``
+    (and ``reopen``) attempt is rejected by the canonical review-merge gate
+    (scripts/git/github_review_bridge.py) the moment its bound PR goes DIRTY,
+    but that rejection happens inside the wrapped agent process, invisible to
+    this wrapper. Rather than parse the child's output, this polls the same
+    live fact directly so a running reviewer worker can stop itself through a
+    governed path instead of failing/exiting abruptly and being reaped as a
+    lost lease. Any resolution or transport failure fails open (returns
+    ``None``): a missing ``gh`` binary, an unconfigured repository, or a task
+    with no live PR binding must never stop or hold a worker that would
+    otherwise run normally.
+    """
+
+    try:
+        task = _get_task_record(coordination_root, task_id)
+    except Exception:
+        return None
+    if not isinstance(task, dict):
+        return None
+    binding = task.get("review_binding")
+    if not isinstance(binding, dict):
+        return None
+    try:
+        pr = int(binding.get("pr") or 0)
+    except (TypeError, ValueError):
+        return None
+    if pr <= 0:
+        return None
+    try:
+        import multi_repo_registry  # local import: only needed for this live check
+
+        resolved = multi_repo_registry.task_repository_slug_and_default_branch(
+            worker_runtime_config(coordination_root), task
+        )
+    except Exception:
+        return None
+    if not resolved:
+        return None
+    repository, _default_branch = resolved
+    if not repository:
+        return None
+    try:
+        # ``scripts/git`` is tooling that ships beside this wrapper's own
+        # checkout (THIS_DIR is always ``<checkout>/.orchestrator``), not
+        # necessarily beside PANTHEON_STATUS_ROOT -- the two can be separate
+        # checkouts (see the command/status root split enforced in ``main``).
+        scripts_git = THIS_DIR.parent / "scripts" / "git"
+        path_str = str(scripts_git)
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
+        import github_review_bridge
+
+        payload = github_review_bridge.GhJsonRunner().run_json(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr),
+                "--repo",
+                repository,
+                "--json",
+                "number,mergeStateStatus,mergeable",
+            ]
+        )
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or int(payload.get("number") or 0) != pr:
+        return None
+    merge_state = str(payload.get("mergeStateStatus") or "").strip().upper()
+    return repository, pr, merge_state
+
+
+def _review_pr_merge_state_is_conflicted(merge_state: str | None) -> bool:
+    """Only a genuine merge-conflict signal, matching supervisor.py's twin.
+
+    ``UNKNOWN``/``BEHIND``/``UNSTABLE``/``BLOCKED`` are not conflicts; only
+    ``DIRTY`` (the same signal ``github_review_bridge`` rejects admission for)
+    trips it.
+    """
+
+    return str(merge_state or "").strip().upper() == "DIRTY"
+
+
+def _record_review_pr_dirty_hold(
+    *,
+    status: dict[str, Any],
+    status_path: Path,
+    coordination_root: Path | None,
+    task_id: str,
+    run_id: str,
+    agent: str,
+    merge_state: str,
+    pr_reference: str,
+) -> None:
+    """Mark this reviewer's exit as a governed, non-terminal hold.
+
+    This is the sibling of ``_record_dispatch_binding_revoked``: an explicit,
+    named exit path -- not an uncaught exception or a bare process exit --
+    that the supervisor's poll loop (``update_worker_runtime_markers`` /
+    ``recover_lost_worker_lease`` in supervisor.py) recognizes and holds
+    rather than reaping as a lost lease and redispatching into the same
+    DIRTY PR.
+    """
+
+    wait_reason = f"review_pr_dirty:{pr_reference}:{merge_state}"
+    status["review_pr_dirty_hold"] = True
+    status["review_pr_dirty_reason"] = wait_reason
+    status["review_pr_merge_state"] = merge_state
+
+    try:
+        write_json(status_path, status)
+    except Exception as e:
+        print(f"worker_runner: warning: failed to write dirty-PR hold status to {status_path}: {e}", file=sys.stderr)
+
+    if coordination_root is not None:
+        try:
+            config = worker_runtime_config(coordination_root)
+            activity_entry = {
+                "type": "worker_review_pr_dirty_hold",
+                "task_id": task_id,
+                "run_id": run_id,
+                "agent": agent,
+                "merge_state": merge_state,
+                "wait_reason": wait_reason,
+                "message": (
+                    f"Reviewer worker for task {task_id} paused non-terminally: "
+                    f"bound PR ({pr_reference}) reports mergeStateStatus={merge_state}. "
+                    "Not a worker failure; dispatch resumes once the PR clears."
+                ),
+            }
+            _write_activity_log(config, activity_entry)
+        except Exception as e:
+            print(f"worker_runner: warning: failed to write dirty-PR hold to activity log: {e}", file=sys.stderr)
+
+
 def validate_promotion_admission(coordination_root: Path, command_runtime: dict[str, str], task_id: str | None = None) -> None:
     state = promotion_state.load_runtime_state(worker_runtime_config(coordination_root))
     if not promotion_state.promotion_launch_allowed(state, command_runtime, task_id):
@@ -1288,6 +1429,7 @@ def main(argv: list[str] | None = None) -> int:
         first_transient_error_at: float | None = None
         transient_failure_threshold = int(os.environ.get("PANTHEON_BINDING_TRANSIENT_ERROR_THRESHOLD", 3))
         transient_grace_window = float(os.environ.get("PANTHEON_BINDING_TRANSIENT_GRACE_SECONDS", 15.0))
+        governed_hold_reason: str | None = None
         while True:
             if direct_exit_code is None:
                 direct_exit_code = child.poll()
@@ -1346,6 +1488,40 @@ def main(argv: list[str] | None = None) -> int:
                             child.send_signal(signal.SIGTERM)
                         except OSError:
                             pass
+                elif binding_current and active_role == "reviewer":
+                    # OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: the reviewer's own
+                    # approve/reopen attempt is rejected by the canonical
+                    # review-merge gate the instant its bound PR goes DIRTY,
+                    # but that rejection happens inside the wrapped agent
+                    # process, invisible to this wrapper. Poll the same live
+                    # fact here so a running reviewer can stop itself through
+                    # the governed path below instead of failing/exiting
+                    # abruptly and being reaped as a lost lease.
+                    pr_state = _live_review_pr_merge_state_for_task(coordination_root, task_id)
+                    merge_state = pr_state[2] if pr_state is not None else None
+                    if _review_pr_merge_state_is_conflicted(merge_state):
+                        repository, pr_number, _ = pr_state
+                        _record_review_pr_dirty_hold(
+                            status=status,
+                            status_path=status_path,
+                            coordination_root=coordination_root,
+                            task_id=task_id,
+                            run_id=args.run_id,
+                            agent=agent,
+                            merge_state=str(merge_state),
+                            pr_reference=f"{repository}#{pr_number}",
+                        )
+                        governed_hold_reason = "review_pr_dirty_hold"
+                        terminating_signal = signal.SIGTERM
+                        signal_received_at = time.monotonic()
+                        status["signal"] = signal.SIGTERM
+                        try:
+                            os.killpg(child.pid, signal.SIGTERM)
+                        except OSError:
+                            try:
+                                child.send_signal(signal.SIGTERM)
+                            except OSError:
+                                pass
 
             # Normal path: child exited and we aren't terminating
             if direct_exit_code is not None and terminating_signal is None:
@@ -1382,7 +1558,7 @@ def main(argv: list[str] | None = None) -> int:
                     exit_code = 128 + terminating_signal
                     status["exit_code"] = exit_code
                     status["finished_at"] = utc_now()
-                    publish("failed")
+                    publish(governed_hold_reason or "failed")
                     return exit_code
 
                 # Group is still alive, check 5-second deadline
@@ -1401,7 +1577,7 @@ def main(argv: list[str] | None = None) -> int:
                     exit_code = 128 + terminating_signal
                     status["exit_code"] = exit_code
                     status["finished_at"] = utc_now()
-                    publish("failed")
+                    publish(governed_hold_reason or "failed")
                     return exit_code
 
             if time.monotonic() >= next_heartbeat:

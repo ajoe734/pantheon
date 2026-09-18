@@ -4544,6 +4544,148 @@ class DurableQueueContractTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
         launch.assert_called_once()
 
+    def _review_ready_event(self, *, event_id: str) -> tuple[dict[str, object], dict[str, object]]:
+        task = task_fixture(status="review", reviewer="Codex2")
+        # ``delivery_binding`` (frozen handoff contract) is what pure
+        # admission requires for REVIEW_READY eligibility; ``review_binding``
+        # (pr/head/base only) is the smaller, live-GitHub-facing binding this
+        # task's live PR-mergeability check resolves from -- both name the
+        # same PR #42 here.
+        task["delivery_binding"] = review_admission_binding()
+        task["review_binding"] = {
+            "pr": 42,
+            "head_sha": "a" * 40,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        event = supervisor.build_dispatch_event(
+            task, "Codex2", supervisor.REASON_REVIEW_READY, {"TASK-1": task}
+        )
+        event.update(
+            {
+                "event_id": event_id,
+                "event_key": event["key"],
+                "target_agent": "codex2",
+                "target_display_name": "Codex2",
+                "delivery_endpoint_id": "codex2",
+                "message": "wake",
+            }
+        )
+        return task, event
+
+    def test_review_ready_dispatch_withheld_when_bound_pr_is_dirty(self) -> None:
+        """OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a task in ``review`` whose
+        bound PR already reports ``mergeStateStatus=DIRTY`` must not be
+        dispatched to a reviewer -- launching one only reproduces the
+        2026-09-17 CB02/CB05/CB07 storm (a reviewer whose approve/reopen is
+        rejected by the canonical merge gate, misclassified as a lost lease).
+        The hold must be non-terminal: the queue event stays ``pending`` with
+        a named wait reason, not ``completed``/``failed``.
+        """
+
+        task, event = self._review_ready_event(event_id="evt-review-dirty")
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
+        with_queue_intents(state, event)
+        with (
+            mock.patch.object(supervisor, "queue_events", return_value=[event]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "live_review_pr_merge_state", return_value="DIRTY"
+            ),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError(
+                    "must not dispatch a reviewer onto a DIRTY PR"
+                ),
+            ),
+        ):
+            changed = supervisor.process_queue(self.config, state)
+        self.assertTrue(changed)
+        record = state["queue"]["events"]["evt-review-dirty"]
+        self.assertEqual(record["status"], "pending")
+        self.assertIn("review_pr_dirty", record["last_wait_reason"])
+        self.assertIn("DIRTY", record["last_wait_reason"])
+        self.assertIn("42", record["last_wait_reason"])
+
+    def test_review_ready_dispatch_resumes_once_pr_is_mergeable_again(self) -> None:
+        """The withheld dispatch above must resume with no leftover
+        contamination once the live check reports MEREABLE again."""
+
+        task, event = self._review_ready_event(event_id="evt-review-clear")
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
+        with_queue_intents(state, event)
+        # Simulate a previous cycle's hold still recorded on the row.
+        state["queue"]["events"]["evt-review-clear"]["status"] = "pending"
+        state["queue"]["events"]["evt-review-clear"]["last_wait_reason"] = "review_pr_dirty:ajoe734/pantheon#42:DIRTY"
+        request = supervisor.DeliveryRequest(
+            agent_id="codex2",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="TASK-1",
+            reason=supervisor.REASON_REVIEW_READY,
+            metadata={"workspace_path": "/tmp/task-1"},
+        )
+        with (
+            mock.patch.object(supervisor, "queue_events", return_value=[event]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "live_review_pr_merge_state", return_value="MERGEABLE"
+            ),
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(
+                supervisor, "prepare_worker_workspace", return_value=(True, None)
+            ),
+            mock.patch.object(
+                supervisor, "check_worker_tree_clean", return_value=(True, None)
+            ),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-1", {"auto_delivered": True}),
+            ) as launch,
+            mock.patch.object(
+                supervisor, "sync_dispatched_task_status", return_value=True
+            ),
+        ):
+            changed = supervisor.process_queue(self.config, state)
+        self.assertTrue(changed)
+        launch.assert_called_once()
+        self.assertEqual(
+            state["queue"]["events"]["evt-review-clear"]["status"], "started"
+        )
+
+    def test_live_review_pr_merge_state_fails_open_without_binding(self) -> None:
+        """No ``review_binding`` (or no configured repository slug) must
+        never attempt a live GitHub call -- it must simply return None so an
+        ordinary owner/reviewer dispatch is never held on an unrelated task.
+        """
+
+        task = task_fixture(status="review", reviewer="Codex2")
+        self.assertIsNone(supervisor.live_review_pr_merge_state(self.config, task))
+        self.assertFalse(
+            supervisor.review_pr_merge_state_is_conflicted(
+                supervisor.live_review_pr_merge_state(self.config, task)
+            )
+        )
+
+    def test_review_pr_merge_state_is_conflicted_only_for_dirty(self) -> None:
+        """UNKNOWN/BEHIND/UNSTABLE/BLOCKED are transient GitHub signals, not
+        merge conflicts, and must never trip this hold."""
+
+        for benign in ("UNKNOWN", "BEHIND", "UNSTABLE", "BLOCKED", "CLEAN", "", None):
+            with self.subTest(merge_state=benign):
+                self.assertFalse(
+                    supervisor.review_pr_merge_state_is_conflicted(benign)
+                )
+        self.assertTrue(supervisor.review_pr_merge_state_is_conflicted("DIRTY"))
+        self.assertTrue(supervisor.review_pr_merge_state_is_conflicted("dirty"))
+
     def test_launch_auth_retry_reuses_health_admission_and_pending_intent(self) -> None:
         state = with_healthy_delivery_health(self.config, {"workers": {}, "queue": {"events": {}}})
         with_queue_intents(state, self.event)
