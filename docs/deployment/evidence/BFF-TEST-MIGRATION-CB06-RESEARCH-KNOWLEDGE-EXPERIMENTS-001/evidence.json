@@ -3,10 +3,10 @@
   "task_id": "BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
   "branch": "task/BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
   "owner": "Antigravity",
-  "reviewer": "Antigravity2",
+  "reviewer": "Codex",
   "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
   "delivery_state": "ready_for_review",
-  "base_sha": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
+  "base_sha": "c1f376851ce57e98009ca6a384c52ac5b14105f8",
   "depends_on": [
     "BFF-TEST-MIGRATION-REPARTITION-PLAN-002"
   ],
@@ -42,8 +42,8 @@
     "main_imports_after": 0,
     "sys_path_mutations_before": 13,
     "sys_path_mutations_after": 0,
-    "ceiling_before": 49,
-    "ceiling_after": 36
+    "ceiling_before": 24,
+    "ceiling_after": 11
   },
   "test_summary": {
     "target_suites_count": 13,
@@ -57,7 +57,7 @@
     "services/control-plane/bff/tests/test_jobs_source_owner_contract.py": {
       "sha256": "4731e6746c9aafb4eeb6da32db493cd1dd4fd812af9e5171e4fa7486d97a8181",
       "bytes": 15400,
-      "lines": 350,
+      "lines": 349,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -65,7 +65,7 @@
     "services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py": {
       "sha256": "229d3662652efdbeaf97df942155f4ab0ea42c4f50dd71ae2cbedfa732996196",
       "bytes": 3256,
-      "lines": 82,
+      "lines": 81,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -73,15 +73,15 @@
     "services/control-plane/bff/tests/test_bff_knowledge_inbox.py": {
       "sha256": "a46756c1c3feda6db6c49e6d15412b62e219b72081d83f6d6a633e231c6f5767",
       "bytes": 7499,
-      "lines": 201,
+      "lines": 200,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw01_research_ticket_contract.py": {
-      "sha256": "2faeb066b70666af61b0dda94cfbfec3ad087ba9c36c65f3e943c6ffa9810adc",
-      "bytes": 16416,
-      "lines": 449,
+      "sha256": "c3ae3537ea26681744b86395a0027e216112b23d7491e17640446c940bc1fe7f",
+      "bytes": 16750,
+      "lines": 457,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -89,7 +89,7 @@
     "services/control-plane/bff/test_rw02_search_contract.py": {
       "sha256": "81ec4b90c0ca2a8f3892b1b9b2043cff6b0503ddd9a8ef22df74c9321d91ccee",
       "bytes": 17482,
-      "lines": 420,
+      "lines": 419,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -97,7 +97,7 @@
     "services/control-plane/bff/test_rw03_analyze_contract.py": {
       "sha256": "d3396d1212e704eb3656937511caa7e5846e97d5b4a273c8bd794cb8e582786a",
       "bytes": 13046,
-      "lines": 328,
+      "lines": 327,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -105,31 +105,31 @@
     "services/control-plane/bff/test_rw04_experiment_launch_contract.py": {
       "sha256": "8d9243e7cdc7c9dae86780a1bd0da1f15741149ce7533e6e34d9fa87114e0375",
       "bytes": 23648,
-      "lines": 592,
+      "lines": 591,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw05_artifact_compare_contract.py": {
-      "sha256": "79a2748c06946391ee22189a8a96417d0499e102d60bbeb9fba80ef2a5f1250b",
-      "bytes": 17639,
-      "lines": 469,
+      "sha256": "1ce300c2098e0152a26027c9e9614c466a09029a5677a68cebcc03ae69e92d1b",
+      "bytes": 17283,
+      "lines": 455,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/tests/test_bff_b2_004_research_search.py": {
-      "sha256": "dc9c8b3437ac2bdd87fb789a6866e7f5e1c0c934ed9fbb0a02853e1ff35522d9",
-      "bytes": 22948,
-      "lines": 569,
+      "sha256": "53a31f54a5640ebe58e7ed620e7055ae4c5c4728be8b775de85da57492835915",
+      "bytes": 23087,
+      "lines": 570,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/tests/test_console_research_projection.py": {
-      "sha256": "4af9968b92652022f779fab27e6822fb5259e5c4d82018825994eb81a6305669",
-      "bytes": 17685,
-      "lines": 427,
+      "sha256": "e1703262d56d4aefeb59ca307041c8f661e5f3f34c3365804750cb0ce7b624a0",
+      "bytes": 17530,
+      "lines": 423,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -137,7 +137,7 @@
     "services/control-plane/bff/test_exp002_bff_research_experiments_contract.py": {
       "sha256": "1c427477684d2e0e29ef7c757b60bb70699fdf3b2f75ee43c5c01fa48f959b62",
       "bytes": 20471,
-      "lines": 487,
+      "lines": 486,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -145,7 +145,7 @@
     "services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py": {
       "sha256": "7419159d864a27674105c4e9562448fed388361db51300b9d21af3a2c55ace68",
       "bytes": 12140,
-      "lines": 319,
+      "lines": 318,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -153,24 +153,24 @@
     "services/control-plane/bff/test_research_oss_preactivation_contract.py": {
       "sha256": "e40a0b2eeaac41e870dcccb8edc9d1465da0fe0446db8d9505f8ad4eee5ecce1",
       "bytes": 24795,
-      "lines": 590,
+      "lines": 589,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     }
   },
-  "rebase_reconciliation_note": "Origin/dev advanced to e7db147f6a31f4af5754de7943d6edc4e08d3e4b with sibling batches CB08 and others merged, progressing the ceiling from 55 to 49. Merging origin/dev into this branch resulted in a content conflict in bff_test_architecture_inventory.json. The conflict was resolved by merging dev's 28 migrated suites with this batch's 13 migrated suites (total 41), recomputing aggregates directly from the merged tests[] entries and running a live AST scan, which confirmed 36 live non-whitelisted main importers (49 - 13 = 36). All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (134 passed total).",
+  "rebase_reconciliation_note": "Origin/dev advanced to c1f376851ce57e98009ca6a384c52ac5b14105f8. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (134 passed total).",
   "decoupling_approach": {
     "test_jobs_source_owner_contract": "Mounted create_jobs_router on isolated FastAPI app with fake JobReadPort injected into test client instead of bff_main.",
     "test_pkt016_knowledge_workbench_contract": "Mounted create_research_router on isolated FastAPI app with knowledge read ports fixture and in-memory ports double.",
     "test_bff_knowledge_inbox": "Mounted create_knowledge_router on isolated FastAPI app with knowledge_read_port_fixtures in-memory double.",
-    "test_rw01_research_ticket_contract": "Mounted create_research_router on isolated FastAPI app with custom _Rw01ResearchRouterService and custom bff_error handler.",
+    "test_rw01_research_ticket_contract": "Mounted create_research_router on isolated FastAPI app with ContextVar request method tracking for fallback rejection.",
     "test_rw02_search_contract": "Mounted create_research_router on isolated FastAPI app with SurfaceStr string-subclass adapter for dataset surface status and dataset_source mapping.",
     "test_rw03_analyze_contract": "Mounted create_research_router on isolated FastAPI app with _Rw03ResearchRouterService and SurfaceStr adapter.",
     "test_rw04_experiment_launch_contract": "Mounted create_research_router on isolated FastAPI app with _FakeResearchWriteOwner injected into create_in_memory_read_surface_ports.",
-    "test_rw05_artifact_compare_contract": "Mounted create_research_router on isolated FastAPI app with _Rw05ResearchRouterService handling compare_artifacts and projected summaries retaining ticket_id.",
-    "test_bff_b2_004_research_search": "Mounted create_research_router(include_prepared_subrouters=True) on isolated FastAPI app with /bff/capabilities route and query limit support.",
-    "test_console_research_projection": "Mounted create_knowledge_router, create_research_router, and /bff/research/tasks projection endpoint on isolated FastAPI app.",
+    "test_rw05_artifact_compare_contract": "Mounted create_research_router on isolated FastAPI app using canonical ResearchRouterService compare_artifacts and router exception handlers.",
+    "test_bff_b2_004_research_search": "Mounted create_research_router(include_prepared_subrouters=True) and create_core_router on isolated FastAPI app with capabilities route.",
+    "test_console_research_projection": "Mounted create_knowledge_router, create_research_router, and create_agora_router on isolated FastAPI app.",
     "test_exp002_bff_research_experiments_contract": "Mounted create_research_router(include_prepared_subrouters=True) on isolated FastAPI app with _FakeResearchWriteOwner injected into read surface ports.",
     "test_mgmt_qlib_006_artifact_research_linkage": "Mounted create_research_router and create_strategies_router on isolated FastAPI app with DefaultResearchKnowledgeSourcePort and create_read_surface_ports.",
     "test_research_oss_preactivation_contract": "Mounted create_research_router(include_prepared_subrouters=True) on isolated FastAPI app with composite operations consultation ports double."
@@ -178,15 +178,15 @@
   "verification_evidence": [
     {
       "description": "Pytest run for all 13 migrated test suites",
-      "command": "/tmp/psd-bff-composition-venv/bin/pytest services/control-plane/bff/tests/test_jobs_source_owner_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_rw04_experiment_launch_contract.py services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_console_research_projection.py services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/test_research_oss_preactivation_contract.py -v",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_rw04_experiment_launch_contract.py services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/tests/test_console_research_projection.py services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
       "exit_code": 0,
-      "result": "126 passed, 3 warnings in 53.94s"
+      "result": "126 passed, 2 warnings in 50.80s"
     },
     {
       "description": "Pytest run for architectural invariant gate test suite",
-      "command": "/tmp/psd-bff-composition-venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py -v",
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
       "exit_code": 0,
-      "result": "8 passed in 3.51s"
+      "result": "8 passed in 5.40s"
     },
     {
       "description": "AST scan verifying 0 main imports and 0 sys.path mutations across all 13 files",
