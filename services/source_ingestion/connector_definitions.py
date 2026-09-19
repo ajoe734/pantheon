@@ -210,6 +210,39 @@ class ConnectorDefinition:
             metadata=dict(data.get("metadata") or {}),
         )
 
+    @property
+    def is_egress_free(self) -> bool:
+        return is_egress_free_connector_definition(self)
+
+
+def is_egress_free_connector_definition(
+    definition: ConnectorDefinition | Mapping[str, Any] | None,
+) -> bool:
+    """Return True if connector definition declares no network egress and no auth credentials.
+
+    A connector is egress-free when:
+    - allowed_host_patterns is empty
+    - auth_modes has only 'none' (or is empty)
+    - secret_fields is empty
+    """
+    if definition is None:
+        return False
+    if isinstance(definition, ConnectorDefinition):
+        allowed_hosts = definition.allowed_host_patterns
+        auth_modes = definition.auth_modes
+        secret_fields = definition.secret_fields
+    elif isinstance(definition, Mapping):
+        allowed_hosts = tuple(definition.get("allowed_host_patterns") or ())
+        auth_modes = tuple(definition.get("auth_modes") or ())
+        secret_fields = tuple(definition.get("secret_fields") or ())
+    else:
+        return False
+    return (
+        len(allowed_hosts) == 0
+        and set(auth_modes).issubset({"none"})
+        and len(secret_fields) == 0
+    )
+
 
 def calculate_source_allowed_actions(
     definition: ConnectorDefinition | Mapping[str, Any],
@@ -968,6 +1001,41 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         allowed_host_patterns=("financialmodelingprep.com", "api.finmindtrade.com", "api.vendor-factors.io"),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/alpha-db-vendor-signals",
+    ),
+    ConnectorDefinition(
+        definition_id="dev-paper-us-equity-simulation",
+        adapter_token="DevPaperUsEquitySimulationAdapter.records_from_now",
+        adapter_version="1.0.0",
+        provider="Explicit controlled simulation",
+        source_kinds=("data_source",),
+        source_types=("market",),
+        source_classes=("market_daily",),
+        datasets=("us_price_daily",),
+        auth_modes=("none",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("none",),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+        secret_fields=(),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 10, "max_bytes": 65536, "timeout_seconds": 5, "max_rate_per_second": 5.0},
+        allowed_host_patterns=(),
+        definition_state=DefinitionState.SUPPORTED,
+        metadata={
+            "is_real": False,
+            "provenance": "simulation",
+            "dev_only": True,
+            "purpose": (
+                "Durable, code-owned, freshness-safe synthetic market-data connector for the "
+                "dev paper baseline's US persona (DEV-PAPER-MARKET-INPUT-STALENESS-001). "
+                "Never selectable outside PANTHEON_ENV=dev."
+            ),
+        },
+        test_manifest_ref="evidence://connector-definition/dev-paper-us-equity-simulation",
     ),
 )
 

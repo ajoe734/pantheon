@@ -272,7 +272,7 @@ jobs:
           # BFF test architecture gate below collects services/control-plane/bff/tests/
           # conftest.py, which imports httpx even though this job does not otherwise
           # exercise BFF runtime deps.
-          python3 -m pip install httpx
+          python3 -m pip install httpx fastapi
 
       - name: BFF test architecture gate
         run: |
@@ -382,7 +382,8 @@ jobs:
             scripts/test_dev_vm_ssh.py \
             scripts/test_dev_direct_ssh_workflow_contract.py \
             scripts/test_dev_deploy_worktree_isolation_contract.py \
-            scripts/test_run_acceptance.py
+            scripts/test_run_acceptance.py \
+            scripts/test_agora_workshop_restart_persistence_smoke.py
 
       - name: Run product or mixed smoke gate
         if: steps.boundary.outputs.product_touched == 'true' || (steps.boundary.outputs.development_tooling_touched != 'true' && steps.boundary.outputs.product_touched != 'true')

@@ -10,9 +10,19 @@ Acceptance criteria verified:
 """
 from __future__ import annotations
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.models import utc_now
+from services.control_plane.bff.tools_integrations.router import create_integrations_router
+from services.control_plane.bff.tools_integrations.service import IntegrationsService
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -20,10 +30,30 @@ VIEWER_TOKEN = "Bearer viewer-1:viewer"
 
 
 def _client() -> TestClient:
-    bff_main._MCP_IMPORT_IDEMPOTENCY.clear()
-    bff_main._MCP_TOOL_ACTION_IDEMPOTENCY.clear()
-    bff_main._MCP_TOOL_REGISTRY.clear()
-    return TestClient(bff_main.app)
+    """Mount the real, extracted Tools & Integrations router on a fresh app.
+
+    Each call builds a brand-new IntegrationsService, which owns its own
+    in-memory mcp_import_idempotency / mcp_tool_action_idempotency /
+    mcp_tool_registry dicts -- so a fresh instance per test naturally
+    replaces the old bff_main-global .clear() calls.
+    """
+    service = IntegrationsService(bff_error_fn=bff_error, utc_now_fn=utc_now)
+    app = FastAPI()
+    register_error_handlers(app)
+    app.state.service = service
+    app.include_router(
+        create_integrations_router(
+            service=service,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            require_mcp_tool_write_role=require_operator_role,
+            require_openclaw_command_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now_fn=utc_now,
+        )
+    )
+    return TestClient(app)
 
 
 def _import_body(tool_id: str = "research.alpha") -> dict:
@@ -72,7 +102,7 @@ def test_import_tools_endpoint_imports_server_descriptors() -> None:
     assert imported["actionCount"] == 1
     assert imported["standaloneCreateEnabled"] is False
     assert data["rejectedTools"] == []
-    assert "server-alpha:research.alpha" in bff_main._MCP_TOOL_REGISTRY
+    assert "server-alpha:research.alpha" in client.app.state.service.mcp_tool_registry
 
     alias_response = client.post(
         "/bff/mcp-servers/server-beta/import-tools",
@@ -81,7 +111,7 @@ def test_import_tools_endpoint_imports_server_descriptors() -> None:
     )
     assert alias_response.status_code == 200, alias_response.text
     assert alias_response.json()["data"]["serverId"] == "server-beta"
-    assert "server-beta:research.beta" in bff_main._MCP_TOOL_REGISTRY
+    assert "server-beta:research.beta" in client.app.state.service.mcp_tool_registry
 
 
 def test_import_tools_replays_same_idempotency_key_and_conflicts_on_changed_payload() -> None:
@@ -163,11 +193,11 @@ def test_import_rejects_implicit_standalone_create_and_route_is_absent() -> None
     data = response.json()["data"]
     assert data["importedTools"] == []
     assert data["rejectedTools"][0]["preconditionFailed"] == "standalone_tool_create"
-    assert "server-alpha:research.alpha" not in bff_main._MCP_TOOL_REGISTRY
+    assert "server-alpha:research.alpha" not in client.app.state.service.mcp_tool_registry
 
     standalone_create_routes = [
         route
-        for route in bff_main.app.routes
+        for route in client.app.routes
         if getattr(route, "path", "") in {"/bff/v1/mcp/tools", "/bff/v1/tools", "/bff/mcp-tools"}
         and "POST" in getattr(route, "methods", set())
     ]
@@ -200,7 +230,7 @@ def test_tool_action_admission_requires_imported_tool_and_updates_lifecycle() ->
         "admitted": True,
         "replayed": False,
     }
-    assert bff_main._MCP_TOOL_REGISTRY["server-alpha:research.alpha"]["status"] == "granted"
+    assert client.app.state.service.mcp_tool_registry["server-alpha:research.alpha"]["status"] == "granted"
 
     alias_response = client.post(
         "/bff/mcp-tools/research.alpha/disable",
@@ -209,7 +239,7 @@ def test_tool_action_admission_requires_imported_tool_and_updates_lifecycle() ->
     )
     assert alias_response.status_code == 200, alias_response.text
     assert alias_response.json()["data"]["status"] == "disabled"
-    assert bff_main._MCP_TOOL_REGISTRY["server-alpha:research.alpha"]["status"] == "disabled"
+    assert client.app.state.service.mcp_tool_registry["server-alpha:research.alpha"]["status"] == "disabled"
 
 
 def test_tool_action_rejects_missing_tool_viewer_role_and_live_lean_direct_grant() -> None:

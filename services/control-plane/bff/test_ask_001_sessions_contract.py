@@ -21,12 +21,19 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, Optional
 
+from collections import deque
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from command_queue import CommandStore
+from services.control_plane.bff.agora.identity.router import create_identity_router
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity_stub,
+    require_read_role,
+)
+from services.control_plane.bff.command_queue import CommandStore
 
 AUTH = {"Authorization": "Bearer ask-test-op:operator"}
 
@@ -132,23 +139,43 @@ def _idem() -> str:
     return f"idem-{uuid.uuid4().hex[:16]}"
 
 
+def _create_test_app(read_surface: Any, command_store: Any, idempotency_store: dict[str, Any]) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Any, exc: Any) -> JSONResponse:
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}},
+        )
+
+    router = create_identity_router(
+        extract_identity=extract_identity_stub,
+        require_read_role=require_read_role,
+        require_write_role=require_read_role,
+        bff_error=bff_error,
+        utc_now=_utc_now,
+        get_read_store=lambda: read_surface,
+        get_command_store=lambda: command_store,
+        idempotency_store=idempotency_store,
+        sse_buffers={"ask": deque(maxlen=500)},
+        sse_subscribers={"ask": []},
+    )
+    app.include_router(router)
+    return app
+
+
 @contextmanager
 def _client(*, seeded: bool = False) -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_cmd = bff_main.command_store
-        bff_main.read_store = _AskSessionsReadStore(_SEED_SESSIONS if seeded else None)
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._ASK_SESSIONS_IDEMPOTENCY.clear()
-        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_cmd
-            bff_main._ASK_SESSIONS_IDEMPOTENCY.clear()
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+        store = _AskSessionsReadStore(_SEED_SESSIONS if seeded else None)
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        idempotency_store: dict[str, Any] = {}
+        app = _create_test_app(store, cmd_store, idempotency_store)
+        yield TestClient(app)
 
 
 # --------------------------------------------------------------------------- #

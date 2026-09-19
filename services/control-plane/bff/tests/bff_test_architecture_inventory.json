@@ -3,7 +3,7 @@
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
   "total_test_files": 384,
-  "migrated_in_task_count": 11,
+  "migrated_in_task_count": 20,
   "composition_allowlist": [
     "smoke_test.py",
     "smoke_test_incident.py",
@@ -23,6 +23,14 @@
   ],
   "migrated_suites": [
     "agora/performance/test_performance.py",
+    "test_ask_001_sessions_contract.py",
+    "test_ask_003_committee_lifecycle.py",
+    "test_ask_004_memo_publish_contract.py",
+    "test_bff_consol_008_fixture_pack_a.py",
+    "test_bff_consol_009_fixture_pack_b.py",
+    "test_bff_consol_010_fixture_pack_c.py",
+    "test_bff_consol_016_detail_smoke_a.py",
+    "test_bff_consol_017_detail_smoke_b.py",
     "test_bff_performance_ranking_read_model_contract.py",
     "test_bff_v5_loop_sentinel_contract.py",
     "test_cw01_consult_request_contract.py",
@@ -43,8 +51,15 @@
     "test_rw04_experiment_launch_contract.py",
     "test_rw05_artifact_compare_contract.py",
     "test_settings_contract.py",
+    "test_trn002_trainer_session_contract.py",
+    "test_trn003_rapid_eval_contract.py",
+    "test_tw01_teaching_dialog_contract.py",
+    "test_tw02_parameter_controls_contract.py",
+    "test_tw03_before_after_compare_contract.py",
+    "test_tw04_teaching_replay_contract.py",
     "tests/test_agora_performance_transport_and_isolated_store.py",
     "tests/test_bff_b2_004_research_search.py",
+    "tests/test_bff_b3_trading_pulse.py",
     "tests/test_bff_b6_001_security_hardening.py",
     "tests/test_bff_b6_003_nl_high_risk_refusal.py",
     "tests/test_bff_b6_management_nl_ask.py",
@@ -73,16 +88,16 @@
   },
   "main_by_layer": {
     "adapter": 1,
-    "application": 19,
+    "application": 12,
     "composition": 9,
     "hosted": 1,
-    "router": 17
+    "router": 9
   },
   "disposition_summary": {
     "ALLOWLIST": 15,
     "DECOUPLED": 316,
-    "MIGRATED": 17,
-    "PLANNED": 36
+    "MIGRATED": 32,
+    "PLANNED": 21
   },
   "tests": [
     {
@@ -403,23 +418,23 @@
     {
       "file": "test_ask_001_sessions_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
     },
     {
       "file": "test_ask_003_committee_lifecycle.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
     },
     {
       "file": "test_ask_004_memo_publish_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
     },
     {
       "file": "test_aud_002_audit_action_write_engine.py",
@@ -487,22 +502,22 @@
     {
       "file": "test_bff_consol_008_fixture_pack_a.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "test_bff_consol_009_fixture_pack_b.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "test_bff_consol_010_fixture_pack_c.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
@@ -515,15 +530,15 @@
     {
       "file": "test_bff_consol_016_detail_smoke_a.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "test_bff_consol_017_detail_smoke_b.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
@@ -1474,44 +1489,44 @@
     {
       "file": "test_trn002_trainer_session_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
     },
     {
       "file": "test_trn003_rapid_eval_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
     },
     {
       "file": "test_tw01_teaching_dialog_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
     },
     {
       "file": "test_tw02_parameter_controls_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
     },
     {
       "file": "test_tw03_before_after_compare_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
     },
     {
       "file": "test_tw04_teaching_replay_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
     },
     {
       "file": "test_v5_interventions.py",
@@ -1922,9 +1937,9 @@
     {
       "file": "tests/test_bff_b3_trading_pulse.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated in BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001: mounts strategies router on isolated FastAPI app via rebalance_authority_test_support, no main import, no sys.path surgery."
     },
     {
       "file": "tests/test_bff_b5_001_security_hardening.py",
@@ -2774,39 +2789,14 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 36,
+  "live_scan_non_whitelisted_main_importer_ceiling": 11,
   "live_scan_non_whitelisted_main_importers": [
-    "test_ask_001_sessions_contract.py",
-    "test_ask_003_committee_lifecycle.py",
-    "test_ask_004_memo_publish_contract.py",
-    "test_bff_consol_008_fixture_pack_a.py",
-    "test_bff_consol_009_fixture_pack_b.py",
-    "test_bff_consol_010_fixture_pack_c.py",
-    "test_bff_consol_016_detail_smoke_a.py",
-    "test_bff_consol_017_detail_smoke_b.py",
-    "test_bff_management_delta_routes.py",
     "test_bff_mgmt_ai_persistence_2026_06_03.py",
     "test_bff_mgmt_common_filters.py",
-    "test_bff_mgmt_ops_001_operations_read_model_contract.py",
     "test_bff_mgmt_ops_006_operator_actions_contract.py",
     "test_bff_pm12_portfolio_book_contract.py",
     "test_bff_promotion_review_governance.py",
-    "test_management_data_sources_v2.py",
-    "test_mcp_tool_import.py",
-    "test_mgmt_load_002_shell_summary.py",
     "test_mgmt_load_005_read_concurrency.py",
-    "test_mgmt_ooda_004_bff_routes.py",
-    "test_mgmt_syn_006_conflict_log_view.py",
-    "test_trn002_trainer_session_contract.py",
-    "test_trn003_rapid_eval_contract.py",
-    "test_tw01_teaching_dialog_contract.py",
-    "test_tw02_parameter_controls_contract.py",
-    "test_tw03_before_after_compare_contract.py",
-    "test_tw04_teaching_replay_contract.py",
-    "tests/test_bff_b3_trading_pulse.py",
-    "tests/test_bff_consol_skills_mcp_registry_contract.py",
-    "tests/test_bff_management_data_sources_contract.py",
-    "tests/test_bff_management_gap_003_contract_schema.py",
     "tests/test_bff_path_dedupe.py",
     "tests/test_bff_rebalance_proposals.py",
     "tests/test_overlay_retirement.py",

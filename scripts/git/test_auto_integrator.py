@@ -1044,6 +1044,94 @@ class IntegrationPlanTests(unittest.TestCase):
                     live_config, runner, command_root=command_root
                 )
 
+    def test_execute_authority_rejects_command_root_differing_from_promoted_watchdog_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            head1 = "a" * 40
+            head2 = "b" * 40
+            command_root = root / "command-runtimes" / head1
+            command_root.mkdir(parents=True)
+            watchdog_root = root / "command-runtimes" / head2
+            watchdog_root.mkdir(parents=True)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            status_file = status_root / "ai-status.json"
+            status_file.write_text('{"tasks": []}\n', encoding="utf-8")
+            live_config = root / "runtime" / "live.json"
+            live_config.parent.mkdir()
+            payload = {
+                "paths": {"status_file": str(status_file)},
+                "review_gate": {"github_review_bridge_required": False},
+                "watchdog": {
+                    "supervisor_command": [
+                        sys.executable,
+                        str(watchdog_root / ".orchestrator" / "supervisor.py"),
+                        "--config",
+                        str(live_config),
+                    ]
+                },
+                "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": ["Commit trailers"]
+                    },
+                    "auto_integrator": {
+                        "lock_file": ".orchestrator/auto-integrator.lock"
+                    },
+                },
+            }
+            live_config.write_text(json.dumps(payload), encoding="utf-8")
+            runner = FakeRunner(git_head=head1)
+
+            with self.assertRaisesRegex(
+                auto_integrator.ExecuteAuthorityError,
+                "auto-integrator command root is not the promoted watchdog root",
+            ):
+                auto_integrator.resolve_execute_authority(
+                    live_config, runner, command_root=command_root
+                )
+
+    def test_main_execute_authority_binding_failure_emits_alert_to_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            missing_config = root / "nonexistent-live.json"
+            stderr_buf = io.StringIO()
+            with mock.patch.dict(os.environ, {auto_integrator.LIVE_CONFIG_ENV: str(missing_config)}):
+                with mock.patch("sys.stderr", stderr_buf):
+                    with self.assertRaises(SystemExit) as cm:
+                        auto_integrator.main(["--execute"])
+                    self.assertEqual(cm.exception.code, 2)
+            self.assertIn("ALERT: auto-integrator live execute authority binding failed", stderr_buf.getvalue())
+
+    def test_integration_candidates_recognizes_configured_integration_path_for_pantheon(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "OPS-001",
+                    "title": "Ready",
+                    "status": "review_approved",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex2",
+                }
+            ]
+        }
+        config = {
+            "coordination": {
+                "repositories": {
+                    "pantheon": {
+                        "repo": "ajoe734/pantheon",
+                        "integration_path": "/home/pantheon-ci-deploy/integration-runtimes/pantheon/" + "f" * 40,
+                    }
+                }
+            }
+        }
+        candidates = auto_integrator.integration_candidates(state, config=config)
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0].dedicated_integration_path)
+        self.assertEqual(
+            candidates[0].repository_root,
+            Path("/home/pantheon-ci-deploy/integration-runtimes/pantheon/" + "f" * 40),
+        )
+
     def test_live_execute_requires_explicit_dedicated_integration_path(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",

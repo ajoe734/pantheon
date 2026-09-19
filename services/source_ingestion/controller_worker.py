@@ -26,6 +26,10 @@ from .controller_state import (
     utc_now,
 )
 from .controller_auth import load_controller_token
+from .connector_definitions import (
+    get_connector_definition,
+    is_egress_free_connector_definition,
+)
 
 
 DEFAULT_DESIRED_STATE_PATH = Path(__file__).with_name("default_desired_state.json")
@@ -957,14 +961,16 @@ def _validate_due_state_readback(
     expected_controller_id: str,
     expected_sequence_no: int,
     expected_deployment: Mapping[str, Any],
+    executed_connector_ids: Sequence[str] = (),
 ) -> None:
     """Accept connector/schedule convergence without claiming provider proof.
 
     This is the always-safe half of the source loop.  It proves that admitted
     persona requirements became configured connectors and enabled schedules,
     while also proving that the reconciliation tick did not enqueue work,
-    execute a provider, or append SourceRecords.  Provider execution remains a
-    separate, explicitly governed bounded operation.
+    execute an external network provider, or append SourceRecords for external
+    connectors.  Scheduled execution of egress-free connectors (no network egress,
+    no auth credentials) is permitted under reconcile-only mode.
     """
 
     if actual.get("schema_version") != "source_ingest_controller_readback.v1":
@@ -1013,21 +1019,93 @@ def _validate_due_state_readback(
             actual_readback=actual,
         )
 
-    immutable_execution_counts = ("source_record_count", "dlq_count", "frontier_backlog")
-    changed_execution_counts = [
-        field
-        for field in immutable_execution_counts
-        if type(pre_actual.get(field)) is not int
-        or type(actual.get(field)) is not int
-        or pre_actual.get(field) != actual.get(field)
-    ]
-    if changed_execution_counts:
-        raise ControllerTickError(
-            "provider_boundary",
-            "reconcile-only tick changed provider execution state: " + ", ".join(changed_execution_counts),
-            reconcile=reconcile,
-            actual_readback=actual,
-        )
+    if executed_connector_ids:
+        for connector_id in executed_connector_ids:
+            defn = get_connector_definition(connector_id)
+            if defn is None or not is_egress_free_connector_definition(defn):
+                raise ControllerTickError(
+                    "provider_boundary",
+                    f"reconcile-only tick executed non-egress-free connector: {connector_id}",
+                    reconcile=reconcile,
+                    actual_readback=actual,
+                )
+
+        pre_src = pre_actual.get("source_record_count")
+        act_src = actual.get("source_record_count")
+        if type(pre_src) is not int or type(act_src) is not int or act_src < pre_src:
+            raise ControllerTickError(
+                "provider_boundary",
+                f"reconcile-only tick decreased source_record_count: {pre_src} -> {act_src}",
+                reconcile=reconcile,
+                actual_readback=actual,
+            )
+
+        for field in ("dlq_count", "frontier_backlog"):
+            if (
+                type(pre_actual.get(field)) is not int
+                or type(actual.get(field)) is not int
+                or pre_actual.get(field) != actual.get(field)
+            ):
+                raise ControllerTickError(
+                    "provider_boundary",
+                    f"reconcile-only tick changed provider execution state: {field}",
+                    reconcile=reconcile,
+                    actual_readback=actual,
+                )
+
+        pre_connectors_by_id = {
+            str(c.get("connector_id")): c
+            for c in pre_actual.get("connectors") or []
+            if isinstance(c, Mapping) and c.get("connector_id")
+        }
+        actual_connectors_by_id = {
+            str(c.get("connector_id")): c
+            for c in actual.get("connectors") or []
+            if isinstance(c, Mapping) and c.get("connector_id")
+        }
+        for cid, pre_c in pre_connectors_by_id.items():
+            if cid not in executed_connector_ids:
+                act_c = actual_connectors_by_id.get(cid)
+                if act_c is not None:
+                    if pre_c.get("latest_source_record") != act_c.get("latest_source_record"):
+                        raise ControllerTickError(
+                            "provider_boundary",
+                            f"reconcile-only tick mutated latest_source_record for non-executed connector {cid}",
+                            reconcile=reconcile,
+                            actual_readback=actual,
+                        )
+                    if pre_c.get("source_health") != act_c.get("source_health"):
+                        raise ControllerTickError(
+                            "provider_boundary",
+                            f"reconcile-only tick mutated source_health for non-executed connector {cid}",
+                            reconcile=reconcile,
+                            actual_readback=actual,
+                        )
+        for cid, act_c in actual_connectors_by_id.items():
+            if cid not in executed_connector_ids and cid not in pre_connectors_by_id:
+                if act_c.get("latest_source_record") is not None:
+                    raise ControllerTickError(
+                        "provider_boundary",
+                        f"reconcile-only tick created latest_source_record for non-executed connector {cid}",
+                        reconcile=reconcile,
+                        actual_readback=actual,
+                    )
+    else:
+        immutable_execution_counts = ("source_record_count", "dlq_count", "frontier_backlog")
+        changed_execution_counts = [
+            field
+            for field in immutable_execution_counts
+            if type(pre_actual.get(field)) is not int
+            or type(actual.get(field)) is not int
+            or pre_actual.get(field) != actual.get(field)
+        ]
+        if changed_execution_counts:
+            raise ControllerTickError(
+                "provider_boundary",
+                "reconcile-only tick changed provider execution state: " + ", ".join(changed_execution_counts),
+                reconcile=reconcile,
+                actual_readback=actual,
+            )
 
     wanted_requirements: dict[str, list[dict[str, Any]]] = {}
     for result in reconcile.get("results") or []:
@@ -1486,14 +1564,48 @@ def run_controller_tick(
             timeout_seconds=config.timeout_seconds,
         )
         if config.mode == RECONCILE_ONLY_MODE:
-            schedule = {
-                "mode": RECONCILE_ONLY_MODE,
-                "provider_egress_attempted": False,
-                "summary": {
-                    "total_reconciled_connectors": len(_connector_ids(reconcile)),
-                    "total_provider_pulls": 0,
-                },
-            }
+            all_connector_ids = _connector_ids(reconcile)
+            egress_free_connector_ids = [
+                cid
+                for cid in all_connector_ids
+                if (defn := get_connector_definition(cid)) is not None and defn.is_egress_free
+            ]
+            if egress_free_connector_ids:
+                schedule = run_schedule_tick(
+                    api_url=config.api_url,
+                    max_concurrency=config.max_concurrency,
+                    timeout_seconds=config.timeout_seconds,
+                    force_connector_ids=egress_free_connector_ids,
+                    exclusive_connector_ids=egress_free_connector_ids,
+                    controller_token=config.controller_token,
+                )
+                schedule_summary = schedule.get("summary")
+                if not isinstance(schedule_summary, Mapping):
+                    raise ControllerTickError(
+                        "schedule_contract",
+                        "scheduled tick response is missing summary",
+                        schedule=schedule,
+                    )
+                failed = int(schedule_summary.get("total_failed") or 0)
+                if failed:
+                    raise ControllerTickError(
+                        "schedule",
+                        f"scheduled source tick reported {failed} failed connector(s)",
+                        reconcile=reconcile,
+                        schedule=schedule,
+                    )
+                schedule = dict(schedule)
+                schedule["mode"] = RECONCILE_ONLY_MODE
+                schedule["provider_egress_attempted"] = False
+            else:
+                schedule = {
+                    "mode": RECONCILE_ONLY_MODE,
+                    "provider_egress_attempted": False,
+                    "summary": {
+                        "total_reconciled_connectors": len(all_connector_ids),
+                        "total_provider_pulls": 0,
+                    },
+                }
             actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
             _validate_due_state_readback(
                 reconcile=reconcile,
@@ -1502,6 +1614,7 @@ def run_controller_tick(
                 expected_controller_id=state.controller_id,
                 expected_sequence_no=state.sequence_no,
                 expected_deployment=state.deployment,
+                executed_connector_ids=egress_free_connector_ids,
             )
         else:
             exclusive_connector_ids = sorted(set(config.exclusive_connector_ids))

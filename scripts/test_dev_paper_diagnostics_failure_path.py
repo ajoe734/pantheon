@@ -1232,6 +1232,7 @@ def install_compensation_artifact_fixture(
             "source_sha": rollback_bff,
             "fe_manifest_bytes_verified": True,
             "strict_auth_denials_verified": True,
+            "dev_login_enabled": True,
             "authenticated_viewer_readback_verified": True,
         },
     }

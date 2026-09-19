@@ -1,38 +1,117 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
+from typing import Any
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    bff_me_tenant_payload,
+    default_utc_now,
+    extract_identity_stub,
+    require_read_role,
+)
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
-from test_training_session_service_client import create_training_read_surface_double
+from services.control_plane.bff.strategies.router import create_strategies_router
+from services.control_plane.bff.test_training_session_service_client import (
+    create_training_read_surface_double,
+)
+from services.control_plane.bff.training.router import create_training_router
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
 
 
+def _page_slice(
+    items: list[dict[str, Any]],
+    page_token: str | None,
+    page_size: int,
+) -> tuple[list[dict[str, Any]], str | None]:
+    start = int(page_token) if page_token else 0
+    end = start + page_size
+    next_page = str(end) if end < len(items) else None
+    return items[start:end], next_page
+
+
+def _dataset_surface_status(
+    dataset: str,
+    *,
+    snapshot_at: str | None = None,
+    has_data: bool | None = None,
+    missing_message: str | None = None,
+    source: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "degraded" if source == "local_snapshot" else "ok",
+        "source": source or "local_snapshot",
+        "staleness": {
+            "served_from": "local_snapshot",
+            "last_known_at": snapshot_at or default_utc_now(),
+        },
+    }
+
+
+def _create_test_app(read_surface: Any) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Any, exc: Any) -> JSONResponse:
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}},
+        )
+
+    app.include_router(
+        create_training_router(
+            read_surface=read_surface,
+            extract_identity=extract_identity_stub,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=default_utc_now,
+            page_slice=_page_slice,
+            dataset_surface_status=_dataset_surface_status,
+        )
+    )
+    app.include_router(
+        create_strategies_router(
+            read_surface=read_surface,
+            get_read_store=lambda: read_surface,
+            extract_identity=extract_identity_stub,
+            require_read_role=require_read_role,
+            require_operator_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=default_utc_now,
+            page_slice=_page_slice,
+            bff_me_tenant_payload=bff_me_tenant_payload,
+        )
+    )
+    return app
+
+
 @contextmanager
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         tracked_env = {
             "STRATEGY_SEED_STORE_PATH": os.environ.get("STRATEGY_SEED_STORE_PATH"),
             "INTERACTION_SOURCE_STORE_PATH": os.environ.get("INTERACTION_SOURCE_STORE_PATH"),
         }
         os.environ["STRATEGY_SEED_STORE_PATH"] = os.path.join(td, "strategy_seeds.jsonl")
         os.environ["INTERACTION_SOURCE_STORE_PATH"] = os.path.join(td, "interaction_records.jsonl")
-        bff_main.read_store = create_training_read_surface_double()
-        client = TestClient(bff_main.app)
+        store = create_training_read_surface_double()
+        app = _create_test_app(store)
+        client = TestClient(app)
         try:
             yield client
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -537,7 +616,6 @@ def test_tw04_existing_snapshot_backfills_drawdown_evidence_route():
 @contextmanager
 def _seeded_client_with_degraded_session():
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         store = create_training_read_surface_double()
         degraded_session = {
             "session_id": "trn-degraded-001",
@@ -582,12 +660,12 @@ def _seeded_client_with_degraded_session():
             ],
         }
         store.add_replay(degraded_session)
-        bff_main.read_store = store
-        client = TestClient(bff_main.app)
+        app = _create_test_app(store)
+        client = TestClient(app)
         try:
             yield client
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_tw04_detail_degraded_surface_suppresses_cta():

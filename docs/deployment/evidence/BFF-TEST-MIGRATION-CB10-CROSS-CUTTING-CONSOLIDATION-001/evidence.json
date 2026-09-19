@@ -1,0 +1,139 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-CB10-CROSS-CUTTING-CONSOLIDATION-001",
+  "batch_id": "CB10_cross_cutting_consolidation",
+  "plan": "PLAN-002 (B28)",
+  "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "title": "Decouple cross-cutting fixture packs A/B/C and detail smoke journey test suites",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "delivery_state": "ready_for_independent_review",
+  "target_repo": "ajoe734/pantheon",
+  "base_ref": "dev@acdf4d0137ff3691a3ed824585003bdb3e751cc6",
+  "base_sha": "acdf4d0137ff3691a3ed824585003bdb3e751cc6",
+  "summary": "Decoupled 5 target test suites (25 test cases across cross-cutting fixture packs A, B, C and detail smoke journeys A, B) from BFF main.py composition root imports, global monkeypatching (bff_main.read_store, bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY, bff_main._GOV_BFF_IDEMPOTENCY, bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY, bff_main._GOV_BFF_EXPERIMENT_OVERLAY, bff_main._MCP_SERVER_REGISTRY, bff_main._TOOL_REGISTRY, bff_main._SKILL_REGISTRY), and sys.path surgery. Implemented build_consolidated_cross_cutting_app in tests/conftest.py mounting 13 domain routers (strategies, personas, capital, deployment, runtime, evolution, control_loops, agora, research, incidents, governance, tools_integrations, jobs) and passing ReadSurfacePorts doubles via dependency injection. Preserved all original test business semantics and negative validation assertions. Lowered live_scan_non_whitelisted_main_importer_ceiling in bff_test_architecture_inventory.json from 29 to 24 (-5), registered all 5 suites in migrated_suites with disposition MIGRATED, verified all 8 architecture invariant tests pass, and achieved 100% pass rate (25/25 passed across target suites, 33/33 passed including architecture tests).",
+  "target_suites": [
+    "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py",
+    "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py",
+    "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
+    "services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py",
+    "services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py"
+  ],
+  "receiver_modules_untouched": [
+    "services/control-plane/bff/shared/cross_domain_utils.py",
+    "services/control-plane/bff/main.py"
+  ],
+  "changed_files": [
+    "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py",
+    "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py",
+    "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
+    "services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py",
+    "services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py",
+    "services/control-plane/bff/tests/conftest.py",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-CB10-CROSS-CUTTING-CONSOLIDATION-001/evidence.json"
+  ],
+  "inventory_update": {
+    "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "ceiling_before": 29,
+    "ceiling_after": 24,
+    "ceiling_delta": -5,
+    "migrated_suites_count_before": 27,
+    "migrated_suites_count_after": 32,
+    "disposition_summary": {
+      "ALLOWLIST": 15,
+      "DECOUPLED": 303,
+      "MIGRATED": 32,
+      "PLANNED": 34
+    },
+    "main_by_layer": {
+      "adapter": 2,
+      "application": 16,
+      "composition": 9,
+      "hosted": 1,
+      "router": 17
+    }
+  },
+  "file_dispositions": {
+    "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 4,
+      "tests_failed": 0,
+      "technique": "Removed import main as bff_main; replaced bff_main.read_store monkeypatching with build_consolidated_cross_cutting_app(read_surface=store); preserved all 4 test cases verifying fixture pack A strategy, persona, and deployment linkages."
+    },
+    "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 11,
+      "tests_failed": 0,
+      "technique": "Removed import main as bff_main; replaced bff_main.read_store and bff_main._V5_INTERVENTIONS_STORE monkeypatching with build_consolidated_cross_cutting_app(read_surface=store); preserved all 11 test cases across evolution, v5 interventions, agora signals/sessions, research tickets, and runtime bindings."
+    },
+    "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 6,
+      "tests_failed": 0,
+      "technique": "Removed import main as bff_main; replaced bff_main.read_store and registry monkeypatching (_MCP_SERVER_REGISTRY, _MCP_TOOL_REGISTRY, _TOOL_REGISTRY, _SKILL_REGISTRY) with build_consolidated_cross_cutting_app(read_surface=store); imported SSE_CHANNEL_CATALOG directly from tools_integrations.service instead of bff_main; preserved all 6 test cases."
+    },
+    "services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 2,
+      "tests_failed": 0,
+      "technique": "Removed import main as bff_main; replaced bff_main.read_store and bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY monkeypatching with build_consolidated_cross_cutting_app(read_surface=store); added get_runtime_binding_by_runtime_id alias to DetailSmokeATestReadPorts; preserved detail smoke journey acceptance links and typed 404 tests."
+    },
+    "services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py": {
+      "disposition": "MIGRATED",
+      "layer": "application",
+      "imports_main": false,
+      "sys_path_mutations": 0,
+      "tests_passed": 2,
+      "tests_failed": 0,
+      "technique": "Removed import main as bff_main; replaced bff_main.read_store, bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY, bff_main._GOV_BFF_EXPERIMENT_OVERLAY, and bff_main._GOV_BFF_IDEMPOTENCY monkeypatching with build_consolidated_cross_cutting_app(read_surface=store); preserved detail smoke journey acceptance links and typed 404 tests."
+    }
+  },
+  "ast_and_inventory_verification": {
+    "live_ast_scan_non_whitelisted_main_importers_before": 29,
+    "live_ast_scan_non_whitelisted_main_importers_after": 24,
+    "ceiling_before": 29,
+    "ceiling_after": 24,
+    "ceiling_direction": "lowered_only_per_gate_policy",
+    "architecture_invariant_check": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "8 passed, 0 failed"
+    }
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py -v",
+        "exit_code": 0,
+        "result": "33 passed, 0 failed"
+      },
+      {
+        "command": "AST scan verifying zero main imports and zero sys.path mutations across 5 target files",
+        "exit_code": 0,
+        "result": "all 5 files verified with zero main imports and zero sys.path mutations"
+      },
+      {
+        "command": "Dynamic module import isolation check verifying no main module pulled into sys.modules",
+        "exit_code": 0,
+        "result": "all 5 modules imported successfully in isolation without loading main"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "result": "clean (zero whitespace or syntax issues)"
+      }
+    ]
+  }
+}

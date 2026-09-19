@@ -256,13 +256,139 @@ def test_reconcile_timeout_raises() -> None:
         ),
     ]
 
-    times = [0, 100]  # monotonic calls: start, then already past deadline (timeout=30)
-    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+    # A low server-side timeout keeps the effective deadline (server + margin)
+    # below the fake clock's jump, so the indefinite-stall path is still
+    # exercised without waiting on the production 600s default.
+    env = {**DEV_ENV, "PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS": "5"}
+    times = [0, 100]  # monotonic calls: start, then already past deadline (5 + 30 margin = 35)
+    with patch.dict(os.environ, env, clear=True), patch.object(
         bootstrap, "_post_json", side_effect=responses
     ) as post, pytest.raises(bootstrap.BootstrapError, match="timed out"):
         _run(monotonic=lambda: times.pop(0) if times else 999)
 
     assert post.call_count == 2  # login + create, then timeout before reconcile poll
+
+
+def test_server_authoritative_timeout_seconds_defaults_and_parses() -> None:
+    assert bootstrap.server_authoritative_timeout_seconds({}) == 600.0
+    assert bootstrap.server_authoritative_timeout_seconds(
+        {"PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS": "900"}
+    ) == 900.0
+    # Malformed or non-positive values fail back to the BFF's own default
+    # instead of producing a zero/negative poll deadline.
+    assert bootstrap.server_authoritative_timeout_seconds(
+        {"PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS": "not-a-number"}
+    ) == 600.0
+    assert bootstrap.server_authoritative_timeout_seconds(
+        {"PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS": "-10"}
+    ) == 600.0
+
+
+def test_effective_poll_timeout_widens_a_too_short_client_budget() -> None:
+    # The production CI invocation passes --timeout-seconds 420, which is
+    # shorter than the BFF's own 600s authoritative provisioning timeout.
+    # The effective deadline must never be shorter than that server timeout
+    # plus the safety margin, regardless of the caller-requested value.
+    assert bootstrap.effective_poll_timeout_seconds(420, environ={}) == 630.0
+    # A generous caller-requested timeout is never shortened.
+    assert bootstrap.effective_poll_timeout_seconds(900, environ={}) == 900
+
+
+def test_reconcile_keeps_polling_past_a_too_short_client_timeout_until_terminal() -> None:
+    """The client's requested 420s budget alone would abort before the BFF's
+    600s authoritative timeout is ever reached. With the widened effective
+    deadline, polling continues until the BFF itself reports a real terminal
+    provisioning_failed reason instead of a generic client-side timeout."""
+
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "provisioning",
+                    "provisioning_step": "schedule_registered",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+        (
+            200,
+            {
+                "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                "meta": {"lifecycle_state": "provisioning", "status": "ok"},
+            },
+        ),
+        (
+            200,
+            {
+                "data": {"id": "persona-1", "state": "provisioning_failed", "capitalMode": "paper"},
+                "meta": {
+                    "lifecycle_state": "provisioning_failed",
+                    "status": "ok",
+                    "provisioning_failure_reason": "runtime_binding_failed_or_mismatched",
+                },
+            },
+        ),
+    ]
+
+    # monotonic(): start(0), top-of-loop check (421), bottom-of-loop check
+    # (440), second top-of-loop check (450) -- all past the naive 420s
+    # client budget but still inside the widened 630s effective deadline
+    # (600s server timeout + 30s margin), so polling reaches the second
+    # reconcile call and observes the terminal failure.
+    times = [0, 421, 440, 450]
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ), pytest.raises(
+        bootstrap.BootstrapError, match="terminal failure during reconcile"
+    ) as exc_info:
+        _run(
+            timeout_seconds=420,
+            monotonic=lambda: times.pop(0) if times else 999,
+        )
+
+    # The real, named failure reason surfaces -- not a generic timeout.
+    assert "runtime_binding_failed_or_mismatched" in str(exc_info.value)
+
+
+def test_timeout_error_surfaces_last_known_reconcile_reason() -> None:
+    """If the stall genuinely outlasts even the widened effective deadline,
+    the timeout error still carries whatever real diagnostic the last
+    reconcile poll observed, instead of a content-free message."""
+
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "provisioning",
+                    "provisioning_step": "schedule_registered",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+        (
+            200,
+            {
+                "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                "meta": {"lifecycle_state": "provisioning", "status": "ok"},
+            },
+        ),
+    ]
+
+    env = {**DEV_ENV, "PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS": "5"}
+    times = [0, 10, 999]
+    with patch.dict(os.environ, env, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ), pytest.raises(bootstrap.BootstrapError, match="timed out") as exc_info:
+        _run(monotonic=lambda: times.pop(0) if times else 9999)
+
+    message = str(exc_info.value)
+    assert '"last_reconcile_lifecycle_state": "provisioning"' in message
 
 
 def test_no_reconcile_after_terminal_create_failure() -> None:

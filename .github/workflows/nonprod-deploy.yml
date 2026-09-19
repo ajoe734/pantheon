@@ -1393,6 +1393,7 @@ jobs:
           DEV_PAPER_RUN_ID: ${{ github.run_id }}
           DEV_PAPER_ATTEMPT: ${{ github.run_attempt }}
           DEV_PAPER_PHASE: paper_bootstrap
+          PANTHEON_MARKET_INPUT_BOOTSTRAP_GRACE_SECONDS: "120"
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
