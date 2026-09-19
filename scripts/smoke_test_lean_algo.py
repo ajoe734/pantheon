@@ -34,8 +34,9 @@ os.environ.update({
 
 class SmokeAlgo(PantheonAlgoBase):
     def __init__(self):
+        super().__init__()
         self.events = []
-    
+
     def Debug(self, message):
         self.events.append(json.loads(message))
 
@@ -43,11 +44,61 @@ def run_smoke():
     try:
         algo = SmokeAlgo()
         algo.Initialize()
+
+        # 1. Verify consumer and store wiring (not disabled!)
+        if algo._consumer is None:
+            print("Smoke test failed: SignalConsumer was not initialized.")
+            return False
+        if algo._signal_store is None:
+            print("Smoke test failed: PendingSignalStore was not initialized.")
+            return False
+
+        # 2. Verify scheduling
+        scheduled = getattr(algo.Schedule, "scheduled_events", [])
+        if not scheduled:
+            print("Smoke test failed: SignalConsumer was not scheduled.")
+            return False
+        print(f"Smoke test: SignalConsumer scheduled ({len(scheduled)} event(s)).")
+
+        # 3. Prove signal intake and order execution
+        signal = {
+            "signal_id": "smoke-sig-001",
+            "version": "1.0",
+            "strategy_id": "strat-smoke",
+            "binding_id": "smoke-test-binding",
+            "runtime_id": "smoke-test-runtime",
+            "metadata": {
+                "capital_pool_id": "pool-smoke",
+            },
+            "timestamp": "2026-09-19T12:00:00Z",
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 0.5,
+            "quantity_type": "PERCENT_PORTFOLIO",
+        }
+        algo._signal_store.enqueue(signal)
+        initial_depth = algo._signal_store.queue_depth()
+        if initial_depth != 1:
+            print(f"Smoke test failed: Expected queue depth 1, got {initial_depth}")
+            return False
+
+        algo.OnData()
+
+        remaining_depth = algo._signal_store.queue_depth()
+        if remaining_depth != 0:
+            print(f"Smoke test failed: Queue was not drained, remaining depth: {remaining_depth}")
+            return False
+
+        if not algo.orders:
+            print("Smoke test failed: No order executed from signal intake.")
+            return False
+        print(f"Smoke test passed: Signal consumed and order executed: {algo.orders[-1]}")
+
+        # 4. Prove telemetry bridge event
         algo.emit_pantheon_event("SmokeTestEvent", metrics={"smoke": 1})
-        
         if len(algo.events) > 0:
-            print("Smoke test passed: Event emitted.")
-            print(f"Event: {algo.events[-1]}")
+            print(f"Smoke test passed: Bridge event emitted: {algo.events[-1]['event_type']}")
             return True
         else:
             print("Smoke test failed: No event emitted.")

@@ -247,6 +247,21 @@ class RuntimeBootstrapContractTests(unittest.TestCase):
         self.assertEqual(request.bridge.source_path, PANTHEON_EXTERNAL_LIBRARY_PATH)
         self.assertEqual(request.bridge.commit, UPSTREAM_LEAN_PINNED_COMMIT)
 
+    def test_bootstrap_request_defaults_to_upstream_lean_and_external_library(self):
+        request = materialize_runtime_bootstrap_request(
+            deployment_plan=_deployment_plan(),
+            runtime_binding=_runtime_binding(
+                metadata={
+                    "engine_bridge_commit": UPSTREAM_LEAN_PINNED_COMMIT,
+                }
+            ),
+            request_id="rbr-test-defaults-001",
+            trace_id="trace-test-defaults-001",
+        )
+        self.assertEqual(request.bridge.remote, UPSTREAM_LEAN_REMOTE)
+        self.assertEqual(request.bridge.source_path, PANTHEON_EXTERNAL_LIBRARY_PATH)
+        self.assertEqual(request.bridge.commit, UPSTREAM_LEAN_PINNED_COMMIT)
+
     def test_bootstrap_request_rejects_unauthorized_engine_bridge_repo(self):
         with self.assertRaisesRegex(BootstrapContractError, "engine_bridge_repo"):
             materialize_runtime_bootstrap_request(

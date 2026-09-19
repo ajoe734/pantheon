@@ -22,7 +22,7 @@ DEFAULT_RUNTIME_CONFIG_REF = "/workspace/lean/Launcher/config.json"
 UPSTREAM_LEAN_REMOTE = "https://github.com/QuantConnect/Lean.git"
 UPSTREAM_LEAN_PINNED_COMMIT = "23b735d99a357807dc0df9f4c51d30f05fe0d277"
 UPSTREAM_LEAN_PINNED_IMAGE = "quantconnect/lean:18070"
-UPSTREAM_LEAN_IMAGE_DIGEST = "sha256:6bc72bd450a4d7c328a2e57018df0d56068f8b38e938488da108d9af44a9931d"
+UPSTREAM_LEAN_IMAGE_DIGEST = "sha256:373b03b8ef5e39a923b1ed2e7e469abdef21b2fef31dd78fb4f7b05464ac69b4"
 PANTHEON_EXTERNAL_LIBRARY_PATH = "integrations/lean/pantheon_algo"
 
 ALLOWED_ENGINE_BRIDGE_REMOTES = frozenset({
@@ -83,7 +83,7 @@ class RuntimeBridgeIdentity:
     path: str
     remote: str
     commit: str
-    source_path: str = PANTHEON_LEAN_SOURCE_PATH
+    source_path: str = PANTHEON_EXTERNAL_LIBRARY_PATH
 
     def to_dict(self) -> dict[str, str]:
         return asdict(self)
@@ -379,13 +379,13 @@ def _materialize_bridge(
         _first_non_empty(binding, "engine_bridge_path", "bridge.source_path", "bridge.repo_path")
         or _metadata_value(binding, "engine_bridge_path", "bridge_source_path", "bridge_repo_path")
         or _metadata_value(plan, "engine_bridge_path", "bridge_source_path", "bridge_repo_path")
-        or PANTHEON_LEAN_SOURCE_PATH
+        or PANTHEON_EXTERNAL_LIBRARY_PATH
     )
     remote = (
         _first_non_empty(binding, "engine_bridge_repo", "bridge.remote")
         or _metadata_value(binding, "engine_bridge_repo", "bridge_remote")
         or _metadata_value(plan, "engine_bridge_repo", "bridge_remote")
-        or PANTHEON_LEAN_REMOTE
+        or UPSTREAM_LEAN_REMOTE
     )
     commit = (
         _first_non_empty(binding, "engine_bridge_commit", "bridge.commit")

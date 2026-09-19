@@ -106,6 +106,42 @@ class PantheonAlgoBaseContextTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeContextError, "runtime context is required"):
                 algo.Initialize()
 
+    def test_consumer_wiring_and_signal_intake(self) -> None:
+        with patched_env(_CONTEXT_ENV):
+            algo = CapturingAlgo()
+            algo.Initialize()
+
+            self.assertIsNotNone(algo._consumer)
+            self.assertIsNotNone(algo._signal_store)
+            self.assertGreater(len(algo.Schedule.scheduled_events), 0)
+
+            signal = {
+                "signal_id": "sig-test-001",
+                "version": "1.0",
+                "strategy_id": "strat-001",
+                "binding_id": "rtb-paper-001",
+                "runtime_id": "rt-paper-001",
+                "metadata": {
+                    "capital_pool_id": "pool-001",
+                },
+                "timestamp": "2026-09-19T12:00:00Z",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 0.5,
+                "quantity_type": "PERCENT_PORTFOLIO",
+            }
+            algo._signal_store.enqueue(signal)
+            self.assertEqual(algo._signal_store.queue_depth(), 1)
+
+            algo.OnData()
+
+            self.assertEqual(algo._signal_store.queue_depth(), 0)
+            self.assertGreater(len(algo.orders), 0)
+            order = algo.orders[0]
+            self.assertEqual(order["method"], "SetHoldings")
+            self.assertEqual(order["percentage"], 0.5)
+
 
 if __name__ == "__main__":
     unittest.main()

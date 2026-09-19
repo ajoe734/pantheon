@@ -30,6 +30,24 @@ log = logging.getLogger(__name__)
 _MANAGED_CONTEXT_STAGES = {"staging", "canary", "live", "prod", "production"}
 _MANAGED_CONTEXT_ROLES = {"staging", "canary", "live", "prod", "production"}
 
+class _ScheduleStub:
+    def __init__(self) -> None:
+        self.scheduled_events: list[Any] = []
+
+    def On(self, *args: Any, **kwargs: Any) -> Any:
+        event = {"args": args, "kwargs": kwargs}
+        self.scheduled_events.append(event)
+        return event
+
+
+class _RulesStub:
+    def EveryDay(self) -> str:
+        return "EveryDay"
+
+    def Every(self, *args: Any, **kwargs: Any) -> str:
+        return "Every"
+
+
 # Guard import so this file can be parsed without LEAN runtime present
 try:
     from AlgorithmImports import (  # type: ignore[import]
@@ -40,8 +58,31 @@ try:
 except ImportError:
     # Outside LEAN: define a stub base class so unit tests can import this module
     class QCAlgorithm:  # type: ignore[no-redef]
-        def Initialize(self): pass
-        def Schedule(self): return _ScheduleStub()
+        def __init__(self) -> None:
+            self.Schedule = _ScheduleStub()
+            self.DateRules = _RulesStub()
+            self.TimeRules = _RulesStub()
+            self.orders: list[Any] = []
+
+        def Initialize(self) -> None: pass
+
+        def SetHoldings(self, symbol: Any, percentage: float, *args: Any, **kwargs: Any) -> Any:
+            order = {"method": "SetHoldings", "symbol": symbol, "percentage": percentage}
+            self.orders.append(order)
+            return order
+
+        def MarketOrder(self, symbol: Any, quantity: float, *args: Any, **kwargs: Any) -> Any:
+            order = {"method": "MarketOrder", "symbol": symbol, "quantity": quantity}
+            self.orders.append(order)
+            return order
+
+        def Liquidate(self, symbol: Any = None, *args: Any, **kwargs: Any) -> Any:
+            order = {"method": "Liquidate", "symbol": symbol}
+            self.orders.append(order)
+            return order
+
+        def Debug(self, message: str) -> None: pass
+        def Log(self, message: str) -> None: pass
     _LEAN_AVAILABLE = False
 
 
@@ -64,15 +105,40 @@ class PantheonAlgoBase(QCAlgorithm):
             )
 
         self._consumer = self._build_consumer()
-        if self._consumer and _LEAN_AVAILABLE:
-            self.Schedule.On(
-                self.DateRules.EveryDay(),
-                self.TimeRules.Every(TimeSpan.FromMinutes(1)),
-                lambda: self._consumer.drain(algo=self),
-            )
-            log.info("Pantheon SignalConsumer scheduled (every 1 min)")
+        if self._consumer:
+            if _LEAN_AVAILABLE:
+                self.Schedule.On(
+                    self.DateRules.EveryDay(),
+                    self.TimeRules.Every(TimeSpan.FromMinutes(1)),
+                    lambda: self._consumer.drain(algo=self),
+                )
+                log.info("Pantheon SignalConsumer scheduled (every 1 min)")
+            else:
+                schedule = getattr(self, "Schedule", None)
+                if callable(schedule):
+                    schedule = schedule()
+                    self.Schedule = schedule
+                if schedule is None or not hasattr(schedule, "On"):
+                    schedule = _ScheduleStub()
+                    self.Schedule = schedule
+                date_rule = getattr(getattr(self, "DateRules", None), "EveryDay", lambda: "EveryDay")()
+                time_rule = "Every(1min)"
+                schedule.On(date_rule, time_rule, lambda: self._consumer.drain(algo=self))
+                log.info("Pantheon SignalConsumer wired (stub environment)")
         else:
             log.warning("Pantheon SignalConsumer not available — running without signal intake")
+
+        if not hasattr(self, "orders"):
+            self.orders = []
+
+    def drain_signals(self) -> None:
+        """Drain pending signals through the consumer."""
+        if self._consumer:
+            self._consumer.drain(algo=self)
+
+    def OnData(self, data: Any = None) -> None:
+        """Default OnData hook drains incoming signals."""
+        self.drain_signals()
 
     def flush_rebalance(self, run_id: str) -> None:
         """Call when FinRL signals all legs for a run_id are delivered."""
@@ -199,24 +265,39 @@ class PantheonAlgoBase(QCAlgorithm):
 
     def _build_consumer(self) -> Any | None:
         try:
-            from services.execution.lean_runtime.signal_consumer import SignalConsumer  # type: ignore[import]
-            from services.signal_store.client import SignalStoreClient  # type: ignore[import]
+            from services.execution.lean_runtime.pending_signal_store import (  # type: ignore[import]
+                build_pending_signal_store,
+            )
+            from services.execution.lean_runtime.signal_consumer import (  # type: ignore[import]
+                SignalConsumer,
+            )
         except ImportError as exc:
             log.error("Cannot import Pantheon runtime modules: %s — signal consumer disabled", exc)
             return None
 
-        redis_url = os.getenv("SIGNAL_STORE_URL", "redis://signal-store:6379")
+        signal_store_url = os.getenv("SIGNAL_STORE_URL", "")
+        binding_id = os.getenv("PANTHEON_RUNTIME_BINDING_ID", "")
+        runtime_id = os.getenv("PANTHEON_RUNTIME_ID", "")
+        capital_pool_id = os.getenv("PANTHEON_CAPITAL_POOL_ID", "")
+
+        ctx = getattr(self, "_pantheon_context", None)
+        if ctx:
+            if not binding_id and getattr(ctx, "runtime_binding_id", None):
+                binding_id = ctx.runtime_binding_id
+            if not runtime_id and getattr(ctx, "runtime_id", None):
+                runtime_id = ctx.runtime_id
+            if not capital_pool_id and getattr(getattr(ctx, "capital", None), "capital_pool_id", None):
+                capital_pool_id = ctx.capital.capital_pool_id
+
         try:
-            store = SignalStoreClient(redis_url=redis_url)
-            return SignalConsumer(store_client=store)
+            store = build_pending_signal_store(signal_store_url)
+            self._signal_store = store
+            return SignalConsumer(
+                store_client=store,
+                binding_id=binding_id or None,
+                runtime_id=runtime_id or None,
+                capital_pool_id=capital_pool_id or None,
+            )
         except Exception as exc:
             log.error("Failed to initialise SignalConsumer: %s — running without signal intake", exc)
             return None
-
-
-# ---------------------------------------------------------------------------
-# Stub for non-LEAN environments
-# ---------------------------------------------------------------------------
-
-class _ScheduleStub:
-    def On(self, *args, **kwargs): pass
