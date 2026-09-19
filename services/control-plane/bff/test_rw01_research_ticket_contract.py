@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -16,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
 from services.control_plane.bff.research.router import create_research_router
 
+_CURRENT_REQUEST_METHOD: ContextVar[str] = ContextVar("_CURRENT_REQUEST_METHOD", default="")
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
 
@@ -92,8 +94,7 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
         include_snapshot_fallback: bool = True,
         include_local_fallback: bool = True,
     ) -> dict | None:
-        import inspect
-        if any(frame.function == "endpoint_get_ticket" for frame in inspect.stack()[:8]):
+        if _CURRENT_REQUEST_METHOD.get() == "GET":
             include_snapshot_fallback = False
             include_local_fallback = False
         if self._source == "local_snapshot" and not (
@@ -152,6 +153,14 @@ def _bff_error(
 
 def _create_test_app(port: _TicketPortDouble) -> FastAPI:
     app = FastAPI()
+
+    @app.middleware("http")
+    async def track_request_method(request, call_next):
+        token = _CURRENT_REQUEST_METHOD.set(request.method)
+        try:
+            return await call_next(request)
+        finally:
+            _CURRENT_REQUEST_METHOD.reset(token)
 
     @app.exception_handler(HTTPException)
     @app.exception_handler(StarletteHTTPException)

@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from services.control_plane.bff.core.app_factory import create_core_router
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 from services.control_plane.bff.research.router import create_research_router
 
@@ -178,8 +179,7 @@ def _create_test_app() -> FastAPI:
 
     app.include_router(router)
 
-    @app.get("/bff/capabilities")
-    async def bff_capabilities(request: Request):
+    async def _sem_bff_capabilities(request: Request):
         auth = request.headers.get("authorization")
         if not auth or "op-b2-004" not in auth:
             raise HTTPException(status_code=401, detail={"error": "unauthorized"})
@@ -192,6 +192,8 @@ def _create_test_app() -> FastAPI:
             },
             "meta": {"snapshot_at": "2026-05-23T00:00:00Z"},
         }
+
+    app.include_router(create_core_router({"sem_bff_capabilities": _sem_bff_capabilities}))
 
     return app
 

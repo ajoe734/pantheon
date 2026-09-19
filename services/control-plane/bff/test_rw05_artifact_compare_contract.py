@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -12,7 +12,11 @@ from services.control_plane.bff.ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
 )
 from services.control_plane.bff.research.router import create_research_router
-from services.control_plane.bff.research.service import ResearchRouterService
+from services.control_plane.bff.research.service import (
+    ResearchNotFoundError,
+    ResearchRouterService,
+    ResearchValidationError,
+)
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -190,68 +194,9 @@ class SurfaceStr(str):
         return default
 
 
-class _Rw05ValidationError(HTTPException):
-    def __init__(self, status_code: int, code: str, message: str, **kwargs: Any) -> None:
-        super().__init__(
-            status_code=status_code,
-            detail={
-                "error": {
-                    "code": code,
-                    "message": message,
-                    "reason": message,
-                    "details": kwargs,
-                }
-            },
-        )
-
-
 class _Rw05ResearchRouterService(ResearchRouterService):
     def _surface(self, dataset: str, *, snapshot_at: str, has_data: bool) -> Any:
         return SurfaceStr("ok")
-
-    def compare_artifacts(self, artifact_ids: str) -> Dict[str, Any]:
-        requested_ids = [value.strip() for value in str(artifact_ids or "").split(",") if value.strip()]
-        if not 2 <= len(requested_ids) <= 4:
-            raise _Rw05ValidationError(
-                400,
-                "VALIDATION_FAILED",
-                "artifact_ids must include between 2 and 4 artifact ids",
-                precondition_failed="artifact_ids",
-            )
-        port = self._port()
-        artifacts = []
-        for artifact_id in requested_ids:
-            artifact = port.get_research_artifact(artifact_id)
-            if not artifact:
-                raise _Rw05ValidationError(404, "RESOURCE_NOT_FOUND", f"Artifact {artifact_id} does not exist")
-            artifacts.append(artifact)
-        non_comparable = [
-            {
-                "artifact_id": artifact.get("artifact_id"),
-                "status": artifact.get("status"),
-                "reason": "Only sealed and superseded artifacts may be compared.",
-            }
-            for artifact in artifacts
-            if not (artifact.get("allowedActions") or {}).get("canCompare")
-        ]
-        if non_comparable:
-            raise _Rw05ValidationError(
-                422,
-                "OPERATION_NOT_ALLOWED",
-                "One or more artifacts cannot be compared",
-                non_comparable_artifacts=non_comparable,
-            )
-        snapshot_at = self.utc_now()
-        payload = dict(port.compare_research_artifacts(requested_ids) or {})
-        meta = self.snapshot_meta(snapshot_at)
-        meta["computed_at"] = snapshot_at
-        meta["surfaces"] = {
-            "artifact_compare": self._surface(
-                "research_artifacts", snapshot_at=snapshot_at, has_data=True
-            )
-        }
-        payload["meta"] = meta
-        return payload
 
 
 def _extract_identity(auth_header: Optional[str]) -> Dict[str, Any]:
@@ -284,10 +229,52 @@ def _create_test_app(port: _ArtifactPortDouble) -> FastAPI:
 
     @app.exception_handler(HTTPException)
     @app.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(request, exc):
+    async def _http_exception_handler(request: Request, exc: Any) -> JSONResponse:
         if isinstance(exc.detail, dict) and "error" in exc.detail:
             return JSONResponse(status_code=exc.status_code, content=exc.detail)
         return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
+
+    @app.exception_handler(ResearchValidationError)
+    async def _research_validation_error_handler(request: Request, exc: ResearchValidationError) -> JSONResponse:
+        details: Dict[str, Any] = {"precondition_failed": exc.field, "reason": str(exc)}
+        if exc.error_code == "OPERATION_NOT_ALLOWED":
+            artifact_ids = [v.strip() for v in str(request.query_params.get("artifact_ids") or "").split(",") if v.strip()]
+            non_comparable = [
+                {
+                    "artifact_id": artifact.get("artifact_id"),
+                    "status": artifact.get("status"),
+                    "reason": "Only sealed and superseded artifacts may be compared.",
+                }
+                for artifact in [port.get_research_artifact(aid) for aid in artifact_ids]
+                if artifact and not (artifact.get("allowedActions") or {}).get("canCompare")
+            ]
+            if non_comparable:
+                details["non_comparable_artifacts"] = non_comparable
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": exc.error_code,
+                    "message": str(exc),
+                    "reason": str(exc),
+                    "details": details,
+                }
+            },
+        )
+
+    @app.exception_handler(ResearchNotFoundError)
+    async def _research_not_found_error_handler(request: Request, exc: ResearchNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": {
+                    "code": "RESOURCE_NOT_FOUND",
+                    "message": f"{exc.label} not found",
+                    "reason": str(exc),
+                    "details": {"reason": str(exc)},
+                }
+            },
+        )
 
     service = _Rw05ResearchRouterService(
         port_getter=lambda: port,

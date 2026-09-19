@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from scripts import cleanup_legacy_research_evidence_refs as legacy_cleanup
 from scripts import project_research_to_bff_surfaces as projector
+from services.control_plane.bff.agora.router import create_agora_router
 from services.control_plane.bff.console_gap.knowledge import create_knowledge_router
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 from services.control_plane.bff.research.router import create_research_router
@@ -275,20 +276,16 @@ def _create_console_projection_app(ports: Any) -> FastAPI:
     )
     app.include_router(research_router)
 
-    @app.get("/bff/research/tasks")
-    async def bff_research_tasks(request: Request):
-        ident = _extract_identity(request.headers.get("authorization"))
-        _require_read_role(ident)
-        tasks = ports.list_research_tickets() if hasattr(ports, "list_research_tickets") else []
-        return {
-            "items": tasks,
-            "page_info": {"total": len(tasks), "page_size": 20, "next_page_token": None},
-            "meta": {
-                "surfaces": {
-                    "research_task_list": {"status": "ok", "source": "test_projection"}
-                }
-            },
-        }
+    agora_router = create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-06-15T11:00:00Z",
+        read_surface=ports,
+        sync_servant_agent=lambda payload: payload,
+    )
+    app.include_router(agora_router)
 
     return app
 
