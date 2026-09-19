@@ -126,7 +126,7 @@
           {
             "name": "shioaji",
             "specifier": "shioaji>=1.2.0,<2.0.0",
-            "pinned": "1.7.4"
+            "pinned": "1.7.5"
           }
         ]
       },
@@ -138,7 +138,7 @@
           {
             "name": "shioaji",
             "specifier": "shioaji>=1.2.0,<2.0.0",
-            "pinned": "1.7.4"
+            "pinned": "1.7.5"
           }
         ]
       },
@@ -172,13 +172,14 @@
     "image": "quantconnect/lean:18070",
     "image_digest": "sha256:373b03b8ef5e39a923b1ed2e7e469abdef21b2fef31dd78fb4f7b05464ac69b4",
     "launcher_assembly": "QuantConnect.Lean.Launcher.dll",
-    "runtime_type": "dotnet 7.0 + Python.NET 2.0.66.0 (CPython 3.11.14)",
+    "runtime_type": ".NET 10.0.1 (Microsoft.NETCore.App 10.0.1, Microsoft.AspNetCore.App 10.0.1) + CPython 3.11.14",
     "replay_algorithm": "EngineReplayAlgo (subclass of pantheon_algo.base.PantheonAlgoBase)",
     "external_library_mount": "/workspace/integrations/lean -> integrations/lean",
-    "isolation": "Standalone container, volume-mounted storage and library, mock-free concrete components",
+    "isolation": "Standalone container, volume-mounted storage and library, mock-free concrete components, --network none",
     "run_1_initial": {
       "status": "success",
       "exit_code": 0,
+      "docker_command": "docker run --rm --network none -v /tmp/pantheon-worker-worktrees/pantheon/oss-execution-baseline-001:/workspace -v /tmp/pantheon_storage:/tmp/pantheon_storage -w /workspace --entrypoint python3 quantconnect/lean:18070 scripts/smoke_test_lean_algo.py --replay initial",
       "lean_available": true,
       "context_loaded": {
         "runtime_id": "rt-engine-replay-001",
@@ -186,6 +187,9 @@
         "deployment_plan_id": "dp-engine-replay-001",
         "strategy_id": "strat-engine-replay-001",
         "capital_pool_id": "pool-engine-replay-001",
+        "model_id": "model-alpha-v1",
+        "tenant_id": "tenant-ops",
+        "session_id": "session-restart-001",
         "bridge_remote": "https://github.com/QuantConnect/Lean.git",
         "bridge_path": "integrations/lean/pantheon_algo",
         "bridge_commit": "23b735d99a357807dc0df9f4c51d30f05fe0d277"
@@ -197,7 +201,10 @@
         "action": "BUY",
         "direction": "LONG",
         "quantity": 0.5,
-        "quantity_type": "PERCENT_PORTFOLIO"
+        "quantity_type": "PERCENT_PORTFOLIO",
+        "model_id": "model-alpha-v1",
+        "tenant_id": "tenant-ops",
+        "session_id": "session-restart-001"
       },
       "order_execution": {
         "order_status": "FILLED",
@@ -205,7 +212,7 @@
         "fill_price": 144.78172417,
         "fill_quantity": 344.0,
         "statistics_total_orders": 1,
-        "statistics_order_list_hash": "d17dbd01fd291aab1eb04cf714ceba93"
+        "duplicate_suppressed": false
       },
       "emitted_bridge_events": [
         "RuntimeContextLoaded",
@@ -216,34 +223,62 @@
     "run_2_restart": {
       "status": "success",
       "exit_code": 0,
+      "docker_command": "docker run --rm --network none -v /tmp/pantheon-worker-worktrees/pantheon/oss-execution-baseline-001:/workspace -v /tmp/pantheon_storage:/tmp/pantheon_storage -w /workspace --entrypoint python3 quantconnect/lean:18070 scripts/smoke_test_lean_algo.py --replay restart",
       "object_store_restart": {
         "detected": true,
         "prior_checkpoint": {
           "initial_run": true,
+          "model_id": "model-alpha-v1",
+          "tenant_id": "tenant-ops",
+          "session_id": "session-restart-001",
           "runtime_id": "rt-engine-replay-001",
+          "runtime_binding_id": "rtb-engine-replay-001",
+          "deployment_plan_id": "dp-engine-replay-001",
           "strategy_id": "strat-engine-replay-001",
-          "timestamp": "2026-09-19T12:00:00Z"
+          "capital_pool_id": "pool-engine-replay-001",
+          "processed_signals": [
+            "engine-replay-sig-001"
+          ],
+          "last_order": {
+            "order_id": "ord-engine-replay-sig-001",
+            "signal_id": "engine-replay-sig-001",
+            "symbol": "SPY",
+            "action": "BUY",
+            "fill_price": 144.78172417,
+            "fill_quantity": 344.0,
+            "status": "FILLED"
+          }
         },
         "emitted_event": "EngineRestartSuccess"
       },
-      "order_execution": {
-        "order_status": "FILLED",
+      "replayed_signal": {
+        "signal_id": "engine-replay-sig-001",
+        "symbol": "SPY.US",
+        "model_id": "model-alpha-v1",
+        "tenant_id": "tenant-ops",
+        "session_id": "session-restart-001"
+      },
+      "duplicate_suppression": {
+        "verified": true,
+        "duplicate_suppressed": true,
+        "new_orders_placed": 0,
         "symbol": "SPY",
-        "fill_price": 144.78172417,
-        "fill_quantity": 344.0,
-        "statistics_total_orders": 1
+        "suppression_reason": "duplicate_suppression_across_restart"
       },
       "emitted_bridge_events": [
         "RuntimeContextLoaded",
         "EngineRestartSuccess",
-        "OrderFilledReplay",
+        "OrderDuplicateSuppressed",
         "EngineReplayComplete"
       ]
     }
   },
   "execution_bridge_guard_qualification": {
     "script": "scripts/check_execution_bridge.py",
-    "contract_scope_status": "Out-of-contract: scripts/check_execution_bridge.py is not listed in task artifacts contract. To prevent diff scope violation during handoff admission, the file is preserved unmodified in the PR.",
+    "caller_workflow": ".github/workflows/p0-bridge-guards.yml:36",
+    "owning_task": "P0-CI-BRIDGE-001 (Phase 6 P0 Paper Loop, archived done at commit 3e6a88422)",
+    "workflow_trigger_scope": "Active only on branch 'main' (push/pull_request to main); inactive on active development trunk 'dev'.",
+    "contract_scope_boundary": "scripts/check_execution_bridge.py and .github/workflows/p0-bridge-guards.yml are not declared in the canonical artifacts list for OSS-EXECUTION-BASELINE-001. Modifying them in PR #5930 is blocked by .orchestrator/rewrite/task_contract.py:328 (validate_task_artifact_diff_scope). Revision of task artifact contracts is a governed action reserved for Human/Ops on pre-dispatch tasks (scripts/ai_status.py:5652).",
     "parameterized_invocation": "python3 scripts/check_execution_bridge.py --expected-remote https://github.com/QuantConnect/Lean.git --base-path ../integrations/lean/pantheon_algo/base.py",
     "verification_result": {
       "ok": true,
@@ -256,15 +291,16 @@
         "compose_exec_path_valid": true
       },
       "violations": []
-    }
+    },
+    "disposition": "Under the task authority boundary, scripts/check_execution_bridge.py correctly validates the upstream remote and externalized base path when given explicit parameters. Updating its hardcoded defaults requires either a dedicated maintenance task or a Human/Ops artifact contract grant to avoid violating PR diff scope gating."
   },
   "verification": {
     "test_suites": [
       {
         "suite": "integrations/lean/pantheon_algo/test_base.py",
-        "passed": 4,
+        "passed": 5,
         "failed": 0,
-        "description": "PantheonAlgoBase runtime context loading, event emission, fail-closed validation, and SignalConsumer wiring with signal intake and order placement"
+        "description": "PantheonAlgoBase runtime context loading, event emission, fail-closed validation, SignalConsumer wiring with signal intake and order placement, and EngineReplayAlgo duplicate suppression across restart"
       },
       {
         "suite": "services/execution/lean_runtime/test_algorithm_smoke.py",
@@ -306,7 +342,7 @@
         "suite": "services/broker/sinopac/test_adapter.py",
         "passed": 42,
         "failed": 0,
-        "description": "SinoPac broker adapter sandbox gating, order placement simulation, cancel simulation, error mapping"
+        "description": "SinoPac broker adapter sandbox gating, order placement simulation, cancel simulation, error mapping, shioaji 1.7.5 compatibility"
       },
       {
         "suite": "services/broker/sinopac/test_facade.py",
@@ -318,14 +354,14 @@
         "suite": "scripts/smoke_test_lean_algo.py",
         "passed": 1,
         "failed": 0,
-        "description": "Standalone LEAN algorithm execution smoke test with concrete PendingSignalStore and SignalConsumer proving signal intake, scheduling, order execution, and event emission without mocking"
+        "description": "Standalone LEAN algorithm execution smoke test and 2-phase EngineReplayAlgo with concrete PendingSignalStore and PersistentLeanObjectStore proving signal intake, order execution, model/tenant/session context, and duplicate suppression across engine restart"
       }
     ],
-    "total_tests_passed": 116,
+    "total_tests_passed": 117,
     "total_tests_failed": 0,
     "lockfile_install_verified": true,
     "docker_builds_verified": [
-      "services/broker/Dockerfile with dependencies/locks/services-broker.txt constraints (Python 3.12)",
+      "services/broker/Dockerfile with dependencies/locks/services-broker.txt constraints (Python 3.12, shioaji 1.7.5)",
       "services/execution/lean_runtime/Dockerfile with dependencies/locks/services-execution-lean_runtime.txt constraints (Python 3.11)"
     ]
   },
@@ -333,11 +369,11 @@
     "live_trading_prevented": "All broker tests executed using isolated simulation. BROKER_PRODUCTION_LIVE_ENABLED is fail-closed (default false). Zero real orders placed, zero live credentials used.",
     "capital_boundary_preserved": "Capital pool IDs and persona capital binding IDs validated via strict runtime context contracts without capital modification.",
     "runtime_isolation": "LEAN execution runtime and broker runtimes maintain isolated dependency closures with separate requirements and lockfiles.",
-    "upstream_engine_compatibility": "LEAN extensions externalized to integrations/lean/pantheon_algo; upstream QuantConnect/Lean master commit 23b735d99a357807dc0df9f4c51d30f05fe0d277 and Docker image quantconnect/lean:18070 (sha256:373b03b8ef5e39a923b1ed2e7e469abdef21b2fef31dd78fb4f7b05464ac69b4) validated via reproducible 2-phase isolated engine replay."
+    "upstream_engine_compatibility": "LEAN extensions externalized to integrations/lean/pantheon_algo; upstream QuantConnect/Lean master commit 23b735d99a357807dc0df9f4c51d30f05fe0d277 and Docker image quantconnect/lean:18070 (sha256:373b03b8ef5e39a923b1ed2e7e469abdef21b2fef31dd78fb4f7b05464ac69b4, running .NET 10.0.1 + Python 3.11.14) validated via reproducible 2-phase network-disabled isolated engine replay."
   },
   "review_decision": {
     "status": "ready_for_independent_review",
     "reviewer": "Codex",
-    "note": "Corrections verified: (1) Upstream LEAN engine acceptance proved via 2-phase isolated Docker replay with pinned image quantconnect/lean:18070 and external library, validating runtime context, bridge events, SignalConsumer intake, order fill (SPY 344 shares @ 144.7817), and ObjectStore persistence across restart (Run 1 and Run 2 exit 0); (2) integrations/lean/pantheon_algo/base.py wires concrete PendingSignalStore and SignalConsumer without mocking, proven in test_base.py and scripts/smoke_test_lean_algo.py; (3) services/broker/Dockerfile and services/execution/lean_runtime/Dockerfile consume lockfiles as constraints during pip install and build cleanly against Python 3.12/3.11; (4) bootstrap_contract.py defaults to UPSTREAM_LEAN_REMOTE and PANTHEON_EXTERNAL_LIBRARY_PATH; scripts/check_execution_bridge.py qualification documented (passes exit 0); (5) all 116 unit/contract tests and standalone smoke tests pass cleanly; (6) live broker credentials and capital boundaries fully preserved."
+    "note": "All review feedback items resolved: (1) Upstream LEAN engine acceptance proved via 2-phase network-disabled Docker replay in quantconnect/lean:18070 (.NET 10.0.1 + Python 3.11.14) using EngineReplayAlgo (subclass of PantheonAlgoBase). Asserts model/tenant/session context propagation, initial order fill (SPY 344 shares @ 144.7817), ObjectStore checkpoint persistence, and duplicate suppression across engine restart (0 new orders placed on replayed signal, duplicate_suppressed: true). Raw Docker commands, terminal logs, and exit codes verified; (2) Lockfiles dependencies/locks/services-broker.txt and services-broker-sinopac.txt updated to pin official stable shioaji==1.7.5 (released 2026-09-10). Full 117-test suite passes with shioaji 1.7.5; (3) scripts/check_execution_bridge.py and .github/workflows/p0-bridge-guards.yml analyzed: owned by archived task P0-CI-BRIDGE-001 (targeting main, not dev), outside canonical artifact diff scope. Parameterized invocation passes exit 0 with 5/5 checks; cross-task disposition documented; (4) concrete PendingSignalStore and SignalConsumer wired without mocking; (5) zero live broker orders or capital alterations."
   }
 }

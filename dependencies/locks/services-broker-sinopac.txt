@@ -3,7 +3,7 @@
 # Primary dependencies (from services/broker/sinopac/requirements.txt):
 #   shioaji>=1.2.0,<2.0.0
 #
-# Transitive closure resolved against official PyPI latest stable releases as of 2026-09-06.
+# Transitive closure resolved against official PyPI latest stable releases as of 2026-09-19.
 
-shioaji==1.7.4
+shioaji==1.7.5
     # via -r services/broker/sinopac/requirements.txt

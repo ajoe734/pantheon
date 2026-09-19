@@ -6,7 +6,7 @@
 #   pydantic
 #   shioaji>=1.2.0,<2.0.0
 #
-# Transitive closure resolved against official PyPI latest stable releases as of 2026-09-06.
+# Transitive closure resolved against official PyPI latest stable releases as of 2026-09-19.
 
 annotated-doc==0.0.5
     # via fastapi
@@ -28,7 +28,7 @@ pydantic==2.13.5
     #   fastapi
 pydantic-core==2.46.5
     # via pydantic
-shioaji==1.7.4
+shioaji==1.7.5
     # via -r services/broker/requirements.txt
 starlette==1.6.0
     # via fastapi

@@ -11,7 +11,7 @@ _LEAN_DIR = Path(__file__).resolve().parent.parent
 if str(_LEAN_DIR) not in sys.path:
     sys.path.insert(0, str(_LEAN_DIR))
 
-from pantheon_algo.base import PantheonAlgoBase
+from pantheon_algo.base import EngineReplayAlgo, PantheonAlgoBase, PersistentLeanObjectStore
 from services.execution.lean_runtime.runtime_context import RuntimeContextError
 
 
@@ -141,6 +141,71 @@ class PantheonAlgoBaseContextTests(unittest.TestCase):
             order = algo.orders[0]
             self.assertEqual(order["method"], "SetHoldings")
             self.assertEqual(order["percentage"], 0.5)
+
+    def test_engine_replay_and_duplicate_suppression_across_restart(self) -> None:
+        object_store = PersistentLeanObjectStore()
+        signal = {
+            "signal_id": "engine-replay-sig-001",
+            "version": "1.0",
+            "strategy_id": "strat-engine-replay-001",
+            "binding_id": "rtb-paper-001",
+            "runtime_id": "rt-paper-001",
+            "metadata": {
+                "capital_pool_id": "pool-001",
+                "model_id": "model-alpha-v1",
+                "tenant_id": "tenant-ops",
+                "session_id": "session-restart-001",
+            },
+            "timestamp": "2026-09-19T12:00:00Z",
+            "symbol": "SPY.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 0.5,
+            "quantity_type": "PERCENT_PORTFOLIO",
+        }
+
+        # Run 1: Initial run
+        with patched_env({**_CONTEXT_ENV, "PANTHEON_MODEL_ID": "model-alpha-v1", "PANTHEON_TENANT_ID": "tenant-ops", "PANTHEON_SESSION_ID": "session-restart-001"}):
+            algo_run1 = EngineReplayAlgo(object_store=object_store)
+            algo_run1.Initialize()
+            self.assertFalse(algo_run1.is_restart)
+            self.assertIsNone(algo_run1.prior_checkpoint)
+
+            # Process initial signal
+            result1 = algo_run1.process_replay_signal(signal)
+            self.assertEqual(result1["status"], "FILLED")
+            self.assertEqual(result1["new_orders_placed"], 1)
+            self.assertFalse(result1["duplicate_suppressed"])
+            self.assertEqual(len(algo_run1.executed_orders), 1)
+            algo_run1.complete_replay()
+
+            event_types1 = [e["event_type"] for e in algo_run1.events]
+            self.assertIn("RuntimeContextLoaded", event_types1)
+            self.assertIn("OrderFilledReplay", event_types1)
+            self.assertIn("EngineReplayComplete", event_types1)
+
+        # Run 2: Restart run with fresh instance sharing same persistent ObjectStore
+        with patched_env({**_CONTEXT_ENV, "PANTHEON_MODEL_ID": "model-alpha-v1", "PANTHEON_TENANT_ID": "tenant-ops", "PANTHEON_SESSION_ID": "session-restart-001"}):
+            algo_run2 = EngineReplayAlgo(object_store=object_store)
+            algo_run2.Initialize()
+            self.assertTrue(algo_run2.is_restart)
+            self.assertIsNotNone(algo_run2.prior_checkpoint)
+            self.assertEqual(algo_run2.prior_checkpoint["model_id"], "model-alpha-v1")
+            self.assertEqual(algo_run2.prior_checkpoint["tenant_id"], "tenant-ops")
+            self.assertEqual(algo_run2.prior_checkpoint["session_id"], "session-restart-001")
+
+            # Replay the same signal - assert duplicate suppression
+            result2 = algo_run2.process_replay_signal(signal)
+            self.assertEqual(result2["status"], "DUPLICATE_SUPPRESSED")
+            self.assertEqual(result2["new_orders_placed"], 0)
+            self.assertTrue(result2["duplicate_suppressed"])
+            self.assertEqual(len(algo_run2.executed_orders), 0)
+            algo_run2.complete_replay()
+
+            event_types2 = [e["event_type"] for e in algo_run2.events]
+            self.assertIn("EngineRestartSuccess", event_types2)
+            self.assertIn("OrderDuplicateSuppressed", event_types2)
+            self.assertIn("EngineReplayComplete", event_types2)
 
 
 if __name__ == "__main__":

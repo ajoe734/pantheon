@@ -13,6 +13,6 @@
 #
 # The base class wires SignalConsumer.drain() into a scheduled event
 # and handles the LEAN Object Store artifact loading bootstrap.
-from .base import PantheonAlgoBase
+from .base import EngineReplayAlgo, PantheonAlgoBase, PersistentLeanObjectStore
 
-__all__ = ["PantheonAlgoBase"]
+__all__ = ["PantheonAlgoBase", "EngineReplayAlgo", "PersistentLeanObjectStore"]
