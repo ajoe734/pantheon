@@ -1,0 +1,798 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "delivery_status": "blocked_external_governance_gap",
+  "base_ref": "dev@dc67c6bf0ca78e6bfe8454f2922f9e3213bd1d86",
+  "pr": 5714,
+  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md Section C; original SD8.5-8.6 retained in full; BFF-TEST-MIGRATION-REPARTITION-PLAN-001 exact-batch partition",
+  "prerequisite_resolution": {
+    "total_dependencies": 23,
+    "satisfied_dependencies": 23,
+    "foundation_prerequisites": [
+      {
+        "task_id": "BFF-TEST-ARCH-001",
+        "title": "BFF test architecture inventory and gate baseline",
+        "status": "done",
+        "satisfied": true
+      },
+      {
+        "task_id": "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
+        "title": "Journal consumer isolation corrective",
+        "status": "done",
+        "satisfied": true
+      },
+      {
+        "task_id": "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001",
+        "title": "BFF auth session seam prerequisite",
+        "status": "done",
+        "satisfied": true
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "title": "Freeze the BFF test-migration partition and parent contract revision",
+        "status": "done",
+        "satisfied": true,
+        "pr": 5745,
+        "merge_commit_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10"
+      }
+    ],
+    "child_batches": [
+      {
+        "task_id": "BFF-TEST-MIGRATION-B01-AGORA-CORE-001",
+        "title": "Agora core",
+        "status": "done",
+        "owner": "Antigravity",
+        "reviewer": "Codex",
+        "pr": 5760,
+        "head_sha": "6b5c8fe4aa162b7d54a10fa9efd1ca94da389762",
+        "merge_commit_sha": "0939ca5ddbfdb85f32e2b8baa4d68d410ca9474e"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+        "title": "ASK and assistant workshop",
+        "status": "done",
+        "owner": "Antigravity2",
+        "reviewer": "Claude",
+        "pr": 5750,
+        "head_sha": "b143c552cd71a90275557a2cc662258dd0141de5",
+        "merge_commit_sha": "08294e46a70cdc62fd6eb782bb6a9df509b065dd"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+        "title": "Auth, sessions, and JWKS",
+        "status": "done",
+        "owner": "Antigravity",
+        "reviewer": "Claude",
+        "pr": 5749,
+        "head_sha": "bd7db78421659cfe51c0717056d4bd7aea9f866f",
+        "merge_commit_sha": "6a583f48ab04d66ec6357b2b5a210f1e7dddfa36"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+        "title": "Security, errors, and idempotency",
+        "status": "done",
+        "owner": "Antigravity2",
+        "reviewer": "Claude",
+        "pr": 5755,
+        "head_sha": "7c17937ed7f912f4a11513aa26550af498f92f7f",
+        "merge_commit_sha": "08294e46a70cdc62fd6eb782bb6a9df509b065dd"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+        "title": "Governance approvals",
+        "status": "done",
+        "owner": "Claude",
+        "reviewer": "Antigravity",
+        "pr": 5746,
+        "head_sha": "a63e44cb4a266d0f34fdb1143bc1f90d59721d38",
+        "merge_commit_sha": "318f378219752d72c6606c2a2cf0767b663674e4"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+        "title": "Governance audit and committee",
+        "status": "done",
+        "owner": "Antigravity2",
+        "reviewer": "Claude",
+        "pr": 5747,
+        "head_sha": "c93f09386fbc84750db30845cd49ce30be1d6197",
+        "merge_commit_sha": "ff50a32d78837bf04dd3f4ec6b4ebc96dd70e1bf"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+        "title": "Persona provisioning",
+        "status": "done",
+        "owner": "Antigravity",
+        "reviewer": "Claude",
+        "pr": 5765,
+        "head_sha": "83f2334d7f389482fb0c7fc1d5f8a23293b89fd4",
+        "merge_commit_sha": "f89d998b9355b4485865385e7f9b7fbb63a5663f"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+        "title": "Strategy, capital, and ranking",
+        "status": "done",
+        "owner": "Claude",
+        "reviewer": "Antigravity",
+        "pr": 5853,
+        "head_sha": "b4c6fe0913ec5f3fffaed0bf43cf4cbd935c6ebc",
+        "merge_commit_sha": "f5c78f382064e5626a30713ba0800fee7d718124"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "title": "Research and knowledge",
+        "status": "done",
+        "owner": "Antigravity",
+        "reviewer": "Antigravity2",
+        "pr": 5748,
+        "head_sha": "f953f9dae7fbf7b40bec47bd1e7998a7ef193fec",
+        "merge_commit_sha": "e3ef0a4b6c8500f19019196e67fcbd5df6df67dc"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001",
+        "title": "Evolution programs",
+        "status": "done",
+        "owner": "Antigravity2",
+        "reviewer": "Claude",
+        "pr": 5754,
+        "head_sha": "75326ce61e8149531ba68466aa33f415342e45b3",
+        "merge_commit_sha": "46022edc952f5ea05e6e9191cea65404953bfcfb"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "title": "Management assistant and operations",
+        "status": "done",
+        "owner": "Claude",
+        "reviewer": "Antigravity2",
+        "pr": 5848,
+        "head_sha": "20885e11531418348e88e3e4b88aa00657d1c83b",
+        "merge_commit_sha": "f86865f9ec63a6422be9fad25c37047caa3de5ec"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+        "title": "Management console read models",
+        "status": "done",
+        "owner": "Claude",
+        "reviewer": "Antigravity2",
+        "pr": 5850,
+        "head_sha": "8b01cceb8f3a30bd73af8b507593a772816abcf4",
+        "merge_commit_sha": "1bad1e9045b019e7227a7958de2512110786903d"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001",
+        "title": "Runtime health and readiness",
+        "status": "done",
+        "owner": "Antigravity",
+        "reviewer": "Antigravity2",
+        "pr": 5756,
+        "head_sha": "a50eea35c5d443a74d718571e6875874d4e29201",
+        "merge_commit_sha": "c99c090b405d95bff5fa0c426d249ea75ffcc9eb"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "title": "Loops and paper V5",
+        "status": "done",
+        "owner": "Antigravity",
+        "reviewer": "Claude",
+        "pr": 5751,
+        "head_sha": "f710a3b9a7436dbbb9899e7c146c0210709fb4d8",
+        "merge_commit_sha": "331c7052737665467ab4fddb4fe84e593963b1e8"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001",
+        "title": "Correct the B15 whole-app composition allowlist contract",
+        "status": "done",
+        "owner": "Claude",
+        "reviewer": "Antigravity",
+        "pr": 5770,
+        "head_sha": "34396b3d43aa28ed0f826b0d2959863cfcb62145",
+        "merge_commit_sha": "6f00d0eb38e57946fe784de493df4606a55169b3"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001",
+        "title": "Migrate the B15 deployment and hosted remainder",
+        "status": "done",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "pr": 5772,
+        "head_sha": "c6515d956329a40bd35e8559df7bbc2668c8d2ab",
+        "merge_commit_sha": "135d4ab4a38391ca34ff9fa6cc9a80656f200979"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001",
+        "title": "Command/write workflow",
+        "status": "done",
+        "owner": "Antigravity2",
+        "reviewer": "Claude",
+        "pr": 5757,
+        "head_sha": "c8694a861ad2a1b26880ce45063c422b305645fd",
+        "merge_commit_sha": "dc67c6bf0ca78e6bfe8454f2922f9e3213bd1d86"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
+        "title": "Router and SSE surfaces",
+        "status": "done",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "pr": 5761,
+        "head_sha": "210b06604d979aeadea04d6e92ecb6f75fc4f066",
+        "merge_commit_sha": "428bd0aa69b1a8d5167b18ca0a70c8ae981b6362"
+      },
+      {
+        "task_id": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+        "title": "Cross-cutting consolidation",
+        "status": "done",
+        "owner": "Antigravity2",
+        "reviewer": "Claude",
+        "pr": 5852,
+        "head_sha": "c32882e3d49fd6d2af7d4249dcb4244194b2ae07",
+        "merge_commit_sha": "0d6fb273574e1d3ff0328c0dabcdeaa07edce1b7"
+      }
+    ]
+  },
+  "forensic_gap_audit": {
+    "reconciliation_summary": "Independent review on PR #5714 rejected acceptance claims. Re-audit proves that while all 18 child batches (B01-B18, 19 PRs) were merged, full test suite migration is not complete on dev. 1) BFF-TEST-MIGRATION-REPARTITION-PLAN-001 omitted 29 PLANNED test files from the 182-file partition based on an erroneous assumption that 34 files were already migrated when only 5 were. 2) 52 files within the 182 partition remain coupled to main.py (e.g. B05 governance suites left coupled due to inline _VALIDATORS in main.py). 3) Canonical inventory bff_test_architecture_inventory.json was never updated and still reports 202 PLANNED, 5 MIGRATED. 4) test_bff_test_architecture.py fails because tests/test_actions_to_commands_adapter.py was retired in commit 26d8a35a91.",
+    "inventory_disposition_state": {
+      "ALLOWLIST": 13,
+      "MIGRATED": 5,
+      "PLANNED": 202,
+      "DECOUPLED": 121
+    },
+    "catalog_baseline_main_importers": 218,
+    "catalog_current_main_importers": 211,
+    "catalog_migrated_count": 5,
+    "total_test_files_scanned": 384,
+    "total_non_allowlist_main_importers_bff": 88,
+    "total_sys_path_mutators_bff": 119,
+    "partition_files_total": 182,
+    "partition_main_importers_count": 52,
+    "partition_sys_path_mutators_count": 19,
+    "partition_monkeypatchers_count": 39,
+    "omitted_planned_suites_from_partition_count": 29,
+    "omitted_planned_suites_from_partition": [
+      "test_ask_001_sessions_contract.py",
+      "test_ask_003_committee_lifecycle.py",
+      "test_ask_004_memo_publish_contract.py",
+      "test_audit_timestamp_filter_no_500.py",
+      "test_bff_audit_contract.py",
+      "test_consultation_surfaces.py",
+      "test_exp002_bff_research_experiments_contract.py",
+      "test_inc001_rebaseline_incidents_contract.py",
+      "test_incident_stream_route_order.py",
+      "test_pkt001_deployment_review_console_contract.py",
+      "test_pkt001_governance_review_queue_contract.py",
+      "test_pkt006_approval_queue_contract.py",
+      "test_rw01_research_ticket_contract.py",
+      "test_rw02_search_contract.py",
+      "test_rw03_analyze_contract.py",
+      "test_rw04_experiment_launch_contract.py",
+      "test_rw05_artifact_compare_contract.py",
+      "test_settings_contract.py",
+      "test_trn002_trainer_session_contract.py",
+      "test_trn003_rapid_eval_contract.py",
+      "test_tw01_teaching_dialog_contract.py",
+      "test_tw02_parameter_controls_contract.py",
+      "test_tw03_before_after_compare_contract.py",
+      "test_tw04_teaching_replay_contract.py",
+      "tests/test_bff_auth_refresh.py",
+      "tests/test_bff_logout.py",
+      "tests/test_bff_me_locale.py",
+      "tests/test_bff_me_session_bootstrap.py",
+      "tests/test_incident_router.py"
+    ],
+    "partition_main_importers": [
+      {
+        "file": "test_bff_approvals_decide_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001"
+      },
+      {
+        "file": "test_bff_consol_008_fixture_pack_a.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      },
+      {
+        "file": "test_bff_consol_009_fixture_pack_b.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      },
+      {
+        "file": "test_bff_consol_010_fixture_pack_c.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      },
+      {
+        "file": "test_bff_consol_016_detail_smoke_a.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      },
+      {
+        "file": "test_bff_consol_017_detail_smoke_b.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      },
+      {
+        "file": "test_bff_management_delta_routes.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_bff_mgmt_common_filters.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_bff_mgmt_ops_001_operations_read_model_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_bff_mgmt_ops_006_operator_actions_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_bff_performance_ranking_read_model_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001"
+      },
+      {
+        "file": "test_bff_pm12_portfolio_book_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001"
+      },
+      {
+        "file": "test_bff_promotion_review_governance.py",
+        "batch": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001"
+      },
+      {
+        "file": "test_bff_v5_loop_sentinel_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001"
+      },
+      {
+        "file": "test_governance_command_submission.py",
+        "batch": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001"
+      },
+      {
+        "file": "test_loop_auto_bff004_cross_loop_drill.py",
+        "batch": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001"
+      },
+      {
+        "file": "test_management_data_sources_v2.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_mcp_tool_import.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_mgmt_load_002_shell_summary.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_mgmt_load_005_read_concurrency.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_mgmt_ooda_004_bff_routes.py",
+        "batch": "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001"
+      },
+      {
+        "file": "test_mgmt_qlib_006_artifact_research_linkage.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "test_mgmt_syn_006_conflict_log_view.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_openclaw_ops_surface.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "test_pkt016_knowledge_workbench_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "test_research_oss_preactivation_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_agora_performance_transport_and_isolated_store.py",
+        "batch": "BFF-TEST-MIGRATION-B01-AGORA-CORE-001"
+      },
+      {
+        "file": "tests/test_bff_alerts_acknowledge.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_bff_b1_007_security_hardening.py",
+        "batch": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      },
+      {
+        "file": "tests/test_bff_b2_004_research_search.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_bff_b3_trading_pulse.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      },
+      {
+        "file": "tests/test_bff_b5_001_security_hardening.py",
+        "batch": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      },
+      {
+        "file": "tests/test_bff_b6_001_security_hardening.py",
+        "batch": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      },
+      {
+        "file": "tests/test_bff_b6_003_nl_high_risk_refusal.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      },
+      {
+        "file": "tests/test_bff_b6_management_nl_ask.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "tests/test_bff_consol_skills_mcp_registry_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      },
+      {
+        "file": "tests/test_bff_knowledge_inbox.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_bff_management_cockpit.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "tests/test_bff_management_data_sources_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "tests/test_bff_management_gap_003_contract_schema.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "tests/test_bff_path_dedupe.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      },
+      {
+        "file": "tests/test_bff_rebalance_proposals.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001"
+      },
+      {
+        "file": "tests/test_console_research_projection.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_management_nl_assistant_provider.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001"
+      },
+      {
+        "file": "tests/test_management_read_budget.py",
+        "batch": "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001"
+      },
+      {
+        "file": "tests/test_overlay_retirement.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      },
+      {
+        "file": "tests/test_pint_003_durable_opinions.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_pint_013_durable_interactions.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_pint_016_strict_browser_readiness.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_ppl_alloc_009_assertion_semantics.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001"
+      },
+      {
+        "file": "tests/test_ppl_alloc_012_ranking_projection.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001"
+      }
+    ],
+    "partition_sys_path_mutators": [
+      {
+        "file": "test_bff_performance_ranking_read_model_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001"
+      },
+      {
+        "file": "test_bff_pm12_portfolio_book_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001"
+      },
+      {
+        "file": "test_bff_promotion_review_governance.py",
+        "batch": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001"
+      },
+      {
+        "file": "test_governance_command_submission.py",
+        "batch": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001"
+      },
+      {
+        "file": "test_mgmt_qlib_006_artifact_research_linkage.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "test_pkt016_knowledge_workbench_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "test_research_oss_preactivation_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_bff_alerts_acknowledge.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_bff_b2_004_research_search.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_bff_knowledge_inbox.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_bff_rebalance_proposals.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001"
+      },
+      {
+        "file": "tests/test_console_data_ooda_projection.py",
+        "batch": "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001"
+      },
+      {
+        "file": "tests/test_console_research_projection.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_management_read_models_router.py",
+        "batch": "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001"
+      },
+      {
+        "file": "tests/test_pint_003_durable_opinions.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_pint_013_durable_interactions.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_pint_016_strict_browser_readiness.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001"
+      },
+      {
+        "file": "tests/test_ppl_alloc_009_assertion_semantics.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001"
+      },
+      {
+        "file": "tests/test_ppl_alloc_012_ranking_projection.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001"
+      }
+    ],
+    "partition_monkeypatchers": [
+      {
+        "file": "test_bff_approvals_decide_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_consol_008_fixture_pack_a.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_consol_009_fixture_pack_b.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_consol_010_fixture_pack_c.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_consol_016_detail_smoke_a.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_consol_017_detail_smoke_b.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_management_delta_routes.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_mgmt_ops_001_operations_read_model_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_mgmt_ops_006_operator_actions_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_performance_ranking_read_model_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_bff_promotion_review_governance.py",
+        "batch": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_governance_command_submission.py",
+        "batch": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_loop_prod_per_001_provisioning.py",
+        "batch": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "pattern": "main.read_store"
+      },
+      {
+        "file": "test_mgmt_load_002_shell_summary.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_mgmt_load_005_read_concurrency.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_mgmt_ooda_004_bff_routes.py",
+        "batch": "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_mgmt_qlib_006_artifact_research_linkage.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_mgmt_syn_006_conflict_log_view.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "test_research_oss_preactivation_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_b1_007_security_hardening.py",
+        "batch": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_b2_004_research_search.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_b3_trading_pulse.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_b5_001_security_hardening.py",
+        "batch": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_b6_001_security_hardening.py",
+        "batch": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_b6_003_nl_high_risk_refusal.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_b6_management_nl_ask.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_consol_skills_mcp_registry_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_knowledge_inbox.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_management_cockpit.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_bff_management_data_sources_contract.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_console_research_projection.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_management_nl_assistant_provider.py",
+        "batch": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_management_read_budget.py",
+        "batch": "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_overlay_retirement.py",
+        "batch": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_pint_003_durable_opinions.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_pint_013_durable_interactions.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_pint_016_strict_browser_readiness.py",
+        "batch": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "pattern": "bff_main.read_store"
+      },
+      {
+        "file": "tests/test_ppl_alloc_012_ranking_projection.py",
+        "batch": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+        "pattern": "bff_main.read_store"
+      }
+    ],
+    "retired_file_missing_on_disk": "services/control-plane/bff/tests/test_actions_to_commands_adapter.py (retired in dev@26d8a35a91)",
+    "unextracted_production_seams": [
+      "services/control-plane/bff/main.py: inline _VALIDATORS dictionary (~35 _validate_* functions) blocking governance command submission and promotion review decoupling"
+    ],
+    "parent_artifact_contract_boundary": [
+      "docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json"
+    ]
+  },
+  "acceptance_state": {
+    "full_original_migration": "unmet_blocked: Independent review REJECTED PR #5714. AST scan confirms 88 non-allowlist test files still import main across BFF (52 within the 182 child batch partition, 29 in omitted PLANNED suites, plus 7 other unclassified files). 119 files mutate sys.path. 39 files monkeypatch read_store. PLANNED or 5 migrated suites is not completion. Governed contract revision and new child batches/seams required.",
+    "actual_import_graph_gate": "unmet_blocked: Real import graph reveals 88 main importers outside composition allowlist. Architecture gate test_bff_test_architecture.py fails due to retired test_actions_to_commands_adapter.py and catalog discrepancies.",
+    "typed_domain_fixtures": "partially_met: Child batches delivered per-domain fixtures for migrated subsets, but 52 partition files and 29 omitted files remain on legacy mocks or global store monkeypatching.",
+    "real_cookie_bearer_auth": "met: Production seam create_auth_dependencies consumed in auth suites.",
+    "per_file_complete_runtime_budgets": "unmet_blocked: Bounded terminal execution budgets cannot be certified as complete while 88 suites remain coupled to composition root and unextracted production seams.",
+    "independent_exact_head_review": "rejected: Reviewer Claude rejected PR #5714 / head 5bc15ef7b on 2026-09-16T15:16:48Z; reopened to implementation.",
+    "hosted_product_closure": "not claimed (test architecture migration rollup task)"
+  },
+  "required_corrective_actions": [
+    "1. Human/Ops / Planner must partition and dispatch the 29 omitted PLANNED test suites into execution batches.",
+    "2. Production seam extraction required: extract _VALIDATORS from services/control-plane/bff/main.py into an importable module so governance test suites can decouple without forking business logic.",
+    "3. Complete migration of the 52 remaining main-importers and 19 sys.path mutators across batches B01-B18.",
+    "4. Update canonical catalog bff_test_architecture_inventory.json (remove retired test_actions_to_commands_adapter.py, update dispositions from PLANNED to DECOUPLED/MIGRATED, update layer and disposition counts).",
+    "5. Under Human/Ops contract revision, expand parent artifact contract or dispatch final gate rollup task to verify zero non-allowlist main importers and green test_bff_test_architecture.py."
+  ],
+  "review": {
+    "reviewer": "Claude",
+    "verdict": "rejected_reopened",
+    "review_note": "Independent review REJECTS this PR acceptance claims; reopening rather than approving. Canonical architecture inventory unchanged (5 MIGRATED, 202 PLANNED). Live AST scan finds 53+ offending test files outside allowlist. 128 files still doing owned sys.path mutation. PLANNED or 5 migrated suites is not completion."
+  }
+}
