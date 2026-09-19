@@ -1,0 +1,664 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-09-19 14:25:05 UTC",
+  "runtime_sha": "b435986b13d5c323c533225f5ea3f6481d79a1be",
+  "scope": "development task accounting and dispatch; not product or hosted acceptance",
+  "tasks": [
+    {
+      "id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+      "title": "Complete the original test migration and enforce actual import and fixture isolation",
+      "label_zh": "BFF 全量測試遷移總驗收",
+      "category": "工程測試",
+      "status": "in_progress",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 192,
+      "depends_on": [
+        "BFF-TEST-ARCH-001",
+        "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
+        "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001",
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-GATE-CORRECTIVE-001",
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-002",
+        "BFF-TEST-MIGRATION-CB01-AGORA-PERFORMANCE-001",
+        "BFF-TEST-MIGRATION-CB02-ASK-TEACHING-WORKSHOP-001",
+        "BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001",
+        "BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001",
+        "BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001",
+        "BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
+        "BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001",
+        "BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001",
+        "BFF-TEST-MIGRATION-CB09-INCIDENTS-DEPLOYMENT-LOOPS-001",
+        "BFF-TEST-MIGRATION-CB10-CROSS-CUTTING-CONSOLIDATION-001"
+      ],
+      "unmet": [
+        "BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "BFF-ROUTER-USECASE-CORRECTIVE-001",
+      "title": "Finish five-domain router-to-application boundaries without further mechanical splitting",
+      "label_zh": "Router 到應用服務的剩餘整合",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 356,
+      "depends_on": [
+        "BFF-ROUTER-STRUCT-001",
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001"
+      ],
+      "unmet": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+      "title": "Complete canonical domain command durability and retire remaining mutation fallbacks",
+      "label_zh": "產品寫入持久化與剩餘 fallback 退役",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 345,
+      "depends_on": [
+        "DOMAIN-WRITERS-001",
+        "BFF-ROUTER-USECASE-CORRECTIVE-001",
+        "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+      ],
+      "unmet": [
+        "BFF-ROUTER-USECASE-CORRECTIVE-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "STRUCT-RETIRE-001",
+      "title": "Complete first-release structural retirement and the source acceptance join",
+      "label_zh": "剩餘結構／舊碼退役與整合驗收",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 326,
+      "depends_on": [
+        "DOC-FIRST-RELEASE-PLAN-DELIVERY-001",
+        "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+        "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001",
+        "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+        "LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001",
+        "FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001"
+      ],
+      "unmet": [
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001",
+        "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+        "LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "SIMPLIFY-BFF-RESIDUAL-001",
+      "title": "Close audit BFF duplicate, native dependency and retired-route residuals after structural delivery",
+      "label_zh": "BFF 重複實作與舊路由殘留清理",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 198,
+      "depends_on": [
+        "STRUCT-RETIRE-001"
+      ],
+      "unmet": [
+        "STRUCT-RETIRE-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "OSS-CORE-BASELINE-001",
+      "title": "Lock the core API runtimes and remove obsolete SSE/Pydantic/dependency branches",
+      "label_zh": "核心 API 套件基線、SSE／Pydantic 相容分支清理",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 136,
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "SIMPLIFY-OPENCLAW-001",
+        "SIMPLIFY-RETRIEVAL-MEMORY-001",
+        "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001"
+      ],
+      "unmet": [
+        "SIMPLIFY-BFF-RESIDUAL-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "SIMPLIFY-EXTRACTION-001",
+      "title": "Replace duplicated intent and StrategySpec semantic rules with one evaluated typed extractor",
+      "label_zh": "以經評測的 typed extractor 收斂意圖／StrategySpec 規則",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "generation": 176,
+      "depends_on": [
+        "SIMPLIFY-OPENCLAW-001",
+        "AGORA-CHAIN-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001"
+      ],
+      "unmet": [
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "OSS-RESEARCH-FOOTPRINT-001",
+      "title": "Measure and retire unnecessary research framework product entry points",
+      "label_zh": "研究框架用途盤點與無用入口退役",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "generation": 135,
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-EXTRACTION-001"
+      ],
+      "unmet": [
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-EXTRACTION-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "OSS-RESEARCH-BASELINE-001",
+      "title": "Upgrade retained numerical and ML runtimes and delete obsolete numerical/API compatibility",
+      "label_zh": "保留的數值／ML 套件升級",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 12,
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001",
+        "OSS-RESEARCH-FOOTPRINT-001"
+      ],
+      "unmet": [
+        "OSS-RESEARCH-FOOTPRINT-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "OSS-EXECUTION-BASELINE-001",
+      "title": "Externalize Pantheon LEAN extensions and validate the execution dependency baseline",
+      "label_zh": "LEAN 擴充抽離與執行引擎依賴驗證",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "in_progress",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "generation": 119,
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001"
+      ],
+      "unmet": [],
+      "workers": [
+        {
+          "run_id": "antigravity-20260919T142120Z-2ceff6c5",
+          "agent_id": "antigravity",
+          "pid": 1383080,
+          "task_generation": 119,
+          "status": "running",
+          "last_heartbeat_at": "2026-09-19T14:23:58Z",
+          "queue_event_id": "evt-20260919T142112Z-dd402d10"
+        }
+      ]
+    },
+    {
+      "id": "OSS-INFRA-PROFILES-001",
+      "title": "Converge Compose profiles and maintained infrastructure image declarations",
+      "label_zh": "Compose profiles 與基礎服務映像收斂",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 54,
+      "depends_on": [
+        "OSS-CORE-BASELINE-001",
+        "OSS-TOOLING-BASELINE-001",
+        "OSS-RESEARCH-BASELINE-001",
+        "OSS-EXECUTION-BASELINE-001",
+        "OSS-INFRA-CHOICE-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001",
+        "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+        "SIMPLIFY-RETRIEVAL-MEMORY-001",
+        "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001"
+      ],
+      "unmet": [
+        "OSS-CORE-BASELINE-001",
+        "OSS-RESEARCH-BASELINE-001",
+        "OSS-EXECUTION-BASELINE-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "OSS-OBJECT-STORE-CUTOVER-001",
+      "title": "Implement the selected object-store source cutover and retire superseded setup",
+      "label_zh": "物件儲存來源切換與舊設定退役",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 45,
+      "depends_on": [
+        "OSS-INFRA-PROFILES-001",
+        "OSS-INFRA-CHOICE-001"
+      ],
+      "unmet": [
+        "OSS-INFRA-PROFILES-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001",
+      "title": "Verify all LLM and OSS simplification outcomes on integrated dev and close the full ledger",
+      "label_zh": "LLM／OSS 簡化整批整合驗收",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 42,
+      "depends_on": [
+        "OSS-OBJECT-STORE-CUTOVER-001",
+        "OSS-TOOLING-BASELINE-001",
+        "FE-UI-DEPS-BASELINE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "SIMPLIFY-EXTRACTION-001",
+        "SIMPLIFY-RETRIEVAL-MEMORY-001",
+        "SIMPLIFY-OPENCLAW-001",
+        "OPS-LEGACY-REVIEW-RETIRE-001",
+        "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001"
+      ],
+      "unmet": [
+        "OSS-OBJECT-STORE-CUTOVER-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "SIMPLIFY-EXTRACTION-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001",
+      "title": "Align packaged journal owner and durable backend configuration",
+      "label_zh": "Journal owner 與持久後端配置對齊",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 28,
+      "depends_on": [
+        "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
+        "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "BFF-ROUTER-USECASE-CORRECTIVE-001"
+      ],
+      "unmet": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "BFF-ROUTER-USECASE-CORRECTIVE-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+      "title": "Connect default BFF read owners and truthful job-log capability",
+      "label_zh": "BFF 預設讀取 owner 與真實 job-log 接線",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 53,
+      "depends_on": [
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "MGMT-READ-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+      ],
+      "unmet": [
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001",
+      "title": "Wire canonical loop receipts through the existing twelve-loop projector",
+      "label_zh": "既有十二迴圈 projector 的正式 receipt 接線",
+      "category": "產品／LLM／OSS／驗收",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "generation": 9,
+      "depends_on": [
+        "LOOP-TRUTH-001",
+        "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+        "SIMPLIFY-EXTRACTION-001",
+        "OSS-RESEARCH-FOOTPRINT-001"
+      ],
+      "unmet": [
+        "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+        "SIMPLIFY-EXTRACTION-001",
+        "OSS-RESEARCH-FOOTPRINT-001"
+      ],
+      "workers": []
+    },
+    {
+      "id": "OPS-QUEUE-RECONCILE-CAS-001",
+      "title": "Finalize queue records only for settled workers; trust model output over trailing native auth marker",
+      "label_zh": "Queue／CAS 與 provider output 判定修正的任務收尾",
+      "category": "開發工具收尾",
+      "status": "todo",
+      "owner": "Human/Ops",
+      "reviewer": "Codex",
+      "generation": 2,
+      "depends_on": [],
+      "unmet": [],
+      "workers": []
+    },
+    {
+      "id": "BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
+      "title": "Decouple Research tickets, experiments, Qlib linkage and knowledge workbench test suites",
+      "label_zh": "Research／Knowledge／Experiments 測試遷移 CB06",
+      "category": "工程測試",
+      "status": "in_progress",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "generation": 768,
+      "depends_on": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-002"
+      ],
+      "unmet": [],
+      "workers": [
+        {
+          "run_id": "antigravity-20260919T140321Z-d46b71f6",
+          "agent_id": "antigravity",
+          "pid": 1247927,
+          "task_generation": 767,
+          "status": "running",
+          "last_heartbeat_at": "2026-09-19T14:23:58Z",
+          "queue_event_id": "evt-20260919T140312Z-159eec1f"
+        }
+      ]
+    }
+  ],
+  "operations": {
+    "dependency-receipt": {
+      "checkpoint": {
+        "event_count": 21256,
+        "last_event_id": "task-state-6fdacc420692db8f72222a44d6952eadff2e03e2c8a50e83f33c5711e8e701d4",
+        "state_sha256": "ec20791976e0fd3e43df552ffaac70df16e7b5c27b37a0020294bcd8d1c39f4b"
+      },
+      "historical_missing_dependencies": {
+        "TJ-E2E-012": [
+          "TJ-E2E-001",
+          "TJ-E2E-002",
+          "TJ-E2E-003",
+          "TJ-E2E-004",
+          "TJ-E2E-005",
+          "TJ-E2E-006",
+          "TJ-E2E-007",
+          "TJ-E2E-008",
+          "TJ-E2E-009",
+          "TJ-E2E-010",
+          "TJ-E2E-011"
+        ]
+      },
+      "historical_unordered_writers": [],
+      "request_sha256": "18e740cfe274fbfabbca01422d340253e5bf1966f8185e4e0da83b09e5a22360",
+      "status": "committed",
+      "task_ids": [
+        "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+        "BFF-ROUTER-USECASE-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001",
+        "LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ]
+    },
+    "execution-dependency-receipt": {
+      "checkpoint": {
+        "event_count": 21258,
+        "last_event_id": "task-state-643e16b253c1fa1fc856009fdc8c66eebfa4c5d8a443affb9970ddcad021dfed",
+        "state_sha256": "11e4ff1ccbe5ba9d9051fd8e16e3d4b3bd7dbaaf67ff06144d6d709c63bd68e1"
+      },
+      "historical_missing_dependencies": {
+        "TJ-E2E-012": [
+          "TJ-E2E-001",
+          "TJ-E2E-002",
+          "TJ-E2E-003",
+          "TJ-E2E-004",
+          "TJ-E2E-005",
+          "TJ-E2E-006",
+          "TJ-E2E-007",
+          "TJ-E2E-008",
+          "TJ-E2E-009",
+          "TJ-E2E-010",
+          "TJ-E2E-011"
+        ]
+      },
+      "historical_unordered_writers": [],
+      "request_sha256": "08ee00ae54fe7d981fb312a5999579a20d679533a28ca170ad080cdec96a1635",
+      "status": "committed",
+      "task_ids": [
+        "OSS-EXECUTION-BASELINE-001"
+      ]
+    },
+    "tj-reconciliation-receipt": {
+      "operation": "historical_task_reconciliation",
+      "mode": "apply",
+      "parent_before_sha256": "91959fc35c4967db26e7adafe0bb79af27c005ed9dfe15e14df2b42c5267ba85",
+      "removed_active_ids": [
+        "TJ-E2E-012"
+      ],
+      "reason": "Operator 2026-09-19 requests reconciling the audited historical decisions and dispatching real remaining work. TJ-E2E-012 was completed by Claude2 with Codex review on 2026-07-24; PR4021 head78619b1337ac5e0efb2147d6e6158c331eeda899 merged3985daeaddcfd8954da8b82609e7a5ac5972b786; PR4011 recorded the independent operator verdict and PR4015 reconciled its wording. Journal genesis on 2026-09-02 reimported the early todo before the accepted addendum; all later generation changes through12 are provider recovery, with no new product scope. Remove only this stale active row and atomically recover the twelve historical completed facts from byte-preserved archives with original generations/dates, following the existing audited PPL-ALLOC-007 drain precedent at journal16289. No new execution, review, hosted acceptance, product readiness or grant is asserted. In particular do not first make the stale parent dispatchable.",
+      "facts": {
+        "TJ-E2E-001": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-11T23:13:00Z"
+        },
+        "TJ-E2E-002": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-11T23:53:33Z"
+        },
+        "TJ-E2E-003": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-12T01:04:32Z"
+        },
+        "TJ-E2E-004": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-12T11:27:19Z"
+        },
+        "TJ-E2E-005": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-12T12:28:16Z"
+        },
+        "TJ-E2E-006": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-12T15:32:43Z"
+        },
+        "TJ-E2E-007": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-12T16:02:45Z"
+        },
+        "TJ-E2E-008": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-12T15:53:02Z"
+        },
+        "TJ-E2E-009": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-12T20:43:57Z"
+        },
+        "TJ-E2E-010": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-12T13:20:21Z"
+        },
+        "TJ-E2E-011": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-12T17:03:10Z"
+        },
+        "TJ-E2E-012": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "generation": 1,
+          "recorded_at": "2026-07-24T01:04:09Z"
+        }
+      },
+      "archives": {
+        "TJ-E2E-001": {
+          "sha256": "cfacf9b8127441564e2f899000b3d5ff70a5c779235485748d20dbc1d0cb5bda",
+          "delivery_commit": "995e7724558a6c7d59698e465a6a823f3a8af179"
+        },
+        "TJ-E2E-002": {
+          "sha256": "b7d20f86e98ea7f729f22632ba61583cf827dd264ea575bba7cbcf15dd059b7e",
+          "delivery_commit": "08ab63239d661ba3854d10579e1e1a6bf9eff9e5"
+        },
+        "TJ-E2E-003": {
+          "sha256": "6985a626e59aff504501f6cb284d85be2bf827e65c2e82c747f8cc9281475c90",
+          "delivery_commit": "9b1981a28486804ac1ac669af48de58a20a0099c"
+        },
+        "TJ-E2E-004": {
+          "sha256": "f230c4de1116f22ea2cf8d9498a1ca2bc86408a18a1f6eb4ef4e6bf27ed6de8a",
+          "delivery_commit": "d4b1a285de27f1f1e042dcf0044519e34309403d"
+        },
+        "TJ-E2E-005": {
+          "sha256": "b17dbf8bb77c59641a60f71024aa6cfdda3538e2fda0ab5a899c37f30feea68c",
+          "delivery_commit": "83f2c6709abcaf245755e9ee0edbaac010f23d72"
+        },
+        "TJ-E2E-006": {
+          "sha256": "e0e82d9f0235363e68ae1ab1428c2ffe428b3aabf36e0a3c5e1ae25d91cd7326",
+          "delivery_commit": "c7b6235c902eb4788caf1089c52d22cb47ae9773"
+        },
+        "TJ-E2E-007": {
+          "sha256": "4e39d67d21b04c954667135285688c9001e1044aaffcd3b06c56719bc00d29d6",
+          "delivery_commit": "74814c14252cb4b58dccb315ddc8091a41ca9241"
+        },
+        "TJ-E2E-008": {
+          "sha256": "e42501c1d9e72670aca14e5299e4a9f9204211a13e2c331f6c52db8877cf3f78",
+          "delivery_commit": "2527d277501792e858c284197bbb4518f66181dc"
+        },
+        "TJ-E2E-009": {
+          "sha256": "c9046a0ebd67d1572071eb34b54e127e08da6ca4e9413ccca9c73368286906be",
+          "delivery_commit": "0102d6d4a15f1a4b33d4af77a4a8c1475fdfa52c"
+        },
+        "TJ-E2E-010": {
+          "sha256": "56292b24bc139a30395cdeaedd68763f56858fc2d53b57cb0d8dbeb03f27a47d",
+          "delivery_commit": "d19874b6e71cf941a018b2f1ffea457abc021453"
+        },
+        "TJ-E2E-011": {
+          "sha256": "1ec7dc0eea843e78d7bf91d19a418e53b12490a920f704baca6068ed0d3c7f92",
+          "delivery_commit": "9cf079e8e0ad1796d6f86b7a4dcf0d879fef112f"
+        },
+        "TJ-E2E-012": {
+          "sha256": "97a22e2710cdffc6b08ae1a9a43336c2aec028be593717d9bd1eae597b34c311",
+          "delivery_commit": "78619b1337ac5e0efb2147d6e6158c331eeda899"
+        }
+      },
+      "checkpoint": {
+        "event_count": 21262,
+        "last_event_id": "task-state-db8511287e8896969a7333e5d83b9f20f90b5272d3e27b37a807ea940feda0af",
+        "state_sha256": "ffc8cfa5ae2f0fc4212cc84b0c7a117ccaee5e68c603a686516386060ee2aa3b"
+      }
+    }
+  },
+  "github": [
+    {
+      "pr": 5868,
+      "exit_code": 0,
+      "result": {
+        "headRefOid": "bf87989e76b079f876516d31bc2e8687bed0081a",
+        "mergeCommit": {
+          "oid": "27e49d598391a5a697e1ee446079bbcf0a702519"
+        },
+        "mergedAt": "2026-09-17T02:21:32Z",
+        "number": 5868,
+        "state": "MERGED",
+        "title": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001: correct rebaseline P1",
+        "url": "https://github.com/ajoe734/pantheon/pull/5868"
+      }
+    },
+    {
+      "pr": 4021,
+      "exit_code": 0,
+      "result": {
+        "headRefOid": "78619b1337ac5e0efb2147d6e6158c331eeda899",
+        "mergeCommit": {
+          "oid": "3985daeaddcfd8954da8b82609e7a5ac5972b786"
+        },
+        "mergedAt": "2026-07-24T01:00:11Z",
+        "number": 4021,
+        "state": "MERGED",
+        "title": "TJ-E2E-012: record reviewer approval and close packet",
+        "url": "https://github.com/ajoe734/pantheon/pull/4021"
+      }
+    },
+    {
+      "pr": 4011,
+      "exit_code": 0,
+      "result": {
+        "headRefOid": "02460ceaeeb61fa53f4428efad717c5e38f86c35",
+        "mergeCommit": {
+          "oid": "00b38f41ec51296762d502c4bd5732f95ccf2953"
+        },
+        "mergedAt": "2026-07-23T14:47:44Z",
+        "number": 4011,
+        "state": "MERGED",
+        "title": "TJ-E2E-012: record Human/Ops verdict APPROVED in closeout section 8",
+        "url": "https://github.com/ajoe734/pantheon/pull/4011"
+      }
+    },
+    {
+      "pr": 4015,
+      "exit_code": 0,
+      "result": {
+        "headRefOid": "c972c05216f69303f37dcec2ad61fa06be7ecf8e",
+        "mergeCommit": {
+          "oid": "7e269e4d2ee35d11574519e63be6e99caf295677"
+        },
+        "mergedAt": "2026-07-24T00:15:56Z",
+        "number": 4015,
+        "state": "MERGED",
+        "title": "TJ-E2E-012: reconcile packet header with recorded verdict",
+        "url": "https://github.com/ajoe734/pantheon/pull/4015"
+      }
+    }
+  ]
+}

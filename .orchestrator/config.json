@@ -190,27 +190,21 @@
     "reviewer_fallbacks": {
       "Claude": [
         "Claude2",
-        "Antigravity",
-        "Antigravity2",
         "Codex",
         "Codex2"
       ],
       "Claude2": [
         "Claude",
-        "Antigravity",
-        "Antigravity2",
         "Codex",
         "Codex2"
       ],
       "Antigravity": [
-        "Antigravity2",
         "Claude",
         "Claude2",
         "Codex",
         "Codex2"
       ],
       "Antigravity2": [
-        "Antigravity",
         "Claude",
         "Claude2",
         "Codex",
@@ -219,16 +213,12 @@
       "Codex": [
         "Codex2",
         "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
+        "Claude2"
       ],
       "Codex2": [
         "Codex",
         "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
+        "Claude2"
       ]
     },
     "max_reassignments_per_cycle": 4,
@@ -492,6 +482,9 @@
         "cli": ".orchestrator/bin/agy",
         "config_home": "~/.gemini-agy2",
         "home": "~/.gemini-agy2",
+        "env": {
+          "PANTHEON_HOST_HOME": "~"
+        },
         "include_directories": true,
         "model": "gemini-3.8-flash-high",
         "output_format": "stream-json",
