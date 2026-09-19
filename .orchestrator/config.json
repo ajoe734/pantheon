@@ -189,36 +189,26 @@
     },
     "reviewer_fallbacks": {
       "Claude": [
-        "Claude2",
         "Codex",
         "Codex2"
       ],
       "Claude2": [
-        "Claude",
         "Codex",
         "Codex2"
       ],
       "Antigravity": [
-        "Claude",
-        "Claude2",
         "Codex",
         "Codex2"
       ],
       "Antigravity2": [
-        "Claude",
-        "Claude2",
         "Codex",
         "Codex2"
       ],
       "Codex": [
-        "Codex2",
-        "Claude",
-        "Claude2"
+        "Codex2"
       ],
       "Codex2": [
-        "Codex",
-        "Claude",
-        "Claude2"
+        "Codex"
       ]
     },
     "max_reassignments_per_cycle": 4,
