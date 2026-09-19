@@ -5893,23 +5893,12 @@ def reviewer_fallback_search_order(
     """
 
     reviewer_mapping = settings.get("reviewer_fallbacks", {}) or {}
-    owner_mapping = settings.get("owner_fallbacks", {}) or {}
-    order: list[str] = []
-    order.extend(
-        bounded_fallback_candidates(
-            config,
-            reviewer_mapping,
-            roots=[name for name in (reviewer, owner, candidate_owner) if name],
-        )
+    # Implementation eligibility does not grant reviewer eligibility.
+    return bounded_fallback_candidates(
+        config,
+        reviewer_mapping,
+        roots=[name for name in (reviewer, owner, candidate_owner) if name],
     )
-    order.extend(
-        bounded_fallback_candidates(
-            config,
-            owner_mapping,
-            roots=[name for name in (owner, candidate_owner) if name],
-        )
-    )
-    return order
 
 
 def plan_task_assignment_pair(
@@ -5992,8 +5981,6 @@ def plan_task_assignment_pair(
             reviewer_order = [reviewer]
         else:
             reviewer_order = list(preferred_reviewers or ([reviewer] if reviewer else []))
-            if preferred_reviewers is None and owner and owner not in reviewer_order:
-                reviewer_order.append(owner)
             reviewer_order.extend(
                 reviewer_fallback_search_order(
                     config,
