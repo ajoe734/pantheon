@@ -898,7 +898,7 @@ def config_fixture(root: Path | None = None) -> dict[str, object]:
             "enabled": True,
             "max_reassignments_per_cycle": 4,
             "owner_fallbacks": {"Codex": ["Codex2"]},
-            "reviewer_fallbacks": {"Codex": ["Codex2"]},
+            "reviewer_fallbacks": {"Codex": ["Codex2"], "Codex2": ["Codex"]},
         },
     }
 
@@ -5175,6 +5175,41 @@ class DurableQueueContractTests(unittest.TestCase):
 class AccountHealthAndRecoveryContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()
+
+    def test_owner_recovery_does_not_promote_implementation_only_agents_to_review(self) -> None:
+        for agent_id, name in (("antigravity", "Antigravity"), ("antigravity2", "Antigravity2")):
+            self.config["agents"][agent_id] = {
+                "display_name": name, "provider": agent_id, "max_parallel": 4,
+            }
+        self.config["worker_reassignment"]["owner_fallbacks"] = {
+            "Antigravity": ["Antigravity2"], "Antigravity2": ["Antigravity"],
+        }
+        task = task_fixture(owner="Antigravity", reviewer="Codex")
+        # Recover the owner while both implementation lanes are healthy.
+        # Neither the old owner nor its fallback is a reviewer candidate.
+        for available_reviewer in (None, "Codex2"):
+            with self.subTest(available_reviewer=available_reviewer), mock.patch.object(
+                supervisor, "agent_can_take_task",
+                side_effect=lambda _config, name, _task, **_kwargs: name in {
+                    "Antigravity", "Antigravity2", available_reviewer,
+                },
+            ):
+                pair = supervisor.plan_task_assignment_pair(
+                    self.config, task, fixed_owner="Antigravity2",
+                )
+                self.assertEqual(
+                    pair, ("Antigravity2", "Codex2") if available_reviewer else None,
+                )
+
+    def test_reviewer_health_search_excludes_owner_only_fallbacks(self) -> None:
+        self.config["worker_reassignment"]["owner_fallbacks"] = {
+            "Codex": ["Antigravity", "Antigravity2"],
+        }
+        candidates = supervisor.reviewer_fallback_search_order(
+            self.config, supervisor.worker_reassignment_settings(self.config),
+            reviewer="Codex", owner="Codex", candidate_owner="Codex2",
+        )
+        self.assertEqual(candidates, ["Codex2", "Codex"])
 
     def test_idle_health_refresh_targets_due_configured_endpoints_without_tasks(self) -> None:
         """Startup planning must refresh stale lanes even with an empty board.
@@ -19872,5 +19907,3 @@ class QueueRecordReconciliationUnsettledWorkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
