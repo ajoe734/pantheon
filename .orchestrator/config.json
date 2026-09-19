@@ -492,6 +492,9 @@
         "cli": ".orchestrator/bin/agy",
         "config_home": "~/.gemini-agy2",
         "home": "~/.gemini-agy2",
+        "env": {
+          "PANTHEON_HOST_HOME": "~"
+        },
         "include_directories": true,
         "model": "gemini-3.8-flash-high",
         "output_format": "stream-json",
