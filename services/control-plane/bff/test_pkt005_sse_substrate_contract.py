@@ -76,7 +76,11 @@ def _load_main_cors_allow_headers() -> tuple[str, ...]:
                         return tuple(
                             elt.value for elt in node.value.elts if isinstance(elt, ast.Constant)
                         )
-    return ()
+    try:
+        from services.control_plane.bff.core.http_security import _CORS_ALLOW_HEADERS as _imported_headers
+        return tuple(_imported_headers)
+    except ImportError:
+        return ()
 
 
 _CORS_ALLOW_HEADERS = _load_main_cors_allow_headers()

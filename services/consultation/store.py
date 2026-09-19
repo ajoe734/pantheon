@@ -38,13 +38,16 @@ def _quote_pg(identifier: str) -> str:
 def _model_to_data(model: Any) -> Dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump(mode="json")
-    return json.loads(model.json())
+    if isinstance(model, dict):
+        return model
+    raise TypeError(f"Unsupported model type for serialization: {type(model)}")
 
 
 def _model_copy(model: Any) -> Any:
     if hasattr(model, "model_copy"):
         return model.model_copy(deep=True)
-    return model.copy(deep=True)
+    import copy
+    return copy.deepcopy(model)
 
 
 def _model_from_data(model_cls: Type[Any], data: Dict[str, Any]) -> Any:
@@ -56,7 +59,7 @@ def _model_from_data(model_cls: Type[Any], data: Dict[str, Any]) -> Any:
 def _model_json(model: Any) -> str:
     if hasattr(model, "model_dump_json"):
         return model.model_dump_json()
-    return model.json()
+    return json.dumps(model)
 
 
 class ConsultationStore:

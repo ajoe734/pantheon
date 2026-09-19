@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterable, Optional, Sequence
 
+from fastapi.sse import EventSourceResponse, format_sse_event
 from starlette.responses import StreamingResponse
 
 
@@ -142,11 +143,11 @@ class EventStreamService:
 
     @staticmethod
     def format_event(event: dict[str, Any]) -> str:
-        return (
-            f"id: {event['id']}\n"
-            f"event: {event['type']}\n"
-            f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        )
+        return format_sse_event(
+            data_str=json.dumps(event, ensure_ascii=False),
+            event=event.get("type"),
+            id=str(event.get("id")) if event.get("id") is not None else None,
+        ).decode("utf-8")
 
     def replay_headers(self, channel: str) -> Dict[str, str]:
         headers = {
@@ -223,7 +224,7 @@ class EventStreamService:
                 try:
                     yield self.format_event(await asyncio.wait_for(queue.get(), timeout=30.0))
                 except asyncio.TimeoutError:
-                    yield ": heartbeat\n\n"
+                    yield format_sse_event(comment="heartbeat").decode("utf-8")
         finally:
             if queue in subscribers:
                 subscribers.remove(queue)
@@ -236,7 +237,7 @@ class EventStreamService:
         bff_error: Callable[..., Exception],
         conflict_code: Any,
         extra_headers: Optional[Dict[str, str]] = None,
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         buffer = self.buffers[channel]
         subscribers = self.subscribers[channel]
         try:
@@ -267,9 +268,8 @@ class EventStreamService:
         }
         if extra_headers:
             headers.update(extra_headers)
-        return StreamingResponse(
+        return EventSourceResponse(
             self.stream(channel, buffer, subscribers, last_event_id),
-            media_type="text/event-stream",
             headers=headers,
         )
 

@@ -120,8 +120,6 @@ async def consultation_identity_boundary(
 def _actor_to_data(actor_ref: ActorRef | Dict[str, str]) -> Dict[str, str]:
     if hasattr(actor_ref, "model_dump"):
         return actor_ref.model_dump(mode="json")
-    if hasattr(actor_ref, "dict"):
-        return actor_ref.dict()
     return dict(actor_ref)
 
 
@@ -188,7 +186,9 @@ def _require_actor(*actor_types: str):
 def _request_dict(req: Any, exclude: Optional[set[str]] = None) -> Dict[str, Any]:
     if hasattr(req, "model_dump"):
         return req.model_dump(exclude=exclude or set(), mode="json")
-    return req.dict(exclude=exclude or set())
+    if isinstance(req, dict):
+        return {k: v for k, v in req.items() if not exclude or k not in exclude}
+    raise TypeError(f"Unsupported request type: {type(req)}")
 
 
 def _canonical_create_payload(req: Any) -> Dict[str, Any]:
@@ -220,9 +220,7 @@ def _stored_create_fingerprint(request: ConsultRequest) -> str:
     # original create shape when it is still available; changed legacy records
     # fail closed because their reconstructed fingerprint will not match.
     request_data = _request_dict(request)
-    create_fields = set(getattr(CreateConsultRequest, "model_fields", {}).keys())
-    if not create_fields:  # Pydantic v1 compatibility.
-        create_fields = set(getattr(CreateConsultRequest, "__fields__", {}).keys())
+    create_fields = set(CreateConsultRequest.model_fields.keys())
     payload = {
         field: request_data.get(field)
         for field in create_fields

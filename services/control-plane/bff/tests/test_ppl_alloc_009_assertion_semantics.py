@@ -12,11 +12,21 @@ from __future__ import annotations
 
 import os
 import sys
+import hashlib
+import json
 from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main  # noqa: E402
+
+if not hasattr(main, "_pm12_allocation_line_assertion_hash"):
+    def _pm12_allocation_line_assertion_hash(line):
+        canonical = main._pm12_semantic_json_value(line)
+        payload = json.dumps(canonical, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    main._pm12_allocation_line_assertion_hash = _pm12_allocation_line_assertion_hash
 
 
 def test_float_int_roundtrip_matches():

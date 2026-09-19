@@ -59,6 +59,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 import httpx
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.sse import EventSourceResponse, format_sse_event
 from pydantic import BaseModel, Field, model_validator
 
 from integrations.openclaw.search_gateway import OpenClawSearchGateway, SearchPolicyError as OpenClawSearchPolicyError
@@ -1939,7 +1940,7 @@ def invoke_openclaw_provider_stream(
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-) -> StreamingResponse:
+) -> EventSourceResponse:
     """Stream an OpenClaw agent turn as SSE via the gateway `POST /v1/responses`.
 
     Emits normalized events the BFF can relay verbatim to the console:
@@ -1963,11 +1964,11 @@ def invoke_openclaw_provider_stream(
 
     def event_stream() -> Iterator[str]:
         if not operator:
-            yield "data: " + json.dumps({
+            yield format_sse_event(data_str=json.dumps({
                 "type": "error", "error_code": "OPERATOR_REQUIRED",
                 "message": "X-Operator-Id header is required for OpenClaw provider invocation.",
-            }) + "\n\n"
-            yield "data: [DONE]\n\n"
+            })).decode("utf-8")
+            yield format_sse_event(data_str="[DONE]").decode("utf-8")
             return
         metadata["operator_id"] = operator
         if x_trace_id:
@@ -1978,12 +1979,12 @@ def invoke_openclaw_provider_stream(
             )
             if admission_error is not None:
                 _, content = admission_error
-                yield "data: " + json.dumps({
+                yield format_sse_event(data_str=json.dumps({
                     "type": "error",
                     "error_code": content.get("error_code", "PERSONA_OPINION_ADMISSION_DENIED"),
                     "message": content.get("message", "Persona opinion admission denied."),
-                }) + "\n\n"
-                yield "data: [DONE]\n\n"
+                })).decode("utf-8")
+                yield format_sse_event(data_str="[DONE]").decode("utf-8")
                 return
         if delegates_kernel_mode_to_codex(mode):
             try:
@@ -2005,22 +2006,22 @@ def invoke_openclaw_provider_stream(
                 for key in ("sandbox", "workspace_class"):
                     if output.get(key) is not None:
                         event[key] = output[key]
-                yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+                yield format_sse_event(data_str=json.dumps(event, ensure_ascii=False)).decode("utf-8")
             except CodexProviderError as exc:
-                yield "data: " + json.dumps({
+                yield format_sse_event(data_str=json.dumps({
                     "type": "error",
                     "error_code": exc.code,
                     "message": str(exc),
                     "status_code": exc.status_code,
-                }) + "\n\n"
+                })).decode("utf-8")
             except AssistantProviderRuntimeError as exc:
-                yield "data: " + json.dumps({
+                yield format_sse_event(data_str=json.dumps({
                     "type": "error",
                     "error_code": exc.code,
                     "message": str(exc),
                     "status_code": 400,
-                }) + "\n\n"
-            yield "data: [DONE]\n\n"
+                })).decode("utf-8")
+            yield format_sse_event(data_str="[DONE]").decode("utf-8")
             return
         def upstream_stream():
             scoped_session = session_user
@@ -2052,7 +2053,7 @@ def invoke_openclaw_provider_stream(
                 events = upstream_stream()
             try:
                 for evt in events:
-                    yield "data: " + json.dumps(evt, ensure_ascii=False) + "\n\n"
+                    yield format_sse_event(data_str=json.dumps(evt, ensure_ascii=False)).decode("utf-8")
             finally:
                 close = getattr(events, "close", None)
                 if close is not None:
@@ -2061,19 +2062,18 @@ def invoke_openclaw_provider_stream(
             code = ("PERSONA_OPINION_IDEMPOTENCY_CONFLICT"
                     if isinstance(exc, _PersonaOpinionInvocationConflict)
                     else "PERSONA_OPINION_INVOCATION_IN_DOUBT")
-            yield "data: " + json.dumps({
+            yield format_sse_event(data_str=json.dumps({
                 "type": "error", "error_code": code, "message": str(exc), "status_code": 409,
-            }) + "\n\n"
+            })).decode("utf-8")
         except Exception as exc:  # noqa: BLE001
-            yield "data: " + json.dumps({
+            yield format_sse_event(data_str=json.dumps({
                 "type": "error", "error_code": "ADAPTER_STREAM_ERROR",
                 "message": str(exc)[:200],
-            }) + "\n\n"
-        yield "data: [DONE]\n\n"
+            })).decode("utf-8")
+        yield format_sse_event(data_str="[DONE]").decode("utf-8")
 
-    return StreamingResponse(
+    return EventSourceResponse(
         event_stream(),
-        media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
