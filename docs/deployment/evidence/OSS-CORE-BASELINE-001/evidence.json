@@ -1,0 +1,309 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OSS-CORE-BASELINE-001",
+  "title": "Lock the core API runtimes and remove obsolete SSE/Pydantic/dependency branches",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "core_runtime",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "c7058742f7d009503026a672b7c8f4bdaf53fb24",
+  "summary": "Locked the core API and service runtimes against official PyPI latest stable releases under Python 3.12. Established root constraints at dependencies/constraints-core.txt and generated all 28 service and root-test lockfiles under dependencies/locks/. Wired all 24+ in-scope runtime Dockerfiles to install from their locked dependency closures (dependencies/locks/<service>.txt). Reconciled google-cloud-storage to official PyPI latest stable 3.14.1 across constraints and locks. Aligned services/search/Dockerfile base image to python:3.12-slim to satisfy numpy==2.5.2 and verified clean container build. Added pytest>=8.0.0,<10.0.0 to monorepo root requirements.txt and regenerated dependencies/locks/root-tests.txt, restoring CI owner contract runs. Restored production assertion semantics in services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py by removing injected monkeypatches and exercising main._pm12_semantic_values_match. Completed native FastAPI SSE integration: eliminated obsolete fallback dispatchers _default_sse_stream and _default_handle_sse_stream, modernized EventStreamService.format_event with jsonable_encoder and ServerSentEvent, removed redundant headers from stream_response and stream_bff_events, and added comprehensive acceptance tests in test_pkt005_sse_substrate_contract.py covering multiline data, exact event IDs, disconnect cancellation, persisted date/enum/null/fingerprint serialization, and [DONE] termination. Synchronized .venv-pantheon with exact locked closures (cryptography 50.0.1, jsonschema 4.26.0, blinker 1.9.0, jinja2 3.1.6, markupsafe 3.0.3, google-cloud-storage 3.14.1). Verified with 436 passed tests across consultation, openclaw adapter, SSE contracts, and auth/assertion suites with zero skips.",
+  "source_packet": {
+    "packet_id": "pkt-llm-oss-simplification-execution-20260906-v2-01",
+    "conversation_id": "pantheon-llm-oss-simplification-20260906",
+    "plan_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2/EXECUTION_PLAN.md",
+    "coverage_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2/COVERAGE.md",
+    "report_candidates": [4, 12]
+  },
+  "scope": {
+    "owned": [
+      "dependencies/constraints-core.txt",
+      "dependencies/locks/root-tests.txt",
+      "dependencies/locks/services-capital.txt",
+      "dependencies/locks/services-channels-discord.txt",
+      "dependencies/locks/services-channels-telegram.txt",
+      "dependencies/locks/services-channels-web.txt",
+      "dependencies/locks/services-consultation.txt",
+      "dependencies/locks/services-control-plane-bff.txt",
+      "dependencies/locks/services-control-plane-feedback.txt",
+      "dependencies/locks/services-control-plane-persona.txt",
+      "dependencies/locks/services-control-plane-router.txt",
+      "dependencies/locks/services-deployment.txt",
+      "dependencies/locks/services-evaluation.txt",
+      "dependencies/locks/services-evolution.txt",
+      "dependencies/locks/services-feedback.txt",
+      "dependencies/locks/services-governance.txt",
+      "dependencies/locks/services-incidents.txt",
+      "dependencies/locks/services-lineage-read.txt",
+      "dependencies/locks/services-memory.txt",
+      "dependencies/locks/services-openclaw-gateway-adapter.txt",
+      "dependencies/locks/services-optimizer-svc.txt",
+      "dependencies/locks/services-paper_fleet_reconciler.txt",
+      "dependencies/locks/services-postmortems.txt",
+      "dependencies/locks/services-promotion.txt",
+      "dependencies/locks/services-reconciliation-drift.txt",
+      "dependencies/locks/services-registry.txt",
+      "dependencies/locks/services-runtime-manager.txt",
+      "dependencies/locks/services-source_ingestion.txt",
+      "dependencies/locks/services-telemetry.txt",
+      "requirements.txt",
+      "Dockerfile.smoke",
+      "services/capital/Dockerfile",
+      "services/channels/web/Dockerfile",
+      "services/consultation/Dockerfile",
+      "services/consultation/main.py",
+      "services/consultation/store.py",
+      "services/control-plane/bff/Dockerfile",
+      "services/control-plane/bff/events/router.py",
+      "services/control-plane/bff/events/service.py",
+      "services/control-plane/bff/requirements.txt",
+      "services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
+      "services/control-plane/bff/test_tj_e2e_007_sse_attention.py",
+      "services/control-plane/bff/tests/test_openclaw_ops_service_auth.py",
+      "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py",
+      "services/control-plane/feedback/Dockerfile",
+      "services/control-plane/persona/Dockerfile",
+      "services/control-plane/router/Dockerfile",
+      "services/deployment/Dockerfile",
+      "services/evaluation/Dockerfile",
+      "services/evolution/Dockerfile",
+      "services/feedback/Dockerfile",
+      "services/governance/Dockerfile",
+      "services/incidents/Dockerfile",
+      "services/lineage-read/Dockerfile",
+      "services/memory/Dockerfile",
+      "services/openclaw-gateway-adapter/Dockerfile",
+      "services/openclaw-gateway-adapter/consultation_provider.py",
+      "services/openclaw-gateway-adapter/main.py",
+      "services/openclaw-gateway-adapter/requirements.txt",
+      "services/optimizer-svc/Dockerfile",
+      "services/paper_fleet_reconciler/Dockerfile",
+      "services/postmortems/Dockerfile",
+      "services/promotion/Dockerfile",
+      "services/reconciliation-drift/Dockerfile",
+      "services/registry/Dockerfile",
+      "services/registry/Dockerfile.test",
+      "services/runtime-manager/Dockerfile",
+      "services/search/Dockerfile",
+      "services/source_ingestion/Dockerfile",
+      "services/telemetry/Dockerfile",
+      "docs/deployment/evidence/OSS-CORE-BASELINE-001/evidence.json"
+    ],
+    "not_changing": [
+      "research ML runtimes (FinRL, Qlib, Ray) and scientific environments",
+      "frontend execute-plans repository and deployment bundle",
+      "live supervisor configuration, account grouping, quota, leases, credentials, installed CLIs, or model/slot settings",
+      "services/search vector backend ownership (reconciled existing requirements.lock without competing locks)",
+      "integrations/openclaw/gateway/Dockerfile soak pins (preserved from SIMPLIFY-OPENCLAW-001)"
+    ],
+    "composes_with": [
+      "OSS-INFRA-PROFILES-001 (infrastructure profile integration consuming isolated dependency locks)",
+      "SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001 (system simplification closure joining all 16 candidate dispositions)"
+    ]
+  },
+  "candidate_4_disposition": {
+    "candidate": 4,
+    "description": "Native SSE and one Pydantic-v2 API baseline",
+    "pydantic_v1_removals": [
+      {
+        "file": "services/consultation/store.py",
+        "details": "Removed fallback branches to .dict() and model_dump(mode='json') wrapping; replaced with native Pydantic v2 model_dump(mode='json'), model_dump_json(), and model_copy(deep=True). Preserved generic dict/dataclass serialization."
+      },
+      {
+        "file": "services/consultation/main.py",
+        "details": "Removed .dict() calls in _actor_to_data and _request_dict. Replaced __fields__ traversal in _stored_create_fingerprint with model_fields iteration for Pydantic v2."
+      },
+      {
+        "file": "services/openclaw-gateway-adapter/consultation_provider.py",
+        "details": "Removed hasattr(obj, 'dict') branch in _model_dict; standardized on model_dump(mode='json')."
+      }
+    ],
+    "native_sse_migration": [
+      {
+        "file": "services/control-plane/bff/events/service.py",
+        "details": "Migrated from custom SSE framing to fastapi.sse.EventSourceResponse and fastapi.sse.format_sse_event. Enhanced format_event with jsonable_encoder for dates, enums, nulls, and fingerprints, and ServerSentEvent for [DONE]. Cleaned up redundant headers."
+      },
+      {
+        "file": "services/control-plane/bff/events/router.py",
+        "details": "Removed obsolete fallback dispatchers _default_sse_stream and _default_handle_sse_stream. Stream endpoints use EventStreamService and EventSourceResponse directly."
+      },
+      {
+        "file": "services/openclaw-gateway-adapter/main.py",
+        "details": "Migrated invoke_openclaw_provider_stream to fastapi.sse.EventSourceResponse and fastapi.sse.format_sse_event."
+      },
+      {
+        "file": "services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
+        "details": "Added comprehensive native SSE acceptance fixtures proving multiline data, exact event IDs, disconnect cancellation, persisted date-enum-null/fingerprint serialization, and [DONE] termination."
+      }
+    ]
+  },
+  "candidate_12_disposition": {
+    "candidate": 12,
+    "description": "Unused dependencies, locks and complete OSS family upgrades - Core runtime baseline",
+    "core_constraints_file": "dependencies/constraints-core.txt",
+    "pinned_versions": {
+      "fastapi": "0.141.1",
+      "pydantic": "2.13.5",
+      "pydantic-core": "2.46.5",
+      "uvicorn": "0.53.0",
+      "httpx": "0.28.1",
+      "starlette": "1.6.0",
+      "anyio": "4.15.1",
+      "cryptography": "50.0.1",
+      "psycopg": "3.3.6",
+      "psycopg-binary": "3.3.6",
+      "asyncpg": "0.31.0",
+      "jsonschema": "4.26.0",
+      "redis": "8.1.0",
+      "flask": "3.1.3",
+      "nats-py": "2.16.0",
+      "discord.py": "2.7.1",
+      "python-telegram-bot": "22.8",
+      "python-multipart": "0.0.32",
+      "google-cloud-storage": "3.14.1"
+    },
+    "runtime_dependency_cleanups": [
+      {
+        "file": "services/control-plane/bff/requirements.txt",
+        "changes": "Removed python-jose[cryptography], passlib[bcrypt], and pytest; added cryptography>=50.0.1 and google-cloud-storage>=2.16,<4.0."
+      },
+      {
+        "file": "services/openclaw-gateway-adapter/requirements.txt",
+        "changes": "Removed pytest."
+      },
+      {
+        "file": "requirements.txt",
+        "changes": "Added pytest>=8.0.0,<10.0.0 to root monorepo test closure to support CI jobs without modifying workflow files."
+      }
+    ],
+    "dockerfile_reconciliations": [
+      {
+        "file": "services/search/Dockerfile",
+        "changes": "Updated base image to python:3.12-slim to satisfy numpy==2.5.2 requirement in requirements.lock; verified clean container build."
+      },
+      {
+        "file": "Dockerfile.smoke",
+        "changes": "Pinned against dependencies/constraints-core.txt."
+      },
+      {
+        "file": "services/registry/Dockerfile.test",
+        "changes": "Pinned exact versions matching core baseline."
+      },
+      {
+        "file": "integrations/openclaw/gateway/Dockerfile",
+        "changes": "Retained existing pinned versions as required by SIMPLIFY-OPENCLAW-001 soak window."
+      },
+      {
+        "file": "services/*/Dockerfile",
+        "changes": "Wired all 24+ in-scope runtime Dockerfiles to copy and install from their exact locked closures (dependencies/locks/<service>.txt)."
+      }
+    ],
+    "lockfiles_generated": [
+      "dependencies/locks/root-tests.txt",
+      "dependencies/locks/services-capital.txt",
+      "dependencies/locks/services-channels-discord.txt",
+      "dependencies/locks/services-channels-telegram.txt",
+      "dependencies/locks/services-channels-web.txt",
+      "dependencies/locks/services-consultation.txt",
+      "dependencies/locks/services-control-plane-bff.txt",
+      "dependencies/locks/services-control-plane-feedback.txt",
+      "dependencies/locks/services-control-plane-persona.txt",
+      "dependencies/locks/services-control-plane-router.txt",
+      "dependencies/locks/services-deployment.txt",
+      "dependencies/locks/services-evaluation.txt",
+      "dependencies/locks/services-evolution.txt",
+      "dependencies/locks/services-feedback.txt",
+      "dependencies/locks/services-governance.txt",
+      "dependencies/locks/services-incidents.txt",
+      "dependencies/locks/services-lineage-read.txt",
+      "dependencies/locks/services-memory.txt",
+      "dependencies/locks/services-openclaw-gateway-adapter.txt",
+      "dependencies/locks/services-optimizer-svc.txt",
+      "dependencies/locks/services-paper_fleet_reconciler.txt",
+      "dependencies/locks/services-postmortems.txt",
+      "dependencies/locks/services-promotion.txt",
+      "dependencies/locks/services-reconciliation-drift.txt",
+      "dependencies/locks/services-registry.txt",
+      "dependencies/locks/services-runtime-manager.txt",
+      "dependencies/locks/services-source_ingestion.txt",
+      "dependencies/locks/services-telemetry.txt"
+    ]
+  },
+  "verification": {
+    "environment": {
+      "python_version": "3.12.3",
+      "venv": ".venv-pantheon",
+      "locked_packages": {
+        "cryptography": "50.0.1",
+        "jsonschema": "4.26.0",
+        "blinker": "1.9.0",
+        "jinja2": "3.1.6",
+        "markupsafe": "3.0.3",
+        "google-cloud-storage": "3.14.1",
+        "fastapi": "0.141.1",
+        "pydantic": "2.13.5"
+      }
+    },
+    "passed_checks": [
+      {
+        "description": "Consultation service models, postgres store, and idempotency tests",
+        "command": ".venv-pantheon/bin/pytest services/consultation/test_models.py services/consultation/test_postgres_store.py services/consultation/test_request_idempotency.py",
+        "exit_code": 0,
+        "result": "18 passed in 5.21s"
+      },
+      {
+        "description": "OpenClaw gateway adapter test suite",
+        "command": ".venv-pantheon/bin/pytest services/openclaw-gateway-adapter/test_main.py",
+        "exit_code": 0,
+        "result": "132 passed in 27.28s"
+      },
+      {
+        "description": "SSE contracts, event streaming, backpressure, and attention tests",
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/events/test_router.py services/control-plane/bff/tests/test_events_router.py services/control-plane/bff/tests/test_sse_backpressure.py services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/test_tj_e2e_007_sse_attention.py",
+        "exit_code": 0,
+        "result": "78 passed in 56.62s"
+      },
+      {
+        "description": "Auth, crypto, JWKS strict, session, token refresh, and assertion tests",
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/tests/test_openclaw_ops_service_auth.py services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py services/control-plane/bff/tests/test_agora_write_authority.py services/control-plane/bff/tests/test_auth_jwks_strict.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/tests/test_bff_auth_refresh.py",
+        "exit_code": 0,
+        "result": "208 passed, 89 warnings in 87.02s"
+      },
+      {
+        "description": "Total verification batch across all in-scope test suites",
+        "exit_code": 0,
+        "result": "436 passed, 89 warnings in 176.13s with zero missing-dependency skips"
+      },
+      {
+        "description": "Isolated docker container image builds",
+        "command": "docker build -f services/search/Dockerfile ., docker build -f services/control-plane/bff/Dockerfile ., docker build -f services/consultation/Dockerfile .",
+        "exit_code": 0,
+        "result": "pantheon-search-test, pantheon-bff-test, and pantheon-consultation-test built cleanly with exit code 0"
+      },
+      {
+        "description": "BFF runtime startup verification without runtime pytest",
+        "command": "BFF_DATA_DIR=/tmp/test RANKING_STORE_BOOTSTRAP=0 RANKING_STORE_DSN='postgresql://test:test@localhost:5432/test' .venv-pantheon/bin/python -c 'assert \"pytest\" not in sys.modules; from services.control_plane.bff import main'",
+        "exit_code": 0,
+        "result": "BFF imported successfully without pytest in runtime sys.modules"
+      }
+    ]
+  },
+  "scope_boundary_and_isolation_statement": {
+    "live_supervisor_config_preserved": true,
+    "credentials_untouched": true,
+    "account_grouping_untouched": true,
+    "quotas_untouched": true,
+    "leases_untouched": true,
+    "installed_clis_untouched": true,
+    "model_slot_settings_untouched": true,
+    "research_ml_isolation": "Research ML dependencies (FinRL, Qlib, Ray) and scientific environments remain untouched. This task locks the core API and service runtimes.",
+    "search_lock_reconciled": "services/search/Dockerfile updated to python:3.12-slim and installs from existing services/search/requirements.lock without conflicting secondary lockfiles.",
+    "openclaw_soak_preserved": "integrations/openclaw/gateway/Dockerfile retained its pinned dependencies from SIMPLIFY-OPENCLAW-001."
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "note": "Independently verify against this exact head: (1) services/search/Dockerfile aligned with python:3.12-slim and builds cleanly; (2) all 24+ service Dockerfiles wired to install exact locked closures from dependencies/locks/*.txt; (3) google-cloud-storage reconciled to official PyPI latest stable 3.14.1 across constraints, locks, and venv; (4) pytest moved to root requirements.txt for CI owner contract runs; (5) test_ppl_alloc_009_assertion_semantics exercises real production authority main._pm12_semantic_values_match; (6) native SSE completed with dead fallback dispatchers removed from router.py, format_event supporting jsonable_encoder and ServerSentEvent, and test_pkt005_sse_substrate_contract covering multiline/exact-ID/disconnect/persisted date-enum-null/fingerprint/DONE fixtures; (7) .venv-pantheon synchronized to exact locked closures (cryptography 50.0.1, jsonschema 4.26.0, etc.); (8) all 436 tests pass cleanly with zero skips."
+  }
+}

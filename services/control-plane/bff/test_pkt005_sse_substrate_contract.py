@@ -76,7 +76,11 @@ def _load_main_cors_allow_headers() -> tuple[str, ...]:
                         return tuple(
                             elt.value for elt in node.value.elts if isinstance(elt, ast.Constant)
                         )
-    return ()
+    try:
+        from services.control_plane.bff.core.http_security import _CORS_ALLOW_HEADERS as _imported_headers
+        return tuple(_imported_headers)
+    except ImportError:
+        return ()
 
 
 _CORS_ALLOW_HEADERS = _load_main_cors_allow_headers()
@@ -542,3 +546,157 @@ def test_ask_replay_payload_is_json_serializable_sse_data() -> None:
     formatted = _sse_format(event)
     data_line = next(line for line in formatted.splitlines() if line.startswith("data: "))
     assert json.loads(data_line.removeprefix("data: "))["data"]["delta"] == "hello"
+
+
+def test_sse_multiline_data_framing() -> None:
+    multiline_text = "line1: start\nline2: middle\nline3: end"
+    formatted = sse_service.format_event({
+        "id": "evt-multiline-001",
+        "type": "log.stream",
+        "data": {"output": multiline_text},
+    })
+    assert "event: log.stream" in formatted
+    assert "id: evt-multiline-001" in formatted
+    lines = formatted.splitlines()
+    data_lines = [l for l in lines if l.startswith("data: ")]
+    assert len(data_lines) >= 1
+    full_data = "\n".join(l.removeprefix("data: ") for l in data_lines)
+    parsed = json.loads(full_data)
+    assert parsed["data"]["output"] == multiline_text
+
+    # Also verify raw multiline text with ServerSentEvent
+    from fastapi.sse import ServerSentEvent
+    raw_sse = ServerSentEvent(raw_data="alpha\nbeta\ngamma", event="chunk", id="evt-raw-001")
+    raw_formatted = sse_service.format_event(raw_sse)
+    assert "event: chunk\n" in raw_formatted
+    assert "data: alpha\ndata: beta\ndata: gamma\n" in raw_formatted
+    assert "id: evt-raw-001\n" in raw_formatted
+
+
+def test_sse_exact_event_ids_preserved_and_replayed() -> None:
+    channel = "approval"
+    exact_id_1 = "evt-exact-uuid-12345678-abcd-ef01-2345-6789abcdef01"
+    exact_id_2 = "evt-exact-custom-id-99999"
+
+    event1 = {
+        "id": exact_id_1,
+        "type": "approval.created",
+        "timestamp": "2026-09-19T12:00:00Z",
+        "data": {"approval_id": "appr-001"},
+    }
+    event2 = {
+        "id": exact_id_2,
+        "type": "approval.decided",
+        "timestamp": "2026-09-19T12:01:00Z",
+        "data": {"approval_id": "appr-001", "outcome": "approved"},
+    }
+    _sse_buffers[channel].append((exact_id_1, event1))
+    _sse_buffers[channel].append((exact_id_2, event2))
+
+    replayed = _replay_from(channel, _sse_buffers[channel], exact_id_1)
+    assert len(replayed) == 1
+    assert replayed[0]["id"] == exact_id_2
+    assert replayed[0]["id"] == "evt-exact-custom-id-99999"
+
+    formatted = _sse_format(event1)
+    assert f"id: {exact_id_1}\n" in formatted
+
+
+def test_sse_disconnect_cancellation_cleans_subscribers() -> None:
+    channel = "approval"
+    _sse_subscribers[channel].clear()
+    assert len(_sse_subscribers[channel]) == 0
+
+    async def _test():
+        gen = sse_service.stream(channel, _sse_buffers[channel], _sse_subscribers[channel], None)
+        task = asyncio.create_task(anext(gen))
+        await asyncio.sleep(0.01)
+        # Entering stream registers subscriber queue
+        assert len(_sse_subscribers[channel]) == 1
+        # Disconnect client: cancel task then close generator
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, StopAsyncIteration):
+            pass
+        await gen.aclose()
+        # Subscriber queue must be cleaned up on disconnect
+        assert len(_sse_subscribers[channel]) == 0
+
+    asyncio.run(_test())
+
+
+def test_sse_persisted_date_enum_null_and_fingerprint_serialization() -> None:
+    from datetime import datetime, timezone
+    from enum import Enum
+
+    class TestStage(str, Enum):
+        PENDING = "pending"
+        APPROVED = "approved"
+
+    test_date = datetime(2026, 9, 19, 14, 30, 0, tzinfo=timezone.utc)
+
+    event_payload = {
+        "id": "evt-persisted-001",
+        "type": "approval.state",
+        "stage": TestStage.APPROVED,
+        "created_at": test_date,
+        "notes": None,
+        "idempotency_fingerprint": "sha256:4a5b6c7d8e9f0123456789abcdef",
+        "nested": {
+            "resolved_at": test_date,
+            "decision": None,
+            "status": TestStage.PENDING,
+        },
+    }
+
+    formatted = sse_service.format_event(event_payload)
+    assert "event: approval.state" in formatted
+    assert "id: evt-persisted-001" in formatted
+
+    data_line = next(line for line in formatted.splitlines() if line.startswith("data: "))
+    payload = json.loads(data_line.removeprefix("data: "))
+
+    assert payload["stage"] == "approved"
+    assert payload["notes"] is None
+    assert payload["idempotency_fingerprint"] == "sha256:4a5b6c7d8e9f0123456789abcdef"
+    assert "2026-09-19T14:30:00" in payload["created_at"]
+    assert payload["nested"]["status"] == "pending"
+    assert payload["nested"]["decision"] is None
+
+
+def test_sse_streaming_done_token_termination() -> None:
+    from fastapi.sse import ServerSentEvent
+
+    # 1. ServerSentEvent with raw_data="[DONE]"
+    formatted_done = sse_service.format_event(ServerSentEvent(raw_data="[DONE]"))
+    assert formatted_done == "data: [DONE]\n\n"
+
+    # 2. String "[DONE]" format
+    done_str = "data: [DONE]\n\n"
+    assert sse_service.format_event(done_str) == "data: [DONE]\n\n"
+
+    # 3. Stream delivery of [DONE] token
+    channel = "ask"
+
+    async def _test_stream_with_done():
+        gen = sse_service.stream(channel, _sse_buffers[channel], _sse_subscribers[channel], None)
+        task = asyncio.create_task(anext(gen))
+        await asyncio.sleep(0.01)
+        _publish_event(
+            _sse_buffers[channel],
+            _sse_subscribers[channel],
+            "ask.message.delta",
+            {"delta": "hello"},
+        )
+        chunk1 = await task
+        assert "ask.message.delta" in chunk1
+
+        for q in list(_sse_subscribers[channel]):
+            q.put_nowait(ServerSentEvent(raw_data="[DONE]"))
+        chunk2 = await anext(gen)
+        assert chunk2 == "data: [DONE]\n\n"
+
+        await gen.aclose()
+
+    asyncio.run(_test_stream_with_done())

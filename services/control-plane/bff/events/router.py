@@ -26,6 +26,7 @@ from typing import (
 )
 
 from fastapi import APIRouter, Body, Cookie, Header, HTTPException, Query, Request, Response
+from fastapi.sse import EventSourceResponse, format_sse_event
 from starlette.responses import JSONResponse, StreamingResponse
 
 from .service import EventStreamService
@@ -157,7 +158,7 @@ def _frontend_sse_event(
 def _frontend_sse_format(event: Dict[str, Any]) -> str:
     event_id = str(event.get("id", ""))
     data_str = json.dumps(event, ensure_ascii=False)
-    return f"id: {event_id}\ndata: {data_str}\n\n"
+    return format_sse_event(data_str=data_str, id=event_id if event_id else None).decode("utf-8")
 
 
 async def _default_frontend_bff_event_stream(
@@ -180,63 +181,6 @@ async def _default_frontend_bff_event_stream(
                 payload={"channels": channel_list},
             )
         )
-
-
-async def _default_sse_stream(
-    buffer: deque,
-    subscribers: list,
-    last_event_id: Optional[str],
-    channel: str,
-    event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
-) -> AsyncGenerator[str, None]:
-    q: asyncio.Queue = asyncio.Queue()
-    subscribers.append(q)
-    try:
-        yield f": connected to {channel}\n\n"
-        while True:
-            try:
-                event = await asyncio.wait_for(q.get(), timeout=15.0)
-                if isinstance(event, dict):
-                    if event_filter is not None and not event_filter(event):
-                        continue
-                    event_id = event.get("id", "")
-                    event_type = event.get("type", "message")
-                    data_str = json.dumps(event, ensure_ascii=False)
-                    yield f"id: {event_id}\nevent: {event_type}\ndata: {data_str}\n\n"
-                elif event_filter is None:
-                    yield f"data: {str(event)}\n\n"
-            except asyncio.TimeoutError:
-                yield ": heartbeat\n\n"
-    finally:
-        if q in subscribers:
-            subscribers.remove(q)
-
-
-def _default_handle_sse_stream(
-    channel: str,
-    buffer: Any,
-    subscribers: Any,
-    last_event_id: Optional[str],
-    extra_headers: Optional[Dict[str, str]] = None,
-    event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
-) -> StreamingResponse:
-    headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-        "X-SSE-Channel": channel,
-        "X-SSE-Replay-Supported": "true",
-    }
-    if extra_headers:
-        headers.update(extra_headers)
-
-    buf = buffer if isinstance(buffer, deque) else deque()
-    subs = subscribers if isinstance(subscribers, list) else []
-    return StreamingResponse(
-        _default_sse_stream(buf, subs, last_event_id, channel, event_filter=event_filter),
-        media_type="text/event-stream",
-        headers=headers,
-    )
 
 
 def create_events_router(
@@ -297,7 +241,7 @@ def create_events_router(
         last_event_id: Optional[str],
         authorization: Optional[str],
         event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         if channel not in _active_sse_channels:
             raise _err(
                 400,
@@ -479,16 +423,14 @@ def create_events_router(
 
         headers = {
             "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
             "X-SSE-Channel": "bff",
             "X-SSE-Replay-Supported": "false",
             "X-SSE-Replay-Store": "liveness-only",
             "X-SSE-Resync-Routes": "/health,/readyz",
         }
-        return StreamingResponse(
+        return EventSourceResponse(
             _frontend_stream(requested),
-            media_type="text/event-stream",
             headers=headers,
         )
 
@@ -497,7 +439,7 @@ def create_events_router(
         channel: str,
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         """Authenticated replay-capable stream for a catalog channel."""
         return _stream_channel(channel, last_event_id, authorization)
 
@@ -508,21 +450,21 @@ def create_events_router(
     async def bff_sse_notifications_alias(
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         return _stream_channel("inbox", last_event_id, authorization)
 
     @router.get("/bff/sse/command-center/kpi")
     async def bff_sse_cc_kpi_alias(
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         return _stream_channel("ranking", last_event_id, authorization)
 
     @router.get("/bff/sse/command-center/events")
     async def bff_sse_cc_events_alias(
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         return _stream_channel("loop", last_event_id, authorization)
 
     @router.get("/bff/sse/jobs/{jobId}/progress")
@@ -530,7 +472,7 @@ def create_events_router(
         jobId: str,
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         """Subscription is channel-based AND server-side filtered by jobId.
 
         BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001: previously this
@@ -564,7 +506,7 @@ def create_events_router(
     async def bff_sse_alerts_alias(
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         return _stream_channel("sentinel", last_event_id, authorization)
 
     @router.get("/bff/sse/incidents/{incidentId}/timeline")
@@ -572,7 +514,7 @@ def create_events_router(
         incidentId: str,
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         return _stream_channel("journal", last_event_id, authorization)
 
     if include_domain_sse_aliases:
@@ -580,14 +522,14 @@ def create_events_router(
         async def bff_sse_deployment_events_alias(
             last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
             authorization: Optional[str] = Header(default=None),
-        ) -> StreamingResponse:
+        ) -> EventSourceResponse:
             return _stream_channel("artifact", last_event_id, authorization)
 
         @router.get("/bff/sse/agora/signals")
         async def bff_sse_agora_signals_alias(
             last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
             authorization: Optional[str] = Header(default=None),
-        ) -> StreamingResponse:
+        ) -> EventSourceResponse:
             return _stream_channel("signal", last_event_id, authorization)
 
         @router.get("/bff/sse/agora/sessions/{sessionId}")
@@ -595,14 +537,14 @@ def create_events_router(
             sessionId: str,
             last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
             authorization: Optional[str] = Header(default=None),
-        ) -> StreamingResponse:
+        ) -> EventSourceResponse:
             return _stream_channel("ask", last_event_id, authorization)
 
     @router.get("/bff/sse/review/updates")
     async def bff_sse_review_updates_alias(
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         return _stream_channel("approval", last_event_id, authorization)
 
     @router.post("/api/v1/internal/sse/publish")

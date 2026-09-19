@@ -9,7 +9,7 @@
 # OSS_INTEGRATION_CHECKLIST.md / integrations/openclaw/governance.md. Bump all together.
 FROM ghcr.io/openclaw/openclaw:2026.7.1 AS openclaw_cli
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /workspace
 
@@ -37,8 +37,8 @@ RUN useradd \
     && install -d -m 0700 -o pantheon-assistant -g pantheon-assistant /home/pantheon-assistant/.codex \
     && install -d -m 0700 -o pantheon-assistant -g pantheon-assistant /home/pantheon-assistant/.claude
 
-COPY services/openclaw-gateway-adapter/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY dependencies/locks/services-openclaw-gateway-adapter.txt /tmp/requirements.lock
+RUN pip install --no-cache-dir -r /tmp/requirements.lock
 RUN npm install -g \
     "@openai/codex@${OPENAI_CODEX_NPM_VERSION}" \
     "@anthropic-ai/claude-code@${ANTHROPIC_CLAUDE_CODE_NPM_VERSION}" \
