@@ -128,33 +128,40 @@ def test_events_router_stream_unauthenticated_liveness():
 
 
 def test_events_router_stream_authenticated_channel():
-    from starlette.responses import StreamingResponse
+    from collections import deque
+    from fastapi.sse import EventSourceResponse
 
-    def _test_handle_sse(channel, buffer, subs, last_id, extra_headers=None):
-        async def _gen():
-            yield f"id: evt-1\nevent: message\ndata: {{}}\n\n"
-        headers = {
-            "Content-Type": "text/event-stream",
-            "X-SSE-Channel": channel,
-            "X-SSE-Replay-Supported": "true",
-        }
-        if extra_headers:
-            headers.update(extra_headers)
-        return StreamingResponse(_gen(), media_type="text/event-stream", headers=headers)
+    async def _test_gen():
+        yield "id: evt-1\nevent: message\ndata: {}\n\n"
 
-    router = create_events_router(handle_sse_stream=_test_handle_sse)
+    class MockEventStream:
+        channels = ("governance",)
+        buffers = {"governance": deque()}
+        subscribers = {"governance": []}
+
+        def stream_response(self, channel, last_event_id, **kwargs):
+            headers = {
+                "X-SSE-Channel": channel,
+                "X-SSE-Replay-Supported": "true",
+            }
+            if kwargs.get("extra_headers"):
+                headers.update(kwargs["extra_headers"])
+            return EventSourceResponse(_test_gen(), headers=headers)
+
+    router = create_events_router(event_stream_service=MockEventStream())
     app = FastAPI()
     app.include_router(router)
     client = TestClient(app)
 
-    resp = client.get(
+    with client.stream(
+        "GET",
         "/bff/events/stream?channel=governance",
         headers={"Authorization": "Bearer op-1:operator"},
-    )
-    assert resp.status_code == 200
-    assert resp.headers["content-type"].startswith("text/event-stream")
-    assert resp.headers["x-sse-channel"] == "governance"
-    assert resp.headers["x-sse-replay-supported"] == "true"
+    ) as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        assert resp.headers["x-sse-channel"] == "governance"
+        assert resp.headers["x-sse-replay-supported"] == "true"
 
 
 def test_events_router_stream_invalid_channel():

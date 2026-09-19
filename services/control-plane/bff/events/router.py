@@ -254,32 +254,13 @@ def create_events_router(
         extra_headers: Dict[str, str] = {}
         if resolve_session_kind is not None:
             extra_headers["X-BFF-Session-Kind"] = resolve_session_kind(identity)
-        if handle_sse_stream is not None:
-            try:
-                return handle_sse_stream(
-                    channel,
-                    _buffers[channel],
-                    _subscribers[channel],
-                    last_event_id,
-                    extra_headers=extra_headers or None,
-                    event_filter=event_filter,
-                )
-            except TypeError:
-                # Backward compatibility for an injected handle_sse_stream
-                # callable that predates the event_filter kwarg.
-                return handle_sse_stream(
-                    channel,
-                    _buffers[channel],
-                    _subscribers[channel],
-                    last_event_id,
-                    extra_headers=extra_headers or None,
-                )
         return _event_stream.stream_response(
             channel,
             last_event_id,
             bff_error=_err,
             conflict_code=ErrorCode.RESOURCE_CONFLICT,
             extra_headers=extra_headers or None,
+            event_filter=event_filter,
         )
 
     @router.get(
@@ -362,7 +343,7 @@ def create_events_router(
         authorization: Optional[str] = Header(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         pantheon_session: Optional[str] = Cookie(default=None),
-    ):
+    ) -> EventSourceResponse:
         """BFF-wide SSE stream for the frontend shell.
 
         lastEventId is accepted for the browser client, but this transitional
@@ -405,14 +386,6 @@ def create_events_router(
             extra_headers: Dict[str, str] = {}
             if resolve_session_kind is not None:
                 extra_headers["X-BFF-Session-Kind"] = resolve_session_kind(identity)
-            if handle_sse_stream is not None:
-                return handle_sse_stream(
-                    selected_channel,
-                    _buffers[selected_channel],
-                    _subscribers[selected_channel],
-                    resolved_last_event_id,
-                    extra_headers=extra_headers or None,
-                )
             return _event_stream.stream_response(
                 selected_channel,
                 resolved_last_event_id,

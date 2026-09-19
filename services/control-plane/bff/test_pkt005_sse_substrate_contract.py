@@ -626,7 +626,7 @@ def test_sse_disconnect_cancellation_cleans_subscribers() -> None:
     asyncio.run(_test())
 
 
-def test_sse_persisted_date_enum_null_and_fingerprint_serialization() -> None:
+def test_sse_persisted_date_enum_null_and_fingerprint_serialization(tmp_path: Any, monkeypatch: Any) -> None:
     from datetime import datetime, timezone
     from enum import Enum
 
@@ -636,9 +636,11 @@ def test_sse_persisted_date_enum_null_and_fingerprint_serialization() -> None:
 
     test_date = datetime(2026, 9, 19, 14, 30, 0, tzinfo=timezone.utc)
 
-    event_payload = {
-        "id": "evt-persisted-001",
-        "type": "approval.state",
+    # 1. Configure file-backed SSE replay store
+    monkeypatch.setenv("PANTHEON_BFF_SSE_REPLAY_STORE", "file")
+    service = EventStreamService(channels=("approval",), data_dir=str(tmp_path))
+
+    data_payload = {
         "stage": TestStage.APPROVED,
         "created_at": test_date,
         "notes": None,
@@ -650,53 +652,157 @@ def test_sse_persisted_date_enum_null_and_fingerprint_serialization() -> None:
         },
     }
 
-    formatted = sse_service.format_event(event_payload)
-    assert "event: approval.state" in formatted
-    assert "id: evt-persisted-001" in formatted
+    # 2. Publish with date/enum/null/fingerprint types: must persist to disk without TypeError
+    event_id = service.publish(
+        service.buffers["approval"],
+        service.subscribers["approval"],
+        "approval.state",
+        data_payload,
+    )
+    assert event_id.startswith("evt-")
 
+    # 3. Verify physical file on disk
+    file_path = service._shared_replay_file("approval")
+    assert file_path.exists()
+    content = file_path.read_text(encoding="utf-8").strip()
+    persisted_json = json.loads(content)
+    assert persisted_json["id"] == event_id
+    assert persisted_json["type"] == "approval.state"
+    assert persisted_json["data"]["stage"] == "approved"
+    assert persisted_json["data"]["notes"] is None
+    assert persisted_json["data"]["idempotency_fingerprint"] == "sha256:4a5b6c7d8e9f0123456789abcdef"
+    assert "2026-09-19T14:30:00" in persisted_json["data"]["created_at"]
+    assert persisted_json["data"]["nested"]["status"] == "pending"
+    assert persisted_json["data"]["nested"]["decision"] is None
+
+    # 4. Reload from fresh EventStreamService instance (simulating server restart)
+    new_service = EventStreamService(channels=("approval",), data_dir=str(tmp_path))
+    reloaded_events = new_service.replay("approval", deque(), None)
+    assert len(reloaded_events) == 1
+    reloaded = reloaded_events[0]
+    assert reloaded["id"] == event_id
+    assert reloaded["data"]["stage"] == "approved"
+    assert reloaded["data"]["notes"] is None
+    assert reloaded["data"]["idempotency_fingerprint"] == "sha256:4a5b6c7d8e9f0123456789abcdef"
+    assert "2026-09-19T14:30:00" in reloaded["data"]["created_at"]
+
+    # 5. Format reloaded event to wire format
+    formatted = new_service.format_event(reloaded)
+    assert f"id: {event_id}" in formatted
+    assert "event: approval.state" in formatted
+    assert "data: " in formatted
     data_line = next(line for line in formatted.splitlines() if line.startswith("data: "))
     payload = json.loads(data_line.removeprefix("data: "))
+    assert payload["data"]["stage"] == "approved"
+    assert payload["data"]["notes"] is None
+    assert payload["data"]["idempotency_fingerprint"] == "sha256:4a5b6c7d8e9f0123456789abcdef"
 
-    assert payload["stage"] == "approved"
-    assert payload["notes"] is None
-    assert payload["idempotency_fingerprint"] == "sha256:4a5b6c7d8e9f0123456789abcdef"
-    assert "2026-09-19T14:30:00" in payload["created_at"]
-    assert payload["nested"]["status"] == "pending"
-    assert payload["nested"]["decision"] is None
+    # 6. Consultation store persistence and reload compatibility
+    from services.consultation.store import ConsultationStore
+    from services.consultation.models import ConsultRequest, ActorRef, ConsultRequestType
+    consult_dir = tmp_path / "consultation"
+    consult_store = ConsultationStore(str(consult_dir))
+    req = ConsultRequest(
+        request_id="req-persist-001",
+        request_type=ConsultRequestType.STRATEGY_REVIEW,
+        requested_by=ActorRef(actor_type="sponsor", actor_id="sponsor-1"),
+        target_type="persona",
+        target_id="persona-a",
+        trace_id="trace-persist-001",
+        metadata={
+            "fingerprint": "sha256:fingerprint001",
+            "stage": TestStage.APPROVED,
+            "created_at": test_date.isoformat(),
+            "notes": None,
+        },
+    )
+    consult_store.put_request(req)
+
+    reloaded_consult_store = ConsultationStore(str(consult_dir))
+    reloaded_req = reloaded_consult_store.get_request("req-persist-001")
+    assert reloaded_req is not None
+    assert reloaded_req.request_id == "req-persist-001"
+    assert reloaded_req.target_id == "persona-a"
+    assert reloaded_req.metadata["fingerprint"] == "sha256:fingerprint001"
+    assert reloaded_req.metadata["stage"] == "approved"
+    assert reloaded_req.metadata["notes"] is None
 
 
-def test_sse_streaming_done_token_termination() -> None:
+def test_sse_streaming_done_token_termination(monkeypatch: Any) -> None:
+    import sys
     from fastapi.sse import ServerSentEvent
+    from fastapi.testclient import TestClient
+    from pathlib import Path
+    import importlib.util
+    _adapter_dir = str(Path(__file__).resolve().parents[3] / "services" / "openclaw-gateway-adapter")
+    if _adapter_dir not in sys.path:
+        sys.path.insert(0, _adapter_dir)
+    _spec = importlib.util.spec_from_file_location("openclaw_adapter_main", Path(_adapter_dir) / "main.py")
+    adapter_main = importlib.util.module_from_spec(_spec)
+    sys.modules["openclaw_adapter_main"] = adapter_main
+    _spec.loader.exec_module(adapter_main)
+    adapter_app = adapter_main.app
 
-    # 1. ServerSentEvent with raw_data="[DONE]"
+    # 1. Format-level [DONE] token check
     formatted_done = sse_service.format_event(ServerSentEvent(raw_data="[DONE]"))
     assert formatted_done == "data: [DONE]\n\n"
 
-    # 2. String "[DONE]" format
     done_str = "data: [DONE]\n\n"
     assert sse_service.format_event(done_str) == "data: [DONE]\n\n"
 
-    # 3. Stream delivery of [DONE] token
+    # 2. Actual adapter HTTP request verifying [DONE] token and HTTP transport termination
+    client = TestClient(adapter_app)
+
+    # Test case A: OPERATOR_REQUIRED error stream terminates with [DONE]
+    resp = client.post(
+        "/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+        json={"mode": "user", "prompt": "hello"},
+    )
+    assert resp.status_code == 200
+    lines = [line.strip() for line in resp.text.splitlines() if line.strip()]
+    assert any("OPERATOR_REQUIRED" in line for line in lines)
+    assert lines[-1] == "data: [DONE]"
+
+    # Test case B: Delegated codex stream terminates with [DONE]
+    from types import SimpleNamespace
+    fake_result = SimpleNamespace(
+        provider="codex",
+        mode="kernel_debug",
+        status="success",
+        output={"text": "codex test output"},
+        redaction={},
+        session_id="sess-123",
+        metadata={},
+    )
+    with monkeypatch.context() as m:
+        m.setattr(adapter_main._CODEX_RUNTIME, "invoke", lambda *args, **kwargs: fake_result)
+        resp2 = client.post(
+            "/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+            headers={"X-Operator-Id": "op-test"},
+            json={"mode": "kernel_debug", "prompt": "debug command"},
+        )
+        assert resp2.status_code == 200
+        lines2 = [line.strip() for line in resp2.text.splitlines() if line.strip()]
+        assert any("codex test output" in line for line in lines2)
+        assert lines2[-1] == "data: [DONE]"
+
+    # Test case C: EventStreamService stream terminates on [DONE] without hanging
     channel = "ask"
 
-    async def _test_stream_with_done():
+    async def _test_event_stream_done_termination():
         gen = sse_service.stream(channel, _sse_buffers[channel], _sse_subscribers[channel], None)
         task = asyncio.create_task(anext(gen))
         await asyncio.sleep(0.01)
-        _publish_event(
-            _sse_buffers[channel],
-            _sse_subscribers[channel],
-            "ask.message.delta",
-            {"delta": "hello"},
-        )
-        chunk1 = await task
-        assert "ask.message.delta" in chunk1
 
+        # Enqueue [DONE] token
         for q in list(_sse_subscribers[channel]):
             q.put_nowait(ServerSentEvent(raw_data="[DONE]"))
-        chunk2 = await anext(gen)
-        assert chunk2 == "data: [DONE]\n\n"
 
-        await gen.aclose()
+        chunk = await task
+        assert chunk == "data: [DONE]\n\n"
 
-    asyncio.run(_test_stream_with_done())
+        # Generator must have terminated cleanly: next read raises StopAsyncIteration
+        with pytest.raises(StopAsyncIteration):
+            await anext(gen)
+
+    asyncio.run(_test_event_stream_done_termination())

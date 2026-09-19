@@ -129,8 +129,9 @@ class EventStreamService:
         if not channel or not self._shared_replay_enabled():
             return
         path = self._shared_replay_file(channel)
+        encoded = jsonable_encoder(event)
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+            handle.write(json.dumps(encoded, ensure_ascii=False, separators=(",", ":")) + "\n")
         try:
             lines = [line for line in path.read_text(encoding="utf-8").splitlines(True) if line.strip()]
             if len(lines) > self.max_events:
@@ -192,11 +193,12 @@ class EventStreamService:
         event_id = self._make_event_id()
         # Match ``SseEventEnvelope[Dict[str, Any]].model_dump(mode="json")``
         # without coupling this prepared domain module to the BFF import root.
+        encoded_data = jsonable_encoder(dict(data or {}))
         event = {
             "id": event_id,
             "type": event_type,
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "data": dict(data or {}),
+            "data": encoded_data,
         }
         buffer.append((event_id, event))
         self._append_shared_event(self._channel_for_buffer(buffer), event)
@@ -241,17 +243,28 @@ class EventStreamService:
         buffer: deque,
         subscribers: list[asyncio.Queue],
         last_event_id: Optional[str],
+        event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
     ) -> AsyncGenerator[str, None]:
         queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         subscribers.append(queue)
         try:
             for event in self.replay(channel, buffer, last_event_id):
+                if event_filter is not None and isinstance(event, dict) and not event_filter(event):
+                    continue
                 yield self.format_event(event)
             while True:
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
                     if event is None:
                         break
+                    if isinstance(event, ServerSentEvent) and event.raw_data == "[DONE]":
+                        yield self.format_event(event)
+                        break
+                    if isinstance(event, str) and (event.strip() == "data: [DONE]" or event.strip() == "[DONE]"):
+                        yield self.format_event(event)
+                        break
+                    if event_filter is not None and isinstance(event, dict) and not event_filter(event):
+                        continue
                     yield self.format_event(event)
                 except asyncio.TimeoutError:
                     yield format_sse_event(comment="heartbeat").decode("utf-8")
@@ -267,6 +280,7 @@ class EventStreamService:
         bff_error: Callable[..., Exception],
         conflict_code: Any,
         extra_headers: Optional[Dict[str, str]] = None,
+        event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
     ) -> EventSourceResponse:
         buffer = self.buffers[channel]
         subscribers = self.subscribers[channel]
@@ -298,7 +312,7 @@ class EventStreamService:
         if extra_headers:
             headers.update(extra_headers)
         return EventSourceResponse(
-            self.stream(channel, buffer, subscribers, last_event_id),
+            self.stream(channel, buffer, subscribers, last_event_id, event_filter=event_filter),
             headers=headers,
         )
 

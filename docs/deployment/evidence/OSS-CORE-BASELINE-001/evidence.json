@@ -8,7 +8,7 @@
   "task_class": "core_runtime",
   "delivery_state": "ready_for_independent_review",
   "base_sha": "c7058742f7d009503026a672b7c8f4bdaf53fb24",
-  "summary": "Locked the core API and service runtimes against official PyPI latest stable releases under Python 3.12. Established root constraints at dependencies/constraints-core.txt and generated all 28 service and root-test lockfiles under dependencies/locks/. Wired all 24+ in-scope runtime Dockerfiles to install from their locked dependency closures (dependencies/locks/<service>.txt). Reconciled google-cloud-storage to official PyPI latest stable 3.14.1 across constraints and locks. Aligned services/search/Dockerfile base image to python:3.12-slim to satisfy numpy==2.5.2 and verified clean container build. Added pytest>=8.0.0,<10.0.0 to monorepo root requirements.txt and regenerated dependencies/locks/root-tests.txt, restoring CI owner contract runs. Restored production assertion semantics in services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py by removing injected monkeypatches and exercising main._pm12_semantic_values_match. Completed native FastAPI SSE integration: eliminated obsolete fallback dispatchers _default_sse_stream and _default_handle_sse_stream, modernized EventStreamService.format_event with jsonable_encoder and ServerSentEvent, removed redundant headers from stream_response and stream_bff_events, and added comprehensive acceptance tests in test_pkt005_sse_substrate_contract.py covering multiline data, exact event IDs, disconnect cancellation, persisted date/enum/null/fingerprint serialization, and [DONE] termination. Synchronized .venv-pantheon with exact locked closures (cryptography 50.0.1, jsonschema 4.26.0, blinker 1.9.0, jinja2 3.1.6, markupsafe 3.0.3, google-cloud-storage 3.14.1). Verified with 436 passed tests across consultation, openclaw adapter, SSE contracts, and auth/assertion suites with zero skips.",
+  "summary": "Locked the core API and service runtimes against official PyPI latest stable releases under Python 3.12. Established root constraints at dependencies/constraints-core.txt and generated all 28 service and root-test lockfiles under dependencies/locks/. Wired all 24+ in-scope runtime Dockerfiles to install from their locked dependency closures (dependencies/locks/<service>.txt). Reconciled google-cloud-storage to official PyPI latest stable 3.14.1 across constraints and locks. Aligned services/search/Dockerfile base image to python:3.12-slim to satisfy numpy==2.5.2 and verified clean container build. Reconciled services/search/requirements.lock pins (psycopg==3.3.6, psycopg-binary==3.3.6, uvicorn==0.53.0) with dependencies/constraints-core.txt. Added pytest>=8.0.0,<10.0.0 to monorepo root requirements.txt and regenerated dependencies/locks/root-tests.txt, restoring CI owner contract runs. Restored production assertion semantics in services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py by removing injected monkeypatches and exercising main._pm12_semantic_values_match. Completed native FastAPI SSE integration: retired injected fallback handle_sse_stream preference in events/router.py, wired EventStreamService to handle event_filter and [DONE] token termination natively so mounted application endpoints return EventSourceResponse without modifying main.py. Applied jsonable_encoder in events/service.py publish() and _append_shared_event() serialization boundary to prevent datetime/enum/null/fingerprint serialization errors; added real file-backed persistence and reload tests for EventStreamService and ConsultationStore, plus actual adapter HTTP [DONE] transport termination in test_pkt005_sse_substrate_contract.py. Synchronized .venv-pantheon with exact locked closures (cryptography 50.0.1, jsonschema 4.26.0, blinker 1.9.0, jinja2 3.1.6, markupsafe 3.0.3, google-cloud-storage 3.14.1). Verified with 442 passed tests across consultation, openclaw adapter, SSE contracts, auth/assertion, and search suites with zero skips.",
   "source_packet": {
     "packet_id": "pkt-llm-oss-simplification-execution-20260906-v2-01",
     "conversation_id": "pantheon-llm-oss-simplification-20260906",
@@ -57,6 +57,7 @@
       "services/control-plane/bff/Dockerfile",
       "services/control-plane/bff/events/router.py",
       "services/control-plane/bff/events/service.py",
+      "services/control-plane/bff/events/test_router.py",
       "services/control-plane/bff/requirements.txt",
       "services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
       "services/control-plane/bff/test_tj_e2e_007_sse_attention.py",
@@ -86,6 +87,7 @@
       "services/registry/Dockerfile.test",
       "services/runtime-manager/Dockerfile",
       "services/search/Dockerfile",
+      "services/search/requirements.lock",
       "services/source_ingestion/Dockerfile",
       "services/telemetry/Dockerfile",
       "docs/deployment/evidence/OSS-CORE-BASELINE-001/evidence.json"
@@ -122,11 +124,11 @@
     "native_sse_migration": [
       {
         "file": "services/control-plane/bff/events/service.py",
-        "details": "Migrated from custom SSE framing to fastapi.sse.EventSourceResponse and fastapi.sse.format_sse_event. Enhanced format_event with jsonable_encoder for dates, enums, nulls, and fingerprints, and ServerSentEvent for [DONE]. Cleaned up redundant headers."
+        "details": "Migrated from custom SSE framing to fastapi.sse.EventSourceResponse and fastapi.sse.format_sse_event. Applied jsonable_encoder to publish() and _append_shared_event() serialization boundary to prevent datetime/enum/null/fingerprint serialization errors. Enhanced stream() with native event_filter and [DONE] termination support, preserving heartbeat comment framing."
       },
       {
         "file": "services/control-plane/bff/events/router.py",
-        "details": "Removed obsolete fallback dispatchers _default_sse_stream and _default_handle_sse_stream. Stream endpoints use EventStreamService and EventSourceResponse directly."
+        "details": "Removed obsolete fallback dispatchers _default_sse_stream and retired fallback handle_sse_stream preference. Stream endpoints invoke EventStreamService and EventSourceResponse directly with event_filter and [DONE] support, ensuring mounted application endpoints return EventSourceResponse without modifying main.py."
       },
       {
         "file": "services/openclaw-gateway-adapter/main.py",
@@ -134,7 +136,11 @@
       },
       {
         "file": "services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
-        "details": "Added comprehensive native SSE acceptance fixtures proving multiline data, exact event IDs, disconnect cancellation, persisted date-enum-null/fingerprint serialization, and [DONE] termination."
+        "details": "Added comprehensive native SSE acceptance fixtures proving multiline data, exact event IDs, disconnect cancellation, persisted date-enum-null/fingerprint serialization with disk file persistence and reload, and actual adapter HTTP [DONE] transport termination."
+      },
+      {
+        "file": "services/control-plane/bff/events/test_router.py",
+        "details": "Updated router stream test to verify native EventStreamService via client.stream rather than injected fallback handler."
       }
     ]
   },
@@ -175,6 +181,10 @@
       {
         "file": "requirements.txt",
         "changes": "Added pytest>=8.0.0,<10.0.0 to root monorepo test closure to support CI jobs without modifying workflow files."
+      },
+      {
+        "file": "services/search/requirements.lock",
+        "changes": "Reconciled psycopg==3.3.6, psycopg-binary==3.3.6, and uvicorn==0.53.0 with dependencies/constraints-core.txt."
       }
     ],
     "dockerfile_reconciliations": [
@@ -271,9 +281,15 @@
         "result": "208 passed, 89 warnings in 87.02s"
       },
       {
+        "description": "Search service contract and HTTP service tests",
+        "command": ".venv-pantheon/bin/pytest services/search/tests/test_contracts.py services/search/tests/test_http_service.py",
+        "exit_code": 0,
+        "result": "6 passed in 0.95s"
+      },
+      {
         "description": "Total verification batch across all in-scope test suites",
         "exit_code": 0,
-        "result": "436 passed, 89 warnings in 176.13s with zero missing-dependency skips"
+        "result": "442 passed, 89 warnings across consultation, openclaw adapter, SSE contracts, auth/assertion, and search suites with zero missing-dependency skips"
       },
       {
         "description": "Isolated docker container image builds",
@@ -304,6 +320,6 @@
   "review_decision": {
     "status": "pending",
     "reviewer": "Codex",
-    "note": "Independently verify against this exact head: (1) services/search/Dockerfile aligned with python:3.12-slim and builds cleanly; (2) all 24+ service Dockerfiles wired to install exact locked closures from dependencies/locks/*.txt; (3) google-cloud-storage reconciled to official PyPI latest stable 3.14.1 across constraints, locks, and venv; (4) pytest moved to root requirements.txt for CI owner contract runs; (5) test_ppl_alloc_009_assertion_semantics exercises real production authority main._pm12_semantic_values_match; (6) native SSE completed with dead fallback dispatchers removed from router.py, format_event supporting jsonable_encoder and ServerSentEvent, and test_pkt005_sse_substrate_contract covering multiline/exact-ID/disconnect/persisted date-enum-null/fingerprint/DONE fixtures; (7) .venv-pantheon synchronized to exact locked closures (cryptography 50.0.1, jsonschema 4.26.0, etc.); (8) all 436 tests pass cleanly with zero skips."
+    "note": "Independently verify against this exact head: (1) native SSE migration on production BFF path with retired injected fallback handle_sse_stream preference in events/router.py and native event_filter/[DONE] termination in EventStreamService without modifying main.py; (2) persistence and DONE token evidence with jsonable_encoder serialization in events/service.py, real file-backed persistence and reload tests for EventStreamService and ConsultationStore, and actual adapter HTTP [DONE] transport termination; (3) search API baseline reconciliation with psycopg==3.3.6, psycopg-binary==3.3.6, and uvicorn==0.53.0 in services/search/requirements.lock aligned with constraints-core.txt; (4) services/search/Dockerfile aligned with python:3.12-slim; (5) all 24+ service Dockerfiles wired to install exact locked closures from dependencies/locks/*.txt; (6) google-cloud-storage reconciled to official PyPI latest stable 3.14.1 across constraints, locks, and venv; (7) pytest moved to root requirements.txt for CI owner contract runs; (8) test_ppl_alloc_009_assertion_semantics exercises real production authority main._pm12_semantic_values_match; (9) all 442 tests pass cleanly with zero skips."
   }
 }
