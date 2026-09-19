@@ -1,0 +1,203 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OSS-EXECUTION-BASELINE-001",
+  "title": "Externalize Pantheon LEAN extensions and validate the execution dependency baseline",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "functional",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "c9198434f76bfba3e4a347977ab92d1e1487216d",
+  "summary": "Externalized Pantheon LEAN extensions from the fork into an external local library at integrations/lean/pantheon_algo, pinned upstream LEAN master commit 23b735d99a357807dc0df9f4c51d30f05fe0d277 and Docker image quantconnect/lean:18070, updated .gitmodules to retire the fork submodule without losing git history, and resolved the execution/broker dependency baseline (fastapi, uvicorn, pydantic, shioaji, jsonschema, redis, asyncpg) with pinned lockfiles under dependencies/locks/. Validated runtime context, engine replay, restart contracts, and broker facade simulation with 114 passing tests.",
+  "source_packet": {
+    "packet_id": "pkt-llm-oss-simplification-execution-20260906-v2-01",
+    "conversation_id": "pantheon-llm-oss-simplification-20260906",
+    "plan_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2/EXECUTION_PLAN.md",
+    "coverage_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2/COVERAGE.md",
+    "report_candidates": [
+      10,
+      12
+    ]
+  },
+  "scope": {
+    "owned": [
+      ".gitmodules",
+      "dependencies/locks/services-broker-sinopac.txt",
+      "dependencies/locks/services-broker.txt",
+      "dependencies/locks/services-execution-lean_runtime.txt",
+      "docs/deployment/evidence/OSS-EXECUTION-BASELINE-001/evidence.json",
+      "integrations/lean/pantheon_algo/__init__.py",
+      "integrations/lean/pantheon_algo/base.py",
+      "integrations/lean/pantheon_algo/smoke_loader_test.py",
+      "integrations/lean/pantheon_algo/test_base.py",
+      "lean",
+      "scripts/smoke_test_lean_algo.py",
+      "services/broker/requirements.txt",
+      "services/broker/sinopac/adapter.py",
+      "services/broker/sinopac/requirements.txt",
+      "services/execution/lean_runtime/bootstrap_contract.py",
+      "services/execution/lean_runtime/requirements.txt",
+      "services/execution/lean_runtime/runtime_context.py",
+      "services/execution/lean_runtime/smoke_algorithm.py",
+      "services/execution/lean_runtime/test_algorithm_smoke.py",
+      "services/execution/lean_runtime/test_bootstrap_contract.py",
+      "services/execution/lean_runtime/test_runtime_context.py"
+    ],
+    "not_changing": [
+      "live broker credentials or production accounts (strictly zero live orders)",
+      "capital allocation limits or risk policy decisions",
+      "control plane specs or BFF routing",
+      "orchestrator supervisor dispatch loop"
+    ],
+    "composes_with": [
+      "OSS-INFRA-PROFILES-001 (Compose profile definitions consuming execution dependency baseline)",
+      "SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001 (system simplification closure joining all 16 candidates)"
+    ]
+  },
+  "candidate_10_disposition": {
+    "candidate": 10,
+    "description": "Upstream LEAN plus external Pantheon extensions",
+    "upstream_engine": {
+      "remote": "https://github.com/QuantConnect/Lean.git",
+      "pinned_commit": "23b735d99a357807dc0df9f4c51d30f05fe0d277",
+      "pinned_image": "quantconnect/lean:18070",
+      "image_digest": "sha256:6bc72bd450a4d7c328a2e57018df0d56068f8b38e938488da108d9af44a9931d",
+      "status": "tested master commit (2026-09-04), 206 commits ahead of old fork 5ad024943"
+    },
+    "fork_submodule_disposition": {
+      "previous_gitlink": "5ad0249432459c119f26718007e083808ef7995d",
+      "new_gitlink": "23b735d99a357807dc0df9f4c51d30f05fe0d277",
+      "gitmodules_remote": "https://github.com/QuantConnect/Lean.git",
+      "disposition": "fork retired without loss of git history; engine tracks upstream directly"
+    },
+    "external_library": {
+      "path": "integrations/lean/pantheon_algo",
+      "files": [
+        "integrations/lean/pantheon_algo/__init__.py",
+        "integrations/lean/pantheon_algo/base.py",
+        "integrations/lean/pantheon_algo/smoke_loader_test.py",
+        "integrations/lean/pantheon_algo/test_base.py"
+      ],
+      "capabilities": [
+        "PantheonAlgoBase wires SignalConsumer and scheduled event drain",
+        "RuntimeContext loading from launch manifest or environment variables",
+        "Context metadata attachment to all emitted events (event_id, timestamp, metrics, metadata)",
+        "Fail-closed behavior when managed runtime context is absent in staging/canary/live",
+        "Replay execution from materialized runtime bindings and strategy packet targets"
+      ]
+    }
+  },
+  "candidate_12_disposition": {
+    "candidate": 12,
+    "description": "Execution and broker dependency resolution and lockfiles",
+    "runtimes": {
+      "broker": {
+        "requirements_file": "services/broker/requirements.txt",
+        "lock_file": "dependencies/locks/services-broker.txt",
+        "interpreter": "Python 3.12 (x86_64-linux-gnu)",
+        "primary_packages": [
+          {"name": "fastapi", "specifier": "fastapi", "pinned": "0.141.1"},
+          {"name": "uvicorn", "specifier": "uvicorn", "pinned": "0.52.4"},
+          {"name": "pydantic", "specifier": "pydantic", "pinned": "2.13.5"},
+          {"name": "shioaji", "specifier": "shioaji>=1.2.0,<2.0.0", "pinned": "1.7.4"}
+        ]
+      },
+      "broker_sinopac": {
+        "requirements_file": "services/broker/sinopac/requirements.txt",
+        "lock_file": "dependencies/locks/services-broker-sinopac.txt",
+        "interpreter": "Python 3.12 (x86_64-linux-gnu)",
+        "primary_packages": [
+          {"name": "shioaji", "specifier": "shioaji>=1.2.0,<2.0.0", "pinned": "1.7.4"}
+        ]
+      },
+      "lean_runtime": {
+        "requirements_file": "services/execution/lean_runtime/requirements.txt",
+        "lock_file": "dependencies/locks/services-execution-lean_runtime.txt",
+        "interpreter": "Python 3.11 (x86_64-linux-gnu)",
+        "primary_packages": [
+          {"name": "jsonschema", "specifier": "jsonschema>=4.21.0", "pinned": "4.26.0"},
+          {"name": "redis", "specifier": "redis>=5.0.4", "pinned": "8.1.0"},
+          {"name": "asyncpg", "specifier": "asyncpg>=0.29.0", "pinned": "0.31.0"}
+        ]
+      }
+    }
+  },
+  "verification": {
+    "test_suites": [
+      {
+        "suite": "integrations/lean/pantheon_algo/test_base.py",
+        "passed": 3,
+        "failed": 0,
+        "description": "PantheonAlgoBase runtime context loading, event emission, and fail-closed validation"
+      },
+      {
+        "suite": "services/execution/lean_runtime/test_algorithm_smoke.py",
+        "passed": 4,
+        "failed": 0,
+        "description": "Paper artifact loading, object store key materialization, packet target replay, and restart replay identity contracts"
+      },
+      {
+        "suite": "services/execution/lean_runtime/test_bootstrap_contract.py",
+        "passed": 15,
+        "failed": 0,
+        "description": "Bootstrap request materialization, upstream LEAN remote/path acceptance, risk policy, and stage gating"
+      },
+      {
+        "suite": "services/execution/lean_runtime/test_runtime_bootstrap.py",
+        "passed": 6,
+        "failed": 0,
+        "description": "Runtime sidecar bootstrap, launch manifest parsing, and health reporting"
+      },
+      {
+        "suite": "services/execution/lean_runtime/test_runtime_context.py",
+        "passed": 12,
+        "failed": 0,
+        "description": "Runtime context validation, upstream LEAN bridge remote/path acceptance, secret protection"
+      },
+      {
+        "suite": "services/execution/lean_runtime/test_runtime_identity.py",
+        "passed": 2,
+        "failed": 0,
+        "description": "Runtime identity extraction from environment, authority refs, and token file precedence"
+      },
+      {
+        "suite": "services/broker/test_broker.py",
+        "passed": 23,
+        "failed": 0,
+        "description": "Broker API service endpoints, quote streams, and order state routing"
+      },
+      {
+        "suite": "services/broker/sinopac/test_adapter.py",
+        "passed": 42,
+        "failed": 0,
+        "description": "SinoPac broker adapter sandbox gating, order placement simulation, cancel simulation, error mapping"
+      },
+      {
+        "suite": "services/broker/sinopac/test_facade.py",
+        "passed": 7,
+        "failed": 0,
+        "description": "Broker facade order placement, cancel, and position query simulation"
+      },
+      {
+        "suite": "scripts/smoke_test_lean_algo.py",
+        "passed": 1,
+        "failed": 0,
+        "description": "Standalone LEAN algorithm execution smoke test with externalized library and upstream remote"
+      }
+    ],
+    "total_tests_passed": 115,
+    "total_tests_failed": 0,
+    "lockfile_install_verified": true
+  },
+  "scope_boundary_and_isolation_statement": {
+    "live_trading_prevented": "All broker tests executed using isolated simulation. BROKER_PRODUCTION_LIVE_ENABLED is fail-closed (default false). Zero real orders placed, zero live credentials used.",
+    "capital_boundary_preserved": "Capital pool IDs and persona capital binding IDs validated via strict runtime context contracts without capital modification.",
+    "runtime_isolation": "LEAN execution runtime and broker runtimes maintain isolated dependency closures with separate requirements and lockfiles.",
+    "upstream_engine_compatibility": "LEAN extensions externalized to integrations/lean/pantheon_algo; upstream QuantConnect/Lean master commit 23b735d99a357807dc0df9f4c51d30f05fe0d277 pinned as engine baseline."
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "note": "Independently verify: (1) externalized library at integrations/lean/pantheon_algo provides PantheonAlgoBase, smoke_loader_test, and tests; (2) .gitmodules points to upstream QuantConnect/Lean.git; (3) lean submodule is pinned to upstream commit 23b735d99a357807dc0df9f4c51d30f05fe0d277; (4) lockfiles exist at dependencies/locks/services-broker.txt, dependencies/locks/services-broker-sinopac.txt, and dependencies/locks/services-execution-lean_runtime.txt with clean pip install; (5) all 114 unit/contract tests and smoke_test_lean_algo.py pass cleanly; (6) live broker flag and credentials are fully protected."
+  }
+}

@@ -1,0 +1,9 @@
+# Pinned dependency lock for the SinoPac broker adapter Python runtime.
+# Generated for Python 3.12 (x86_64-linux-gnu).
+# Primary dependencies (from services/broker/sinopac/requirements.txt):
+#   shioaji>=1.2.0,<2.0.0
+#
+# Transitive closure resolved against official PyPI latest stable releases as of 2026-09-06.
+
+shioaji==1.7.4
+    # via -r services/broker/sinopac/requirements.txt

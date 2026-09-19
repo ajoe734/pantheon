@@ -2,6 +2,10 @@
 import os
 import sys
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
 # Add externalized integrations/lean and fallback lean/Algorithm.Python to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'integrations', 'lean')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'lean', 'Algorithm.Python')))
@@ -20,9 +24,9 @@ os.environ.update({
     "PANTHEON_STRATEGY_ID": "strat-smoke",
     "PANTHEON_CAPITAL_POOL_ID": "pool-smoke",
     "PANTHEON_PERSONA_CAPITAL_BINDING_ID": "pcb-smoke",
-    "PANTHEON_ENGINE_BRIDGE_REMOTE": "ajoe734/pantheon-lean.git",
-    "PANTHEON_ENGINE_BRIDGE_SOURCE_PATH": "pantheon/lean",
-    "PANTHEON_ENGINE_BRIDGE_COMMIT": "smoke-commit",
+    "PANTHEON_ENGINE_BRIDGE_REMOTE": "https://github.com/QuantConnect/Lean.git",
+    "PANTHEON_ENGINE_BRIDGE_SOURCE_PATH": "integrations/lean/pantheon_algo",
+    "PANTHEON_ENGINE_BRIDGE_COMMIT": "23b735d99a357807dc0df9f4c51d30f05fe0d277",
     "PANTHEON_RUNTIME_ADAPTER_VERSION": "0.1.0",
     "PANTHEON_TRACE_ID": "trace-smoke",
     "PANTHEON_CORRELATION_ID": "corr-smoke",

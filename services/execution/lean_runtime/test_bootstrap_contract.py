@@ -1,8 +1,11 @@
 import unittest
 
 from services.execution.lean_runtime.bootstrap_contract import (
+    PANTHEON_EXTERNAL_LIBRARY_PATH,
     PANTHEON_LEAN_REMOTE,
     PANTHEON_LEAN_SOURCE_PATH,
+    UPSTREAM_LEAN_PINNED_COMMIT,
+    UPSTREAM_LEAN_REMOTE,
     BootstrapContractError,
     materialize_runtime_bootstrap_request,
 )
@@ -225,6 +228,49 @@ class RuntimeBootstrapContractTests(unittest.TestCase):
                     runtime_config={"live_broker_enabled": True},
                 ),
                 runtime_binding=_runtime_binding(deployment_mode="live"),
+            )
+
+    def test_bootstrap_request_accepts_upstream_lean_and_external_library(self):
+        request = materialize_runtime_bootstrap_request(
+            deployment_plan=_deployment_plan(),
+            runtime_binding=_runtime_binding(
+                metadata={
+                    "engine_bridge_repo": UPSTREAM_LEAN_REMOTE,
+                    "engine_bridge_path": PANTHEON_EXTERNAL_LIBRARY_PATH,
+                    "engine_bridge_commit": UPSTREAM_LEAN_PINNED_COMMIT,
+                }
+            ),
+            request_id="rbr-test-upstream-001",
+            trace_id="trace-test-upstream-001",
+        )
+        self.assertEqual(request.bridge.remote, UPSTREAM_LEAN_REMOTE)
+        self.assertEqual(request.bridge.source_path, PANTHEON_EXTERNAL_LIBRARY_PATH)
+        self.assertEqual(request.bridge.commit, UPSTREAM_LEAN_PINNED_COMMIT)
+
+    def test_bootstrap_request_rejects_unauthorized_engine_bridge_repo(self):
+        with self.assertRaisesRegex(BootstrapContractError, "engine_bridge_repo"):
+            materialize_runtime_bootstrap_request(
+                deployment_plan=_deployment_plan(),
+                runtime_binding=_runtime_binding(
+                    metadata={
+                        "engine_bridge_repo": "https://github.com/unauthorized/lean-fork.git",
+                        "engine_bridge_path": PANTHEON_EXTERNAL_LIBRARY_PATH,
+                        "engine_bridge_commit": "abc1234",
+                    }
+                ),
+            )
+
+    def test_bootstrap_request_rejects_unauthorized_engine_bridge_path(self):
+        with self.assertRaisesRegex(BootstrapContractError, "engine_bridge_path"):
+            materialize_runtime_bootstrap_request(
+                deployment_plan=_deployment_plan(),
+                runtime_binding=_runtime_binding(
+                    metadata={
+                        "engine_bridge_repo": UPSTREAM_LEAN_REMOTE,
+                        "engine_bridge_path": "invalid/custom/path",
+                        "engine_bridge_commit": "abc1234",
+                    }
+                ),
             )
 
 

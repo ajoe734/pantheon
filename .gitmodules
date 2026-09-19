@@ -1,4 +1,4 @@
 [submodule "lean"]
-	# Canonical Pantheon task path: pantheon/lean
+	# Canonical upstream LEAN engine; extensions externalized to integrations/lean/pantheon_algo
 	path = lean
-	url = https://github.com/ajoe734/pantheon-lean.git
+	url = https://github.com/QuantConnect/Lean.git

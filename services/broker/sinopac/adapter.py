@@ -422,14 +422,28 @@ class ShioajiBrokerAdapter:
         the SDK is not installed (e.g. test environments using a mock API).
         """
         try:
-            import shioaji.constant as sc  # noqa: PLC0415
-            action = sc.Action.Buy if side == "buy" else sc.Action.Sell
-            price_type = sc.StockPriceType.MKT if order_type == "market" else sc.StockPriceType.LMT
-            if account_kind == _ACCOUNT_FUTURES:
-                shioaji_order_type = getattr(sc, "FuturesOrderType", sc.OrderType).ROD
-                futures_octype = sc.FuturesOCType.Auto
+            import shioaji as sj  # noqa: PLC0415
+            action_cls = getattr(sj, "Action", None)
+            if action_cls is None:
+                import shioaji.constant as sc  # noqa: PLC0415
+                action_cls = sc.Action
+                price_type_cls = sc.StockPriceType
+                order_type_cls = sc.OrderType
+                futures_order_type_cls = getattr(sc, "FuturesOrderType", order_type_cls)
+                futures_octype_cls = getattr(sc, "FuturesOCType", None)
             else:
-                shioaji_order_type = sc.OrderType.ROD
+                price_type_cls = getattr(sj, "StockPriceType", None)
+                order_type_cls = getattr(sj, "OrderType", None)
+                futures_order_type_cls = getattr(sj, "FuturesOrderType", order_type_cls)
+                futures_octype_cls = getattr(sj, "FuturesOCType", None)
+
+            action = action_cls.Buy if side == "buy" else action_cls.Sell
+            price_type = price_type_cls.MKT if order_type == "market" else price_type_cls.LMT
+            if account_kind == _ACCOUNT_FUTURES:
+                shioaji_order_type = getattr(futures_order_type_cls, "ROD", "ROD")
+                futures_octype = getattr(futures_octype_cls, "Auto", "Auto")
+            else:
+                shioaji_order_type = getattr(order_type_cls, "ROD", "ROD")
                 futures_octype = None
         except ImportError:
             action = "Buy" if side == "buy" else "Sell"
