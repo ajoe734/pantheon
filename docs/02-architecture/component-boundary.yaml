@@ -59,6 +59,7 @@ components:
       - docs/operations/execution-grant-issuer.md
       - docs/operations/development-tooling-mfa-retirement.md
       - docs/operations/development-tooling-cleanup-20260911.md
+      - docs/operations/task-delivery-audit-20260919/
       - docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md
       - scripts/provision_live_supervisor_config.py
       - scripts/supervisor_runtime_health.py
