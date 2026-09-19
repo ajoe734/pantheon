@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-import os
-import sys
-import tempfile
+from typing import Any, Dict, Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 from contextlib import contextmanager
 
-from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+)
+from services.control_plane.bff.research.router import create_research_router
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -96,31 +98,141 @@ LAUNCH_PAYLOAD = {
 }
 
 
+class _FakeResearchWriteOwner:
+    _CANCELABLE = frozenset({"queued", "running"})
+
+    def __init__(self, seed: dict) -> None:
+        self._experiments = {}
+        for k, v in seed.items():
+            rec = dict(v)
+            if "allowedActions" not in rec:
+                rec["allowedActions"] = {"canCancel": rec.get("status") in self._CANCELABLE}
+            self._experiments[k] = rec
+
+    def list_research_experiments(self, *, ticket_id=None, status=None):
+        items = list(self._experiments.values())
+        if ticket_id:
+            items = [e for e in items if e.get("ticket_id") == ticket_id]
+        if status:
+            items = [e for e in items if e.get("status") == status]
+        return [dict(e) for e in items]
+
+    def get_research_experiment(self, experiment_id):
+        rec = self._experiments.get(str(experiment_id))
+        return dict(rec) if rec else None
+
+    def create_research_experiment(
+        self,
+        *,
+        ticket_id,
+        experiment_name,
+        strategy_selector,
+        parameter_set,
+        run_config,
+        launch_context,
+        queued_at=None,
+        experiment_id=None,
+    ):
+        timestamp = queued_at or "2026-04-20T00:00:00Z"
+        date_part = timestamp[:10].replace("-", "")
+        exp_id = experiment_id or f"exp-{date_part}-{len(self._experiments) + 1:03d}"
+        record = {
+            "experiment_id": exp_id,
+            "ticket_id": ticket_id,
+            "experiment_name": experiment_name,
+            "status": "queued",
+            "queued_at": timestamp,
+            "started_at": None,
+            "completed_at": None,
+            "strategy_selector": strategy_selector,
+            "parameter_set": parameter_set,
+            "run_config": run_config,
+            "launch_context": launch_context,
+            "validation_warnings": [],
+            "artifact_ids": [],
+            "failure": {"reason_code": None, "message": None},
+            "allowedActions": {"canCancel": True},
+        }
+        self._experiments[exp_id] = record
+        return dict(record)
+
+    def cancel_research_experiment(self, experiment_id, *, completed_at=None):
+        rec = self._experiments.get(str(experiment_id))
+        if not rec or rec.get("status") not in self._CANCELABLE:
+            return None
+        rec["status"] = "canceled"
+        rec["completed_at"] = completed_at or "2026-04-20T00:00:00Z"
+        rec["allowedActions"] = {"canCancel": False}
+        return dict(rec)
+
+
+def _extract_identity(auth_header: Optional[str]) -> Dict[str, Any]:
+    if not auth_header:
+        return {"sub": "anonymous", "roles": []}
+    return {
+        "sub": "test-operator",
+        "roles": ["operator", "researcher", "admin"],
+    }
+
+
+def _bff_error(
+    status_code: int,
+    code: Any,
+    message: str,
+    reason: Optional[str] = None,
+    **kwargs: Any,
+) -> HTTPException:
+    error_dict = {
+        "code": getattr(code, "value", str(code)),
+        "message": message,
+        "reason": reason or message,
+        "details": {**kwargs, "reason": reason or message} if kwargs else {"reason": reason or message},
+    }
+    return HTTPException(status_code=status_code, detail={"error": error_dict})
+
+
+def _create_test_app(port: Any) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
+
+    router = create_research_router(
+        read_surface=lambda: port,
+        extract_identity=_extract_identity,
+        require_read_role=lambda ident: None,
+        require_operator_role=lambda ident: None,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-04-20T00:00:00Z",
+        dataset_surface_status=lambda *args, **kwargs: "fresh",
+        include_prepared_subrouters=False,
+    )
+    app.include_router(router)
+    return app
+
+
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = DefaultResearchKnowledgeSourcePort(
-            research_experiments_store=_SEEDED_EXPERIMENTS,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = DefaultResearchKnowledgeSourcePort(
+        research_write_owner=_FakeResearchWriteOwner(_SEEDED_EXPERIMENTS),
+    )
+    app = _create_test_app(port)
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client
 
 
 @contextmanager
 def _no_fallback_client():
-    """Client with allow_local_snapshot_fallback=False — the production path."""
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = DefaultResearchKnowledgeSourcePort()
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = DefaultResearchKnowledgeSourcePort(
+        research_write_owner=_FakeResearchWriteOwner({}),
+    )
+    app = _create_test_app(port)
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client
 
 
 # ---------------------------------------------------------------------------

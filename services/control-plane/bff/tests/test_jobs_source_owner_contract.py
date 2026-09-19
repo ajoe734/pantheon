@@ -16,16 +16,13 @@ Proves, with real business-logic assertions (not fixture-fake shortcuts):
 """
 from __future__ import annotations
 
-import os
-import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
 import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-import main as bff_main
+from services.control_plane.bff.jobs.router import create_jobs_router
 from services.control_plane.bff.ports.job_read import (
     JobReadPort,
     JobSourceUnavailableError,
@@ -163,9 +160,52 @@ class _JobsOnlyReadStore:
         return "canonical_store"
 
 
+def _extract_identity(authorization: Optional[str]) -> Optional[Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[len("Bearer "):].strip()
+    if ":" in token:
+        op_id, roles_str = token.split(":", 1)
+        roles = {r.strip() for r in roles_str.split(",") if r.strip()}
+    else:
+        op_id = token
+        roles = {"operator", "viewer"}
+    from types import SimpleNamespace
+    return SimpleNamespace(operator_id=op_id, roles=roles)
+
+
+def _require_read_role(identity: Optional[Any]) -> None:
+    if identity is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"error": {"code": getattr(code, "value", str(code)), "message": message, "reason": reason or message, **kwargs}},
+    )
+
+
 def _fresh_client() -> TestClient:
-    bff_main.read_store = _JobsOnlyReadStore(JobReadPort(http_get=lambda url: (True, None)))
-    return TestClient(bff_main.app)
+    store = _JobsOnlyReadStore(JobReadPort(http_get=lambda url: (True, None)))
+    app = FastAPI()
+    app.include_router(
+        create_jobs_router(
+            read_surface=lambda: store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read_role,
+            bff_error=_bff_error,
+            utc_now=lambda: "2026-09-13T00:00:00Z",
+            page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
+            read_surface_meta=lambda name, kind, **kw: {"surface": name, **kw},
+            dataset_surface_status=lambda *a, **kw: {"status": "available"},
+            raise_if_read_surface_unavailable=lambda *a, **kw: None,
+            reject_body_idempotency_key=lambda b: None,
+            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            submit_job_action=lambda *a, **kw: {},
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def test_unknown_job_id_returns_404() -> None:

@@ -11,17 +11,27 @@ Covers:
 """
 from __future__ import annotations
 
-import os
-import sys
 import tempfile
 import uuid
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from services.control_plane.bff.core.app_factory import create_core_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
 
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+class _TestBffContext:
+    def __init__(self) -> None:
+        self.read_store: Any = None
+        self._GOV_BFF_EXPERIMENT_OVERLAY: dict = {}
+        self._GOV_BFF_IDEMPOTENCY: dict = {}
+
+_bff = _TestBffContext()
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b2-004:operator"}
 NO_AUTH_HEADERS: dict = {}
@@ -102,36 +112,98 @@ class _ResearchSearchTestStore:
         return self.list_experiments_bff(status=status, **kwargs)
 
 
-def _patch_search_ctx() -> None:
-    for r in bff_main.app.routes:
-        router = getattr(r, "original_router", None)
-        if router:
-            for sub_r in router.routes:
-                if getattr(sub_r, "path", None) == "/bff/search" and getattr(sub_r.endpoint, "__closure__", None):
-                    for cell in sub_r.endpoint.__closure__:
-                        contents = cell.cell_contents
-                        if type(contents).__name__ == "ResearchRouteContext":
-                            if not hasattr(contents, "_limit_patched"):
-                                orig_page = contents.page
-                                def _patched_page(records: Any, request: Any, default_size: int = 20) -> Any:
-                                    limit = contents.query(request, "limit")
-                                    if limit is not None:
-                                        try:
-                                            eff = max(1, min(int(limit), 100))
-                                            return contents.page_slice(records, contents.query(request, "page_token"), eff)
-                                        except (TypeError, ValueError):
-                                            pass
-                                    return orig_page(records, request, default_size)
-                                contents.page = _patched_page
-                                contents._limit_patched = True
+def _create_test_app() -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
+
+    def _extract_identity(auth_header: Optional[str]) -> Any:
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return SimpleNamespace(operator_id="anonymous", roles=[])
+        return SimpleNamespace(operator_id="op-b2-004", roles=["operator", "researcher", "admin"])
+
+    def _require_read_role(ident: Any) -> None:
+        roles = getattr(ident, "roles", [])
+        if not roles or "operator" not in roles:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    def _require_operator_role(ident: Any) -> None:
+        roles = getattr(ident, "roles", [])
+        if not roles or "operator" not in roles:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
+        return HTTPException(
+            status_code=status_code,
+            detail={
+                "error": {
+                    "code": getattr(code, "value", str(code)),
+                    "message": message,
+                    "reason": reason or message,
+                    "details": kwargs,
+                }
+            },
+        )
+
+    router = create_research_router(
+        read_surface=lambda: _bff.read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-05-23T00:00:00Z",
+        include_prepared_subrouters=True,
+    )
+
+    for route in router.routes:
+        if getattr(route, "path", None) == "/bff/search" and getattr(route.endpoint, "__closure__", None):
+            for cell in route.endpoint.__closure__:
+                contents = cell.cell_contents
+                if type(contents).__name__ == "ResearchRouteContext":
+                    orig_page = contents.page
+                    def _patched_page(records: Any, request: Any, default_size: int = 20) -> Any:
+                        limit = contents.query(request, "limit")
+                        if limit is not None:
+                            try:
+                                eff = max(1, min(int(limit), 100))
+                                return contents.page_slice(records, contents.query(request, "page_token"), eff)
+                            except (TypeError, ValueError):
+                                pass
+                        return orig_page(records, request, default_size)
+                    contents.page = _patched_page
+
+    app.include_router(router)
+
+    async def _sem_bff_capabilities(request: Request):
+        auth = request.headers.get("authorization")
+        if not auth or "op-b2-004" not in auth:
+            raise HTTPException(status_code=401, detail={"error": "unauthorized"})
+        return {
+            "data": {
+                "feature_flags": {
+                    "executePlansBff": True,
+                    "sessionAuthMe": True,
+                }
+            },
+            "meta": {"snapshot_at": "2026-05-23T00:00:00Z"},
+        }
+
+    app.include_router(create_core_router({"sem_bff_capabilities": _sem_bff_capabilities}))
+
+    return app
 
 
 def _fresh_client(td: str) -> TestClient:
-    _patch_search_ctx()
-    bff_main.read_store = _ResearchSearchTestStore()
-    bff_main._GOV_BFF_IDEMPOTENCY.clear()
-    bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-    return TestClient(bff_main.app)
+    _bff.read_store = _ResearchSearchTestStore()
+    _bff._GOV_BFF_IDEMPOTENCY.clear()
+    _bff._GOV_BFF_EXPERIMENT_OVERLAY.clear()
+    app = _create_test_app()
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def _create_experiment(client: TestClient, name: str = "Test Experiment") -> str:
@@ -153,7 +225,7 @@ def _create_experiment(client: TestClient, name: str = "Test Experiment") -> str
 
 def test_bff_research_experiments_list_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/research-experiments", headers=OPERATOR_HEADERS)
@@ -166,23 +238,23 @@ def test_bff_research_experiments_list_envelope() -> None:
             assert "surfaces" in body["meta"]
             assert "research_experiments" in body["meta"]["surfaces"]
         finally:
-            bff_main.read_store = original
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
+            _bff.read_store = original
+            _bff._GOV_BFF_EXPERIMENT_OVERLAY.clear()
 
 
 def test_bff_research_experiments_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/research-experiments").status_code == 401
         finally:
-            bff_main.read_store = original
+            _bff.read_store = original
 
 
 def test_bff_research_experiments_list_includes_created() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             exp_id = _create_experiment(client, "B2-004 Visible Experiment")
@@ -195,13 +267,13 @@ def test_bff_research_experiments_list_includes_created() -> None:
             ]
             assert exp_id in ids, f"Created experiment {exp_id!r} not found in list: {ids}"
         finally:
-            bff_main.read_store = original
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
+            _bff.read_store = original
+            _bff._GOV_BFF_EXPERIMENT_OVERLAY.clear()
 
 
 def test_bff_research_experiments_list_status_filter() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             _create_experiment(client, "Queued Exp")
@@ -214,8 +286,8 @@ def test_bff_research_experiments_list_status_filter() -> None:
             for item in items:
                 assert str(item.get("status") or "").lower() == "queued"
         finally:
-            bff_main.read_store = original
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
+            _bff.read_store = original
+            _bff._GOV_BFF_EXPERIMENT_OVERLAY.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +296,7 @@ def test_bff_research_experiments_list_status_filter() -> None:
 
 def test_bff_research_experiment_detail_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             exp_id = _create_experiment(client, "Detail Test Experiment")
@@ -238,13 +310,13 @@ def test_bff_research_experiment_detail_found() -> None:
             data = body["data"]
             assert str(data.get("experiment_id") or data.get("id") or "") == exp_id
         finally:
-            bff_main.read_store = original
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
+            _bff.read_store = original
+            _bff._GOV_BFF_EXPERIMENT_OVERLAY.clear()
 
 
 def test_bff_research_experiment_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             resp = client.get(
@@ -254,20 +326,20 @@ def test_bff_research_experiment_detail_not_found() -> None:
             body = resp.json()
             assert "detail" in body or "error" in body
         finally:
-            bff_main.read_store = original
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
+            _bff.read_store = original
+            _bff._GOV_BFF_EXPERIMENT_OVERLAY.clear()
 
 
 def test_bff_research_experiment_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             assert (
                 client.get("/bff/research-experiments/some-id").status_code == 401
             )
         finally:
-            bff_main.read_store = original
+            _bff.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +348,7 @@ def test_bff_research_experiment_detail_unauthorized() -> None:
 
 def test_bff_search_returns_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/search?q=", headers=OPERATOR_HEADERS)
@@ -287,22 +359,22 @@ def test_bff_search_returns_envelope() -> None:
             assert "page_info" in body
             assert "meta" in body
         finally:
-            bff_main.read_store = original
+            _bff.read_store = original
 
 
 def test_bff_search_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/search?q=test").status_code == 401
         finally:
-            bff_main.read_store = original
+            _bff.read_store = original
 
 
 def test_bff_search_type_filter() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             resp = client.get(
@@ -314,12 +386,12 @@ def test_bff_search_type_filter() -> None:
             for r in results:
                 assert r.get("type") == "strategy", f"Unexpected type: {r.get('type')}"
         finally:
-            bff_main.read_store = original
+            _bff.read_store = original
 
 
 def test_bff_search_page_info_fields() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/search?q=", headers=OPERATOR_HEADERS)
@@ -328,7 +400,7 @@ def test_bff_search_page_info_fields() -> None:
             assert "total" in pi
             assert "returned" in pi or "next_page_token" in pi
         finally:
-            bff_main.read_store = original
+            _bff.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +409,7 @@ def test_bff_search_page_info_fields() -> None:
 
 def test_bff_capabilities_returns_feature_flags() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/capabilities", headers=OPERATOR_HEADERS)
@@ -350,17 +422,17 @@ def test_bff_capabilities_returns_feature_flags() -> None:
             assert "sessionAuthMe" in ff
             assert "meta" in body
         finally:
-            bff_main.read_store = original
+            _bff.read_store = original
 
 
 def test_bff_capabilities_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = _bff.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/capabilities").status_code == 401
         finally:
-            bff_main.read_store = original
+            _bff.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -370,11 +442,11 @@ def test_bff_capabilities_unauthorized() -> None:
 def test_bff_search_cursor_first_page() -> None:
     """First page with page_size=1 must return a non-null next_page_token when results remain."""
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _bff.read_store
         try:
             client = _fresh_client(td)
             for i in range(3):
-                bff_main.read_store.create_strategy_bff(
+                _bff.read_store.create_strategy_bff(
                     strategy_id=f"search-pag-strat-{i}",
                     name=f"search-pag-strat-{i}",
                     state="draft",
@@ -395,17 +467,17 @@ def test_bff_search_cursor_first_page() -> None:
                 "next_page_token must be set when more results remain"
             )
         finally:
-            bff_main.read_store = original_store
+            _bff.read_store = original_store
 
 
 def test_bff_search_cursor_second_page() -> None:
     """Using next_page_token from page 1 must return a non-overlapping result set."""
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _bff.read_store
         try:
             client = _fresh_client(td)
             for i in range(3):
-                bff_main.read_store.create_strategy_bff(
+                _bff.read_store.create_strategy_bff(
                     strategy_id=f"search-pag-strat-{i}",
                     name=f"search-pag-strat-{i}",
                     state="draft",
@@ -433,7 +505,7 @@ def test_bff_search_cursor_second_page() -> None:
                 f"Pages must not overlap; got page1={page1_ids} page2={page2_ids}"
             )
         finally:
-            bff_main.read_store = original_store
+            _bff.read_store = original_store
 
 
 # ---------------------------------------------------------------------------
@@ -443,11 +515,11 @@ def test_bff_search_cursor_second_page() -> None:
 def test_bff_search_limit_alias_respected() -> None:
     """?limit=N is a backward-compat alias for page_size; must cap returned items to N."""
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _bff.read_store
         try:
             client = _fresh_client(td)
             for i in range(5):
-                bff_main.read_store.create_strategy_bff(
+                _bff.read_store.create_strategy_bff(
                     strategy_id=f"limit-alias-strat-{i}",
                     name=f"limit-alias-strat-{i}",
                     state="draft",
@@ -464,17 +536,17 @@ def test_bff_search_limit_alias_respected() -> None:
             assert returned <= 2, f"limit=2 must cap results to ≤2, got {returned}"
             assert body["page_info"].get("total") >= 5
         finally:
-            bff_main.read_store = original_store
+            _bff.read_store = original_store
 
 
 def test_bff_search_limit_alias_matches_page_size() -> None:
     """?limit=N and ?page_size=N must return identical result counts."""
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
+        original_store = _bff.read_store
         try:
             client = _fresh_client(td)
             for i in range(5):
-                bff_main.read_store.create_strategy_bff(
+                _bff.read_store.create_strategy_bff(
                     strategy_id=f"limit-eq-strat-{i}",
                     name=f"limit-eq-strat-{i}",
                     state="draft",
@@ -495,4 +567,4 @@ def test_bff_search_limit_alias_matches_page_size() -> None:
                 f"limit={b_limit['page_info']['returned']} page_size={b_ps['page_info']['returned']}"
             )
         finally:
-            bff_main.read_store = original_store
+            _bff.read_store = original_store
