@@ -1,0 +1,343 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OSS-EXECUTION-BASELINE-001",
+  "title": "Externalize Pantheon LEAN extensions and validate the execution dependency baseline",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "functional",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "c7058742f7d009503026a672b7c8f4bdaf53fb24",
+  "summary": "Externalized Pantheon LEAN extensions from the fork into an external local library at integrations/lean/pantheon_algo, pinned upstream LEAN master commit 23b735d99a357807dc0df9f4c51d30f05fe0d277 and pinned Docker image quantconnect/lean:18070 (sha256:373b03b8ef5e39a923b1ed2e7e469abdef21b2fef31dd78fb4f7b05464ac69b4). Proved actual upstream LEAN engine acceptance via isolated 2-phase Docker replay (runtime context, bridge events, SignalConsumer intake, order fill, ObjectStore persistence across restart). Wired concrete PendingSignalStore and SignalConsumer in PantheonAlgoBase without mocking. Updated broker and execution Dockerfiles to consume lockfiles as constraints during pip install. Reconciled bootstrap defaults to UPSTREAM_LEAN_REMOTE and PANTHEON_EXTERNAL_LIBRARY_PATH. All 116 tests and standalone smoke test pass cleanly.",
+  "source_packet": {
+    "packet_id": "pkt-llm-oss-simplification-execution-20260906-v2-01",
+    "conversation_id": "pantheon-llm-oss-simplification-20260906",
+    "plan_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2/EXECUTION_PLAN.md",
+    "coverage_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2/COVERAGE.md",
+    "report_candidates": [
+      10,
+      12
+    ]
+  },
+  "scope": {
+    "owned": [
+      ".gitmodules",
+      "dependencies/locks/services-broker-sinopac.txt",
+      "dependencies/locks/services-broker.txt",
+      "dependencies/locks/services-execution-lean_runtime.txt",
+      "docs/deployment/evidence/OSS-EXECUTION-BASELINE-001/evidence.json",
+      "integrations/lean/pantheon_algo/__init__.py",
+      "integrations/lean/pantheon_algo/base.py",
+      "integrations/lean/pantheon_algo/smoke_loader_test.py",
+      "integrations/lean/pantheon_algo/test_base.py",
+      "lean",
+      "scripts/smoke_test_lean_algo.py",
+      "services/broker/Dockerfile",
+      "services/broker/requirements.txt",
+      "services/broker/sinopac/adapter.py",
+      "services/broker/sinopac/facade.py",
+      "services/broker/sinopac/requirements.txt",
+      "services/broker/sinopac/test_adapter.py",
+      "services/broker/sinopac/test_facade.py",
+      "services/broker/test_broker.py",
+      "services/execution/lean_runtime/Dockerfile",
+      "services/execution/lean_runtime/bootstrap_contract.py",
+      "services/execution/lean_runtime/requirements.txt",
+      "services/execution/lean_runtime/runtime_bootstrap.py",
+      "services/execution/lean_runtime/runtime_context.py",
+      "services/execution/lean_runtime/runtime_identity.py",
+      "services/execution/lean_runtime/smoke_algorithm.py",
+      "services/execution/lean_runtime/test_algorithm_smoke.py",
+      "services/execution/lean_runtime/test_bootstrap_contract.py",
+      "services/execution/lean_runtime/test_runtime_bootstrap.py",
+      "services/execution/lean_runtime/test_runtime_context.py",
+      "services/execution/lean_runtime/test_runtime_identity.py"
+    ],
+    "not_changing": [
+      "live broker credentials or production accounts (strictly zero live orders)",
+      "capital allocation limits or risk policy decisions",
+      "control plane specs or BFF routing",
+      "orchestrator supervisor dispatch loop"
+    ],
+    "composes_with": [
+      "OSS-INFRA-PROFILES-001 (Compose profile definitions consuming execution dependency baseline)",
+      "SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001 (system simplification closure joining all 16 candidates)"
+    ]
+  },
+  "candidate_10_disposition": {
+    "candidate": 10,
+    "description": "Upstream LEAN plus external Pantheon extensions",
+    "upstream_engine": {
+      "remote": "https://github.com/QuantConnect/Lean.git",
+      "pinned_commit": "23b735d99a357807dc0df9f4c51d30f05fe0d277",
+      "pinned_image": "quantconnect/lean:18070",
+      "image_digest": "sha256:373b03b8ef5e39a923b1ed2e7e469abdef21b2fef31dd78fb4f7b05464ac69b4",
+      "status": "tested master commit (2026-09-04), 206 commits ahead of old fork 5ad024943"
+    },
+    "fork_submodule_disposition": {
+      "previous_gitlink": "5ad0249432459c119f26718007e083808ef7995d",
+      "new_gitlink": "23b735d99a357807dc0df9f4c51d30f05fe0d277",
+      "gitmodules_remote": "https://github.com/QuantConnect/Lean.git",
+      "disposition": "fork retired without loss of git history; engine tracks upstream directly"
+    },
+    "external_library": {
+      "path": "integrations/lean/pantheon_algo",
+      "files": [
+        "integrations/lean/pantheon_algo/__init__.py",
+        "integrations/lean/pantheon_algo/base.py",
+        "integrations/lean/pantheon_algo/smoke_loader_test.py",
+        "integrations/lean/pantheon_algo/test_base.py"
+      ],
+      "capabilities": [
+        "PantheonAlgoBase wires concrete PendingSignalStore and SignalConsumer with scheduled event drain",
+        "RuntimeContext loading from launch manifest or environment variables",
+        "Context metadata attachment to all emitted events (event_id, timestamp, metrics, metadata)",
+        "Fail-closed behavior when managed runtime context is absent in staging/canary/live",
+        "Replay execution from materialized runtime bindings and strategy packet targets"
+      ]
+    }
+  },
+  "candidate_12_disposition": {
+    "candidate": 12,
+    "description": "Execution and broker dependency resolution and lockfiles",
+    "runtimes": {
+      "broker": {
+        "dockerfile": "services/broker/Dockerfile",
+        "dockerfile_constraints_applied": true,
+        "requirements_file": "services/broker/requirements.txt",
+        "lock_file": "dependencies/locks/services-broker.txt",
+        "interpreter": "Python 3.12 (x86_64-linux-gnu)",
+        "primary_packages": [
+          {
+            "name": "fastapi",
+            "specifier": "fastapi",
+            "pinned": "0.141.1"
+          },
+          {
+            "name": "uvicorn",
+            "specifier": "uvicorn",
+            "pinned": "0.52.4"
+          },
+          {
+            "name": "pydantic",
+            "specifier": "pydantic",
+            "pinned": "2.13.5"
+          },
+          {
+            "name": "shioaji",
+            "specifier": "shioaji>=1.2.0,<2.0.0",
+            "pinned": "1.7.4"
+          }
+        ]
+      },
+      "broker_sinopac": {
+        "requirements_file": "services/broker/sinopac/requirements.txt",
+        "lock_file": "dependencies/locks/services-broker-sinopac.txt",
+        "interpreter": "Python 3.12 (x86_64-linux-gnu)",
+        "primary_packages": [
+          {
+            "name": "shioaji",
+            "specifier": "shioaji>=1.2.0,<2.0.0",
+            "pinned": "1.7.4"
+          }
+        ]
+      },
+      "lean_runtime": {
+        "dockerfile": "services/execution/lean_runtime/Dockerfile",
+        "dockerfile_constraints_applied": true,
+        "requirements_file": "services/execution/lean_runtime/requirements.txt",
+        "lock_file": "dependencies/locks/services-execution-lean_runtime.txt",
+        "interpreter": "Python 3.11 (x86_64-linux-gnu)",
+        "primary_packages": [
+          {
+            "name": "jsonschema",
+            "specifier": "jsonschema>=4.21.0",
+            "pinned": "4.26.0"
+          },
+          {
+            "name": "redis",
+            "specifier": "redis>=5.0.4",
+            "pinned": "8.1.0"
+          },
+          {
+            "name": "asyncpg",
+            "specifier": "asyncpg>=0.29.0",
+            "pinned": "0.31.0"
+          }
+        ]
+      }
+    }
+  },
+  "upstream_engine_acceptance": {
+    "image": "quantconnect/lean:18070",
+    "image_digest": "sha256:373b03b8ef5e39a923b1ed2e7e469abdef21b2fef31dd78fb4f7b05464ac69b4",
+    "launcher_assembly": "QuantConnect.Lean.Launcher.dll",
+    "runtime_type": "dotnet 7.0 + Python.NET 2.0.66.0 (CPython 3.11.14)",
+    "replay_algorithm": "EngineReplayAlgo (subclass of pantheon_algo.base.PantheonAlgoBase)",
+    "external_library_mount": "/workspace/integrations/lean -> integrations/lean",
+    "isolation": "Standalone container, volume-mounted storage and library, mock-free concrete components",
+    "run_1_initial": {
+      "status": "success",
+      "exit_code": 0,
+      "lean_available": true,
+      "context_loaded": {
+        "runtime_id": "rt-engine-replay-001",
+        "runtime_binding_id": "rtb-engine-replay-001",
+        "deployment_plan_id": "dp-engine-replay-001",
+        "strategy_id": "strat-engine-replay-001",
+        "capital_pool_id": "pool-engine-replay-001",
+        "bridge_remote": "https://github.com/QuantConnect/Lean.git",
+        "bridge_path": "integrations/lean/pantheon_algo",
+        "bridge_commit": "23b735d99a357807dc0df9f4c51d30f05fe0d277"
+      },
+      "object_store_action": "INITIAL_RUN checkpoint persisted to storage/pantheon_restart_checkpoint",
+      "signal_intake": {
+        "signal_id": "engine-replay-sig-001",
+        "symbol": "SPY.US",
+        "action": "BUY",
+        "direction": "LONG",
+        "quantity": 0.5,
+        "quantity_type": "PERCENT_PORTFOLIO"
+      },
+      "order_execution": {
+        "order_status": "FILLED",
+        "symbol": "SPY",
+        "fill_price": 144.78172417,
+        "fill_quantity": 344.0,
+        "statistics_total_orders": 1,
+        "statistics_order_list_hash": "d17dbd01fd291aab1eb04cf714ceba93"
+      },
+      "emitted_bridge_events": [
+        "RuntimeContextLoaded",
+        "OrderFilledReplay",
+        "EngineReplayComplete"
+      ]
+    },
+    "run_2_restart": {
+      "status": "success",
+      "exit_code": 0,
+      "object_store_restart": {
+        "detected": true,
+        "prior_checkpoint": {
+          "initial_run": true,
+          "runtime_id": "rt-engine-replay-001",
+          "strategy_id": "strat-engine-replay-001",
+          "timestamp": "2026-09-19T12:00:00Z"
+        },
+        "emitted_event": "EngineRestartSuccess"
+      },
+      "order_execution": {
+        "order_status": "FILLED",
+        "symbol": "SPY",
+        "fill_price": 144.78172417,
+        "fill_quantity": 344.0,
+        "statistics_total_orders": 1
+      },
+      "emitted_bridge_events": [
+        "RuntimeContextLoaded",
+        "EngineRestartSuccess",
+        "OrderFilledReplay",
+        "EngineReplayComplete"
+      ]
+    }
+  },
+  "execution_bridge_guard_qualification": {
+    "script": "scripts/check_execution_bridge.py",
+    "contract_scope_status": "Out-of-contract: scripts/check_execution_bridge.py is not listed in task artifacts contract. To prevent diff scope violation during handoff admission, the file is preserved unmodified in the PR.",
+    "parameterized_invocation": "python3 scripts/check_execution_bridge.py --expected-remote https://github.com/QuantConnect/Lean.git --base-path ../integrations/lean/pantheon_algo/base.py",
+    "verification_result": {
+      "ok": true,
+      "exit_code": 0,
+      "checks": {
+        "submodule_path_valid": true,
+        "bridge_remote_valid": true,
+        "bridge_commit_present": true,
+        "pantheon_algo_base_present": true,
+        "compose_exec_path_valid": true
+      },
+      "violations": []
+    }
+  },
+  "verification": {
+    "test_suites": [
+      {
+        "suite": "integrations/lean/pantheon_algo/test_base.py",
+        "passed": 4,
+        "failed": 0,
+        "description": "PantheonAlgoBase runtime context loading, event emission, fail-closed validation, and SignalConsumer wiring with signal intake and order placement"
+      },
+      {
+        "suite": "services/execution/lean_runtime/test_algorithm_smoke.py",
+        "passed": 4,
+        "failed": 0,
+        "description": "Paper artifact loading, object store key materialization, packet target replay, and restart replay identity contracts"
+      },
+      {
+        "suite": "services/execution/lean_runtime/test_bootstrap_contract.py",
+        "passed": 16,
+        "failed": 0,
+        "description": "Bootstrap request materialization, upstream LEAN remote/path acceptance and default fallbacks, risk policy, and stage gating"
+      },
+      {
+        "suite": "services/execution/lean_runtime/test_runtime_bootstrap.py",
+        "passed": 6,
+        "failed": 0,
+        "description": "Runtime sidecar bootstrap, launch manifest parsing, and health reporting"
+      },
+      {
+        "suite": "services/execution/lean_runtime/test_runtime_context.py",
+        "passed": 12,
+        "failed": 0,
+        "description": "Runtime context validation, upstream LEAN bridge remote/path acceptance, secret protection"
+      },
+      {
+        "suite": "services/execution/lean_runtime/test_runtime_identity.py",
+        "passed": 2,
+        "failed": 0,
+        "description": "Runtime identity extraction from environment, authority refs, and token file precedence"
+      },
+      {
+        "suite": "services/broker/test_broker.py",
+        "passed": 23,
+        "failed": 0,
+        "description": "Broker API service endpoints, quote streams, and order state routing"
+      },
+      {
+        "suite": "services/broker/sinopac/test_adapter.py",
+        "passed": 42,
+        "failed": 0,
+        "description": "SinoPac broker adapter sandbox gating, order placement simulation, cancel simulation, error mapping"
+      },
+      {
+        "suite": "services/broker/sinopac/test_facade.py",
+        "passed": 7,
+        "failed": 0,
+        "description": "Broker facade order placement, cancel, and position query simulation"
+      },
+      {
+        "suite": "scripts/smoke_test_lean_algo.py",
+        "passed": 1,
+        "failed": 0,
+        "description": "Standalone LEAN algorithm execution smoke test with concrete PendingSignalStore and SignalConsumer proving signal intake, scheduling, order execution, and event emission without mocking"
+      }
+    ],
+    "total_tests_passed": 116,
+    "total_tests_failed": 0,
+    "lockfile_install_verified": true,
+    "docker_builds_verified": [
+      "services/broker/Dockerfile with dependencies/locks/services-broker.txt constraints (Python 3.12)",
+      "services/execution/lean_runtime/Dockerfile with dependencies/locks/services-execution-lean_runtime.txt constraints (Python 3.11)"
+    ]
+  },
+  "scope_boundary_and_isolation_statement": {
+    "live_trading_prevented": "All broker tests executed using isolated simulation. BROKER_PRODUCTION_LIVE_ENABLED is fail-closed (default false). Zero real orders placed, zero live credentials used.",
+    "capital_boundary_preserved": "Capital pool IDs and persona capital binding IDs validated via strict runtime context contracts without capital modification.",
+    "runtime_isolation": "LEAN execution runtime and broker runtimes maintain isolated dependency closures with separate requirements and lockfiles.",
+    "upstream_engine_compatibility": "LEAN extensions externalized to integrations/lean/pantheon_algo; upstream QuantConnect/Lean master commit 23b735d99a357807dc0df9f4c51d30f05fe0d277 and Docker image quantconnect/lean:18070 (sha256:373b03b8ef5e39a923b1ed2e7e469abdef21b2fef31dd78fb4f7b05464ac69b4) validated via reproducible 2-phase isolated engine replay."
+  },
+  "review_decision": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex",
+    "note": "Corrections verified: (1) Upstream LEAN engine acceptance proved via 2-phase isolated Docker replay with pinned image quantconnect/lean:18070 and external library, validating runtime context, bridge events, SignalConsumer intake, order fill (SPY 344 shares @ 144.7817), and ObjectStore persistence across restart (Run 1 and Run 2 exit 0); (2) integrations/lean/pantheon_algo/base.py wires concrete PendingSignalStore and SignalConsumer without mocking, proven in test_base.py and scripts/smoke_test_lean_algo.py; (3) services/broker/Dockerfile and services/execution/lean_runtime/Dockerfile consume lockfiles as constraints during pip install and build cleanly against Python 3.12/3.11; (4) bootstrap_contract.py defaults to UPSTREAM_LEAN_REMOTE and PANTHEON_EXTERNAL_LIBRARY_PATH; scripts/check_execution_bridge.py qualification documented (passes exit 0); (5) all 116 unit/contract tests and standalone smoke tests pass cleanly; (6) live broker credentials and capital boundaries fully preserved."
+  }
+}

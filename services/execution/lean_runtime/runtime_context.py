@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from services.execution.lean_runtime.bootstrap_contract import (
+    ALLOWED_ENGINE_BRIDGE_REMOTES,
+    ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS,
     PANTHEON_LEAN_REMOTE,
     PANTHEON_LEAN_SOURCE_PATH,
 )
@@ -233,13 +235,13 @@ class PantheonRuntimeContext:
     def validate(self, *, managed_runtime: bool = True) -> None:
         if managed_runtime and self.deployment_stage in _MANAGED_STAGES and not self.runtime_binding_id:
             raise RuntimeContextError("runtime_binding_id is required for deployment-managed runtime")
-        if self.bridge.repo != PANTHEON_LEAN_REMOTE:
+        if self.bridge.repo not in ALLOWED_ENGINE_BRIDGE_REMOTES:
             raise RuntimeContextError(
-                f"bridge.repo must be {PANTHEON_LEAN_REMOTE!r}, got {self.bridge.repo!r}"
+                f"bridge.repo must be one of {sorted(ALLOWED_ENGINE_BRIDGE_REMOTES)!r}, got {self.bridge.repo!r}"
             )
-        if self.bridge.path != PANTHEON_LEAN_SOURCE_PATH:
+        if self.bridge.path not in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS:
             raise RuntimeContextError(
-                f"bridge.path must be {PANTHEON_LEAN_SOURCE_PATH!r}, got {self.bridge.path!r}"
+                f"bridge.path must be one of {sorted(ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)!r}, got {self.bridge.path!r}"
             )
         _reject_raw_secrets(self.to_dict(), "runtime_context")
 

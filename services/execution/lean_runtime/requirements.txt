@@ -1,6 +1,7 @@
 jsonschema>=4.21.0
 redis>=5.0.4
 asyncpg>=0.29.0
+# Pinned dependency lock: dependencies/locks/services-execution-lean_runtime.txt
 
 # LEAN runtime dependency — not a PyPI package.
 # QuantConnect is injected into the Python environment by the LEAN engine at runtime.
