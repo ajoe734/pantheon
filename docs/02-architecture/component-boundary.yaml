@@ -90,6 +90,7 @@ components:
   - id: git-integration-authority
     domain: development_tooling
     paths:
+      - .gitignore
       - scripts/git/
       - scripts/run-auto-integrator.sh
       - scripts/auto_integrator_install.py
