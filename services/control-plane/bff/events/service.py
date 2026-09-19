@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterable, Optional, Sequence
 
-from fastapi.sse import EventSourceResponse, format_sse_event
+from fastapi.encoders import jsonable_encoder
+from fastapi.sse import EventSourceResponse, ServerSentEvent, format_sse_event
 from starlette.responses import StreamingResponse
 
 
@@ -142,12 +143,38 @@ class EventStreamService:
         return f"{prefix}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
 
     @staticmethod
-    def format_event(event: dict[str, Any]) -> str:
-        return format_sse_event(
-            data_str=json.dumps(event, ensure_ascii=False),
-            event=event.get("type"),
-            id=str(event.get("id")) if event.get("id") is not None else None,
-        ).decode("utf-8")
+    def format_event(event: Any) -> str:
+        if isinstance(event, str):
+            return event
+        if isinstance(event, ServerSentEvent):
+            if event.raw_data is not None:
+                data_str = event.raw_data
+            elif event.data is not None:
+                if hasattr(event.data, "model_dump_json"):
+                    data_str = event.data.model_dump_json()
+                else:
+                    data_str = json.dumps(jsonable_encoder(event.data), ensure_ascii=False)
+            else:
+                data_str = None
+            return format_sse_event(
+                data_str=data_str,
+                event=event.event,
+                id=str(event.id) if event.id is not None else None,
+                retry=event.retry,
+                comment=event.comment,
+            ).decode("utf-8")
+
+        if isinstance(event, dict):
+            event_id = event.get("id")
+            event_type = event.get("type")
+            encoded = jsonable_encoder(event)
+            return format_sse_event(
+                data_str=json.dumps(encoded, ensure_ascii=False),
+                event=str(event_type) if event_type is not None else None,
+                id=str(event_id) if event_id is not None else None,
+            ).decode("utf-8")
+
+        return format_sse_event(data_str=str(event)).decode("utf-8")
 
     def replay_headers(self, channel: str) -> Dict[str, str]:
         headers = {
@@ -222,7 +249,10 @@ class EventStreamService:
                 yield self.format_event(event)
             while True:
                 try:
-                    yield self.format_event(await asyncio.wait_for(queue.get(), timeout=30.0))
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    if event is None:
+                        break
+                    yield self.format_event(event)
                 except asyncio.TimeoutError:
                     yield format_sse_event(comment="heartbeat").decode("utf-8")
         finally:
@@ -262,7 +292,6 @@ class EventStreamService:
             raise error from exc
         headers = {
             "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
             **self.replay_headers(channel),
         }

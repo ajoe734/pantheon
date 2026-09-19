@@ -25,6 +25,8 @@ h11==0.16.0
     # via
     #   -c dependencies/constraints-core.txt
     #   uvicorn
+iniconfig==2.3.0
+    # via pytest
 itsdangerous==2.2.0
     # via
     #   -c dependencies/constraints-core.txt
@@ -47,6 +49,16 @@ markupsafe==3.0.3
     #   flask
     #   jinja2
     #   werkzeug
+packaging==26.3
+    # via
+    #   -c dependencies/constraints-core.txt
+    #   pytest
+pluggy==1.6.0
+    # via pytest
+pygments==2.21.0
+    # via pytest
+pytest==9.1.1
+    # via -r requirements.txt
 referencing==0.37.0
     # via
     #   -c dependencies/constraints-core.txt

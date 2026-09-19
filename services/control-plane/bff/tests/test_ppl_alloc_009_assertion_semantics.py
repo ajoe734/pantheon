@@ -12,21 +12,11 @@ from __future__ import annotations
 
 import os
 import sys
-import hashlib
-import json
 from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main  # noqa: E402
-
-if not hasattr(main, "_pm12_allocation_line_assertion_hash"):
-    def _pm12_allocation_line_assertion_hash(line):
-        canonical = main._pm12_semantic_json_value(line)
-        payload = json.dumps(canonical, separators=(",", ":"), ensure_ascii=False)
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-    main._pm12_allocation_line_assertion_hash = _pm12_allocation_line_assertion_hash
 
 
 def test_float_int_roundtrip_matches():
@@ -69,9 +59,7 @@ def test_noncanonicalizable_input_fails_closed():
 
 
 def test_semantic_hash_still_used_for_rebalance_line():
-    # The shared canonicalizer underpins the rebalance-line assertion hash too.
+    # The shared canonicalizer underpins the rebalance-line assertion matching.
     line_float = {"target_weight": 1.0, "delta": 0.0, "capital_scope": "pool"}
     line_int = {"target_weight": 1, "delta": 0, "capital_scope": "pool"}
-    assert main._pm12_allocation_line_assertion_hash(
-        line_float
-    ) == main._pm12_allocation_line_assertion_hash(line_int)
+    assert main._pm12_semantic_values_match(line_float, line_int)

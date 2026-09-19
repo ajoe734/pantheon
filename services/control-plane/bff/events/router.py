@@ -183,66 +183,6 @@ async def _default_frontend_bff_event_stream(
         )
 
 
-async def _default_sse_stream(
-    buffer: deque,
-    subscribers: list,
-    last_event_id: Optional[str],
-    channel: str,
-    event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
-) -> AsyncGenerator[str, None]:
-    q: asyncio.Queue = asyncio.Queue()
-    subscribers.append(q)
-    try:
-        yield format_sse_event(comment=f"connected to {channel}").decode("utf-8")
-        while True:
-            try:
-                event = await asyncio.wait_for(q.get(), timeout=15.0)
-                if isinstance(event, dict):
-                    if event_filter is not None and not event_filter(event):
-                        continue
-                    event_id = event.get("id", "")
-                    event_type = event.get("type", "message")
-                    data_str = json.dumps(event, ensure_ascii=False)
-                    yield format_sse_event(
-                        data_str=data_str,
-                        event=event_type,
-                        id=str(event_id) if event_id else None,
-                    ).decode("utf-8")
-                elif event_filter is None:
-                    yield format_sse_event(data_str=str(event)).decode("utf-8")
-            except asyncio.TimeoutError:
-                yield format_sse_event(comment="heartbeat").decode("utf-8")
-    finally:
-        if q in subscribers:
-            subscribers.remove(q)
-
-
-def _default_handle_sse_stream(
-    channel: str,
-    buffer: Any,
-    subscribers: Any,
-    last_event_id: Optional[str],
-    extra_headers: Optional[Dict[str, str]] = None,
-    event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
-) -> EventSourceResponse:
-    headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-        "X-SSE-Channel": channel,
-        "X-SSE-Replay-Supported": "true",
-    }
-    if extra_headers:
-        headers.update(extra_headers)
-
-    buf = buffer if isinstance(buffer, deque) else deque()
-    subs = subscribers if isinstance(subscribers, list) else []
-    return EventSourceResponse(
-        _default_sse_stream(buf, subs, last_event_id, channel, event_filter=event_filter),
-        headers=headers,
-    )
-
-
 def create_events_router(
     *,
     read_surface: Optional[Any] = None,
@@ -483,7 +423,6 @@ def create_events_router(
 
         headers = {
             "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
             "X-SSE-Channel": "bff",
             "X-SSE-Replay-Supported": "false",
