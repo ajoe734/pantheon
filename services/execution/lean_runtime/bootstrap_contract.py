@@ -19,6 +19,27 @@ PANTHEON_LEAN_SOURCE_PATH = "pantheon/lean"
 PANTHEON_LEAN_RUNTIME_PATH = "/workspace/lean"
 DEFAULT_RUNTIME_CONFIG_REF = "/workspace/lean/Launcher/config.json"
 
+UPSTREAM_LEAN_REMOTE = "https://github.com/QuantConnect/Lean.git"
+UPSTREAM_LEAN_PINNED_COMMIT = "23b735d99a357807dc0df9f4c51d30f05fe0d277"
+UPSTREAM_LEAN_PINNED_IMAGE = "quantconnect/lean:18070"
+UPSTREAM_LEAN_IMAGE_DIGEST = "sha256:6bc72bd450a4d7c328a2e57018df0d56068f8b38e938488da108d9af44a9931d"
+PANTHEON_EXTERNAL_LIBRARY_PATH = "integrations/lean/pantheon_algo"
+
+ALLOWED_ENGINE_BRIDGE_REMOTES = frozenset({
+    PANTHEON_LEAN_REMOTE,
+    f"https://github.com/{PANTHEON_LEAN_REMOTE}",
+    UPSTREAM_LEAN_REMOTE,
+    "QuantConnect/Lean.git",
+    "QuantConnect/Lean",
+})
+ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS = frozenset({
+    PANTHEON_LEAN_SOURCE_PATH,
+    "integrations/lean",
+    "integrations/lean/pantheon_algo",
+    "Algorithm.Python",
+    "lean",
+})
+
 _VALID_STAGES = {"paper", "canary", "live", "frozen"}
 _APPROVED_ARTIFACT_STATES = {"approved"}
 _APPROVED_CONFIG_STATES = {"approved"}
@@ -381,13 +402,13 @@ def _materialize_bridge(
         "source_path": source_path,
     }
     _reject_lean_platform_target(bridge_payload, "bridge")
-    if remote != PANTHEON_LEAN_REMOTE:
+    if remote not in ALLOWED_ENGINE_BRIDGE_REMOTES:
         raise BootstrapContractError(
-            f"engine_bridge_repo must be {PANTHEON_LEAN_REMOTE!r}, got {remote!r}"
+            f"engine_bridge_repo must be one of {sorted(ALLOWED_ENGINE_BRIDGE_REMOTES)!r}, got {remote!r}"
         )
-    if source_path != PANTHEON_LEAN_SOURCE_PATH:
+    if source_path not in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS:
         raise BootstrapContractError(
-            f"engine_bridge_path must be {PANTHEON_LEAN_SOURCE_PATH!r}, got {source_path!r}"
+            f"engine_bridge_path must be one of {sorted(ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)!r}, got {source_path!r}"
         )
     return RuntimeBridgeIdentity(
         path=runtime_path,

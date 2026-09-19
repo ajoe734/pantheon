@@ -2,7 +2,8 @@
 import os
 import sys
 
-# Add Algorithm.Python to sys.path
+# Add externalized integrations/lean and fallback lean/Algorithm.Python to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'integrations', 'lean')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'lean', 'Algorithm.Python')))
 
 import json
