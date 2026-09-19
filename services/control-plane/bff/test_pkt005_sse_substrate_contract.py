@@ -806,3 +806,102 @@ def test_sse_streaming_done_token_termination(monkeypatch: Any) -> None:
             await anext(gen)
 
     asyncio.run(_test_event_stream_done_termination())
+
+
+def test_mounted_main_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Any, monkeypatch: Any) -> None:
+    """Mounted-app regression for replay and restart using BFF_DATA_DIR without PANTHEON_BFF_DATA_DIR.
+
+    Verifies production assembly binding:
+    - Events published via bff_main._publish_event persist under BFF_DATA_DIR/sse_replay/{channel}.jsonl.
+    - Router reader is bound to the publisher store/config and resolves BFF_DATA_DIR without PANTHEON_BFF_DATA_DIR.
+    - Initial native replay returns all published events (not zero).
+    - GET /api/v1/stream/approval?last_event_id=<first-id> returns 200 and replays the second event (does not fail with 409 SSE_REPLAY_HISTORY_MISSING).
+    - Restart simulation with empty in-memory buffer correctly recovers and replays persisted events from disk.
+    """
+    monkeypatch.setenv("BFF_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("PANTHEON_BFF_DATA_DIR", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_SSE_REPLAY_STORE", "file")
+    monkeypatch.setenv("PANTHEON_AUTH_DEV_LOGIN", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("RANKING_STORE_BOOTSTRAP", "0")
+    monkeypatch.setenv("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
+
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.test_normalized_route_uniqueness import scan_fastapi_routes
+
+    id1 = bff_main._publish_event(
+        bff_main._sse_buffers["approval"],
+        bff_main._sse_subscribers["approval"],
+        "approval.created",
+        {"num": 1},
+    )
+    id2 = bff_main._publish_event(
+        bff_main._sse_buffers["approval"],
+        bff_main._sse_subscribers["approval"],
+        "approval.created",
+        {"num": 2},
+    )
+
+    # 1. Verify physical file persistence under BFF_DATA_DIR (not PANTHEON_BFF_DATA_DIR)
+    replay_file = tmp_path / "sse_replay" / "approval.jsonl"
+    assert replay_file.exists()
+    lines = [json.loads(l) for l in replay_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(lines) == 2
+    assert lines[0]["id"] == id1
+    assert lines[1]["id"] == id2
+
+    # 2. Verify reader binding on the mounted router
+    event_stream = getattr(bff_main._events_router, "event_stream_service", None)
+    assert event_stream is not None
+
+    # Initial native replay must return both events (not zero)
+    initial_replay = event_stream.replay("approval", bff_main._sse_buffers["approval"], None)
+    assert len(initial_replay) == 2
+    assert initial_replay[0]["id"] == id1
+    assert initial_replay[1]["id"] == id2
+
+    # Replay after id1 must return id2
+    replay_after_1 = event_stream.replay("approval", bff_main._sse_buffers["approval"], id1)
+    assert len(replay_after_1) == 1
+    assert replay_after_1[0]["id"] == id2
+
+    # 3. Verify mounted endpoint execution
+    entries = scan_fastapi_routes(bff_main.app)
+    entry = next(e for e in entries if e.raw_path == "/api/v1/stream/{channel}")
+    endpoint = entry.endpoint
+
+    async def _test_endpoint_replay():
+        # Calling endpoint with last_event_id=id1 must return 200 (not 409 SSE_REPLAY_HISTORY_MISSING)
+        resp = await endpoint(channel="approval", last_event_id=id1, authorization="Bearer op-1:operator")
+        assert resp.status_code == 200
+        assert resp.headers.get("X-SSE-Channel") == "approval"
+        assert resp.headers.get("X-SSE-Replay-Supported") == "true"
+        assert resp.headers.get("X-SSE-Replay-Store") == "file"
+
+        body_iter = resp.body_iterator
+        first_event = await anext(body_iter)
+        assert f"id: {id2}" in first_event
+        assert "approval.created" in first_event
+
+    asyncio.run(_test_endpoint_replay())
+
+    # 4. Restart simulation: clear in-memory buffer and verify disk recovery
+    bff_main._sse_buffers["approval"].clear()
+    assert len(bff_main._sse_buffers["approval"]) == 0
+
+    restarted_replay = event_stream.replay("approval", bff_main._sse_buffers["approval"], id1)
+    assert len(restarted_replay) == 1
+    assert restarted_replay[0]["id"] == id2
+
+    restarted_all = event_stream.replay("approval", bff_main._sse_buffers["approval"], None)
+    assert len(restarted_all) == 2
+
+    async def _test_endpoint_after_restart():
+        resp = await endpoint(channel="approval", last_event_id=id1, authorization="Bearer op-1:operator")
+        assert resp.status_code == 200
+        body_iter = resp.body_iterator
+        restarted_chunk = await anext(body_iter)
+        assert f"id: {id2}" in restarted_chunk
+
+    asyncio.run(_test_endpoint_after_restart())
+

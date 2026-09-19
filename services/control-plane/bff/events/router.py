@@ -203,6 +203,7 @@ def create_events_router(
     frontend_bff_event_stream: Optional[Callable[..., Any]] = None,
     resolve_session_kind: Optional[Callable[..., str]] = None,
     event_stream_service: Optional[EventStreamService] = None,
+    data_dir: Optional[Union[str, Path]] = None,
     include_domain_sse_aliases: bool = True,
 ) -> APIRouter:
     """Create canonical BFF Events router.
@@ -225,7 +226,9 @@ def create_events_router(
         channels=sse_channels,
         buffers=sse_buffers,
         subscribers=sse_subscribers,
+        data_dir=data_dir,
     )
+    router.event_stream_service = _event_stream  # type: ignore[attr-defined]
     _active_sse_channels = frozenset(_event_stream.channels)
     _buffers = _event_stream.buffers
     _subscribers = _event_stream.subscribers
