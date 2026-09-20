@@ -745,7 +745,7 @@ export function buildWorkerCapacity(status, orchState, dashboardBundle = null, a
       label: workerLaneLabel(key, agent?.name || key),
       agent,
       capacity,
-      capacitySource: target?.source || "observed",
+      capacitySource: "observed",
       liveOccupied,
       running,
       pending,
@@ -1109,15 +1109,21 @@ export function formatTime(value) {
 }
 
 export async function fetchJson(path) {
-  const response = await fetch(`${path}?t=${Date.now()}`, { cache: "no-store" });
+  const response = await fetch(`${path}?t=${Date.now()}`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
   if (!response.ok) {
     throw new Error(`無法載入 ${path}: ${response.status}`);
   }
   return response.json();
 }
 
-export async function fetchText(path) {
-  const response = await fetch(`${path}?t=${Date.now()}`, { cache: "no-store" });
+export async function fetchText(path, { timeoutMs = 15_000 } = {}) {
+  const response = await fetch(`${path}?t=${Date.now()}`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!response.ok) {
     throw new Error(`無法載入 ${path}: ${response.status}`);
   }
@@ -1128,6 +1134,7 @@ export async function requestDashboardRefresh() {
   const response = await fetch(`./__refresh?t=${Date.now()}`, {
     method: "POST",
     cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) {
     let detail = "";
