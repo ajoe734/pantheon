@@ -125,7 +125,12 @@ async function render({ syncFirst = false } = {}) {
       objectiveEl.textContent = objectiveText;
       objectiveEl.setAttribute("title", objectiveText);
     }
-    qs("#updated-at").textContent = formatTime(status.updated_at);
+    // Governed task updates can advance last_update without changing the
+    // legacy document timestamp. Show the newest source timestamp we read.
+    const dataUpdatedAt = [status.updated_at, ...(status.tasks || []).map((task) => task.last_update)]
+      .filter((value) => value && Number.isFinite(Date.parse(value)))
+      .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+    qs("#updated-at").textContent = formatTime(dataUpdatedAt);
     if (projectBadge) {
       projectBadge.textContent = `${projectName} Runtime`;
     }
@@ -208,6 +213,8 @@ async function render({ syncFirst = false } = {}) {
       renderFailureNotice(activityFailures);
     });
     runRenderStep("render_failure_notice", renderFailures, () => renderFailureNotice(renderFailures));
+    const refreshedAtEl = qs("#refreshed-at");
+    if (refreshedAtEl) refreshedAtEl.textContent = formatTime(new Date().toISOString());
   } catch (error) {
     qs("#objective").textContent = `協作資料載入失敗：${error.message}`;
   } finally {
