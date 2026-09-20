@@ -728,6 +728,36 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertFalse(result.manual_confirmation_required)
         self.assertEqual(result.mode, "antigravity")
 
+    def test_repository_agy_workers_load_runtime_completion_hook_for_old_worktrees(self) -> None:
+        config = json.loads((THIS_DIR / "config.json").read_text())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config["paths"]["status_file"] = str(root / "ai-status.json")
+            for provider in ("antigravity", "antigravity2"):
+                for task_id in ("T-COMPLETION", None):
+                    with self.subTest(provider=provider, task_id=task_id):
+                        request = DeliveryRequest(
+                            agent_id=provider, provider=provider, delivery_mode="antigravity",
+                            message="wake", task_id=task_id,
+                            metadata={"workspace_path": str(root)},
+                        )
+                        with (
+                            mock.patch("adapters.antigravity.command_exists", return_value="agy"),
+                            mock.patch("adapters.antigravity._auth_ready", return_value=True),
+                            mock.patch("adapters.antigravity.spawn_background_process",
+                                       return_value=(mock.Mock(pid=1234), root / "agy.log")) as spawn,
+                        ):
+                            result = AntigravityAdapter(config=config, provider_capabilities={}).deliver(request)
+                        self.assertTrue(result.ok)
+                        dirs = [result.command[i + 1] for i, arg in enumerate(result.command) if arg == "--add-dir"]
+                        expected = [str(root)] + ([str(THIS_DIR / "antigravity")] if task_id else [])
+                        self.assertEqual(dirs, expected)
+                        self.assertFalse((root / ".agents").exists())
+                        env = spawn.call_args.kwargs["env"]
+                        self.assertEqual(env["AGY_CLI_DISABLE_AUTO_UPDATE"], "true")
+                        if task_id:
+                            self.assertEqual(env["ORCH_TASK_ID"], task_id)
+
     def test_antigravity_alias_uses_provider_specific_home_and_identity_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -62,6 +62,8 @@ components:
       - docs/operations/task-delivery-audit-20260919/
       - docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md
       - scripts/provision_live_supervisor_config.py
+      - scripts/test_provision_live_supervisor_config.py
+      - docs/operations/worker-validation-completion.md
       - scripts/supervisor_runtime_health.py
       - scripts/supervisor_watchdog.py
       - scripts/supervisor_watchdog_*
