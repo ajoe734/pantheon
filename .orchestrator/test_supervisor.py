@@ -1401,6 +1401,95 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             self.assertEqual(brief.read_text(encoding="utf-8"), content)
 
 
+class IncompleteWorkerWorktreeRecoveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.git(self.repo, "init", "-q", "-b", "dev")
+        self.git(self.repo, "config", "user.name", "Test")
+        self.git(self.repo, "config", "user.email", "test@example.com")
+        (self.repo / "source.txt").write_text("committed source\n")
+        self.git(self.repo, "add", "source.txt")
+        self.git(self.repo, "commit", "-qm", "initial")
+        self.head = self.git(self.repo, "rev-parse", "HEAD")
+        self.branch = "task/WORKTREE-RECOVERY-001"
+        self.workspace = self.root / "workers" / "recovery"
+        self.git(self.repo, "worktree", "add", "-b", self.branch, str(self.workspace))
+
+    @staticmethod
+    def git(root: Path, *args: str) -> str:
+        return subprocess.check_output(["git", *args], cwd=root, text=True, stderr=subprocess.DEVNULL).strip()
+
+    def lose_registration(self) -> None:
+        admin = Path(self.git(self.workspace, "rev-parse", "--absolute-git-dir"))
+        shutil.rmtree(admin)
+
+    def test_missing_registration_preserves_all_files_and_recreates_original_branch(self) -> None:
+        (self.workspace / "source.txt").write_text("unfinished source\n")
+        (self.workspace / "untracked.txt").write_bytes(b"untracked\x00bytes")
+        external = self.root / "external"
+        external.write_text("external target remains untouched")
+        (self.workspace / "external-link").symlink_to(external)
+        marker = (self.workspace / ".git").read_bytes()
+        self.lose_registration()
+
+        created, error, origin = supervisor._create_worker_worktree(
+            self.repo, self.workspace, self.branch, self.head,
+        )
+
+        self.assertTrue(created, error)
+        self.assertEqual(origin, "existing_local_branch")
+        self.assertEqual(self.git(self.workspace, "branch", "--show-current"), self.branch)
+        self.assertEqual(self.git(self.workspace, "rev-parse", "HEAD"), self.head)
+        self.assertEqual((self.workspace / "source.txt").read_text(), "committed source\n")
+        archives = list((self.workspace.parent / ".incomplete-worktree-quarantine").iterdir())
+        self.assertEqual(len(archives), 1)
+        preserved = archives[0]
+        self.assertEqual((preserved / "source.txt").read_text(), "unfinished source\n")
+        self.assertEqual((preserved / "untracked.txt").read_bytes(), b"untracked\x00bytes")
+        self.assertEqual((preserved / ".git").read_bytes(), marker)
+        self.assertTrue((preserved / "external-link").is_symlink())
+        self.assertEqual(external.read_text(), "external target remains untouched")
+
+    def test_valid_registered_worktree_is_never_quarantined(self) -> None:
+        (self.workspace / "source.txt").write_text("active work\n")
+        self.assertIsNone(supervisor._quarantine_incomplete_worker_path(self.workspace, repo_root=self.repo))
+        self.assertEqual((self.workspace / "source.txt").read_text(), "active work\n")
+        self.assertEqual(self.git(self.workspace, "rev-parse", "HEAD"), self.head)
+
+    def test_foreign_missing_registration_and_symlink_markers_are_preserved(self) -> None:
+        self.lose_registration()
+        marker = self.workspace / ".git"
+        marker.write_text(f"gitdir: {self.root}/foreign/.git/worktrees/recovery\n")
+        self.assertIsNone(supervisor._quarantine_incomplete_worker_path(self.workspace, repo_root=self.repo))
+        self.assertTrue(marker.is_file())
+        marker.unlink()
+        marker.symlink_to(self.root / "missing-marker")
+        self.assertIsNone(supervisor._quarantine_incomplete_worker_path(self.workspace, repo_root=self.repo))
+        self.assertTrue(marker.is_symlink())
+
+    def test_process_using_orphan_worktree_prevents_quarantine(self) -> None:
+        self.lose_registration()
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=self.workspace)
+        try:
+            self.assertIsNone(supervisor._quarantine_incomplete_worker_path(self.workspace, repo_root=self.repo))
+            self.assertTrue((self.workspace / ".git").is_file())
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    def test_original_missing_marker_recovery_still_preserves_directory(self) -> None:
+        self.lose_registration()
+        (self.workspace / ".git").unlink()
+        (self.workspace / "source.txt").write_text("partial checkout\n")
+        preserved = supervisor._quarantine_incomplete_worker_path(self.workspace, repo_root=self.repo)
+        self.assertIsNotNone(preserved)
+        self.assertEqual((preserved / "source.txt").read_text(), "partial checkout\n")
+
+
 class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
     @staticmethod
     def _git(cwd: Path, *args: str) -> str:
