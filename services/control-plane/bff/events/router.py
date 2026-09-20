@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+from pathlib import Path
 from collections import deque
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -43,7 +45,16 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 from .service import EventStreamService
 
-from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
+
+try:
+    from services.control_plane.bff.auth.policy import (
+        bff_me_tenant_payload as _auth_bff_me_tenant_payload,
+        get_session_state as _auth_get_session_state,
+    )
+except ImportError:
+    _auth_bff_me_tenant_payload = None
+    _auth_get_session_state = None
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +101,13 @@ def _resolve_cursor(
     return None
 
 
+def _first_nonblank(*candidates: Any) -> Optional[str]:
+    for cand in candidates:
+        if isinstance(cand, str) and cand.strip():
+            return cand.strip()
+    return None
+
+
 def _extract_field(obj: Any, *field_names: str) -> Optional[str]:
     for name in field_names:
         if isinstance(obj, dict):
@@ -98,38 +116,205 @@ def _extract_field(obj: Any, *field_names: str) -> Optional[str]:
             val = getattr(obj, name, None)
         if isinstance(val, str) and val.strip():
             return val.strip()
+    claims = getattr(obj, "claims", None)
+    if claims is None and isinstance(obj, dict):
+        claims = obj.get("claims")
+    if isinstance(claims, dict):
+        for name in field_names:
+            val = claims.get(name)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+            if "." in name:
+                cur: Any = claims
+                for part in name.split("."):
+                    if not isinstance(cur, dict):
+                        cur = None
+                        break
+                    cur = cur.get(part)
+                if isinstance(cur, str) and cur.strip():
+                    return cur.strip()
     return None
 
 
 def _get_event_candidates(event: Dict[str, Any], *field_names: str) -> Set[str]:
     candidates: Set[str] = set()
-    for name in field_names:
-        val = event.get(name)
+
+    def _collect(val: Any) -> None:
         if isinstance(val, str) and val.strip():
             candidates.add(val.strip())
+        elif isinstance(val, (list, tuple, set)):
+            for item in val:
+                if isinstance(item, str) and item.strip():
+                    candidates.add(item.strip())
+
+    for name in field_names:
+        _collect(event.get(name))
     for sub in ("data", "payload"):
         sub_obj = event.get(sub)
         if isinstance(sub_obj, dict):
             for name in field_names:
-                val = sub_obj.get(name)
-                if isinstance(val, str) and val.strip():
-                    candidates.add(val.strip())
+                _collect(sub_obj.get(name))
     return candidates
+
+
+def _resolve_caller_tenant_scope(
+    identity: Any,
+    requested_tenant: Optional[str] = None,
+    session_store: Optional[Any] = None,
+    tenant_payload_fn: Optional[Callable[..., Dict[str, Any]]] = None,
+    bff_error: Optional[Callable[..., HTTPException]] = None,
+) -> Tuple[Optional[str], Set[str], bool]:
+    """Resolve caller effective tenant, allowed tenants set, and global scope flag.
+
+    Enforces allowed tenant boundaries and fails closed for unauthorized requests.
+    """
+    session_tenant = None
+    if session_store is not None and _auth_get_session_state is not None:
+        try:
+            s_state = _auth_get_session_state(identity, session_store)
+            if isinstance(s_state, dict):
+                session_tenant = _first_nonblank(s_state.get("tenant_id"), s_state.get("tenantId"))
+        except Exception:
+            session_tenant = None
+
+    target_tenant = _first_nonblank(requested_tenant, session_tenant)
+
+    effective_tenant: Optional[str] = None
+    allowed_tenants: Set[str] = set()
+    is_global: bool = False
+
+    fn = tenant_payload_fn or _auth_bff_me_tenant_payload
+    if fn is not None:
+        try:
+            policy_ident = identity
+            if not hasattr(identity, "claims") or not isinstance(getattr(identity, "claims", None), dict):
+                claims: Dict[str, Any] = {}
+                t_id = _extract_field(identity, "tenant_id", "tenantId", "tenant")
+                if t_id:
+                    claims["tenant_id"] = t_id
+                t_allowed = getattr(identity, "allowed_tenants", None) or getattr(identity, "allowedTenants", None)
+                if t_allowed:
+                    if isinstance(t_allowed, (list, tuple, set)):
+                        claims["allowed_tenants"] = list(t_allowed)
+                    elif isinstance(t_allowed, str):
+                        claims["allowed_tenants"] = [t.strip() for t in t_allowed.split(",") if t.strip()]
+                op_id = getattr(identity, "operator_id", None) or getattr(identity, "actor_id", "op-user")
+                roles = getattr(identity, "roles", [])
+                if isinstance(roles, set):
+                    roles = sorted(roles)
+                elif not isinstance(roles, list):
+                    roles = list(roles) if roles else ["viewer"]
+                policy_ident = OperatorIdentity(
+                    operator_id=str(op_id),
+                    roles=roles,
+                    claims=claims,
+                    mfa_verified=bool(getattr(identity, "mfa_verified", False)),
+                )
+            t_payload = fn(policy_ident, requested_tenant=target_tenant)
+            effective_tenant = t_payload.get("id")
+            allowed_list = t_payload.get("allowed_ids") or []
+            allowed_tenants = set(allowed_list)
+            is_global = (t_payload.get("scope") == "global") or ("*" in allowed_tenants)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            log.warning("Tenant payload policy resolution fallback: %s", exc)
+
+    if effective_tenant is None and not is_global:
+        claims = getattr(identity, "claims", None)
+        if claims is None and isinstance(identity, dict):
+            claims = identity.get("claims")
+        if not isinstance(claims, dict):
+            claims = {}
+
+        claim_tenant = _first_nonblank(
+            claims.get("tenant_id"),
+            claims.get("tenantId"),
+            claims.get("tenant"),
+            claims.get("tid"),
+            claims.get("org_id"),
+            _extract_field(identity, "tenant_id", "tenantId", "tenant"),
+        )
+
+        allowed_list = []
+        for k in ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants"):
+            val = claims.get(k)
+            if isinstance(val, (list, tuple, set)):
+                allowed_list.extend([str(x).strip() for x in val if str(x).strip()])
+            elif isinstance(val, str) and val.strip():
+                allowed_list.extend([x.strip() for x in val.split(",") if x.strip()])
+        top_allowed = getattr(identity, "allowed_tenants", None) or getattr(identity, "allowedTenants", None)
+        if isinstance(top_allowed, (list, tuple, set)):
+            allowed_list.extend([str(x).strip() for x in top_allowed if str(x).strip()])
+        elif isinstance(top_allowed, str) and top_allowed.strip():
+            allowed_list.extend([x.strip() for x in top_allowed.split(",") if x.strip()])
+
+        if allowed_list:
+            allowed_tenants = set(allowed_list)
+        elif claim_tenant:
+            allowed_tenants = {claim_tenant}
+
+        is_global = "*" in allowed_tenants
+
+        default_tenant = _first_nonblank(
+            claim_tenant,
+            os.getenv("PANTHEON_BFF_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+            os.getenv("PANTHEON_TENANT_ID"),
+            "pantheon-dev",
+        )
+
+        eff = target_tenant or default_tenant
+        if allowed_tenants and not is_global and eff not in allowed_tenants:
+            err_fn = bff_error or _default_bff_error
+            raise err_fn(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Tenant access denied",
+                "Requested tenant is outside the caller tenant scope",
+                precondition_failed="tenant_scope",
+                suggestion="Switch to an allowed tenant or request access from an administrator",
+                details_extra={"tenantId": eff, "allowedTenantIds": sorted(allowed_tenants)},
+            )
+        effective_tenant = eff
+
+    return effective_tenant, allowed_tenants, is_global
 
 
 def _make_scope_filter(
     identity: Any,
     extra_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
+    clean_tenant: Optional[str] = None,
+    allowed_tenants: Optional[Set[str]] = None,
+    is_global: bool = False,
+    requested_tenant: Optional[str] = None,
 ) -> Optional[Callable[[Dict[str, Any]], bool]]:
-    clean_tenant = _extract_field(identity, "tenant_id", "tenantId", "tenant")
+    if clean_tenant is None and not is_global:
+        clean_tenant = _extract_field(
+            identity,
+            "tenant_id", "tenantId", "tenant", "tid", "org_id",
+        )
     clean_operator = _extract_field(identity, "operator_id", "operatorId", "actor", "user_id")
 
     def _filter(event: Dict[str, Any]) -> bool:
-        if clean_tenant:
-            event_tenants = _get_event_candidates(event, "tenant_id", "tenantId", "tenant")
-            if event_tenants and clean_tenant not in event_tenants:
+        # Tenant isolation
+        event_tenants = _get_event_candidates(
+            event,
+            "tenant_id", "tenantId", "tenant",
+            "tenant_ids", "tenantIds", "tenants",
+            "allowed_tenants", "allowedTenants",
+        )
+        if event_tenants:
+            if is_global and not requested_tenant:
+                pass  # Global caller with no specific tenant constraint sees all
+            elif clean_tenant:
+                if clean_tenant not in event_tenants:
+                    return False
+            else:
+                # Unresolved scope fails closed on tenant-scoped events
                 return False
 
+        # Operator / actor isolation
         if clean_operator:
             target_actors = _get_event_candidates(
                 event, "target_operator_id", "target_operator", "target_actor", "recipient_id"
@@ -320,6 +505,8 @@ def create_events_router(
     event_stream_service: Optional[EventStreamService] = None,
     data_dir: Optional[Union[str, Path]] = None,
     include_domain_sse_aliases: bool = True,
+    session_lifecycle_store: Optional[Any] = None,
+    bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None,
 ) -> APIRouter:
     """Create canonical BFF Events router.
 
@@ -334,6 +521,18 @@ def create_events_router(
     _extract_ident = extract_identity or _default_extract_identity
     _require_read = require_read_role or _default_require_read_role
     _err = bff_error or _default_bff_error
+    _tenant_payload_fn = bff_me_tenant_payload or _auth_bff_me_tenant_payload
+    _session_store = session_lifecycle_store
+    if _session_store is None:
+        store_dir = data_dir or os.getenv("PANTHEON_BFF_DATA_DIR") or os.getenv("BFF_DATA_DIR")
+        if store_dir:
+            store_path = os.path.join(str(store_dir), "session_lifecycle.json")
+            if os.path.exists(store_path):
+                try:
+                    from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+                    _session_store = SessionLifecycleStore(store_path)
+                except Exception:
+                    pass
     # ``EventStreamService`` owns replay, connection management, and internal
     # delivery.  The assembly layer can inject the live BFF buffers later;
     # this prepared router deliberately does not import ``main``.
@@ -364,6 +563,9 @@ def create_events_router(
         x_mfa_token: Optional[str] = None,
         pantheon_session: Optional[str] = None,
         extra_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
+        x_tenant_id: Optional[str] = None,
+        x_pantheon_tenant: Optional[str] = None,
+        tenant_query: Optional[str] = None,
     ) -> _StreamSubscription:
         cursor = _resolve_cursor(last_event_id, last_event_id_camel, last_event_id_header)
         if channel not in _active_sse_channels:
@@ -379,6 +581,18 @@ def create_events_router(
             session_cookie=pantheon_session,
         )
         _require_read(identity)
+
+        req_tenant = _first_nonblank(x_tenant_id, x_pantheon_tenant, tenant_query)
+        eff_tenant, allowed_set, is_glob = _resolve_caller_tenant_scope(
+            identity=identity,
+            requested_tenant=req_tenant,
+            session_store=_session_store,
+            tenant_payload_fn=_tenant_payload_fn,
+            bff_error=_err,
+        )
+
+        if eff_tenant:
+            response.headers["X-Tenant-Id"] = eff_tenant
 
         if hasattr(_event_stream, "replay_headers"):
             for k, v in _event_stream.replay_headers(channel).items():
@@ -396,7 +610,14 @@ def create_events_router(
                 bff_error=_err,
                 conflict_code=ErrorCode.RESOURCE_CONFLICT,
             )
-        filter_func = _make_scope_filter(identity, extra_filter)
+        filter_func = _make_scope_filter(
+            identity,
+            extra_filter,
+            clean_tenant=eff_tenant,
+            allowed_tenants=allowed_set,
+            is_global=is_glob,
+            requested_tenant=req_tenant,
+        )
         return _StreamSubscription(
             channel=channel,
             cursor=cursor,
@@ -408,6 +629,9 @@ def create_events_router(
         last_event_id: Optional[str],
         authorization: Optional[str],
         event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
+        x_tenant_id: Optional[str] = None,
+        x_pantheon_tenant: Optional[str] = None,
+        tenant_query: Optional[str] = None,
     ) -> EventSourceResponse:
         sub = _validate_subscription(
             response=Response(),
@@ -415,6 +639,9 @@ def create_events_router(
             last_event_id=last_event_id,
             authorization=authorization,
             extra_filter=event_filter,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            tenant_query=tenant_query,
         )
         return _event_stream.stream_response(
             channel,
@@ -504,6 +731,11 @@ def create_events_router(
         authorization: Optional[str] = Header(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+        tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+        tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
     ) -> _StreamSubscription:
         channels_value = channels if isinstance(channels, str) else None
         channel_value = channel if isinstance(channel, str) else None
@@ -526,6 +758,9 @@ def create_events_router(
                 authorization=authorization,
                 x_mfa_token=x_mfa_token,
                 pantheon_session=pantheon_session,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
+                tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
             )
 
         response.headers["Cache-Control"] = "no-cache"
@@ -593,6 +828,11 @@ def create_events_router(
         authorization: Optional[str] = Header(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+        tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+        tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
     ) -> _StreamSubscription:
         return _validate_subscription(
             response=response,
@@ -603,6 +843,9 @@ def create_events_router(
             authorization=authorization,
             x_mfa_token=x_mfa_token,
             pantheon_session=pantheon_session,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
         )
 
     @router.get(
@@ -627,6 +870,11 @@ def create_events_router(
             authorization: Optional[str] = Header(default=None),
             x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
             pantheon_session: Optional[str] = Cookie(default=None),
+            x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+            x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+            tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+            tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+            tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
         ) -> _StreamSubscription:
             return _validate_subscription(
                 response=response,
@@ -637,6 +885,9 @@ def create_events_router(
                 authorization=authorization,
                 x_mfa_token=x_mfa_token,
                 pantheon_session=pantheon_session,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
+                tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
             )
         return _dep
 
@@ -681,6 +932,11 @@ def create_events_router(
         authorization: Optional[str] = Header(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+        tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+        tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
     ) -> _StreamSubscription:
         clean_job_id = str(jobId or "").strip()
 
@@ -710,6 +966,9 @@ def create_events_router(
             x_mfa_token=x_mfa_token,
             pantheon_session=pantheon_session,
             extra_filter=_matches_job,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
         )
 
     @router.get("/bff/sse/jobs/{jobId}/progress", response_class=EventSourceResponse)
@@ -745,6 +1004,11 @@ def create_events_router(
         authorization: Optional[str] = Header(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+        tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+        tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
     ) -> _StreamSubscription:
         return _validate_subscription(
             response=response,
@@ -755,6 +1019,9 @@ def create_events_router(
             authorization=authorization,
             x_mfa_token=x_mfa_token,
             pantheon_session=pantheon_session,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
         )
 
     @router.get("/bff/sse/incidents/{incidentId}/timeline", response_class=EventSourceResponse)
@@ -789,6 +1056,11 @@ def create_events_router(
             authorization: Optional[str] = Header(default=None),
             x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
             pantheon_session: Optional[str] = Cookie(default=None),
+            x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+            x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+            tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+            tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+            tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
         ) -> _StreamSubscription:
             return _validate_subscription(
                 response=response,
@@ -799,6 +1071,9 @@ def create_events_router(
                 authorization=authorization,
                 x_mfa_token=x_mfa_token,
                 pantheon_session=pantheon_session,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
+                tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
             )
 
         @router.get("/bff/sse/agora/sessions/{sessionId}", response_class=EventSourceResponse)

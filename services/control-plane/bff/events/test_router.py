@@ -339,3 +339,210 @@ def test_events_router_cursor_handling_and_409_conflict():
     assert f"id: {id_1}\n" not in resp_bff_known.text
     assert f"id: {id_2}\n" in resp_bff_known.text
 
+
+def test_events_router_real_operator_identity_jwt_and_cookie_tenant_isolation(monkeypatch, tmp_path):
+    from services.control_plane.bff.auth import policy
+    from services.control_plane.bff.auth.test_policy import (
+        _make_jwt,
+        TEST_JWT_SECRET,
+        TEST_JWT_ISSUER,
+        TEST_JWT_AUDIENCE,
+    )
+    from events.service import EventStreamService
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", TEST_JWT_ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", TEST_JWT_AUDIENCE)
+
+    token_a = _make_jwt(
+        subject="alice",
+        roles=["viewer"],
+        extra={"tenant_id": "tenant-a", "allowed_tenants": ["tenant-a"]},
+    )
+    token_b = _make_jwt(
+        subject="bob",
+        roles=["viewer"],
+        extra={"tenant_id": "tenant-b", "allowed_tenants": ["tenant-b"]},
+    )
+
+    ident_a = policy.extract_identity("Bearer " + token_a)
+    assert ident_a.claims.get("tenant_id") == "tenant-a"
+
+    for mode in ("memory", "file"):
+        monkeypatch.setenv("PANTHEON_BFF_SSE_REPLAY_STORE", mode)
+        store_dir = tmp_path / f"store-{mode}"
+        store_dir.mkdir(parents=True, exist_ok=True)
+        service = EventStreamService(channels=("approval",), data_dir=str(store_dir))
+        for t in ("tenant-a", "tenant-b"):
+            service.publish(
+                service.buffers["approval"],
+                service.subscribers["approval"],
+                "approval.created",
+                {"tenant_id": t, "secret": f"{t}-{mode}-secret-data"},
+            )
+        _make_finite_service(service)
+
+        router = create_events_router(
+            event_stream_service=service,
+            extract_identity=policy.extract_identity,
+            require_read_role=policy.require_read_role,
+        )
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        # 1. Bearer token in Authorization header
+        for route in (
+            "/api/v1/stream/approval",
+            "/bff/events/stream?channel=approval",
+            "/bff/sse/review/updates",
+        ):
+            resp = client.get(route, headers={"Authorization": f"Bearer {token_a}"})
+            assert resp.status_code == 200, f"Failed on route {route} in mode {mode}"
+            assert resp.headers.get("X-Tenant-Id") == "tenant-a"
+            assert f"tenant-a-{mode}-secret-data" in resp.text
+            assert f"tenant-b-{mode}-secret-data" not in resp.text
+
+        # 2. Cookie 'pantheon_session' without Authorization header
+        cookie_client = TestClient(app)
+        cookie_client.cookies.set("pantheon_session", token_a)
+        for route in (
+            "/api/v1/stream/approval",
+            "/bff/events/stream?channel=approval",
+            "/bff/sse/review/updates",
+        ):
+            resp_cookie = cookie_client.get(route)
+            assert resp_cookie.status_code == 200, f"Failed cookie on route {route} in mode {mode}"
+            assert resp_cookie.headers.get("X-Tenant-Id") == "tenant-a"
+            assert f"tenant-a-{mode}-secret-data" in resp_cookie.text
+            assert f"tenant-b-{mode}-secret-data" not in resp_cookie.text
+
+
+def test_events_router_tenant_scoping_forbidden_for_unauthorized_tenant(monkeypatch, tmp_path):
+    from services.control_plane.bff.auth import policy
+    from services.control_plane.bff.auth.test_policy import (
+        _make_jwt,
+        TEST_JWT_SECRET,
+        TEST_JWT_ISSUER,
+        TEST_JWT_AUDIENCE,
+    )
+    from events.service import EventStreamService
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", TEST_JWT_ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", TEST_JWT_AUDIENCE)
+
+    token = _make_jwt(
+        subject="alice",
+        roles=["viewer"],
+        extra={"tenant_id": "tenant-a", "allowed_tenants": ["tenant-a"]},
+    )
+    service = EventStreamService(channels=("approval",), data_dir=str(tmp_path))
+    _make_finite_service(service)
+
+    router = create_events_router(
+        event_stream_service=service,
+        extract_identity=policy.extract_identity,
+        require_read_role=policy.require_read_role,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    # Requesting unauthorized tenant via X-Tenant-Id header fails with 403
+    resp_header = client.get(
+        "/api/v1/stream/approval",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-b"},
+    )
+    assert resp_header.status_code == 403
+    assert "tenant_scope" in resp_header.text
+
+    # Requesting unauthorized tenant via query param fails with 403
+    resp_query = client.get(
+        "/bff/events/stream?channel=approval&tenant_id=tenant-b",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_query.status_code == 403
+    assert "tenant_scope" in resp_query.text
+
+
+def test_events_router_live_events_tenant_filtering(monkeypatch, tmp_path):
+    from services.control_plane.bff.auth import policy
+    from services.control_plane.bff.auth.test_policy import (
+        _make_jwt,
+        TEST_JWT_SECRET,
+        TEST_JWT_ISSUER,
+        TEST_JWT_AUDIENCE,
+    )
+    from events.service import EventStreamService
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", TEST_JWT_ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", TEST_JWT_AUDIENCE)
+
+    token_a = _make_jwt(
+        subject="alice",
+        roles=["viewer"],
+        extra={"tenant_id": "tenant-a", "allowed_tenants": ["tenant-a"]},
+    )
+    service = EventStreamService(channels=("approval",), data_dir=str(tmp_path))
+    # Publish initial replay events
+    service.publish(
+        service.buffers["approval"],
+        service.subscribers["approval"],
+        "approval.created",
+        {"tenant_id": "tenant-a", "msg": "replayed-a"},
+    )
+    service.publish(
+        service.buffers["approval"],
+        service.subscribers["approval"],
+        "approval.created",
+        {"tenant_id": "tenant-b", "msg": "replayed-b"},
+    )
+    orig_stream = service.stream
+    async def live_stream(*args, **kwargs):
+        service.publish(
+            service.buffers["approval"],
+            service.subscribers["approval"],
+            "approval.created",
+            {"tenant_id": "tenant-b", "msg": "live-b"},
+        )
+        service.publish(
+            service.buffers["approval"],
+            service.subscribers["approval"],
+            "approval.created",
+            {"tenant_id": "tenant-a", "msg": "live-a"},
+        )
+        s = orig_stream(*args, **kwargs)
+        try:
+            for _ in range(5):
+                yield await asyncio.wait_for(anext(s), 0.1)
+        except (TimeoutError, StopAsyncIteration):
+            pass
+        finally:
+            await s.aclose()
+    service.stream = live_stream
+
+    router = create_events_router(
+        event_stream_service=service,
+        extract_identity=policy.extract_identity,
+        require_read_role=policy.require_read_role,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    resp = client.get("/bff/sse/review/updates", headers={"Authorization": f"Bearer {token_a}"})
+    assert resp.status_code == 200
+    assert "replayed-a" in resp.text
+    assert "live-a" in resp.text
+    assert "replayed-b" not in resp.text
+    assert "live-b" not in resp.text
+
+
