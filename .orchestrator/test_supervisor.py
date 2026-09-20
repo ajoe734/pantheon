@@ -2143,17 +2143,26 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                 for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
                     self.assertNotIn("max_parallel", config["agents"][slot_id])
 
-    def test_repo_claude_shared_quota_preserves_independent_lane_capacities(self) -> None:
+    def test_repo_claude_quota_pause_survives_healthy_auth_probe(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         account = supervisor.agent_account_id(config, "claude")
         self.assertTrue(bool(account) and account == supervisor.agent_account_id(config, "claude2"))
         self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 3)
-        for agent_id, capacity in (("claude", 3), ("claude2", 1)):
+        for agent_id in ("claude", "claude2"):
             with self.subTest(agent_id=agent_id):
-                self.assertEqual(config["agents"][agent_id]["max_parallel"], capacity)
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
-                self.assertEqual(lane.max_parallel, capacity)
+                self.assertEqual(lane.max_parallel, 0)
                 self.assertTrue(all(endpoint.account_id == account for endpoint in lane.endpoints))
+                health = supervisor.rewrite_provider_health.apply_probe(
+                    {}, endpoint_id=agent_id, account_id=account,
+                    probe={"source": "live", "ready": True},
+                )
+                self.assertEqual(
+                    supervisor.assignment_terminal_unavailability(
+                        config, {"delivery_health": health}, agent_id,
+                    ),
+                    "configured_zero_capacity",
+                )
 
     def test_retired_capacity_fields_fail_closed(self) -> None:
         for retired in (
