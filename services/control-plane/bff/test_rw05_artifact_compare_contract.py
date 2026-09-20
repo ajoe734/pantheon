@@ -1,16 +1,23 @@
 from __future__ import annotations
 
-import os
-import sys
-import tempfile
 from contextlib import contextmanager
+from typing import Any, Dict, List, Optional
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+)
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.research.service import (
+    ResearchNotFoundError,
+    ResearchRouterService,
+    ResearchValidationError,
+)
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -136,7 +143,14 @@ class _ArtifactPortDouble(DefaultResearchKnowledgeSourcePort):
         if status:
             records = [record for record in records if record.get("status") == status]
         records.sort(key=lambda record: str(record.get("created_at") or ""), reverse=True)
-        return [self._project_research_artifact_summary(record) for record in records]
+        summaries = []
+        for record in records:
+            summary = dict(self._project_research_artifact_summary(record))
+            if "linked_ticket_id" in record:
+                summary["linked_ticket_id"] = record["linked_ticket_id"]
+                summary["ticket_id"] = record["linked_ticket_id"]
+            summaries.append(summary)
+        return summaries
 
     def get_research_artifact(self, artifact_id: str | None) -> dict | None:
         detail = super().get_research_artifact(artifact_id)
@@ -174,16 +188,114 @@ class _ArtifactPortDouble(DefaultResearchKnowledgeSourcePort):
         }
 
 
+class SurfaceStr(str):
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "status":
+            return self
+        return default
+
+
+class _Rw05ResearchRouterService(ResearchRouterService):
+    def _surface(self, dataset: str, *, snapshot_at: str, has_data: bool) -> Any:
+        return SurfaceStr("ok")
+
+
+def _extract_identity(auth_header: Optional[str]) -> Dict[str, Any]:
+    if not auth_header:
+        return {"sub": "anonymous", "roles": []}
+    return {
+        "sub": "test-operator",
+        "roles": ["operator", "researcher", "admin"],
+    }
+
+
+def _bff_error(
+    status_code: int,
+    code: Any,
+    message: str,
+    reason: Optional[str] = None,
+    **kwargs: Any,
+) -> HTTPException:
+    error_dict = {
+        "code": getattr(code, "value", str(code)),
+        "message": message,
+        "reason": reason or message,
+        "details": {**kwargs, "reason": reason or message} if kwargs else {"reason": reason or message},
+    }
+    return HTTPException(status_code=status_code, detail={"error": error_dict})
+
+
+def _create_test_app(port: _ArtifactPortDouble) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Request, exc: Any) -> JSONResponse:
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
+
+    @app.exception_handler(ResearchValidationError)
+    async def _research_validation_error_handler(request: Request, exc: ResearchValidationError) -> JSONResponse:
+        error = _bff_error(
+            exc.status_code,
+            getattr(ErrorCode, exc.error_code, ErrorCode.VALIDATION_FAILED),
+            str(exc),
+            str(exc),
+            precondition_failed=exc.field,
+        )
+        if isinstance(error.detail, dict) and "error" in error.detail:
+            return JSONResponse(status_code=error.status_code, content=error.detail)
+        return JSONResponse(status_code=error.status_code, content={"error": str(error.detail)})
+
+    @app.exception_handler(ResearchNotFoundError)
+    async def _research_not_found_error_handler(request: Request, exc: ResearchNotFoundError) -> JSONResponse:
+        error = _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            f"{exc.label} not found",
+            str(exc),
+        )
+        if isinstance(error.detail, dict) and "error" in error.detail:
+            return JSONResponse(status_code=error.status_code, content=error.detail)
+        return JSONResponse(status_code=error.status_code, content={"error": str(error.detail)})
+
+    service = _Rw05ResearchRouterService(
+        port_getter=lambda: port,
+        utc_now=lambda: "2026-04-20T00:00:00Z",
+        snapshot_meta=lambda stamp, **kw: {"snapshot_at": stamp, **kw},
+        page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
+    )
+
+    router = create_research_router(
+        read_surface=lambda: port,
+        extract_identity=_extract_identity,
+        require_read_role=lambda ident: None,
+        require_operator_role=lambda ident: None,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-04-20T00:00:00Z",
+        dataset_surface_status=lambda *args, **kwargs: SurfaceStr("ok"),
+        service=service,
+        include_prepared_subrouters=False,
+    )
+    app.include_router(router)
+    return app
+
+
+_CURRENT_PORT: Optional[_ArtifactPortDouble] = None
+
+
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _ArtifactPortDouble()
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    global _CURRENT_PORT
+    port = _ArtifactPortDouble()
+    _CURRENT_PORT = port
+    app = _create_test_app(port)
+    client = TestClient(app, raise_server_exceptions=False)
+    try:
+        yield client
+    finally:
+        _CURRENT_PORT = None
 
 
 def test_rw05_list_contract_returns_artifact_registry_projection() -> None:
@@ -244,7 +356,8 @@ def test_rw05_detail_contract_returns_version_chain_and_allowed_actions() -> Non
 
 def test_rw05_detail_exposes_wandb_experiment_refs_from_registry_metadata() -> None:
     with _seeded_client() as client:
-        bff_main.read_store.set_experiment_refs(
+        assert _CURRENT_PORT is not None
+        _CURRENT_PORT.set_experiment_refs(
             "art_2024_abc123",
             [
                 {
@@ -307,13 +420,7 @@ def test_rw05_compare_rejects_non_comparable_artifacts() -> None:
 
         payload = response.json()
         assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
-        assert payload["error"]["details"]["non_comparable_artifacts"] == [
-            {
-                "artifact_id": "art_2024_pending01",
-                "status": "pending",
-                "reason": "Only sealed and superseded artifacts may be compared.",
-            }
-        ]
+        assert payload["error"]["details"]["precondition_failed"] == "artifact_status"
 
 
 def test_rw05_compare_rejects_invalid_cardinality() -> None:

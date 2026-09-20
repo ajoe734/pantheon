@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Optional
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
-
+from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.research.router import create_research_router
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
 
@@ -72,10 +73,12 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
         records: dict[str, dict],
         *,
         source: str,
+        snapshot_records: dict[str, dict] | None = None,
         persistence_path: Path | None = None,
     ) -> None:
         super().__init__(research_tickets_store=records)
         self._source = source
+        self._snapshot_records = snapshot_records or {}
         self._persistence_path = persistence_path
 
     def dataset_source(self, dataset: str, **_: object) -> str:
@@ -83,18 +86,27 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
             return self._source
         return super().dataset_source(dataset)
 
-    def get_research_ticket(
+    def list_research_tickets(
         self,
-        ticket_id: str,
         *,
-        include_snapshot_fallback: bool = True,
-        include_local_fallback: bool = True,
-    ) -> dict | None:
-        if self._source == "local_snapshot" and not (
-            include_snapshot_fallback and include_local_fallback
-        ):
-            return None
-        return super().get_research_ticket(ticket_id)
+        statuses: Optional[list[str]] = None,
+        owner: Optional[str] = None,
+        include_fixture_pack: bool = False,
+    ) -> list[dict[str, Any]]:
+        if self._source == "local_snapshot" and self._snapshot_records:
+            snapshot_port = DefaultResearchKnowledgeSourcePort(
+                research_tickets_store=self._snapshot_records
+            )
+            return snapshot_port.list_research_tickets(
+                statuses=statuses,
+                owner=owner,
+                include_fixture_pack=include_fixture_pack,
+            )
+        return super().list_research_tickets(
+            statuses=statuses,
+            owner=owner,
+            include_fixture_pack=include_fixture_pack,
+        )
 
     def _persist(self) -> None:
         if self._persistence_path is not None:
@@ -114,19 +126,72 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
         return ticket
 
 
+def _extract_identity(authorization: Optional[str]) -> Optional[Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[len("Bearer "):].strip()
+    if ":" in token:
+        op_id, roles_str = token.split(":", 1)
+        roles = {r.strip() for r in roles_str.split(",") if r.strip()}
+    else:
+        op_id = token
+        roles = {"operator", "viewer"}
+    return SimpleNamespace(operator_id=op_id, roles=roles)
+
+
+def _bff_error(
+    status_code: int,
+    code: Any,
+    message: str,
+    reason: Optional[str] = None,
+    **kwargs: Any,
+) -> HTTPException:
+    error_dict = {
+        "code": getattr(code, "value", str(code)),
+        "message": message,
+        "reason": reason or message,
+    }
+    if kwargs:
+        error_dict["details"] = kwargs
+    return HTTPException(status_code=status_code, detail={"error": error_dict})
+
+
+def _create_test_app(port: _TicketPortDouble) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
+
+    router = create_research_router(
+        read_surface=lambda: port,
+        extract_identity=_extract_identity,
+        require_read_role=lambda ident: None,
+        require_operator_role=lambda ident: None,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-04-20T05:30:00Z",
+        page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
+        snapshot_meta=lambda stamp, **kw: {"snapshot_at": stamp, **kw},
+        dataset_surface_status=lambda *a, **kw: {"status": "ok"},
+        submit_experiment_action=lambda *a, **kw: {},
+    )
+    app.include_router(router)
+    return app
+
+
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _TicketPortDouble(
-            _SEEDED_TICKETS,
-            source="local_snapshot",
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = _TicketPortDouble(
+        {"rt-20260418-003": _SEEDED_TICKETS["rt-20260418-003"]},
+        source="local_snapshot",
+        snapshot_records=_SEEDED_TICKETS,
+    )
+    app = _create_test_app(port)
+    client = TestClient(app)
+    yield client
 
 
 @contextmanager
@@ -176,17 +241,16 @@ def _service_backed_client():
 
         os.environ["PANTHEON_BFF_RESEARCH_TICKET_STORE"] = str(ticket_store)
 
-        original_store = bff_main.read_store
-        bff_main.read_store = _TicketPortDouble(
+        port = _TicketPortDouble(
             json.loads(ticket_store.read_text(encoding="utf-8")),
             source="service_client",
             persistence_path=ticket_store,
         )
-        client = TestClient(bff_main.app)
+        app = _create_test_app(port)
+        client = TestClient(app)
         try:
             yield client, ticket_store
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -196,14 +260,10 @@ def _service_backed_client():
 
 @contextmanager
 def _unavailable_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _TicketPortDouble({}, source="missing")
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = _TicketPortDouble({}, source="missing")
+    app = _create_test_app(port)
+    client = TestClient(app)
+    yield client
 
 
 def test_rw01_list_contract_returns_ticket_projection() -> None:

@@ -11,20 +11,17 @@ Covers:
 - 404 for unknown experiment_id
 - auth gate: 401 when no credentials
 """
-from __future__ import annotations
-
-import os
-import sys
-import tempfile
 from contextlib import contextmanager
-from typing import Iterator
+from types import SimpleNamespace
+from typing import Any, Dict, Iterator, Optional
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
 
 OPERATOR_AUTH = "Bearer exp002-op:operator"
 HEADERS = {"Authorization": OPERATOR_AUTH}
@@ -189,27 +186,83 @@ class _FakeResearchWriteOwner:
         return dict(rec)
 
 
+def _create_test_app(store: Any) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
+
+    def _extract_identity(auth_header: Optional[str]) -> Any:
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return SimpleNamespace(operator_id="anonymous", roles=[])
+        return SimpleNamespace(operator_id="exp002-op", roles=["operator", "researcher", "admin"])
+
+    def _require_read_role(ident: Any) -> None:
+        roles = getattr(ident, "roles", [])
+        if not roles or "operator" not in roles:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    def _require_operator_role(ident: Any) -> None:
+        roles = getattr(ident, "roles", [])
+        if not roles or "operator" not in roles:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    def _dataset_surface_status(
+        dataset: str,
+        *,
+        snapshot_at: str = "2026-04-20T00:00:00Z",
+        source: Optional[str] = None,
+        has_data: Optional[bool] = None,
+        missing_message: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return {"status": "ok", "source": source or "local_snapshot", "snapshot_at": snapshot_at}
+
+    def _bff_error(
+        status_code: int,
+        code: Any,
+        message: str,
+        reason: Optional[str] = None,
+        **kwargs: Any,
+    ) -> HTTPException:
+        return HTTPException(
+            status_code=status_code,
+            detail={
+                "error": {
+                    "code": getattr(code, "value", str(code)),
+                    "message": message,
+                    "reason": reason or message,
+                    "details": kwargs,
+                }
+            },
+        )
+
+    router = create_research_router(
+        get_read_store=lambda: store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-04-20T00:00:00Z",
+        dataset_surface_status=_dataset_surface_status,
+        include_prepared_subrouters=True,
+    )
+    app.include_router(router)
+    return app
+
+
 @contextmanager
 def _bff_client(*, fallback: bool = True) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    original_experiment_overlay = dict(bff_main._GOV_BFF_EXPERIMENT_OVERLAY)
-    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
     store = create_in_memory_read_surface_ports(
         research_knowledge_source_kwargs={
             "research_write_owner": _FakeResearchWriteOwner(_SEED_EXPERIMENTS if fallback else {}),
         }
     )
-    bff_main.read_store = store
-    bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-    bff_main._GOV_BFF_IDEMPOTENCY.clear()
-    try:
-        yield TestClient(bff_main.app)
-    finally:
-        bff_main.read_store = original_store
-        bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-        bff_main._GOV_BFF_EXPERIMENT_OVERLAY.update(original_experiment_overlay)
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
+    app = _create_test_app(store)
+    yield TestClient(app, raise_server_exceptions=False)
 
 
 # ---------------------------------------------------------------------------

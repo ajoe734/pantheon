@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
+from types import SimpleNamespace
+from typing import Any, Optional
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+)
+from services.control_plane.bff.research.router import create_research_router
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -99,12 +103,19 @@ class _SearchPortDouble(DefaultResearchKnowledgeSourcePort):
         self._available = available
 
     def dataset_source(self, dataset: str, **_: object) -> str:
-        if dataset in {"research_search_documents", "research_search_index"}:
+        if dataset in {"research_search_documents", "research_search_index", "research_search"}:
             return "local_snapshot" if self._available else "missing"
         return super().dataset_source(dataset)
 
     def get_research_search_index(self) -> dict | None:
-        return dict(_SEARCH_INDEX) if self._available else None
+        if not self._available:
+            return None
+        return {
+            "snapshot_at": _SEARCH_INDEX["snapshot_at"],
+            "adapter_state": "degraded" if self.dataset_source("research_search") == "local_snapshot" else "fresh",
+            "indexed_match_types": list(_SEARCH_INDEX["indexed_match_types"]),
+            "source_watermarks": dict(_SEARCH_INDEX["source_watermarks"]),
+        }
 
     def list_research_search_results(
         self,
@@ -162,18 +173,90 @@ class _SearchPortDouble(DefaultResearchKnowledgeSourcePort):
         return matches
 
 
+def _extract_identity(authorization: Optional[str]) -> Optional[Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[len("Bearer "):].strip()
+    if ":" in token:
+        op_id, roles_str = token.split(":", 1)
+        roles = {r.strip() for r in roles_str.split(",") if r.strip()}
+    else:
+        op_id = token
+        roles = {"operator", "viewer"}
+    return SimpleNamespace(operator_id=op_id, roles=roles)
+
+
+def _bff_error(
+    status_code: int,
+    code: Any,
+    message: str,
+    reason: Optional[str] = None,
+    **kwargs: Any,
+) -> HTTPException:
+    details = dict(kwargs)
+    if reason:
+        details["reason"] = reason
+    error_dict = {
+        "code": getattr(code, "value", str(code)),
+        "message": message,
+        "reason": reason or message,
+        "details": details,
+    }
+    detail = {"error": error_dict}
+    if reason == "SEARCH_RESULTS_UNAVAILABLE":
+        detail["surfaces"] = {"search_results": "unavailable"}
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _create_test_app(port: _SearchPortDouble) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
+
+    def _dataset_surface_status(dataset: str, *, source: str = "missing", **kwargs: Any) -> str:
+        if source == "local_snapshot":
+            return "degraded"
+        if source == "missing":
+            return "unavailable"
+        return "fresh"
+
+    def _snapshot_meta(snapshot_at: str, **kw: Any) -> dict[str, Any]:
+        meta = {"snapshot_at": snapshot_at, **kw}
+        refs = getattr(port, "get_last_governed_search_refs", None)
+        if callable(refs):
+            last_refs = refs()
+            if last_refs:
+                meta["governed_evidence"] = last_refs
+        return meta
+
+    router = create_research_router(
+        read_surface=lambda: port,
+        extract_identity=_extract_identity,
+        require_read_role=lambda ident: None,
+        require_operator_role=lambda ident: None,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-04-19T20:14:30Z",
+        snapshot_meta=_snapshot_meta,
+        dataset_surface_status=_dataset_surface_status,
+        submit_experiment_action=lambda *a, **kw: {},
+    )
+    app.include_router(router)
+    return app
+
+
 @contextmanager
 def _seeded_client(*, allow_local_snapshot_fallback: bool):
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _SearchPortDouble(
-            available=allow_local_snapshot_fallback,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = _SearchPortDouble(
+        available=allow_local_snapshot_fallback,
+    )
+    app = _create_test_app(port)
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client
 
 
 def test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta() -> None:
