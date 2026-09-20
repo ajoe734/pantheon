@@ -166,6 +166,12 @@ class AntigravityAdapter(BaseAdapter):
             for path in paths:
                 expanded = Path(os.path.expanduser(str(path)))
                 command.extend(["--add-dir", str(expanded if expanded.is_absolute() else root / expanded)])
+        if request.task_id:
+            # AGY >= 1.2.6 gives unfinished commands only five seconds after
+            # the agent stops. Load its native Stop hook from this immutable
+            # runtime, including when the task worktree predates the repair.
+            completion_hooks = Path(__file__).resolve().parents[1] / "antigravity"
+            command.extend(["--add-dir", str(completion_hooks)])
         command.extend(["--prompt", request.message])
 
         base_env = dict(os.environ)
