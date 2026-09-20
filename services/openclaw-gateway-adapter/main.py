@@ -58,8 +58,8 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import httpx
 from fastapi import FastAPI, Header, Request
-from fastapi.responses import JSONResponse, StreamingResponse
-from fastapi.sse import EventSourceResponse, format_sse_event
+from fastapi.responses import JSONResponse
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field, model_validator
 
 from integrations.openclaw.search_gateway import OpenClawSearchGateway, SearchPolicyError as OpenClawSearchPolicyError
@@ -1934,13 +1934,16 @@ def _assert_structured_gateway_policy(agent_id: str, *, deadline: float) -> None
         )
 
 
-@app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream")
+@app.post(
+    "/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+    response_class=EventSourceResponse,
+)
 def invoke_openclaw_provider_stream(
     req: AssistantProviderInvokeRequest,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-) -> EventSourceResponse:
+) -> Iterator[ServerSentEvent]:
     """Stream an OpenClaw agent turn as SSE via the gateway `POST /v1/responses`.
 
     Emits normalized events the BFF can relay verbatim to the console:
@@ -1962,120 +1965,114 @@ def invoke_openclaw_provider_stream(
         operator_id=operator, metadata=metadata
     )
 
-    def event_stream() -> Iterator[str]:
-        if not operator:
-            yield format_sse_event(data_str=json.dumps({
-                "type": "error", "error_code": "OPERATOR_REQUIRED",
-                "message": "X-Operator-Id header is required for OpenClaw provider invocation.",
-            })).decode("utf-8")
-            yield format_sse_event(data_str="[DONE]").decode("utf-8")
+    if not operator:
+        yield ServerSentEvent(data={
+            "type": "error", "error_code": "OPERATOR_REQUIRED",
+            "message": "X-Operator-Id header is required for OpenClaw provider invocation.",
+        })
+        yield ServerSentEvent(raw_data="[DONE]")
+        return
+    metadata["operator_id"] = operator
+    if x_trace_id:
+        metadata.setdefault("trace_id", x_trace_id)
+    if req.persona_admission is not None:
+        admission_error = _persona_opinion_admission_error(
+            req, idempotency_key=idempotency_key, mode=mode, metadata=metadata,
+        )
+        if admission_error is not None:
+            _, content = admission_error
+            yield ServerSentEvent(data={
+                "type": "error",
+                "error_code": content.get("error_code", "PERSONA_OPINION_ADMISSION_DENIED"),
+                "message": content.get("message", "Persona opinion admission denied."),
+            })
+            yield ServerSentEvent(raw_data="[DONE]")
             return
-        metadata["operator_id"] = operator
-        if x_trace_id:
-            metadata.setdefault("trace_id", x_trace_id)
-        if req.persona_admission is not None:
-            admission_error = _persona_opinion_admission_error(
-                req, idempotency_key=idempotency_key, mode=mode, metadata=metadata,
-            )
-            if admission_error is not None:
-                _, content = admission_error
-                yield format_sse_event(data_str=json.dumps({
-                    "type": "error",
-                    "error_code": content.get("error_code", "PERSONA_OPINION_ADMISSION_DENIED"),
-                    "message": content.get("message", "Persona opinion admission denied."),
-                })).decode("utf-8")
-                yield format_sse_event(data_str="[DONE]").decode("utf-8")
-                return
-        if delegates_kernel_mode_to_codex(mode):
-            try:
-                result = _invoke_codex_runtime(req, metadata=metadata, mode=mode)
-                data = _delegated_codex_result_data(
-                    result,
-                    route="/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
-                )
-                output = data["output"]
-                event = {
-                    "type": "done",
-                    "text": _delegated_codex_text(output),
-                    "transport": "codex_runtime",
-                    "provider": data["provider"],
-                    "runtime": data["runtime"],
-                    "mode": data["mode"],
-                    "delegated_from": "openclaw",
-                }
-                for key in ("sandbox", "workspace_class"):
-                    if output.get(key) is not None:
-                        event[key] = output[key]
-                yield format_sse_event(data_str=json.dumps(event, ensure_ascii=False)).decode("utf-8")
-            except CodexProviderError as exc:
-                yield format_sse_event(data_str=json.dumps({
-                    "type": "error",
-                    "error_code": exc.code,
-                    "message": str(exc),
-                    "status_code": exc.status_code,
-                })).decode("utf-8")
-            except AssistantProviderRuntimeError as exc:
-                yield format_sse_event(data_str=json.dumps({
-                    "type": "error",
-                    "error_code": exc.code,
-                    "message": str(exc),
-                    "status_code": 400,
-                })).decode("utf-8")
-            yield format_sse_event(data_str="[DONE]").decode("utf-8")
-            return
-        def upstream_stream():
-            scoped_session = session_user
-            if req.persona_admission is not None:
-                scoped_session = derive_session_user(
-                    operator_id=operator, metadata=metadata,
-                    session_id=_persona_opinion_session_id(str(idempotency_key)),
-                )
-            return _OPENCLAW_AGENT_PROVIDER.stream(
-                req.prompt,
-                mode=mode,
-                operator_id=operator,
-                trace_id=x_trace_id,
-                session_user=scoped_session,
-                model=req.model,
-                agent_id=req.agent_id,
-                messages=req.messages,
-                attachments=req.attachments,
-                context_pack=req.context_pack,
-            )
-
+    if delegates_kernel_mode_to_codex(mode):
         try:
-            if req.persona_admission is not None:
-                events = _stream_persona_opinion_idempotently(
-                    req, idempotency_key=str(idempotency_key).strip(),
-                    operator_id=operator, stream_fn=upstream_stream,
-                )
-            else:
-                events = upstream_stream()
-            try:
-                for evt in events:
-                    yield format_sse_event(data_str=json.dumps(evt, ensure_ascii=False)).decode("utf-8")
-            finally:
-                close = getattr(events, "close", None)
-                if close is not None:
-                    close()
-        except (_PersonaOpinionInvocationConflict, _PersonaOpinionInvocationInDoubt) as exc:
-            code = ("PERSONA_OPINION_IDEMPOTENCY_CONFLICT"
-                    if isinstance(exc, _PersonaOpinionInvocationConflict)
-                    else "PERSONA_OPINION_INVOCATION_IN_DOUBT")
-            yield format_sse_event(data_str=json.dumps({
-                "type": "error", "error_code": code, "message": str(exc), "status_code": 409,
-            })).decode("utf-8")
-        except Exception as exc:  # noqa: BLE001
-            yield format_sse_event(data_str=json.dumps({
-                "type": "error", "error_code": "ADAPTER_STREAM_ERROR",
-                "message": str(exc)[:200],
-            })).decode("utf-8")
-        yield format_sse_event(data_str="[DONE]").decode("utf-8")
+            result = _invoke_codex_runtime(req, metadata=metadata, mode=mode)
+            data = _delegated_codex_result_data(
+                result,
+                route="/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+            )
+            output = data["output"]
+            event = {
+                "type": "done",
+                "text": _delegated_codex_text(output),
+                "transport": "codex_runtime",
+                "provider": data["provider"],
+                "runtime": data["runtime"],
+                "mode": data["mode"],
+                "delegated_from": "openclaw",
+            }
+            for key in ("sandbox", "workspace_class"):
+                if output.get(key) is not None:
+                    event[key] = output[key]
+            yield ServerSentEvent(data=event)
+        except CodexProviderError as exc:
+            yield ServerSentEvent(data={
+                "type": "error",
+                "error_code": exc.code,
+                "message": str(exc),
+                "status_code": exc.status_code,
+            })
+        except AssistantProviderRuntimeError as exc:
+            yield ServerSentEvent(data={
+                "type": "error",
+                "error_code": exc.code,
+                "message": str(exc),
+                "status_code": 400,
+            })
+        yield ServerSentEvent(raw_data="[DONE]")
+        return
+    def upstream_stream():
+        scoped_session = session_user
+        if req.persona_admission is not None:
+            scoped_session = derive_session_user(
+                operator_id=operator, metadata=metadata,
+                session_id=_persona_opinion_session_id(str(idempotency_key)),
+            )
+        return _OPENCLAW_AGENT_PROVIDER.stream(
+            req.prompt,
+            mode=mode,
+            operator_id=operator,
+            trace_id=x_trace_id,
+            session_user=scoped_session,
+            model=req.model,
+            agent_id=req.agent_id,
+            messages=req.messages,
+            attachments=req.attachments,
+            context_pack=req.context_pack,
+        )
 
-    return EventSourceResponse(
-        event_stream(),
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
-    )
+    try:
+        if req.persona_admission is not None:
+            events = _stream_persona_opinion_idempotently(
+                req, idempotency_key=str(idempotency_key).strip(),
+                operator_id=operator, stream_fn=upstream_stream,
+            )
+        else:
+            events = upstream_stream()
+        try:
+            for evt in events:
+                yield ServerSentEvent(data=evt)
+        finally:
+            close = getattr(events, "close", None)
+            if close is not None:
+                close()
+    except (_PersonaOpinionInvocationConflict, _PersonaOpinionInvocationInDoubt) as exc:
+        code = ("PERSONA_OPINION_IDEMPOTENCY_CONFLICT"
+                if isinstance(exc, _PersonaOpinionInvocationConflict)
+                else "PERSONA_OPINION_INVOCATION_IN_DOUBT")
+        yield ServerSentEvent(data={
+            "type": "error", "error_code": code, "message": str(exc), "status_code": 409,
+        })
+    except Exception as exc:  # noqa: BLE001
+        yield ServerSentEvent(data={
+            "type": "error", "error_code": "ADAPTER_STREAM_ERROR",
+            "message": str(exc)[:200],
+        })
+    yield ServerSentEvent(raw_data="[DONE]")
 
 
 class GatewayCronCallRequest(BaseModel):

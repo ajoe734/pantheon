@@ -5,7 +5,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-COPY dependencies/locks/services-control-plane-router.txt /tmp/requirements.lock
+COPY requirements.txt /tmp/requirements.lock
 RUN pip install --no-cache-dir -r /tmp/requirements.lock
 
 COPY . .

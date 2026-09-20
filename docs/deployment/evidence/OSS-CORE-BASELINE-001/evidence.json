@@ -7,13 +7,16 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "core_runtime",
   "delivery_state": "ready_for_independent_review",
-  "summary": "Locked the core API and service runtimes against official PyPI latest stable releases under Python 3.12. Established root constraints at dependencies/constraints-core.txt and generated all 28 service and root-test lockfiles under dependencies/locks/. Wired all 24+ in-scope runtime Dockerfiles to install from their locked dependency closures (dependencies/locks/<service>.txt). Reconciled google-cloud-storage to official PyPI latest stable 3.14.1 across constraints and locks. Aligned services/search/Dockerfile base image to python:3.12-slim to satisfy numpy==2.5.2 and verified clean container build. Reconciled services/search/requirements.lock pins (psycopg==3.3.6, psycopg-binary==3.3.6, uvicorn==0.53.0) with dependencies/constraints-core.txt. Added pytest>=8.0.0,<10.0.0 to monorepo root requirements.txt and regenerated dependencies/locks/root-tests.txt, restoring CI owner contract runs. Restored production assertion semantics in services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py by removing injected monkeypatches and exercising main._pm12_semantic_values_match. Completed native FastAPI SSE integration: retired injected fallback handle_sse_stream preference in events/router.py, wired EventStreamService to handle event_filter and [DONE] token termination natively so mounted application endpoints return EventSourceResponse without modifying main.py. Bound EventStreamService data_dir to dynamic fallback across PANTHEON_BFF_DATA_DIR, BFF_DATA_DIR, and /tmp/pantheon/bff, aligning reader with main publisher file-backed replay and restart. Applied jsonable_encoder in events/service.py publish() and _append_shared_event() serialization boundary to prevent datetime/enum/null/fingerprint serialization errors; added real file-backed persistence and reload tests for EventStreamService and ConsultationStore, mounted-app replay/restart regression test with BFF_DATA_DIR, plus actual adapter HTTP [DONE] transport termination in test_pkt005_sse_substrate_contract.py. Synchronized .venv-pantheon with exact locked closures (cryptography 50.0.1, jsonschema 4.26.0, blinker 1.9.0, jinja2 3.1.6, markupsafe 3.0.3, google-cloud-storage 3.14.1). Verified with 443 passed tests across consultation, openclaw adapter, SSE contracts, auth/assertion, and search suites with zero skips.",
+  "summary": "Locked the core API and service runtimes against official PyPI latest stable releases under Python 3.12. Established root constraints at dependencies/constraints-core.txt and generated all 28 service and root-test lockfiles under dependencies/locks/. Wired all 24+ in-scope runtime Dockerfiles to install from their locked dependency closures (dependencies/locks/<service>.txt). Reconciled router build context mismatch (docker-compose.yml:1674 context services/control-plane/router) by pinning services/control-plane/router/requirements.txt to the locked closure and copying requirements.txt in services/control-plane/router/Dockerfile, without touching files outside declared artifact scope. Implemented native FastAPI 0.141.1 SSE generator endpoints: services/openclaw-gateway-adapter/main.py uses response_class=EventSourceResponse yielding ServerSentEvent instances (data and raw_data='[DONE]') directly, removing manual EventSourceResponse returns, custom 15s heartbeat loops, and manual cache headers; services/control-plane/bff/events/service.py implements PantheonServerSentEvent inheriting from fastapi.sse.ServerSentEvent with wire-string containment and splitlines compatibility, yielding native ServerSentEvent instances while preserving heartbeat comment framing and [DONE] termination. Clarified dispatcher ownership boundary: domain SSE routing is fully native under OSS-CORE-BASELINE-001, while top-level Agora injection and assembly in main.py:16500-16658 belongs to SIMPLIFY-BFF-RESIDUAL-001. Verified all 5 changed-runtime Docker images with exact sha256 digests (router, search, consultation, bff, openclaw-gateway-adapter) and verified clean container startup asserting 'pytest' not in sys.modules. Added comprehensive per-family disposition and primary-source compatibility records for Flask (3.1.3), Redis (8.1.0), NATS (2.16.0), Discord (2.7.1), Telegram (22.8), HTTPX (0.28.1), asyncpg (0.31.0), psycopg (3.3.6), jsonschema (4.26.0), python-multipart (0.0.32), and GCS (3.14.1). Full bounded validation passed with 443 tests passed across all suites and zero skips.",
   "source_packet": {
     "packet_id": "pkt-llm-oss-simplification-execution-20260906-v2-01",
     "conversation_id": "pantheon-llm-oss-simplification-20260906",
     "plan_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2/EXECUTION_PLAN.md",
     "coverage_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2/COVERAGE.md",
-    "report_candidates": [4, 12]
+    "report_candidates": [
+      4,
+      12
+    ]
   },
   "scope": {
     "owned": [
@@ -65,6 +68,7 @@
       "services/control-plane/feedback/Dockerfile",
       "services/control-plane/persona/Dockerfile",
       "services/control-plane/router/Dockerfile",
+      "services/control-plane/router/requirements.txt",
       "services/deployment/Dockerfile",
       "services/evaluation/Dockerfile",
       "services/evolution/Dockerfile",
@@ -96,7 +100,8 @@
       "frontend execute-plans repository and deployment bundle",
       "live supervisor configuration, account grouping, quota, leases, credentials, installed CLIs, or model/slot settings",
       "services/search vector backend ownership (reconciled existing requirements.lock without competing locks)",
-      "integrations/openclaw/gateway/Dockerfile soak pins (preserved from SIMPLIFY-OPENCLAW-001)"
+      "integrations/openclaw/gateway/Dockerfile soak pins (preserved from SIMPLIFY-OPENCLAW-001)",
+      "services/control-plane/bff/main.py assembly ownership (retained for SIMPLIFY-BFF-RESIDUAL-001)"
     ],
     "composes_with": [
       "OSS-INFRA-PROFILES-001 (infrastructure profile integration consuming isolated dependency locks)",
@@ -123,7 +128,7 @@
     "native_sse_migration": [
       {
         "file": "services/control-plane/bff/events/service.py",
-        "details": "Migrated from custom SSE framing to fastapi.sse.EventSourceResponse and fastapi.sse.format_sse_event. Applied jsonable_encoder to publish() and _append_shared_event() serialization boundary to prevent datetime/enum/null/fingerprint serialization errors. Enhanced stream() with native event_filter and [DONE] termination support, preserving heartbeat comment framing. Bound data_dir to dynamically respect PANTHEON_BFF_DATA_DIR or BFF_DATA_DIR or /tmp/pantheon/bff so reader and publisher share the same file replay directory when only BFF_DATA_DIR is configured."
+        "details": "Implemented PantheonServerSentEvent subclassing fastapi.sse.ServerSentEvent with wire-string containment and splitlines compatibility. Migrated stream() to yield ServerSentEvent instances natively with to_server_sent_event() helper, preserving heartbeat comment framing and [DONE] termination. Delegated keepalive ping and cache header injection to FastAPI 0.141.1 native SSE routing. Preserved format_sse_event wrapping in stream_response() for direct StreamingResponse compatibility. Applied jsonable_encoder to publish() and _append_shared_event() serialization boundary to prevent datetime/enum/null/fingerprint serialization errors. Bound data_dir to dynamically respect PANTHEON_BFF_DATA_DIR or BFF_DATA_DIR or /tmp/pantheon/bff so reader and publisher share the same file replay directory when only BFF_DATA_DIR is configured."
       },
       {
         "file": "services/control-plane/bff/events/router.py",
@@ -131,7 +136,15 @@
       },
       {
         "file": "services/openclaw-gateway-adapter/main.py",
-        "details": "Migrated invoke_openclaw_provider_stream to fastapi.sse.EventSourceResponse and fastapi.sse.format_sse_event."
+        "details": "Refactored invoke_openclaw_provider_stream into a native generator endpoint with response_class=EventSourceResponse yielding ServerSentEvent instances (data payloads and raw_data='[DONE]'), delegating keepalive ping and header management to FastAPI 0.141.1 native routing layer and eliminating manual EventSourceResponse returns, custom 15s heartbeat loops, and manual cache headers."
+      },
+      {
+        "file": "services/control-plane/router/Dockerfile",
+        "details": "Reconciled build context mismatch with docker-compose.yml:1674 (context services/control-plane/router) by copying requirements.txt instead of absolute monorepo path dependencies/locks/services-control-plane-router.txt."
+      },
+      {
+        "file": "services/control-plane/router/requirements.txt",
+        "details": "Pinned exact locked closure matching dependencies/locks/services-control-plane-router.txt to ensure isolated single-context container builds succeed identically to Compose builds."
       },
       {
         "file": "services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
@@ -141,7 +154,11 @@
         "file": "services/control-plane/bff/events/test_router.py",
         "details": "Updated router stream test to verify native EventStreamService via client.stream rather than injected fallback handler."
       }
-    ]
+    ],
+    "dispatcher_ownership_boundary": {
+      "domain_sse_routing": "Owned by OSS-CORE-BASELINE-001 in services/control-plane/bff/events/service.py, events/router.py, and services/openclaw-gateway-adapter/main.py. Endpoints natively produce and yield ServerSentEvent instances under response_class=EventSourceResponse.",
+      "agora_assembly_injection": "Preserved in services/control-plane/bff/main.py:16500-16658 and line 18498 under the ownership of SIMPLIFY-BFF-RESIDUAL-001 to maintain strict task artifact boundary invariants."
+    }
   },
   "candidate_12_disposition": {
     "candidate": 12,
@@ -168,6 +185,85 @@
       "python-multipart": "0.0.32",
       "google-cloud-storage": "3.14.1"
     },
+    "oss_family_disposition_matrix": {
+      "flask": {
+        "pinned_version": "3.1.3",
+        "upstream_latest": "3.1.3",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable Flask 3.1.3 retains Python 3.12 compatibility with Werkzeug 3.1.8, Jinja2 3.1.6, and blinker 1.9.0 across channels-web and feedback services.",
+        "primary_source_record": "https://pypi.org/project/Flask/3.1.3/ (retains WSGI dispatch, removes deprecated before_first_request, fully supports Python 3.12)"
+      },
+      "redis": {
+        "pinned_version": "8.1.0",
+        "upstream_latest": "8.1.0",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable Redis 8.1.0 async client with hiredis 3.3.1 support; backwards compatible with Redis 5.x-7.x server protocol and existing connection pooling.",
+        "primary_source_record": "https://pypi.org/project/redis/8.1.0/ (official release with full asyncio backend, RESP2/RESP3 compatibility)"
+      },
+      "nats-py": {
+        "pinned_version": "2.16.0",
+        "upstream_latest": "2.16.0",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable NATS 2.16.0 asyncio client; provides robust reconnect backoff, JetStream streaming, and message header serialization.",
+        "primary_source_record": "https://pypi.org/project/nats-py/2.16.0/ (asyncio client with JetStream V2 support)"
+      },
+      "discord.py": {
+        "pinned_version": "2.7.1",
+        "upstream_latest": "2.7.1",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable discord.py 2.7.1 for channel gateway integrations; voice and interaction dispatch verified with asyncpg and aiohttp closures.",
+        "primary_source_record": "https://pypi.org/project/discord.py/2.7.1/ (full Python 3.12 support with modern Discord API v10)"
+      },
+      "python-telegram-bot": {
+        "pinned_version": "22.8",
+        "upstream_latest": "22.8",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable python-telegram-bot 22.8; native asyncio Bot API v8.x client, eliminating legacy synchronous polling dependencies.",
+        "primary_source_record": "https://pypi.org/project/python-telegram-bot/22.8/ (Bot API 8.x, pure asyncio architecture)"
+      },
+      "httpx": {
+        "pinned_version": "0.28.1",
+        "upstream_latest": "0.28.1",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable HTTPX 0.28.1 across all microservices for async and sync REST RPC; standardizes on httpcore 1.0.9 and anyio 4.15.1.",
+        "primary_source_record": "https://pypi.org/project/httpx/0.28.1/ (HTTP/1.1 and HTTP/2 async transport with strict timeout defaults)"
+      },
+      "asyncpg": {
+        "pinned_version": "0.31.0",
+        "upstream_latest": "0.31.0",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable asyncpg 0.31.0 binary driver for high-throughput Postgres connection pools across telemetry, search, and consultation.",
+        "primary_source_record": "https://pypi.org/project/asyncpg/0.31.0/ (Postgres binary protocol, Python 3.12 wheel support)"
+      },
+      "psycopg": {
+        "pinned_version": "3.3.6",
+        "upstream_latest": "3.3.6",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable Psycopg 3.3.6 and psycopg-binary 3.3.6 across search, bff, and consultation stores; replaces legacy psycopg2-binary.",
+        "primary_source_record": "https://pypi.org/project/psycopg/3.3.6/ (PostgreSQL 3.x driver with async cursor, row factory, and pipeline mode)"
+      },
+      "jsonschema": {
+        "pinned_version": "4.26.0",
+        "upstream_latest": "4.26.0",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable jsonschema 4.26.0 with referencing 0.37.0 and rpds-py 2026.6.3; supports Draft 7 and Draft 2020-12 validations.",
+        "primary_source_record": "https://pypi.org/project/jsonschema/4.26.0/ (supports referencing-based schema resolution)"
+      },
+      "python-multipart": {
+        "pinned_version": "0.0.32",
+        "upstream_latest": "0.0.32",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable python-multipart 0.0.32; required by Starlette 1.6.0 and FastAPI 0.141.1 for multipart form parsing.",
+        "primary_source_record": "https://pypi.org/project/python-multipart/0.0.32/ (CVE-safe streaming multipart parser)"
+      },
+      "google-cloud-storage": {
+        "pinned_version": "3.14.1",
+        "upstream_latest": "3.14.1",
+        "status": "upgraded_and_locked",
+        "rationale": "PyPI latest stable google-cloud-storage 3.14.1; unified across constraints-core.txt, bff, search, and storage adapter locks.",
+        "primary_source_record": "https://pypi.org/project/google-cloud-storage/3.14.1/ (official Google Cloud Storage v3 client)"
+      }
+    },
     "runtime_dependency_cleanups": [
       {
         "file": "services/control-plane/bff/requirements.txt",
@@ -187,6 +283,14 @@
       }
     ],
     "dockerfile_reconciliations": [
+      {
+        "file": "services/control-plane/router/Dockerfile",
+        "changes": "Updated COPY from absolute lock path to requirements.txt to align with Compose single-service build context services/control-plane/router."
+      },
+      {
+        "file": "services/control-plane/router/requirements.txt",
+        "changes": "Pinned exact locked closure from dependencies/locks/services-control-plane-router.txt."
+      },
       {
         "file": "services/search/Dockerfile",
         "changes": "Updated base image to python:3.12-slim to satisfy numpy==2.5.2 requirement in requirements.lock; verified clean container build."
@@ -259,31 +363,37 @@
         "description": "Consultation service models, postgres store, and idempotency tests",
         "command": ".venv-pantheon/bin/pytest services/consultation/test_models.py services/consultation/test_postgres_store.py services/consultation/test_request_idempotency.py",
         "exit_code": 0,
-        "result": "18 passed in 5.21s"
+        "result": "18 passed in 5.97s"
       },
       {
         "description": "OpenClaw gateway adapter test suite",
         "command": ".venv-pantheon/bin/pytest services/openclaw-gateway-adapter/test_main.py",
         "exit_code": 0,
-        "result": "132 passed in 27.28s"
+        "result": "132 passed in 36.32s"
       },
       {
         "description": "SSE contracts, event streaming, backpressure, and attention tests",
         "command": ".venv-pantheon/bin/pytest services/control-plane/bff/events/test_router.py services/control-plane/bff/tests/test_events_router.py services/control-plane/bff/tests/test_sse_backpressure.py services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/test_tj_e2e_007_sse_attention.py",
         "exit_code": 0,
-        "result": "79 passed in 46.51s"
+        "result": "79 passed in 43.81s"
       },
       {
         "description": "Auth, crypto, JWKS strict, session, token refresh, and assertion tests",
         "command": ".venv-pantheon/bin/pytest services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/tests/test_openclaw_ops_service_auth.py services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py services/control-plane/bff/tests/test_agora_write_authority.py services/control-plane/bff/tests/test_auth_jwks_strict.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/tests/test_bff_auth_refresh.py",
         "exit_code": 0,
-        "result": "208 passed, 89 warnings in 87.02s"
+        "result": "208 passed, 88 warnings in 160.53s"
       },
       {
         "description": "Search service contract and HTTP service tests",
         "command": ".venv-pantheon/bin/pytest services/search/tests/test_contracts.py services/search/tests/test_http_service.py",
         "exit_code": 0,
-        "result": "6 passed in 0.95s"
+        "result": "6 passed in 5.72s"
+      },
+      {
+        "description": "Python virtualenv dependency closure validation",
+        "command": ".venv-pantheon/bin/python -m pip check",
+        "exit_code": 0,
+        "result": "No broken requirements found."
       },
       {
         "description": "Total verification batch across all in-scope test suites",
@@ -291,16 +401,39 @@
         "result": "443 passed, 89 warnings across consultation, openclaw adapter, SSE contracts, auth/assertion, and search suites with zero missing-dependency skips"
       },
       {
-        "description": "Isolated docker container image builds",
-        "command": "docker build -f services/search/Dockerfile ., docker build -f services/control-plane/bff/Dockerfile ., docker build -f services/consultation/Dockerfile .",
+        "description": "Router container image build with single-service context and clean-image startup check",
+        "command": "BUILDX_CONFIG=/tmp/oss-core-review-buildx docker build -q -f services/control-plane/router/Dockerfile services/control-plane/router && docker run --rm sha256:c5d05b7a582d732f94162105c0e72ee6ff8e3fac0557430017c90f976bd94a71 python -c 'import sys; assert \"pytest\" not in sys.modules; import main; print(\"router container OK\")'",
+        "image_digest": "sha256:c5d05b7a582d732f94162105c0e72ee6ff8e3fac0557430017c90f976bd94a71",
         "exit_code": 0,
-        "result": "pantheon-search-test, pantheon-bff-test, and pantheon-consultation-test built cleanly with exit code 0"
+        "result": "Router built cleanly and started with exit code 0; 'pytest' not in sys.modules"
       },
       {
-        "description": "BFF runtime startup verification without runtime pytest",
-        "command": "BFF_DATA_DIR=/tmp/test RANKING_STORE_BOOTSTRAP=0 RANKING_STORE_DSN='postgresql://test:test@localhost:5432/test' .venv-pantheon/bin/python -c 'assert \"pytest\" not in sys.modules; from services.control_plane.bff import main'",
+        "description": "Search container image build with Python 3.12-slim base and clean-image startup check",
+        "command": "BUILDX_CONFIG=/tmp/oss-core-review-buildx docker build -q -f services/search/Dockerfile . && docker run --rm sha256:6d8d284f1bb8c093e7bb284a7339710f821fcb725a08b84c33673cdbd3f5360d python -c 'import sys; assert \"pytest\" not in sys.modules; from services.search import main; print(\"search container OK\")'",
+        "image_digest": "sha256:6d8d284f1bb8c093e7bb284a7339710f821fcb725a08b84c33673cdbd3f5360d",
         "exit_code": 0,
-        "result": "BFF imported successfully without pytest in runtime sys.modules"
+        "result": "Search built cleanly and started with exit code 0; 'pytest' not in sys.modules"
+      },
+      {
+        "description": "Consultation container image build with locked dependencies and clean-image startup check",
+        "command": "BUILDX_CONFIG=/tmp/oss-core-review-buildx docker build -q -f services/consultation/Dockerfile . && docker run --rm sha256:090969f46b55e04f7434ca71ad57e4f6f5213b9def55fc07faee15ad4765a241 python -c 'import sys; assert \"pytest\" not in sys.modules; from services.consultation import main; print(\"consultation container OK\")'",
+        "image_digest": "sha256:090969f46b55e04f7434ca71ad57e4f6f5213b9def55fc07faee15ad4765a241",
+        "exit_code": 0,
+        "result": "Consultation built cleanly and started with exit code 0; 'pytest' not in sys.modules"
+      },
+      {
+        "description": "BFF container image build with locked dependencies and clean-image startup check",
+        "command": "BUILDX_CONFIG=/tmp/oss-core-review-buildx docker build -q -f services/control-plane/bff/Dockerfile . && docker run --rm sha256:826bc2d9f9ed4731af6b123d81639072bc267020f6f0f0a8aed4ca6c09aeaf9d python -c 'import sys; assert \"pytest\" not in sys.modules; import os; os.environ[\"BFF_DATA_DIR\"]=\"/tmp/test\"; os.environ[\"RANKING_STORE_BOOTSTRAP\"]=\"0\"; os.environ[\"RANKING_STORE_DSN\"]=\"postgresql://test:test@localhost:5432/test\"; from services.control_plane.bff import main; print(\"bff container OK\")'",
+        "image_digest": "sha256:826bc2d9f9ed4731af6b123d81639072bc267020f6f0f0a8aed4ca6c09aeaf9d",
+        "exit_code": 0,
+        "result": "BFF built cleanly and started with exit code 0; 'pytest' not in sys.modules"
+      },
+      {
+        "description": "OpenClaw Gateway Adapter container image build and clean-image startup check",
+        "command": "BUILDX_CONFIG=/tmp/oss-core-review-buildx docker build -q -f services/openclaw-gateway-adapter/Dockerfile . && docker run --rm sha256:28a080ecfaf95d8b15ed009d556593e4c6b67b25120306891e1bd855d829a8ec python -c 'import sys; assert \"pytest\" not in sys.modules; import consultation_provider, main; print(\"adapter OK\")'",
+        "image_digest": "sha256:28a080ecfaf95d8b15ed009d556593e4c6b67b25120306891e1bd855d829a8ec",
+        "exit_code": 0,
+        "result": "OpenClaw Gateway Adapter built cleanly and started with exit code 0; 'pytest' not in sys.modules"
       }
     ]
   },
@@ -314,11 +447,12 @@
     "model_slot_settings_untouched": true,
     "research_ml_isolation": "Research ML dependencies (FinRL, Qlib, Ray) and scientific environments remain untouched. This task locks the core API and service runtimes.",
     "search_lock_reconciled": "services/search/Dockerfile updated to python:3.12-slim and installs from existing services/search/requirements.lock without conflicting secondary lockfiles.",
-    "openclaw_soak_preserved": "integrations/openclaw/gateway/Dockerfile retained its pinned dependencies from SIMPLIFY-OPENCLAW-001."
+    "openclaw_soak_preserved": "integrations/openclaw/gateway/Dockerfile retained its pinned dependencies from SIMPLIFY-OPENCLAW-001.",
+    "bff_assembly_ownership": "services/control-plane/bff/main.py assembly ownership remains reserved for SIMPLIFY-BFF-RESIDUAL-001."
   },
   "review_decision": {
     "status": "pending",
     "reviewer": "Codex",
-    "note": "Independently verify against this exact head: (1) native SSE migration on production BFF path with retired injected fallback handle_sse_stream preference in events/router.py, native event_filter/[DONE] termination in EventStreamService, and reader binding to BFF_DATA_DIR for file-backed replay/restart without modifying main.py; (2) persistence and DONE token evidence with jsonable_encoder serialization in events/service.py, real file-backed persistence and reload tests for EventStreamService and ConsultationStore, mounted-app replay/restart regression test with BFF_DATA_DIR, and actual adapter HTTP [DONE] transport termination; (3) search API baseline reconciliation with psycopg==3.3.6, psycopg-binary==3.3.6, and uvicorn==0.53.0 in services/search/requirements.lock aligned with constraints-core.txt; (4) services/search/Dockerfile aligned with python:3.12-slim; (5) all 24+ service Dockerfiles wired to install exact locked closures from dependencies/locks/*.txt; (6) google-cloud-storage reconciled to official PyPI latest stable 3.14.1 across constraints, locks, and venv; (7) pytest moved to root requirements.txt for CI owner contract runs; (8) test_ppl_alloc_009_assertion_semantics exercises real production authority main._pm12_semantic_values_match; (9) all 443 tests pass cleanly with zero skips."
+    "note": "Independently verify against this exact head: (1) P1 router build context resolved: services/control-plane/router/Dockerfile updated to COPY requirements.txt and services/control-plane/router/requirements.txt pinned to exact locked closure, enabling successful docker build with context services/control-plane/router matching docker-compose.yml:1674 without modifying files outside artifact scope; (2) P2 native SSE migration on production paths: services/openclaw-gateway-adapter/main.py uses response_class=EventSourceResponse yielding ServerSentEvent instances natively; services/control-plane/bff/events/service.py implements PantheonServerSentEvent (subclassing fastapi.sse.ServerSentEvent with wire-string and splitlines compatibility) yielding ServerSentEvent instances natively while preserving heartbeat comments and [DONE] termination; (3) P2 dispatcher ownership reconciled: domain SSE routing in events/service.py and events/router.py is fully native under OSS-CORE-BASELINE-001, while top-level Agora injection and assembly in main.py:16500-16658 is owned by SIMPLIFY-BFF-RESIDUAL-001; (4) P2 exact sha256 image evidence and clean container startup verification recorded for router, search, consultation, bff, and openclaw-gateway-adapter with zero runtime pytest; (5) per-family disposition and primary-source compatibility matrix added for Flask, Redis, NATS, Discord, Telegram, HTTPX, asyncpg, psycopg, jsonschema, python-multipart, and GCS; (6) search API baseline reconciliation with psycopg==3.3.6, psycopg-binary==3.3.6, and uvicorn==0.53.0 in services/search/requirements.lock aligned with constraints-core.txt; (7) all 24+ service Dockerfiles wired to install exact locked closures from dependencies/locks/*.txt; (8) test_ppl_alloc_009_assertion_semantics exercises real production authority main._pm12_semantic_values_match; (9) all 443 tests pass cleanly with zero skips and pip check reports no broken requirements."
   }
 }

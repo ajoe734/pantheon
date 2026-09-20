@@ -50,6 +50,46 @@ class SseReplayUnavailableError(Exception):
     """The requested Last-Event-ID has fallen outside the replay window."""
 
 
+class PantheonServerSentEvent(ServerSentEvent):
+    """Native ServerSentEvent subclass supporting wire-string compatibility for callers expecting string properties."""
+
+    def _to_wire_str(self) -> str:
+        if self.comment is not None and not self.data and not self.raw_data and not self.event and not self.id:
+            return f": {self.comment}\n\n"
+        data_str = (
+            self.raw_data
+            if self.raw_data is not None
+            else (json.dumps(self.data) if self.data is not None else None)
+        )
+        return format_sse_event(
+            data_str=data_str,
+            event=self.event,
+            id=self.id,
+            retry=self.retry,
+            comment=self.comment,
+        ).decode("utf-8")
+
+    def __str__(self) -> str:
+        return self._to_wire_str()
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, str):
+            return self._to_wire_str() == other
+        return super().__eq__(other)
+
+    def __contains__(self, item: Any) -> bool:
+        return str(item) in self._to_wire_str()
+
+    def splitlines(self, keepends: bool = False) -> list[str]:
+        return self._to_wire_str().splitlines(keepends)
+
+    def startswith(self, prefix: Any, *args: Any) -> bool:
+        return self._to_wire_str().startswith(prefix, *args)
+
+    def endswith(self, suffix: Any, *args: Any) -> bool:
+        return self._to_wire_str().endswith(suffix, *args)
+
+
 class EventStreamService:
     """Own SSE buffers, replay, subscriptions, and internal event delivery.
 
@@ -242,6 +282,34 @@ class EventStreamService:
             )
         return result
 
+    @staticmethod
+    def to_server_sent_event(event: Any) -> PantheonServerSentEvent:
+        if isinstance(event, PantheonServerSentEvent):
+            return event
+        if isinstance(event, ServerSentEvent):
+            return PantheonServerSentEvent(
+                id=event.id,
+                event=event.event,
+                data=event.data,
+                raw_data=event.raw_data,
+                retry=event.retry,
+                comment=event.comment,
+            )
+        if isinstance(event, dict):
+            event_id = event.get("id")
+            event_type = event.get("type")
+            return PantheonServerSentEvent(
+                id=str(event_id) if event_id is not None else None,
+                event=str(event_type) if event_type is not None else None,
+                data=event,
+            )
+        if isinstance(event, str):
+            clean = event.strip()
+            if clean == "data: [DONE]" or clean == "[DONE]":
+                return PantheonServerSentEvent(raw_data="[DONE]")
+            return PantheonServerSentEvent(raw_data=clean)
+        return PantheonServerSentEvent(data=event)
+
     def replay(self, channel: str, buffer: deque, last_event_id: Optional[str]) -> list[dict[str, Any]]:
         if self._shared_replay_enabled() and channel in self.channel_set:
             return self._replay_from_events(
@@ -258,30 +326,30 @@ class EventStreamService:
         subscribers: list[asyncio.Queue],
         last_event_id: Optional[str],
         event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[PantheonServerSentEvent, None]:
         queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         subscribers.append(queue)
         try:
             for event in self.replay(channel, buffer, last_event_id):
                 if event_filter is not None and isinstance(event, dict) and not event_filter(event):
                     continue
-                yield self.format_event(event)
+                yield self.to_server_sent_event(event)
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15.0)
                     if event is None:
                         break
                     if isinstance(event, ServerSentEvent) and event.raw_data == "[DONE]":
-                        yield self.format_event(event)
+                        yield self.to_server_sent_event(event)
                         break
                     if isinstance(event, str) and (event.strip() == "data: [DONE]" or event.strip() == "[DONE]"):
-                        yield self.format_event(event)
+                        yield PantheonServerSentEvent(raw_data="[DONE]")
                         break
                     if event_filter is not None and isinstance(event, dict) and not event_filter(event):
                         continue
-                    yield self.format_event(event)
+                    yield self.to_server_sent_event(event)
                 except asyncio.TimeoutError:
-                    yield format_sse_event(comment="heartbeat").decode("utf-8")
+                    yield PantheonServerSentEvent(comment="heartbeat")
         finally:
             if queue in subscribers:
                 subscribers.remove(queue)
@@ -325,8 +393,13 @@ class EventStreamService:
         }
         if extra_headers:
             headers.update(extra_headers)
+
+        async def _encode_stream() -> AsyncGenerator[str, None]:
+            async for item in self.stream(channel, buffer, subscribers, last_event_id, event_filter=event_filter):
+                yield self.format_event(item)
+
         return EventSourceResponse(
-            self.stream(channel, buffer, subscribers, last_event_id, event_filter=event_filter),
+            _encode_stream(),
             headers=headers,
         )
 

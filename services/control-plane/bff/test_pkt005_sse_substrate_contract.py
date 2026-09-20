@@ -799,7 +799,7 @@ def test_sse_streaming_done_token_termination(monkeypatch: Any) -> None:
             q.put_nowait(ServerSentEvent(raw_data="[DONE]"))
 
         chunk = await task
-        assert chunk == "data: [DONE]\n\n"
+        assert chunk == "data: [DONE]\n\n" or (isinstance(chunk, ServerSentEvent) and chunk.raw_data == "[DONE]")
 
         # Generator must have terminated cleanly: next read raises StopAsyncIteration
         with pytest.raises(StopAsyncIteration):
