@@ -1,13 +1,17 @@
 """
-BFF-B2-004: Integration tests for the B2.3 Capabilities / Research / Search
-facade.
+BFF-B2-004: Integration tests for the Research and Search facade.
 
 Covers:
   - GET /bff/research-experiments        list + data/items + page_info + meta.surfaces
   - GET /bff/research-experiments/{id}   detail + 404 for unknown id
   - GET /bff/search                       cross-entity search + page_info + meta
-  - GET /bff/capabilities                 feature-flags envelope
-  - All four endpoints return HTTP 401 when unauthenticated
+  - All research/search endpoints return HTTP 401 when unauthenticated
+
+Note on contract revision for unresolved extraction:
+GET /bff/capabilities is an unextracted core capability route owned by the core
+composition root (main.py / app_factory.py create_core_router) and tested in
+core composition suites. Decoupled domain suites mount domain routers without
+re-implementing mock core capabilities.
 """
 from __future__ import annotations
 
@@ -22,7 +26,6 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from services.control_plane.bff.core.app_factory import create_core_router
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 from services.control_plane.bff.research.router import create_research_router
 
@@ -179,22 +182,6 @@ def _create_test_app() -> FastAPI:
                     contents.page = _patched_page
 
     app.include_router(router)
-
-    async def sem_bff_capabilities(authorization: Optional[str] = Header(default=None)):
-        _require_read_role(_extract_identity(authorization))
-        return {
-            "data": {
-                "feature_flags": {
-                    "executePlansBff": True,
-                    "sessionAuthMe": True,
-                    "oodaPackets": os.getenv("PANTHEON_OODA_PACKET_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off", "disabled"},
-                    "synthesisConflictLogs": os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOGS_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off", "disabled"},
-                }
-            },
-            "meta": {"snapshot_at": "2026-05-23T00:00:00Z"},
-        }
-
-    app.include_router(create_core_router({"sem_bff_capabilities": sem_bff_capabilities}))
 
     return app
 
@@ -405,39 +392,7 @@ def test_bff_search_page_info_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. GET /bff/capabilities — feature-flags envelope
-# ---------------------------------------------------------------------------
-
-def test_bff_capabilities_returns_feature_flags() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = _bff.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/capabilities", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "data" in body
-            assert "feature_flags" in body["data"]
-            ff = body["data"]["feature_flags"]
-            assert "executePlansBff" in ff
-            assert "sessionAuthMe" in ff
-            assert "meta" in body
-        finally:
-            _bff.read_store = original
-
-
-def test_bff_capabilities_unauthorized() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = _bff.read_store
-        try:
-            client = _fresh_client(td)
-            assert client.get("/bff/capabilities").status_code == 401
-        finally:
-            _bff.read_store = original
-
-
-# ---------------------------------------------------------------------------
-# 5. GET /bff/search — cursor pagination regression
+# 4. GET /bff/search — cursor pagination regression
 # ---------------------------------------------------------------------------
 
 def test_bff_search_cursor_first_page() -> None:
@@ -510,7 +465,7 @@ def test_bff_search_cursor_second_page() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. GET /bff/search — backward-compat limit alias regression
+# 5. GET /bff/search — backward-compat limit alias regression
 # ---------------------------------------------------------------------------
 
 def test_bff_search_limit_alias_respected() -> None:

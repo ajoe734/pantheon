@@ -44,25 +44,6 @@ class _AnalysisPortDouble(DefaultResearchKnowledgeSourcePort):
         return super().get_research_analysis(analysis_id)
 
 
-class SurfaceStr(str):
-    def get(self, key: str, default: Any = None) -> Any:
-        if key == "status":
-            return self
-        return default
-
-
-class _Rw03ResearchRouterService(ResearchRouterService):
-    def _surface(self, dataset: str, *, snapshot_at: str, has_data: bool) -> Any:
-        raw = super()._surface(dataset, snapshot_at=snapshot_at, has_data=has_data)
-        status = raw.get("status")
-        source = raw.get("source")
-        if status == "unavailable" or source == "missing" or not has_data:
-            return SurfaceStr("unavailable")
-        if source == "local_snapshot":
-            return SurfaceStr("degraded")
-        return SurfaceStr("fresh")
-
-
 def _extract_identity(authorization: Optional[str]) -> Optional[Any]:
     if not authorization or not authorization.startswith("Bearer "):
         return None
@@ -102,7 +83,7 @@ def _create_test_app(port: _AnalysisPortDouble) -> FastAPI:
             return JSONResponse(status_code=exc.status_code, content=exc.detail)
         return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
 
-    service = _Rw03ResearchRouterService(
+    service = ResearchRouterService(
         port_getter=lambda: port,
         utc_now=lambda: "2026-04-20T03:10:00Z",
         snapshot_meta=lambda stamp, **kw: {"snapshot_at": stamp, **kw},
@@ -237,7 +218,10 @@ def test_rw03_list_contract_returns_backend_grouped_analysis_projection() -> Non
         assert [item["analysis_id"] for item in payload["data"]] == ["analysis-service-001"]
         assert payload["data"][0]["metric_group_refs"] == ["performance"]
         assert payload["data"][0]["summary"]["verdict"] == "hold"
-        assert payload["meta"]["surfaces"]["analysis_results"] == "fresh"
+        assert payload["meta"]["surfaces"]["analysis_results"] == {
+            "status": "ok",
+            "source": "service_client",
+        }
 
 
 def test_rw03_detail_contract_returns_metric_groups_and_comparative_summary() -> None:
@@ -261,7 +245,10 @@ def test_rw03_detail_contract_returns_metric_groups_and_comparative_summary() ->
             "linked_ticket_detail": "/research/tickets/rt-service-001",
             "linked_experiment_detail": "/research/experiments/exp-service-001",
         }
-        assert payload["meta"]["surfaces"]["analysis_results"] == "fresh"
+        assert payload["meta"]["surfaces"]["analysis_results"] == {
+            "status": "ok",
+            "source": "service_client",
+        }
 
 
 def test_rw03_list_rejects_invalid_status_filter() -> None:
@@ -286,7 +273,10 @@ def test_rw03_service_backed_reads_override_seeded_snapshot() -> None:
 
         payload = list_response.json()
         assert [item["analysis_id"] for item in payload["data"]] == ["analysis-service-001"]
-        assert payload["meta"]["surfaces"]["analysis_results"] == "fresh"
+        assert payload["meta"]["surfaces"]["analysis_results"] == {
+            "status": "ok",
+            "source": "service_client",
+        }
         assert payload["data"][0]["metric_group_refs"] == ["performance"]
 
         detail_response = client.get(
@@ -298,7 +288,10 @@ def test_rw03_service_backed_reads_override_seeded_snapshot() -> None:
         detail = detail_response.json()
         assert detail["summary"]["headline"] == "Service-backed analysis wins over local fallback"
         assert detail["comparative_summary"]["baseline_analysis_id"] == "analysis-service-000"
-        assert detail["meta"]["surfaces"]["analysis_results"] == "fresh"
+        assert detail["meta"]["surfaces"]["analysis_results"] == {
+            "status": "ok",
+            "source": "service_client",
+        }
 
 
 def test_rw03_detail_does_not_fall_back_to_local_snapshot() -> None:
@@ -324,4 +317,5 @@ def test_rw03_list_reports_unavailable_without_service_or_snapshot_fallback() ->
             "next_page_token": None,
             "total": 0,
         }
-        assert payload["meta"]["surfaces"]["analysis_results"] == "unavailable"
+        assert payload["meta"]["surfaces"]["analysis_results"]["status"] == "unavailable"
+        assert payload["meta"]["surfaces"]["analysis_results"]["source"] == "missing"

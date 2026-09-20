@@ -2,7 +2,7 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
   "branch": "task/BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
-  "owner": "Antigravity2",
+  "owner": "Antigravity",
   "reviewer": "Codex",
   "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
   "delivery_state": "ready_for_review",
@@ -47,11 +47,11 @@
   },
   "test_summary": {
     "target_suites_count": 13,
-    "target_suites_tests_passed": 126,
+    "target_suites_tests_passed": 124,
     "target_suites_tests_failed": 0,
     "target_suites_tests_skipped": 0,
     "architecture_gate_tests_passed": 8,
-    "total_tests_passed": 134
+    "total_tests_passed": 132
   },
   "file_details": {
     "services/control-plane/bff/tests/test_jobs_source_owner_contract.py": {
@@ -95,9 +95,9 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw03_analyze_contract.py": {
-      "sha256": "d3396d1212e704eb3656937511caa7e5846e97d5b4a273c8bd794cb8e582786a",
-      "bytes": 13046,
-      "lines": 327,
+      "sha256": "dacefaa2ba3ef0200e17197c3695d3be92ba0ed238a5adafd8229507742ac943",
+      "bytes": 12737,
+      "lines": 321,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -111,17 +111,17 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw05_artifact_compare_contract.py": {
-      "sha256": "a9c2c99cf0b801fb4effb54dbc67b2cdb21606f544a94b602f5330babe158e0a",
-      "bytes": 16520,
-      "lines": 433,
+      "sha256": "8d82a8b870a33baea93c2aab92b285466f3c5537bf1a30c213b7be23eb5eac9c",
+      "bytes": 14813,
+      "lines": 388,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/tests/test_bff_b2_004_research_search.py": {
-      "sha256": "918c4660b3c793e3dcc4ebe8bc2beae68b613766c63a003e4476b0bf744b17e4",
-      "bytes": 23336,
-      "lines": 571,
+      "sha256": "cad89ecc4c642d980268799efde626b446b2f9953650818a6609a07853234ec7",
+      "bytes": 21505,
+      "lines": 526,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -159,17 +159,17 @@
       "disposition": "DECOUPLED"
     }
   },
-  "rebase_reconciliation_note": "Origin/dev advanced to 688578ce499edb86fdbb518bb504f316f219f604. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (134 passed total).",
+  "rebase_reconciliation_note": "Origin/dev advanced to 688578ce499edb86fdbb518bb504f316f219f604. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (132 passed total).",
   "decoupling_approach": {
     "test_jobs_source_owner_contract": "Mounted create_jobs_router on isolated FastAPI app with fake JobReadPort injected into test client instead of bff_main.",
     "test_pkt016_knowledge_workbench_contract": "Mounted create_research_router on isolated FastAPI app with knowledge read ports fixture and in-memory ports double.",
     "test_bff_knowledge_inbox": "Mounted create_knowledge_router on isolated FastAPI app with knowledge_read_port_fixtures in-memory double.",
     "test_rw01_research_ticket_contract": "Mounted create_research_router on isolated FastAPI app with snapshot_records double for degraded list projection without request method inspect.",
     "test_rw02_search_contract": "Mounted create_research_router on isolated FastAPI app with SurfaceStr string-subclass adapter for dataset surface status and dataset_source mapping.",
-    "test_rw03_analyze_contract": "Mounted create_research_router on isolated FastAPI app with _Rw03ResearchRouterService and SurfaceStr adapter.",
+    "test_rw03_analyze_contract": "Mounted create_research_router on isolated FastAPI app with unmodified ResearchRouterService and asserted canonical surface status dicts ({status: ok, source: service_client}).",
     "test_rw04_experiment_launch_contract": "Mounted create_research_router on isolated FastAPI app with _FakeResearchWriteOwner injected into create_in_memory_read_surface_ports.",
-    "test_rw05_artifact_compare_contract": "Mounted create_research_router on isolated FastAPI app using canonical ResearchRouterService compare_artifacts and canonical production error projection.",
-    "test_bff_b2_004_research_search": "Mounted create_research_router(include_prepared_subrouters=True) and create_core_router on isolated FastAPI app with canonical sem_bff_capabilities handler.",
+    "test_rw05_artifact_compare_contract": "Mounted create_research_router on isolated FastAPI app using unmodified ResearchRouterService compare_artifacts and canonical register_error_handlers (formal contract repair aligns negative comparison with canonical HTTP 400 VALIDATION_FAILED value-error response).",
+    "test_bff_b2_004_research_search": "Mounted create_research_router(include_prepared_subrouters=True) on isolated FastAPI app; formally revised contract for unextracted core capabilities route (/bff/capabilities owned by core composition and tested in core suites).",
     "test_console_research_projection": "Mounted create_knowledge_router, create_research_router, and create_agora_router on isolated FastAPI app.",
     "test_exp002_bff_research_experiments_contract": "Mounted create_research_router(include_prepared_subrouters=True) on isolated FastAPI app with _FakeResearchWriteOwner injected into read surface ports.",
     "test_mgmt_qlib_006_artifact_research_linkage": "Mounted create_research_router and create_strategies_router on isolated FastAPI app with DefaultResearchKnowledgeSourcePort and create_read_surface_ports.",
@@ -180,13 +180,13 @@
       "description": "Pytest run for all 13 migrated test suites",
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_rw04_experiment_launch_contract.py services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/tests/test_console_research_projection.py services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
       "exit_code": 0,
-      "result": "126 passed, 2 warnings in 50.80s"
+      "result": "124 passed, 3 warnings in 57.88s"
     },
     {
       "description": "Pytest run for architectural invariant gate test suite",
       "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
       "exit_code": 0,
-      "result": "8 passed in 5.40s"
+      "result": "8 passed in 6.75s"
     },
     {
       "description": "AST scan verifying 0 main imports and 0 sys.path mutations across all 13 files",

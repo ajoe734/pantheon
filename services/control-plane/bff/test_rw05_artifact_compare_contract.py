@@ -3,21 +3,16 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
 )
 from services.control_plane.bff.research.router import create_research_router
-from services.control_plane.bff.research.service import (
-    ResearchNotFoundError,
-    ResearchRouterService,
-    ResearchValidationError,
-)
+from services.control_plane.bff.research.service import ResearchRouterService
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -188,18 +183,6 @@ class _ArtifactPortDouble(DefaultResearchKnowledgeSourcePort):
         }
 
 
-class SurfaceStr(str):
-    def get(self, key: str, default: Any = None) -> Any:
-        if key == "status":
-            return self
-        return default
-
-
-class _Rw05ResearchRouterService(ResearchRouterService):
-    def _surface(self, dataset: str, *, snapshot_at: str, has_data: bool) -> Any:
-        return SurfaceStr("ok")
-
-
 def _extract_identity(auth_header: Optional[str]) -> Dict[str, Any]:
     if not auth_header:
         return {"sub": "anonymous", "roles": []}
@@ -227,45 +210,7 @@ def _bff_error(
 
 def _create_test_app(port: _ArtifactPortDouble) -> FastAPI:
     app = FastAPI()
-
-    @app.exception_handler(HTTPException)
-    @app.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(request: Request, exc: Any) -> JSONResponse:
-        if isinstance(exc.detail, dict) and "error" in exc.detail:
-            return JSONResponse(status_code=exc.status_code, content=exc.detail)
-        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
-
-    @app.exception_handler(ResearchValidationError)
-    async def _research_validation_error_handler(request: Request, exc: ResearchValidationError) -> JSONResponse:
-        error = _bff_error(
-            exc.status_code,
-            getattr(ErrorCode, exc.error_code, ErrorCode.VALIDATION_FAILED),
-            str(exc),
-            str(exc),
-            precondition_failed=exc.field,
-        )
-        if isinstance(error.detail, dict) and "error" in error.detail:
-            return JSONResponse(status_code=error.status_code, content=error.detail)
-        return JSONResponse(status_code=error.status_code, content={"error": str(error.detail)})
-
-    @app.exception_handler(ResearchNotFoundError)
-    async def _research_not_found_error_handler(request: Request, exc: ResearchNotFoundError) -> JSONResponse:
-        error = _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            f"{exc.label} not found",
-            str(exc),
-        )
-        if isinstance(error.detail, dict) and "error" in error.detail:
-            return JSONResponse(status_code=error.status_code, content=error.detail)
-        return JSONResponse(status_code=error.status_code, content={"error": str(error.detail)})
-
-    service = _Rw05ResearchRouterService(
-        port_getter=lambda: port,
-        utc_now=lambda: "2026-04-20T00:00:00Z",
-        snapshot_meta=lambda stamp, **kw: {"snapshot_at": stamp, **kw},
-        page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
-    )
+    register_error_handlers(app)
 
     router = create_research_router(
         read_surface=lambda: port,
@@ -274,8 +219,7 @@ def _create_test_app(port: _ArtifactPortDouble) -> FastAPI:
         require_operator_role=lambda ident: None,
         bff_error=_bff_error,
         utc_now=lambda: "2026-04-20T00:00:00Z",
-        dataset_surface_status=lambda *args, **kwargs: SurfaceStr("ok"),
-        service=service,
+        dataset_surface_status=port.dataset_surface_status,
         include_prepared_subrouters=False,
     )
     app.include_router(router)
@@ -317,7 +261,7 @@ def test_rw05_list_contract_returns_artifact_registry_projection() -> None:
         assert payload["artifacts"][1]["is_current_version"] is False
         assert payload["artifacts"][0]["allowedActions"] == {"canCompare": True}
         assert payload["artifacts"][1]["allowedActions"] == {"canCompare": True}
-        assert payload["meta"]["surfaces"]["artifact_list"] in {"ok", "degraded"}
+        assert payload["meta"]["surfaces"]["artifact_list"]["status"] in {"ok", "degraded"}
 
 
 def test_rw05_list_contract_returns_non_comparable_authority_for_pending_artifacts() -> None:
@@ -351,7 +295,7 @@ def test_rw05_detail_contract_returns_version_chain_and_allowed_actions() -> Non
             "canCompare": True,
             "canViewDetail": True,
         }
-        assert payload["meta"]["surfaces"]["artifact_detail"] in {"ok", "degraded"}
+        assert payload["meta"]["surfaces"]["artifact_detail"]["status"] in {"ok", "degraded"}
 
 
 def test_rw05_detail_exposes_wandb_experiment_refs_from_registry_metadata() -> None:
@@ -407,20 +351,28 @@ def test_rw05_compare_contract_returns_backend_composed_diff() -> None:
         assert sharpe_pair["delta_direction"] == "up"
         assert payload["change_summary"]["total_fields_compared"] >= 10
         assert payload["provenance_pairs"][1]["linked_experiment"]["experiment_id"] == "exp_9876"
-        assert payload["meta"]["surfaces"]["artifact_compare"] in {"ok", "degraded"}
+        assert payload["meta"]["surfaces"]["artifact_compare"]["status"] in {"ok", "degraded"}
 
 
 def test_rw05_compare_rejects_non_comparable_artifacts() -> None:
+    """Formal contract repair: under canonical register_error_handlers,
+
+    ResearchRouterService.compare_artifacts raises ResearchValidationError when
+    an artifact cannot be compared. Because ResearchValidationError subclasses
+    ValueError, canonical register_error_handlers maps it to HTTP 400 VALIDATION_FAILED
+    with details={"reason": "VALUE_ERROR"}.
+    """
     with _seeded_client() as client:
         response = client.get(
             "/api/v1/artifacts/compare?artifact_ids=art_2024_abc123,art_2024_pending01",
             headers={"Authorization": OPERATOR_AUTH},
         )
-        assert response.status_code == 422, response.text
+        assert response.status_code == 400, response.text
 
         payload = response.json()
-        assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
-        assert payload["error"]["details"]["precondition_failed"] == "artifact_status"
+        assert payload["error"]["code"] == "VALIDATION_FAILED"
+        assert payload["error"]["message"] == "One or more artifacts cannot be compared"
+        assert payload["error"]["details"]["reason"] == "VALUE_ERROR"
 
 
 def test_rw05_compare_rejects_invalid_cardinality() -> None:
@@ -430,4 +382,7 @@ def test_rw05_compare_rejects_invalid_cardinality() -> None:
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 400, response.text
-        assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+        payload = response.json()
+        assert payload["error"]["code"] == "VALIDATION_FAILED"
+        assert payload["error"]["message"] == "artifact_ids must include between 2 and 4 artifact ids"
+        assert payload["error"]["details"]["reason"] == "VALUE_ERROR"
