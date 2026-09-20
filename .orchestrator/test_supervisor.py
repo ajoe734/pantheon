@@ -5497,6 +5497,177 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertEqual(observations[0]["endpoint_id"], "claude")
         probe.assert_called_once_with(self.config, "claude", force=True, check_capacity=True)
 
+    def test_bootstrap_cold_start_refresh_to_admission_probes_capacity(self) -> None:
+        """Cold-start lane with no account health probes capacity before admission."""
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-shared",
+        }
+        state: dict[str, Any] = {"workers": {}, "queue": {"events": {}}, "delivery_health": {}}
+        now = datetime.now(timezone.utc)
+
+        gate, target = supervisor.rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id="claude",
+            account_id="claude_shared",
+            endpoint_health=supervisor._admission_health_records(state["delivery_health"], "endpoints"),
+            account_health=supervisor._admission_health_records(state["delivery_health"], "accounts"),
+            now=now,
+        )
+        self.assertEqual(gate, supervisor.rewrite_dispatch_admission.DispatchBlockReason.HEALTH_REFRESH_REQUIRED)
+        self.assertIsNotNone(target)
+
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "claude_prompt"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config, [{"scope": "endpoint", "id": "claude"}], quiet=True, state=state,
+            )
+        probe.assert_called_once_with(self.config, "claude", force=True, check_capacity=True)
+        supervisor.apply_delivery_health_observations(self.config, state, observations)
+
+        self.assertEqual(
+            supervisor.rewrite_provider_health.account_state(state["delivery_health"], "claude_shared", now=now),
+            supervisor.rewrite_provider_health.DeliveryHealthState.HEALTHY,
+        )
+        gate, target = supervisor.rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id="claude",
+            account_id="claude_shared",
+            endpoint_health=supervisor._admission_health_records(state["delivery_health"], "endpoints"),
+            account_health=supervisor._admission_health_records(state["delivery_health"], "accounts"),
+            now=now,
+        )
+        self.assertIsNone(gate)
+        self.assertIsNone(target)
+
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "claude_auth_status_refresh"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config, [{"scope": "endpoint", "id": "claude"}], quiet=True, state=state,
+            )
+        probe.assert_called_once_with(self.config, "claude", force=True)
+        supervisor.apply_delivery_health_observations(self.config, state, observations)
+        self.assertEqual(
+            supervisor.rewrite_provider_health.account_state(state["delivery_health"], "claude_shared", now=now),
+            supervisor.rewrite_provider_health.DeliveryHealthState.HEALTHY,
+        )
+
+    def test_ttl_expiry_refresh_to_admission_probes_capacity(self) -> None:
+        """Expired healthy account demands fresh capacity probe before re-admission."""
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-shared",
+        }
+        now = datetime.now(timezone.utc)
+        state: dict[str, Any] = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "claude": {"state": "healthy", "valid_until": (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")},
+                },
+                "accounts": {
+                    "claude_shared": {"state": "healthy", "valid_until": (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")},
+                },
+            },
+        }
+
+        gate, target = supervisor.rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id="claude",
+            account_id="claude_shared",
+            endpoint_health=supervisor._admission_health_records(state["delivery_health"], "endpoints"),
+            account_health=supervisor._admission_health_records(state["delivery_health"], "accounts"),
+            now=now,
+        )
+        self.assertEqual(gate, supervisor.rewrite_dispatch_admission.DispatchBlockReason.HEALTH_REFRESH_REQUIRED)
+
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "claude_prompt"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config, [{"scope": "endpoint", "id": "claude"}], quiet=True, state=state,
+            )
+        probe.assert_called_once_with(self.config, "claude", force=True, check_capacity=True)
+        supervisor.apply_delivery_health_observations(self.config, state, observations)
+
+        self.assertEqual(
+            supervisor.rewrite_provider_health.account_state(state["delivery_health"], "claude_shared", now=now),
+            supervisor.rewrite_provider_health.DeliveryHealthState.HEALTHY,
+        )
+        gate, target = supervisor.rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id="claude",
+            account_id="claude_shared",
+            endpoint_health=supervisor._admission_health_records(state["delivery_health"], "endpoints"),
+            account_health=supervisor._admission_health_records(state["delivery_health"], "accounts"),
+            now=now,
+        )
+        self.assertIsNone(gate)
+
+    def test_auth_only_success_does_not_infer_capacity_or_admit_account(self) -> None:
+        """Authentication success without capacity probe does not mark account healthy or admit lane."""
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-shared",
+        }
+        now = datetime.now(timezone.utc)
+        state: dict[str, Any] = {"workers": {}, "queue": {"events": {}}, "delivery_health": {}}
+
+        auth_obs = [{
+            "endpoint_id": "claude",
+            "account_id": "claude_shared",
+            "probe": {
+                "ready": True,
+                "status": "ready",
+                "source": "live",
+                "method": "claude_auth_status_refresh",
+                "checked_at": now.isoformat().replace("+00:00", "Z"),
+            },
+        }]
+        supervisor.apply_delivery_health_observations(self.config, state, auth_obs)
+
+        self.assertEqual(
+            supervisor.rewrite_provider_health.endpoint_state(state["delivery_health"], "claude", now=now),
+            supervisor.rewrite_provider_health.DeliveryHealthState.HEALTHY,
+        )
+        self.assertEqual(
+            supervisor.rewrite_provider_health.account_state(state["delivery_health"], "claude_shared", now=now),
+            supervisor.rewrite_provider_health.DeliveryHealthState.UNKNOWN,
+        )
+
+        gate, target = supervisor.rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id="claude",
+            account_id="claude_shared",
+            endpoint_health=supervisor._admission_health_records(state["delivery_health"], "endpoints"),
+            account_health=supervisor._admission_health_records(state["delivery_health"], "accounts"),
+            now=now,
+        )
+        self.assertEqual(gate, supervisor.rewrite_dispatch_admission.DispatchBlockReason.HEALTH_REFRESH_REQUIRED)
+
     def test_quota_exhaustion_fallback_selects_healthy_lane_preserving_reviewer(self) -> None:
         task = {
             "id": "TASK-FALLBACK-001",

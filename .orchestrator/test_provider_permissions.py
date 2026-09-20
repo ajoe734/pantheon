@@ -1678,6 +1678,22 @@ EOF
             "2026-09-21T12:00:00Z",
         )
         self.assertEqual(
+            provider_permissions.parse_quota_reset_at("reset 2026-09-21 12:00 +08:00"),
+            "2026-09-21T04:00:00Z",
+        )
+        self.assertEqual(
+            provider_permissions.parse_quota_reset_at("reset 2026-09-21T12:00+08:00"),
+            "2026-09-21T04:00:00Z",
+        )
+        self.assertEqual(
+            provider_permissions.parse_quota_reset_at("reset 2026-09-21 12:00 -05:00"),
+            "2026-09-21T17:00:00Z",
+        )
+        self.assertEqual(
+            provider_permissions.parse_quota_reset_at("reset 2026-09-21T12:00-05:00"),
+            "2026-09-21T17:00:00Z",
+        )
+        self.assertEqual(
             provider_permissions.parse_quota_reset_at("try again at 2026-09-22 08:30:00 UTC"),
             "2026-09-22T08:30:00Z",
         )

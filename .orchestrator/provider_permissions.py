@@ -104,6 +104,10 @@ _QUOTA_RESET_DATETIME_PATTERN = re.compile(
     r"(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}))?)",
     re.IGNORECASE,
 )
+_QUOTA_RESET_TS_COMPONENTS_PATTERN = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})[T ](?P<time>\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)(?:\s*(?P<tz>Z|UTC|[+-]\d{2}:?\d{2}))?$",
+    re.IGNORECASE,
+)
 _CODEX_QUOTA_RESET_ISO_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])(?:reset(?:s)?(?:[_\s-]*at)?|try\s+again\s+at)"
     r"(?![A-Za-z0-9])[^0-9]{0,32}"
@@ -350,27 +354,25 @@ def parse_quota_reset_at(
     m = _QUOTA_RESET_DATETIME_PATTERN.search(text)
     if m:
         raw_ts = m.group("timestamp").strip()
-        raw_iso = raw_ts.replace(" ", "T").replace("UTC", "+00:00").replace("Z", "+00:00")
-        parts = raw_iso.split("T")
-        date_part = parts[0]
-        time_part = parts[1] if len(parts) > 1 else ""
-        tz = ""
-        if "+" in time_part:
-            time_part, tz = time_part.split("+", 1)
-            tz = "+" + tz
-        elif "-" in time_part:
-            time_part, tz = time_part.split("-", 1)
-            tz = "-" + tz
-        if len(time_part) == 5:
-            time_part += ":00"
-        if not tz:
-            tz = "+00:00"
-        try:
-            parsed = datetime.fromisoformat(f"{date_part}T{time_part}{tz}")
-            if parsed.tzinfo is not None:
-                return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        except ValueError:
-            pass
+        tm = _QUOTA_RESET_TS_COMPONENTS_PATTERN.match(raw_ts)
+        if tm:
+            date_part = tm.group("date")
+            time_part = tm.group("time")
+            tz_part = (tm.group("tz") or "").strip().upper()
+            if len(time_part) == 5:
+                time_part += ":00"
+            if not tz_part or tz_part in ("Z", "UTC"):
+                tz_norm = "+00:00"
+            else:
+                tz_norm = tm.group("tz").strip()
+                if len(tz_norm) == 5 and (tz_norm.startswith("+") or tz_norm.startswith("-")) and ":" not in tz_norm:
+                    tz_norm = f"{tz_norm[:3]}:{tz_norm[3:]}"
+            try:
+                parsed = datetime.fromisoformat(f"{date_part}T{time_part}{tz_norm}")
+                if parsed.tzinfo is not None:
+                    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            except ValueError:
+                pass
 
     match = _CODEX_QUOTA_RESET_ISO_PATTERN.search(text)
     if match:

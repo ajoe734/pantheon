@@ -2420,10 +2420,21 @@ def probe_demanded_delivery_health(
         account_id = agent_account_id(config, endpoint_id)
         if not provider_id or not account_id:
             continue
-        account_entry = accounts.get(account_id, {}) if isinstance(accounts, Mapping) else {}
+        account_entry = (
+            rewrite_provider_health.account_health_entry(health, account_id)
+            if isinstance(health, Mapping)
+            else {}
+        )
+        if account_entry.get("state") == "unknown" and isinstance(health, Mapping):
+            accounts_bucket = health.get("accounts", {})
+            if isinstance(accounts_bucket, Mapping):
+                for k in accounts_bucket:
+                    if normalize_agent_id(str(k)) == account_id:
+                        account_entry = rewrite_provider_health.account_health_entry(health, str(k))
+                        break
         needs_capacity = (
             demand_flags.get(endpoint_id, False)
-            or account_entry.get("state") == "retry_after"
+            or account_entry.get("state") != "healthy"
             or account_entry.get("reason_kind") in (
                 "quota_terminal",
                 "quota",
@@ -2434,7 +2445,9 @@ def probe_demanded_delivery_health(
             or bool(account_entry.get("quota_reset_at"))
         )
         probe_kwargs: dict[str, Any] = {"force": True}
-        if needs_capacity:
+        provider_cfg = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
+        delivery_mode = str(provider_cfg.get("delivery_mode") or provider_id).strip().lower()
+        if needs_capacity and (delivery_mode == "claude_cli" or demand_flags.get(endpoint_id, False)):
             probe_kwargs["check_capacity"] = True
         probe = _safe_phase(
             f"probe_delivery_health:{endpoint_id}",

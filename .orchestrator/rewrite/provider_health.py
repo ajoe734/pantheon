@@ -55,6 +55,10 @@ _RESET_DATETIME_PATTERN = re.compile(
     r"(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}))?)",
     re.IGNORECASE,
 )
+_RESET_TS_COMPONENTS_PATTERN = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})[T ](?P<time>\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)(?:\s*(?P<tz>Z|UTC|[+-]\d{2}:?\d{2}))?$",
+    re.IGNORECASE,
+)
 _RESET_EPOCH_PATTERN = re.compile(
     r'"?resets?[_-]?at"?\s*[:=]\s*"?(?P<epoch>\d{10})"?',
     re.IGNORECASE,
@@ -93,26 +97,24 @@ def _extract_reset_timestamp(text: str | None) -> str | None:
     m = _RESET_DATETIME_PATTERN.search(raw)
     if m:
         raw_ts = m.group("timestamp").strip()
-        raw_iso = raw_ts.replace(" ", "T").replace("UTC", "+00:00").replace("Z", "+00:00")
-        parts = raw_iso.split("T")
-        date_part = parts[0]
-        time_part = parts[1] if len(parts) > 1 else ""
-        tz = ""
-        if "+" in time_part:
-            time_part, tz = time_part.split("+", 1)
-            tz = "+" + tz
-        elif "-" in time_part:
-            time_part, tz = time_part.split("-", 1)
-            tz = "-" + tz
-        if len(time_part) == 5:
-            time_part += ":00"
-        if not tz:
-            tz = "+00:00"
-        try:
-            dt = datetime.fromisoformat(f"{date_part}T{time_part}{tz}")
-            return _iso(dt)
-        except ValueError:
-            pass
+        tm = _RESET_TS_COMPONENTS_PATTERN.match(raw_ts)
+        if tm:
+            date_part = tm.group("date")
+            time_part = tm.group("time")
+            tz_part = (tm.group("tz") or "").strip().upper()
+            if len(time_part) == 5:
+                time_part += ":00"
+            if not tz_part or tz_part in ("Z", "UTC"):
+                tz_norm = "+00:00"
+            else:
+                tz_norm = tm.group("tz").strip()
+                if len(tz_norm) == 5 and (tz_norm.startswith("+") or tz_norm.startswith("-")) and ":" not in tz_norm:
+                    tz_norm = f"{tz_norm[:3]}:{tz_norm[3:]}"
+            try:
+                dt = datetime.fromisoformat(f"{date_part}T{time_part}{tz_norm}")
+                return _iso(dt)
+            except ValueError:
+                pass
 
     em = _RESET_EPOCH_PATTERN.search(raw)
     if em:

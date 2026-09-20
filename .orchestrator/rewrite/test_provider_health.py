@@ -292,6 +292,35 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
         self.assertEqual(entry["quota_reset_at"], "2026-09-22T08:30:00Z")
         self.assertEqual(entry["retry_at"], "2026-09-22T08:30:00Z")
 
+    def test_extract_reset_timestamp_preserves_timezone_offsets(self) -> None:
+        self.assertEqual(
+            provider_health._extract_reset_timestamp("reset 2026-09-21 12:00 +08:00"),
+            "2026-09-21T04:00:00Z",
+        )
+        self.assertEqual(
+            provider_health._extract_reset_timestamp("reset 2026-09-21T12:00+08:00"),
+            "2026-09-21T04:00:00Z",
+        )
+        self.assertEqual(
+            provider_health._extract_reset_timestamp("reset 2026-09-21 12:00 -05:00"),
+            "2026-09-21T17:00:00Z",
+        )
+        self.assertEqual(
+            provider_health._extract_reset_timestamp("reset 2026-09-21T12:00-05:00"),
+            "2026-09-21T17:00:00Z",
+        )
+        snapshot = provider_health.apply_failure(
+            provider_health.empty_delivery_health(),
+            endpoint_id="claude",
+            account_id="claude-shared",
+            failure_kind="quota_terminal",
+            observed_at=self.now,
+            detail='Hit weekly limit with reset 2026-09-21 12:00 +08:00',
+        )
+        entry = snapshot["accounts"]["claude-shared"]
+        self.assertEqual(entry["quota_reset_at"], "2026-09-21T04:00:00Z")
+        self.assertEqual(entry["retry_at"], "2026-09-21T04:00:00Z")
+
 
 if __name__ == "__main__":
     unittest.main()

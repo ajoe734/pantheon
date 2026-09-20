@@ -1,26 +1,26 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "OPS-PROVIDER-QUOTA-READINESS-001",
-  "base_ref": "origin/dev@9fbf1c2eb8c15db63bc97a9f7e8ec8a58145a5aa",
+  "base_ref": "origin/dev@9fbf1c2ebee21fedf08118aeaf4f585dd5b696da",
   "depends_on": [],
   "reproduction": {
-    "description": "An existing quota_terminal account observation was overwritten to HEALTHY by a successful authentication-only probe even though the provider rejected the weekly quota.",
-    "command": "python3 -c '<isolated fixture: apply_failure(quota_terminal, retry_at=now+1day); apply_probe(claude_auth_status_refresh, ready=True)>'",
-    "pre_fix_result": "Before probe: DeliveryHealthState.RETRY_AFTER; After auth-only probe: DeliveryHealthState.HEALTHY (bug reproduced)",
-    "post_fix_result": "Before probe: DeliveryHealthState.RETRY_AFTER; After auth-only probe: DeliveryHealthState.RETRY_AFTER (preserved); After capacity-aware probe: DeliveryHealthState.HEALTHY (recovered)"
+    "description": "An existing quota_terminal account observation was overwritten to HEALTHY by a successful authentication-only probe even though the provider rejected the weekly quota; additionally cold-start and expired-healthy accounts were excluded from capacity probing and timezone offsets were stripped by naive string replacement.",
+    "command": "python3 /tmp/ops-quota-review-repro.py",
+    "pre_fix_result": "Before probe: DeliveryHealthState.RETRY_AFTER; After auth-only probe: DeliveryHealthState.HEALTHY (bug reproduced); cold-start/expired accounts had 0 capacity calls and remained blocked; timezone offsets stripped to UTC",
+    "post_fix_result": "Before probe: DeliveryHealthState.RETRY_AFTER; After auth-only probe: DeliveryHealthState.RETRY_AFTER (preserved); cold-start/expired accounts execute bounded capacity probe and achieve admission; timezone offsets parsed correctly to UTC"
   },
   "results": {
     "provider_health_auth_only_probe_protection": {
       "file": ".orchestrator/rewrite/provider_health.py",
-      "details": "Added is_auth_only_probe helper identifying probes that verify credentials rather than model inference capacity (e.g. claude_auth_status_refresh, gemini_auth_material, copilot_auth_material, codex_auth_file, antigravity_auth_material). When an auth-only probe succeeds, apply_probe updates endpoint health to HEALTHY while preserving account quota and capacity state. In apply_failure and apply_probe, extracted and preserved quota_reset_at timestamps from provider failure details."
+      "details": "Added is_auth_only_probe helper identifying probes that verify credentials rather than model inference capacity (e.g. claude_auth_status_refresh, gemini_auth_material, copilot_auth_material, codex_auth_file, antigravity_auth_material). When an auth-only probe succeeds, apply_probe updates endpoint health to HEALTHY while preserving account quota and capacity state. In apply_failure and apply_probe, extracted and preserved quota_reset_at timestamps from provider failure details, preserving explicit positive/negative timezone offsets with and without spaces."
     },
     "provider_permissions_capacity_probing": {
       "file": ".orchestrator/provider_permissions.py",
-      "details": "Extended _claude_auth_probe and probe_provider_auth with check_capacity parameter. When check_capacity=False (routine auth probe), only authentication is verified via OAuth refresh without consuming inference quota. When check_capacity=True, a non-persistent prompt probe is executed, correctly parsing weekly usage limits and extracting UTC quota reset timestamps."
+      "details": "Extended _claude_auth_probe and probe_provider_auth with check_capacity parameter. When check_capacity=False (routine auth probe), only authentication is verified via OAuth refresh without consuming inference quota. When check_capacity=True, a non-persistent prompt probe is executed, correctly parsing weekly usage limits and extracting UTC quota reset timestamps while preserving explicit timezone offsets."
     },
     "supervisor_demanded_health_refresh": {
       "file": ".orchestrator/supervisor.py",
-      "details": "probe_demanded_delivery_health now accepts runtime state. When an account is in retry_after with quota or capacity failure, or holds a quota_reset_at timestamp, the refresh demand sets check_capacity=True so that the probe genuinely tests model capacity before clearing account gates."
+      "details": "probe_demanded_delivery_health now accepts runtime state and evaluates account health via account_health_entry. When an account is absent/unknown (bootstrap cold start), expired healthy (TTL elapsed), in retry_after with quota or capacity failure, or holds a quota_reset_at timestamp, check_capacity=True is requested for supported delivery modes (claude_cli) or explicitly demanded endpoints. Routine refreshes within the healthy TTL remain auth-only."
     },
     "account_scope_and_fallback": {
       "details": "Preserved account scope and fallback semantics. When one Claude endpoint experiences quota exhaustion, the shared account claude-shared enters RETRY_AFTER, preventing fallback to other Claude endpoints (e.g. Claude2) on the same account while allowing fallback to distinct healthy accounts (e.g. Antigravity)."
@@ -34,24 +34,24 @@
   },
   "verification": [
     {
-      "command": "python3 .orchestrator/rewrite/test_provider_health.py",
-      "result": "Ran 11 tests in 0.005s, OK (covers auth-only probe preservation, empty account behavior, capacity probe restoration, quota reset extraction from failure and probe)"
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest rewrite.test_provider_health",
+      "result": "Ran 12 tests in 0.005s, OK (covers auth-only probe preservation, empty account behavior, capacity probe restoration, quota reset extraction, timezone offsets)"
     },
     {
       "command": "PYTHONPATH=.orchestrator python3 -m unittest test_provider_permissions.ProviderPermissionsTest.test_claude_auth_probe_auth_only_does_not_invoke_cli_prompt test_provider_permissions.ProviderPermissionsTest.test_claude_auth_probe_check_capacity_invokes_cli_prompt_and_detects_quota test_provider_permissions.ProviderPermissionsTest.test_claude_auth_probe_check_capacity_succeeds test_provider_permissions.ProviderPermissionsTest.test_claude_probe_ready_classifications test_provider_permissions.ProviderPermissionsTest.test_parse_quota_reset_at_formats",
-      "result": "Ran 5 tests in 0.007s, OK (covers auth-only vs check_capacity, prompt execution, quota detection, classification, reset parsing)"
-    },
-    {
-      "command": "PYTHONPATH=.orchestrator python3 -m unittest test_supervisor.AccountHealthAndRecoveryContractTests.test_probe_demanded_delivery_health_checks_capacity_when_account_has_quota_failure test_supervisor.AccountHealthAndRecoveryContractTests.test_quota_exhaustion_fallback_selects_healthy_lane_preserving_reviewer test_supervisor.AccountHealthAndRecoveryContractTests.test_operator_zero_capacity_hold_survives_probe_and_expired_retry",
-      "result": "Ran 3 tests in 0.005s, OK (covers capacity-aware demanded refresh, fallback excluding exhausted shared account alias, operator zero-capacity hold)"
+      "result": "Ran 5 tests in 0.007s, OK (covers auth-only vs check_capacity, prompt execution, quota detection, classification, reset parsing with offsets)"
     },
     {
       "command": "PYTHONPATH=.orchestrator python3 -m unittest test_supervisor.AccountHealthAndRecoveryContractTests test_supervisor.RuntimeConfigurationContractTests",
-      "result": "Ran 37 tests in 0.093s, OK"
+      "result": "Ran 40 tests in 0.092s, OK (includes bootstrap cold-start, TTL expiry, and auth-only non-inferral end-to-end tests)"
     },
     {
       "command": "python3 .orchestrator/test_provider_permissions.py",
-      "result": "Ran 136 tests in 18.749s, OK"
+      "result": "Ran 136 tests in 17.345s, OK"
+    },
+    {
+      "command": "python3 /tmp/ops-quota-review-repro.py",
+      "result": "Exit 0, synthetic identities, no live provider calls: cold_start (1 capacity call, healthy, admitted), expired_healthy (1 capacity call, healthy, admitted), timezone offset parsing (04:00:00Z for +08:00), continued quota and recovery verified"
     },
     {
       "command": "git diff --check",
