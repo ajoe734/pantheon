@@ -49,6 +49,7 @@ import {
 } from "./js/dashboard-renderers.js?v=20260518-archive-fix";
 
 let renderInFlight = false;
+let renderGeneration = 0;
 
 function runRenderStep(label, failures, fn) {
   try {
@@ -83,6 +84,7 @@ function renderFailureNotice(failures) {
 async function render({ syncFirst = false } = {}) {
   if (renderInFlight) return;
   renderInFlight = true;
+  const generation = ++renderGeneration;
   try {
     const refreshButton = qs("#refresh-button");
     if (refreshButton) {
@@ -93,9 +95,12 @@ async function render({ syncFirst = false } = {}) {
       await requestDashboardRefresh();
     }
 
-    const [status, activityText, currentWorkText, orchState, approvalQueue, rawPlanningState, rawDashboardBundle] = await Promise.all([
+    // Audit writers can hold the activity log lock for tens of seconds.
+    // Load this optional panel separately so it cannot stall the whole page.
+    const activityResult = fetchText(DATA_FILES.activity, { timeoutMs: 5_000 })
+      .then((text) => ({ text }), (error) => ({ error }));
+    const [status, currentWorkText, orchState, approvalQueue, rawPlanningState, rawDashboardBundle] = await Promise.all([
       fetchJson(DATA_FILES.status),
-      fetchText(DATA_FILES.activity).catch(() => ""),
       fetchText(DATA_FILES.currentWork).catch(() => ""),
       fetchJson(DATA_FILES.orchestratorState).catch(() => null),
       fetchJson(DATA_FILES.approvalQueue).catch(() => null),
@@ -103,7 +108,6 @@ async function render({ syncFirst = false } = {}) {
       fetchJson(DATA_FILES.dashboardBundle).catch(() => null),
     ]);
 
-    const logs = parseJsonLines(activityText);
     const planningState = normalizePlanningState(rawPlanningState);
     const dashboardBundle = normalizeDashboardBundle(rawDashboardBundle);
     const planningEvents = (planningState.recent_events || []).map((entry) => ({
@@ -111,7 +115,6 @@ async function render({ syncFirst = false } = {}) {
       agent: entry.agent || entry.actor || planningState.facilitator,
       ts: entry.ts || entry.updated_at,
     }));
-    const combinedActivity = [...logs, ...planningEvents].sort((a, b) => String(a.ts || "").localeCompare(String(b.ts || "")));
     const snapshot = parseCurrentWork(currentWorkText);
     const projectName = titleCase(status.project || snapshot.project || "project");
     const projectBadge = qs("#project-badge");
@@ -189,7 +192,21 @@ async function render({ syncFirst = false } = {}) {
       `
     ));
     runRenderStep("snapshot", renderFailures, () => renderSnapshot(snapshot));
-    runRenderStep("activity", renderFailures, () => renderActivity(combinedActivity));
+    const activityEl = qs("#activity-list");
+    if (activityEl) activityEl.textContent = "活動紀錄載入中…";
+    void activityResult.then(({ text, error }) => {
+      // A slower response from an earlier refresh must not replace newer data.
+      if (generation !== renderGeneration) return;
+      if (error) {
+        if (activityEl) activityEl.textContent = "活動紀錄暫時無法載入；其他面板已更新，可按「重新整理」重試。";
+        return;
+      }
+      const combinedActivity = [...parseJsonLines(text), ...planningEvents]
+        .sort((a, b) => String(a.ts || "").localeCompare(String(b.ts || "")));
+      const activityFailures = [];
+      runRenderStep("activity", activityFailures, () => renderActivity(combinedActivity));
+      renderFailureNotice(activityFailures);
+    });
     runRenderStep("render_failure_notice", renderFailures, () => renderFailureNotice(renderFailures));
   } catch (error) {
     qs("#objective").textContent = `協作資料載入失敗：${error.message}`;
