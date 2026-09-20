@@ -202,6 +202,7 @@ def test_build_live_config_pins_high_reasoning_antigravity_models(tmp_path: Path
         provider = rendered["providers"][provider_id]
         assert provider["antigravity"]["model"] == "gemini-3.8-flash-high"
         assert provider["antigravity"]["output_format"] == "stream-json"
+        assert provider["runtime"]["env"]["AGY_CLI_DISABLE_AUTO_UPDATE"] == "true"
         assert provider["model_rotation"] == {
             "enabled": True,
             "primary": "gemini-3.8-flash-high",
