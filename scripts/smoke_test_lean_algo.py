@@ -14,7 +14,9 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +96,7 @@ def run_smoke() -> bool:
             "metadata": {
                 "capital_pool_id": "pool-engine-replay-001",
             },
-            "timestamp": "2026-09-19T12:00:00Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "symbol": "AAPL.US",
             "action": "BUY",
             "direction": "LONG",
@@ -144,7 +146,7 @@ def get_replay_signal() -> dict[str, Any]:
             "tenant_id": "tenant-ops",
             "session_id": "session-restart-001",
         },
-        "timestamp": "2026-09-19T12:00:00Z",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "symbol": "SPY.US",
         "action": "BUY",
         "direction": "LONG",
@@ -153,126 +155,185 @@ def get_replay_signal() -> dict[str, Any]:
     }
 
 
+def _clean_checkpoint(storage_dir: Path) -> None:
+    targets = ["pantheon_restart_checkpoint", "storage", "summary_initial.json", "summary_restart.json"]
+    for name in targets:
+        target = storage_dir / name
+        try:
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            elif target.exists():
+                target.unlink()
+        except Exception:
+            pass
+    lingering = [name for name in targets if (storage_dir / name).exists()]
+    if lingering and shutil.which("docker"):
+        subprocess.run(
+            ["docker", "run", "--rm", "--entrypoint", "rm", "-v", f"{storage_dir}:/s", "quantconnect/lean:18070", "-rf"] + [f"/s/{name}" for name in lingering],
+            check=False,
+        )
+
+
+def execute_upstream_lean(storage_dir: Path, phase: str) -> dict[str, Any]:
+    launcher_dll = Path("/Lean/Launcher/bin/Debug/QuantConnect.Lean.Launcher.dll")
+    has_launcher = launcher_dll.is_file()
+    has_docker = shutil.which("docker") is not None
+
+    if not has_launcher and not has_docker:
+        sys.stderr.write(
+            "ERROR: Fail closed: Neither QuantConnect.Lean.Launcher.dll nor docker is available.\n"
+            "Real upstream LEAN engine execution is required; mock/stub doubles are rejected.\n"
+        )
+        sys.exit(1)
+
+    summary_file = storage_dir / f"summary_{phase}.json"
+    if summary_file.exists():
+        try:
+            summary_file.unlink()
+        except PermissionError:
+            if shutil.which("docker"):
+                subprocess.run(
+                    ["docker", "run", "--rm", "--entrypoint", "rm", "-v", f"{storage_dir}:/s", "quantconnect/lean:18070", "-rf", f"/s/summary_{phase}.json"],
+                    check=False,
+                )
+
+    algo_path = Path(REPO_ROOT) / "integrations" / "lean" / "pantheon_algo" / "base.py"
+    if not algo_path.exists():
+        sys.stderr.write(f"ERROR: Algorithm file not found at {algo_path}\n")
+        sys.exit(1)
+
+    env = os.environ.copy()
+    env.update({
+        "PANTHEON_RUNTIME_BINDING_ID": "rtb-engine-replay-001",
+        "PANTHEON_RUNTIME_ID": "rt-engine-replay-001",
+        "PANTHEON_DEPLOYMENT_PLAN_ID": "dp-engine-replay-001",
+        "PANTHEON_DEPLOYMENT_STAGE": "paper",
+        "PANTHEON_RUNTIME_ROLE": "paper",
+        "PANTHEON_ARTIFACT_ID": "art-engine-replay-001",
+        "PANTHEON_ARTIFACT_VERSION": "1.0.0",
+        "PANTHEON_ARTIFACT_CHECKSUM": "sha256:engine-replay",
+        "PANTHEON_STRATEGY_ID": "strat-engine-replay-001",
+        "PANTHEON_CAPITAL_POOL_ID": "pool-engine-replay-001",
+        "PANTHEON_PERSONA_CAPITAL_BINDING_ID": "pcb-engine-replay-001",
+        "PANTHEON_ENGINE_BRIDGE_REMOTE": "https://github.com/QuantConnect/Lean.git",
+        "PANTHEON_ENGINE_BRIDGE_SOURCE_PATH": "integrations/lean/pantheon_algo",
+        "PANTHEON_ENGINE_BRIDGE_COMMIT": "23b735d99a357807dc0df9f4c51d30f05fe0d277",
+        "PANTHEON_RUNTIME_ADAPTER_VERSION": "0.1.0",
+        "PANTHEON_TRACE_ID": "trace-engine-replay-001",
+        "PANTHEON_CORRELATION_ID": "corr-engine-replay-001",
+        "PANTHEON_MODEL_ID": "model-alpha-v1",
+        "PANTHEON_TENANT_ID": "tenant-ops",
+        "PANTHEON_SESSION_ID": "session-restart-001",
+    })
+
+    if has_launcher:
+        env["PYTHONPATH"] = f"{REPO_ROOT}/integrations/lean:{REPO_ROOT}"
+        env["PANTHEON_SUMMARY_PATH"] = str(summary_file)
+        cmd = [
+            "dotnet",
+            str(launcher_dll),
+            "--close-automatically", "true",
+            "--algorithm-language", "Python",
+            "--algorithm-location", str(algo_path),
+            "--algorithm-type-name", "EngineReplayAlgo",
+            "--data-folder", "/Lean/Data/",
+        ]
+        res = subprocess.run(cmd, env=env, check=False)
+        exit_code = res.returncode
+    else:
+        cmd = [
+            "docker", "run", "--rm",
+            "--network", "none",
+            "-v", f"{REPO_ROOT}:/workspace:ro",
+            "-v", f"{storage_dir}:/Lean/Launcher/bin/Debug/storage",
+            "-e", "PYTHONPATH=/workspace/integrations/lean:/workspace",
+            "-e", f"PANTHEON_SUMMARY_PATH=/Lean/Launcher/bin/Debug/storage/summary_{phase}.json",
+        ]
+        for k, v in env.items():
+            if k.startswith("PANTHEON_"):
+                cmd.extend(["-e", f"{k}={v}"])
+        cmd.extend([
+            "quantconnect/lean:18070",
+            "--close-automatically", "true",
+            "--algorithm-language", "Python",
+            "--algorithm-location", "/workspace/integrations/lean/pantheon_algo/base.py",
+            "--algorithm-type-name", "EngineReplayAlgo",
+            "--data-folder", "/Lean/Data/",
+        ])
+        res = subprocess.run(cmd, check=False)
+        exit_code = res.returncode
+
+    if exit_code != 0:
+        raise RuntimeError(f"Upstream LEAN execution for phase {phase} failed with exit code {exit_code}")
+
+    if not summary_file.exists():
+        raise RuntimeError(f"Summary file not generated by LEAN execution: {summary_file}")
+
+    summary = json.loads(summary_file.read_text(encoding="utf-8"))
+    summary["exit_code"] = exit_code
+    return summary
+
+
 def run_engine_replay_initial(storage_dir: Path) -> dict[str, Any]:
-    print(f"\n--- Starting Engine Replay: Phase 1 (Initial Run) [storage={storage_dir}] ---")
-    # Clear prior checkpoint in storage directory for initial run
-    checkpoint_file = storage_dir / "storage_pantheon_restart_checkpoint"
-    if checkpoint_file.exists():
-        checkpoint_file.unlink()
+    print(f"\n--- Starting Upstream Engine Replay: Phase 1 (Initial Run) [storage={storage_dir}] ---")
+    _clean_checkpoint(storage_dir)
 
-    store = PersistentLeanObjectStore(storage_dir)
-    algo = EngineReplayAlgo(object_store=store)
-    algo.Initialize()
+    summary = execute_upstream_lean(storage_dir, "initial")
 
-    if algo.is_restart:
+    if not summary.get("lean_available"):
+        raise RuntimeError("Phase 1 failed: real LEAN engine was not available")
+    if summary.get("is_restart"):
         raise RuntimeError("Phase 1 expected initial run, but detected prior restart checkpoint")
 
-    print(f"Initial run initialized: model={algo.model_id}, tenant={algo.tenant_id}, session={algo.session_id}")
+    neg_test = summary.get("negative_test") or {}
+    if not neg_test.get("passed"):
+        raise RuntimeError(f"Phase 1 negative rejected-signal test failed: {neg_test}")
+    if neg_test.get("result", {}).get("status") != "BINDING_MISMATCH" or neg_test.get("result", {}).get("new_orders_placed") != 0:
+        raise RuntimeError(f"Phase 1 wrong binding was not rejected with 0 orders: {neg_test}")
 
-    signal = get_replay_signal()
-    result = algo.process_replay_signal(signal)
+    orders = summary.get("executed_orders") or []
+    if len(orders) != 1 or orders[0].get("status") != "FILLED":
+        raise RuntimeError(f"Phase 1 expected exactly 1 FILLED order, got: {orders}")
 
-    if result["status"] != "FILLED" or result["new_orders_placed"] != 1:
-        raise RuntimeError(f"Phase 1 order fill failed: {result}")
+    chk = storage_dir / "pantheon_restart_checkpoint"
+    if not chk.exists():
+        raise RuntimeError(f"Phase 1 expected checkpoint file at {chk}, but it does not exist")
 
-    algo.complete_replay()
-    event_types = [e["event_type"] for e in algo.events]
-    print(f"Phase 1 completed successfully. Emitted events: {event_types}")
-    print(f"Phase 1 order executed: {algo.executed_orders[-1]}")
-
-    summary = {
-        "status": "success",
-        "exit_code": 0,
-        "phase": "initial_run",
-        "lean_available": True,
-        "context_loaded": {
-            "runtime_id": algo.get_pantheon_context().runtime_id if algo.get_pantheon_context() else os.environ["PANTHEON_RUNTIME_ID"],
-            "runtime_binding_id": os.environ["PANTHEON_RUNTIME_BINDING_ID"],
-            "deployment_plan_id": os.environ["PANTHEON_DEPLOYMENT_PLAN_ID"],
-            "strategy_id": os.environ["PANTHEON_STRATEGY_ID"],
-            "capital_pool_id": os.environ["PANTHEON_CAPITAL_POOL_ID"],
-            "model_id": algo.model_id,
-            "tenant_id": algo.tenant_id,
-            "session_id": algo.session_id,
-            "bridge_remote": os.environ["PANTHEON_ENGINE_BRIDGE_REMOTE"],
-            "bridge_path": os.environ["PANTHEON_ENGINE_BRIDGE_SOURCE_PATH"],
-            "bridge_commit": os.environ["PANTHEON_ENGINE_BRIDGE_COMMIT"],
-        },
-        "object_store_action": "INITIAL_RUN checkpoint persisted to storage/pantheon_restart_checkpoint",
-        "signal_intake": {
-            "signal_id": signal["signal_id"],
-            "symbol": signal["symbol"],
-            "action": signal["action"],
-            "direction": signal["direction"],
-            "quantity": signal["quantity"],
-            "quantity_type": signal["quantity_type"],
-            "model_id": signal["metadata"]["model_id"],
-            "tenant_id": signal["metadata"]["tenant_id"],
-            "session_id": signal["metadata"]["session_id"],
-        },
-        "order_execution": {
-            "order_status": "FILLED",
-            "symbol": "SPY",
-            "fill_price": 144.78172417,
-            "fill_quantity": 344.0,
-            "statistics_total_orders": 1,
-            "duplicate_suppressed": False,
-        },
-        "emitted_bridge_events": event_types,
-    }
+    print("Phase 1 completed successfully in upstream engine.")
+    print(f"Phase 1 order executed: {orders[0]}")
+    print(f"Emitted events: {summary.get('emitted_events')}")
     print(json.dumps(summary, indent=2))
     return summary
 
 
 def run_engine_replay_restart(storage_dir: Path) -> dict[str, Any]:
-    print(f"\n--- Starting Engine Replay: Phase 2 (Engine Restart Run) [storage={storage_dir}] ---")
-    store = PersistentLeanObjectStore(storage_dir)
-    algo = EngineReplayAlgo(object_store=store)
-    algo.Initialize()
+    print(f"\n--- Starting Upstream Engine Replay: Phase 2 (Engine Restart Run) [storage={storage_dir}] ---")
+    chk = storage_dir / "pantheon_restart_checkpoint"
+    if not chk.exists():
+        raise RuntimeError(f"Phase 2 expected prior checkpoint at {chk}, but it does not exist")
 
-    if not algo.is_restart:
-        raise RuntimeError("Phase 2 expected engine restart, but no prior checkpoint was found in ObjectStore")
+    summary = execute_upstream_lean(storage_dir, "restart")
 
-    print(f"Engine restart detected: model={algo.model_id}, tenant={algo.tenant_id}, session={algo.session_id}")
-    print(f"Prior checkpoint verified: {algo.prior_checkpoint}")
+    if not summary.get("lean_available"):
+        raise RuntimeError("Phase 2 failed: real LEAN engine was not available")
+    if not summary.get("is_restart"):
+        raise RuntimeError("Phase 2 expected engine restart, but no prior checkpoint was detected by engine")
 
-    # Replay the identical signal to test duplicate suppression across engine restart
-    signal = get_replay_signal()
-    result = algo.process_replay_signal(signal)
+    neg_test = summary.get("negative_test") or {}
+    if not neg_test.get("passed"):
+        raise RuntimeError(f"Phase 2 negative rejected-signal test failed: {neg_test}")
 
-    if result["status"] != "DUPLICATE_SUPPRESSED" or result["new_orders_placed"] != 0:
-        raise RuntimeError(f"Duplicate suppression failed across engine restart: {result}")
+    pos_test = summary.get("positive_test") or {}
+    if pos_test.get("status") != "DUPLICATE_SUPPRESSED" or pos_test.get("new_orders_placed") != 0:
+        raise RuntimeError(f"Duplicate suppression failed across engine restart: {pos_test}")
 
-    algo.complete_replay()
-    event_types = [e["event_type"] for e in algo.events]
-    print(f"Phase 2 completed successfully. Emitted events: {event_types}")
-    print(f"Duplicate suppression confirmed: new_orders_placed=0, duplicate_suppressed=True")
+    orders = summary.get("executed_orders") or []
+    if len(orders) != 0:
+        raise RuntimeError(f"Phase 2 expected 0 executed orders (duplicate suppressed), got: {orders}")
 
-    summary = {
-        "status": "success",
-        "exit_code": 0,
-        "phase": "restart_run",
-        "object_store_restart": {
-            "detected": True,
-            "prior_checkpoint": algo.prior_checkpoint,
-            "emitted_event": "EngineRestartSuccess",
-        },
-        "replayed_signal": {
-            "signal_id": signal["signal_id"],
-            "symbol": signal["symbol"],
-            "model_id": signal["metadata"]["model_id"],
-            "tenant_id": signal["metadata"]["tenant_id"],
-            "session_id": signal["metadata"]["session_id"],
-        },
-        "duplicate_suppression": {
-            "verified": True,
-            "duplicate_suppressed": True,
-            "new_orders_placed": 0,
-            "symbol": "SPY",
-            "suppression_reason": "duplicate_suppression_across_restart",
-        },
-        "emitted_bridge_events": event_types,
-    }
+    print("Phase 2 completed successfully in upstream engine.")
+    print("Duplicate suppression confirmed: new_orders_placed=0, duplicate_suppressed=True")
+    print(f"Emitted events: {summary.get('emitted_events')}")
     print(json.dumps(summary, indent=2))
     return summary
 

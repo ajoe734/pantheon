@@ -4,6 +4,7 @@ import os
 import sys
 import unittest
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -124,7 +125,7 @@ class PantheonAlgoBaseContextTests(unittest.TestCase):
                 "metadata": {
                     "capital_pool_id": "pool-001",
                 },
-                "timestamp": "2026-09-19T12:00:00Z",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "symbol": "AAPL.US",
                 "action": "BUY",
                 "direction": "LONG",
@@ -206,6 +207,39 @@ class PantheonAlgoBaseContextTests(unittest.TestCase):
             self.assertIn("EngineRestartSuccess", event_types2)
             self.assertIn("OrderDuplicateSuppressed", event_types2)
             self.assertIn("EngineReplayComplete", event_types2)
+
+    def test_engine_replay_wrong_binding_rejected(self) -> None:
+        object_store = PersistentLeanObjectStore()
+        wrong_signal = {
+            "signal_id": "sig-rejected-001",
+            "version": "1.0",
+            "strategy_id": "strat-engine-replay-001",
+            "binding_id": "rtb-mismatched-wrong-binding",
+            "runtime_id": "rt-paper-001",
+            "metadata": {
+                "capital_pool_id": "pool-001",
+                "model_id": "model-alpha-v1",
+                "tenant_id": "tenant-ops",
+                "session_id": "session-restart-001",
+            },
+            "timestamp": "2026-09-19T12:00:00Z",
+            "symbol": "SPY.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 0.5,
+            "quantity_type": "PERCENT_PORTFOLIO",
+        }
+        with patched_env({**_CONTEXT_ENV, "PANTHEON_RUNTIME_BINDING_ID": "rtb-paper-001"}):
+            algo = EngineReplayAlgo(object_store=object_store)
+            algo.Initialize()
+
+            result = algo.process_replay_signal(wrong_signal)
+            self.assertEqual(result["status"], "BINDING_MISMATCH")
+            self.assertEqual(result["new_orders_placed"], 0)
+            self.assertTrue(result.get("rejected", False))
+            self.assertEqual(len(algo.executed_orders), 0)
+            self.assertNotIn("sig-rejected-001", algo.processed_signals)
+            self.assertFalse(object_store.ContainsKey(algo.CHECKPOINT_KEY))
 
 
 if __name__ == "__main__":

@@ -101,9 +101,21 @@ try:
     from AlgorithmImports import (  # type: ignore[import]
         QCAlgorithm,
         TimeSpan,
+        Resolution,
+        OrderStatus,
+        Slice,
     )
     _LEAN_AVAILABLE = True
 except ImportError:
+    class OrderStatus:  # type: ignore[no-redef]
+        Filled = "Filled"
+
+    class Resolution:  # type: ignore[no-redef]
+        Daily = "Daily"
+
+    class Slice:  # type: ignore[no-redef]
+        pass
+
     # Outside LEAN: define a stub base class so unit tests can import this module
     class QCAlgorithm:  # type: ignore[no-redef]
         def __init__(self) -> None:
@@ -352,6 +364,9 @@ class PantheonAlgoBase(QCAlgorithm):
             return None
 
 
+PantheonAlgoBase.__module__ = "pantheon_algo.base"
+
+
 class EngineReplayAlgo(PantheonAlgoBase):
     """
     LEAN QCAlgorithm implementation for upstream engine replay acceptance,
@@ -359,7 +374,8 @@ class EngineReplayAlgo(PantheonAlgoBase):
     and duplicate suppression across engine restart.
     """
 
-    CHECKPOINT_KEY = "storage/pantheon_restart_checkpoint"
+    CHECKPOINT_KEY = "pantheon_restart_checkpoint"
+    LEGACY_CHECKPOINT_KEY = "storage/pantheon_restart_checkpoint"
 
     def __init__(self, object_store: Any | None = None) -> None:
         super().__init__()
@@ -367,29 +383,63 @@ class EngineReplayAlgo(PantheonAlgoBase):
         self.model_id = os.getenv("PANTHEON_MODEL_ID", "model-alpha-v1")
         self.tenant_id = os.getenv("PANTHEON_TENANT_ID", "tenant-ops")
         self.session_id = os.getenv("PANTHEON_SESSION_ID", "session-restart-001")
-        if object_store is not None:
-            self.ObjectStore = object_store
-        elif not hasattr(self, "ObjectStore") or self.ObjectStore is None:
-            storage_dir = os.getenv("PANTHEON_OBJECT_STORE_DIR", "/tmp/pantheon_storage")
-            self.ObjectStore = PersistentLeanObjectStore(storage_dir)
+        self.binding_id = os.getenv("PANTHEON_RUNTIME_BINDING_ID", "rtb-engine-replay-001")
+        self.runtime_id = os.getenv("PANTHEON_RUNTIME_ID", "rt-engine-replay-001")
+        self.deployment_plan_id = os.getenv("PANTHEON_DEPLOYMENT_PLAN_ID", "dp-engine-replay-001")
+        self.strategy_id = os.getenv("PANTHEON_STRATEGY_ID", "strat-engine-replay-001")
+        self.capital_pool_id = os.getenv("PANTHEON_CAPITAL_POOL_ID", "pool-engine-replay-001")
+
+        if not _LEAN_AVAILABLE:
+            if object_store is not None:
+                self.ObjectStore = object_store
+            elif not hasattr(self, "ObjectStore") or self.ObjectStore is None:
+                storage_dir = os.getenv("PANTHEON_OBJECT_STORE_DIR", "/tmp/pantheon_storage")
+                self.ObjectStore = PersistentLeanObjectStore(storage_dir)
+
         self.is_restart = False
         self.prior_checkpoint: dict[str, Any] | None = None
         self.processed_signals: set[str] = set()
         self.executed_orders: list[dict[str, Any]] = []
+        self.negative_test_passed = False
+        self.negative_test_result: dict[str, Any] | None = None
+        self.positive_test_result: dict[str, Any] | None = None
+        self._pending_replay_signal: dict[str, Any] | None = None
+        self._active_replay_signal_id: str | None = None
 
     def Debug(self, message: str) -> None:
         try:
             self.events.append(json.loads(message))
         except Exception:
             pass
+        if _LEAN_AVAILABLE:
+            super().Debug(message)
 
     def Initialize(self) -> None:
+        if _LEAN_AVAILABLE:
+            self.SetStartDate(2013, 10, 7)
+            self.SetEndDate(2013, 10, 11)
+            self.SetCash(100000)
+            self.AddEquity("SPY", Resolution.Daily)
+
         super().Initialize()
 
         # Check ObjectStore for prior run checkpoint
-        if hasattr(self, "ObjectStore") and self.ObjectStore.ContainsKey(self.CHECKPOINT_KEY):
+        has_checkpoint = False
+        key_to_use = self.CHECKPOINT_KEY
+        if hasattr(self, "ObjectStore") and self.ObjectStore is not None:
+            try:
+                if self.ObjectStore.ContainsKey(self.CHECKPOINT_KEY):
+                    has_checkpoint = True
+                    key_to_use = self.CHECKPOINT_KEY
+                elif self.ObjectStore.ContainsKey(self.LEGACY_CHECKPOINT_KEY):
+                    has_checkpoint = True
+                    key_to_use = self.LEGACY_CHECKPOINT_KEY
+            except Exception as e:
+                log.warning("ObjectStore.ContainsKey check failed: %s", e)
+
+        if has_checkpoint:
             self.is_restart = True
-            raw = self.ObjectStore.Read(self.CHECKPOINT_KEY)
+            raw = self.ObjectStore.Read(key_to_use)
             self.prior_checkpoint = json.loads(raw)
             for sid in self.prior_checkpoint.get("processed_signals", []):
                 self.processed_signals.add(str(sid))
@@ -408,6 +458,75 @@ class EngineReplayAlgo(PantheonAlgoBase):
         else:
             self.is_restart = False
             self.prior_checkpoint = None
+            self.emit_pantheon_event(
+                "EngineInitialRun",
+                metadata={
+                    "model_id": self.model_id,
+                    "tenant_id": self.tenant_id,
+                    "session_id": self.session_id,
+                },
+            )
+
+        if _LEAN_AVAILABLE:
+            # 1. Run negative rejected-signal test: wrong binding ID must reject signal, 0 orders placed, 0 fills
+            wrong_binding_signal = {
+                "signal_id": "sig-negative-rejected-binding",
+                "version": "1.0",
+                "strategy_id": self.strategy_id,
+                "binding_id": "rtb-mismatched-wrong-binding",
+                "runtime_id": self.runtime_id,
+                "metadata": {
+                    "capital_pool_id": self.capital_pool_id,
+                    "model_id": self.model_id,
+                    "tenant_id": self.tenant_id,
+                    "session_id": self.session_id,
+                },
+                "timestamp": "2026-09-19T12:00:00Z",
+                "symbol": "SPY.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 0.5,
+                "quantity_type": "PERCENT_PORTFOLIO",
+            }
+            neg_res = self.process_replay_signal(wrong_binding_signal)
+            if neg_res.get("status") == "BINDING_MISMATCH" and neg_res.get("new_orders_placed") == 0:
+                self.negative_test_passed = True
+                self.negative_test_result = neg_res
+                self.Log(f"PANTHEON_NEGATIVE_TEST_PASSED: {neg_res}")
+            else:
+                raise RuntimeError(f"Negative rejected-signal test failed: {neg_res}")
+
+            # 2. Queue replay signal to be executed in OnData when price is available
+            self._pending_replay_signal = {
+                "signal_id": "engine-replay-sig-001",
+                "version": "1.0",
+                "strategy_id": self.strategy_id,
+                "binding_id": self.binding_id,
+                "runtime_id": self.runtime_id,
+                "metadata": {
+                    "capital_pool_id": self.capital_pool_id,
+                    "model_id": self.model_id,
+                    "tenant_id": self.tenant_id,
+                    "session_id": self.session_id,
+                },
+                "timestamp": "2026-09-19T12:00:00Z",
+                "symbol": "SPY.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 0.5,
+                "quantity_type": "PERCENT_PORTFOLIO",
+            }
+
+    def OnData(self, data: Any = None) -> None:
+        if getattr(self, "_pending_replay_signal", None) is not None:
+            sig = self._pending_replay_signal
+            self._pending_replay_signal = None
+            if _LEAN_AVAILABLE and hasattr(self, "Time"):
+                sig["timestamp"] = self.Time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            pos_res = self.process_replay_signal(sig)
+            self.positive_test_result = pos_res
+            self.Log(f"PANTHEON_REPLAY_SIGNAL_RESULT: {pos_res}")
+        super().OnData(data)
 
     def process_replay_signal(self, signal: dict[str, Any]) -> dict[str, Any]:
         sid = str(signal.get("signal_id", ""))
@@ -416,7 +535,7 @@ class EngineReplayAlgo(PantheonAlgoBase):
         sig_tenant = metadata.get("tenant_id") or self.tenant_id
         sig_session = metadata.get("session_id") or self.session_id
 
-        # Duplicate suppression check across restart
+        # 1. Duplicate suppression check across restart
         is_dup = sid in self.processed_signals
         if not is_dup and getattr(self, "_signal_store", None) and hasattr(self._signal_store, "is_processed"):
             is_dup = self._signal_store.is_processed(sid)
@@ -441,65 +560,192 @@ class EngineReplayAlgo(PantheonAlgoBase):
                 "symbol": signal.get("symbol", "").split(".")[0],
             }
 
-        # First-time execution: enqueue to store and drain, or place order
-        if getattr(self, "_signal_store", None):
+        # 2. Binding verification - fail closed on binding mismatch
+        sig_binding = str(signal.get("binding_id") or "").strip()
+        expected_binding = getattr(self, "binding_id", None) or os.getenv("PANTHEON_RUNTIME_BINDING_ID", "")
+        if expected_binding and sig_binding != expected_binding:
+            self.emit_pantheon_event(
+                "SignalRejectedBindingMismatch",
+                metadata={
+                    "signal_id": sid,
+                    "expected_binding_id": expected_binding,
+                    "signal_binding_id": sig_binding,
+                    "symbol": signal.get("symbol", "").split(".")[0],
+                },
+            )
+            return {
+                "status": "BINDING_MISMATCH",
+                "signal_id": sid,
+                "new_orders_placed": 0,
+                "duplicate_suppressed": False,
+                "rejected": True,
+                "symbol": signal.get("symbol", "").split(".")[0],
+            }
+
+        # 3. Valid signal execution: order placement via consumer or SetHoldings
+        self._active_replay_signal_id = sid
+        symbol = signal.get("symbol", "").split(".")[0]
+        qty = float(signal.get("quantity", 0.5))
+
+        if getattr(self, "_signal_store", None) and getattr(self, "_consumer", None):
             self._signal_store.enqueue(signal)
-            self.OnData()
+            self._consumer.drain(algo=self)
         else:
-            symbol = signal.get("symbol", "").split(".")[0]
-            self.SetHoldings(symbol, float(signal.get("quantity", 0.5)))
+            self.SetHoldings(symbol, qty)
+
+        # In stub environment outside LEAN, simulate fill for unit tests
+        if not _LEAN_AVAILABLE:
+            order_record = {
+                "order_id": f"ord-{sid}",
+                "signal_id": sid,
+                "symbol": symbol,
+                "action": signal.get("action", "BUY"),
+                "fill_price": 144.78172417,
+                "fill_quantity": 344.0,
+                "status": "FILLED",
+            }
+            self.executed_orders.append(order_record)
+            self.processed_signals.add(sid)
+            if getattr(self, "_signal_store", None) and hasattr(self._signal_store, "mark_processed"):
+                self._signal_store.mark_processed(sid)
+
+            checkpoint = {
+                "initial_run": not self.is_restart,
+                "model_id": sig_model,
+                "tenant_id": sig_tenant,
+                "session_id": sig_session,
+                "runtime_id": self.runtime_id,
+                "runtime_binding_id": self.binding_id,
+                "deployment_plan_id": self.deployment_plan_id,
+                "strategy_id": self.strategy_id,
+                "capital_pool_id": self.capital_pool_id,
+                "processed_signals": sorted(list(self.processed_signals)),
+                "last_order": order_record,
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            }
+            if hasattr(self, "ObjectStore") and self.ObjectStore is not None:
+                self.ObjectStore.Save(self.CHECKPOINT_KEY, json.dumps(checkpoint, indent=2))
+
+            self.emit_pantheon_event(
+                "OrderFilledReplay",
+                metrics={"fill_quantity": 344.0, "fill_price": 144.78172417},
+                metadata={
+                    "signal_id": sid,
+                    "symbol": symbol,
+                    "model_id": sig_model,
+                    "tenant_id": sig_tenant,
+                    "session_id": sig_session,
+                },
+            )
+            return {
+                "status": "FILLED",
+                "signal_id": sid,
+                "new_orders_placed": 1,
+                "fill_price": 144.78172417,
+                "fill_quantity": 344.0,
+                "duplicate_suppressed": False,
+                "symbol": symbol,
+            }
+
+        # Inside real LEAN engine: order placed with transaction handler, fill will be observed in OnOrderEvent
+        return {
+            "status": "ORDER_PLACED",
+            "signal_id": sid,
+            "new_orders_placed": 1,
+            "duplicate_suppressed": False,
+            "symbol": symbol,
+        }
+
+    def OnOrderEvent(self, orderEvent: Any) -> None:
+        status_str = str(getattr(orderEvent, "Status", ""))
+        is_filled = "Filled" in status_str or getattr(orderEvent, "Status", None) == getattr(OrderStatus, "Filled", "Filled")
+        if not is_filled:
+            return
+
+        fill_price = float(getattr(orderEvent, "FillPrice", 0.0) or 0.0)
+        fill_quantity = float(getattr(orderEvent, "FillQuantity", 0.0) or 0.0)
+        order_id = str(getattr(orderEvent, "OrderId", ""))
+        symbol_str = str(getattr(orderEvent, "Symbol", "SPY"))
 
         order_record = {
-            "order_id": f"ord-{sid}",
-            "signal_id": sid,
-            "symbol": signal.get("symbol", "").split(".")[0],
-            "action": signal.get("action", "BUY"),
-            "fill_price": 144.78172417,
-            "fill_quantity": 344.0,
+            "order_id": order_id,
+            "signal_id": self._active_replay_signal_id or f"ord-{order_id}",
+            "symbol": symbol_str,
+            "action": "BUY" if fill_quantity > 0 else "SELL",
+            "fill_price": fill_price,
+            "fill_quantity": fill_quantity,
             "status": "FILLED",
         }
         self.executed_orders.append(order_record)
-        self.processed_signals.add(sid)
-        if getattr(self, "_signal_store", None) and hasattr(self._signal_store, "mark_processed"):
-            self._signal_store.mark_processed(sid)
+        if self._active_replay_signal_id:
+            self.processed_signals.add(self._active_replay_signal_id)
+            if getattr(self, "_signal_store", None) and hasattr(self._signal_store, "mark_processed"):
+                self._signal_store.mark_processed(self._active_replay_signal_id)
 
-        # Persist checkpoint to ObjectStore
         checkpoint = {
             "initial_run": not self.is_restart,
-            "model_id": sig_model,
-            "tenant_id": sig_tenant,
-            "session_id": sig_session,
-            "runtime_id": os.getenv("PANTHEON_RUNTIME_ID", "rt-engine-replay-001"),
-            "runtime_binding_id": os.getenv("PANTHEON_RUNTIME_BINDING_ID", "rtb-engine-replay-001"),
-            "deployment_plan_id": os.getenv("PANTHEON_DEPLOYMENT_PLAN_ID", "dp-engine-replay-001"),
-            "strategy_id": os.getenv("PANTHEON_STRATEGY_ID", "strat-engine-replay-001"),
-            "capital_pool_id": os.getenv("PANTHEON_CAPITAL_POOL_ID", "pool-engine-replay-001"),
+            "model_id": self.model_id,
+            "tenant_id": self.tenant_id,
+            "session_id": self.session_id,
+            "runtime_id": self.runtime_id,
+            "runtime_binding_id": self.binding_id,
+            "deployment_plan_id": self.deployment_plan_id,
+            "strategy_id": self.strategy_id,
+            "capital_pool_id": self.capital_pool_id,
             "processed_signals": sorted(list(self.processed_signals)),
             "last_order": order_record,
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
-        self.ObjectStore.Save(self.CHECKPOINT_KEY, json.dumps(checkpoint, indent=2))
+        if hasattr(self, "ObjectStore") and self.ObjectStore is not None:
+            self.ObjectStore.Save(self.CHECKPOINT_KEY, json.dumps(checkpoint, indent=2))
 
         self.emit_pantheon_event(
             "OrderFilledReplay",
-            metrics={"fill_quantity": 344.0, "fill_price": 144.78172417},
+            metrics={"fill_quantity": fill_quantity, "fill_price": fill_price},
             metadata={
-                "signal_id": sid,
-                "symbol": order_record["symbol"],
-                "model_id": sig_model,
-                "tenant_id": sig_tenant,
-                "session_id": sig_session,
+                "order_id": order_id,
+                "signal_id": self._active_replay_signal_id or "",
+                "symbol": symbol_str,
+                "model_id": self.model_id,
+                "tenant_id": self.tenant_id,
+                "session_id": self.session_id,
             },
         )
-        return {
-            "status": "FILLED",
-            "signal_id": sid,
-            "new_orders_placed": 1,
-            "fill_price": 144.78172417,
-            "fill_quantity": 344.0,
-            "duplicate_suppressed": False,
-            "symbol": order_record["symbol"],
+        self.Log(f"PANTHEON_ORDER_EVENT_FILLED: {order_record}")
+
+    def OnEndOfAlgorithm(self) -> None:
+        self.complete_replay()
+        summary = {
+            "status": "success",
+            "phase": "restart_run" if self.is_restart else "initial_run",
+            "is_restart": self.is_restart,
+            "lean_available": True,
+            "negative_test": {
+                "passed": self.negative_test_passed,
+                "result": self.negative_test_result,
+            },
+            "positive_test": self.positive_test_result,
+            "context_loaded": {
+                "runtime_id": self.runtime_id,
+                "runtime_binding_id": self.binding_id,
+                "deployment_plan_id": self.deployment_plan_id,
+                "strategy_id": self.strategy_id,
+                "capital_pool_id": self.capital_pool_id,
+                "model_id": self.model_id,
+                "tenant_id": self.tenant_id,
+                "session_id": self.session_id,
+            },
+            "executed_orders": list(self.executed_orders),
+            "processed_signals": sorted(list(self.processed_signals)),
+            "prior_checkpoint": self.prior_checkpoint,
+            "emitted_events": [e.get("event_type") for e in self.events if isinstance(e, dict)],
         }
+        summary_path = os.getenv("PANTHEON_SUMMARY_PATH")
+        if summary_path:
+            p = Path(summary_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        self.Log(f"PANTHEON_REPLAY_SUMMARY: {json.dumps(summary)}")
 
     def complete_replay(self) -> dict[str, Any]:
         return self.emit_pantheon_event(
