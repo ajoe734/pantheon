@@ -524,33 +524,8 @@ class ReadSurfacePorts:
     def list_research_tickets(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_research_tickets(**kwargs)
 
-    def get_research_ticket(
-        self,
-        ticket_id: str,
-        *,
-        include_snapshot_fallback: bool = True,
-        include_local_fallback: bool = True,
-        **kwargs: Any,
-    ) -> Optional[Dict[str, Any]]:
-        rks = self.research_knowledge_source
-        method = getattr(rks, "get_research_ticket", None)
-        if method is None:
-            return None
-        call_kwargs = dict(kwargs)
-        try:
-            import inspect
-            sig = inspect.signature(method)
-            has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
-            if has_var_kw or "include_snapshot_fallback" in sig.parameters:
-                call_kwargs["include_snapshot_fallback"] = include_snapshot_fallback
-            if has_var_kw or "include_local_fallback" in sig.parameters:
-                call_kwargs["include_local_fallback"] = include_local_fallback
-            if not has_var_kw:
-                call_kwargs = {k: v for k, v in call_kwargs.items() if k in sig.parameters}
-        except (TypeError, ValueError):
-            call_kwargs["include_snapshot_fallback"] = include_snapshot_fallback
-            call_kwargs["include_local_fallback"] = include_local_fallback
-        return method(ticket_id, **call_kwargs)
+    def get_research_ticket(self, ticket_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_research_ticket(ticket_id, **kwargs)
 
     def list_research_analyses(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_research_analyses(**kwargs)

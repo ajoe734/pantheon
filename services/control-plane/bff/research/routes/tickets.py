@@ -237,13 +237,21 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
         port = ctx.get_read_store()
         snapshot_at = ctx.utc_now()
         ticket_id = str(request.path_params.get("ticket_id") or "")
-        ticket = ctx.call_port(
-            port,
-            "get_research_ticket",
-            ticket_id,
-            include_snapshot_fallback=False,
-            include_local_fallback=False,
-        )
+        source_fn = getattr(port, "dataset_source", None)
+        if not callable(source_fn):
+            delegate = getattr(port, "_active_delegate", None) or getattr(port, "research_knowledge_source", None)
+            source_fn = getattr(delegate, "dataset_source", None)
+        source = str(source_fn("research_tickets") or "") if callable(source_fn) else ""
+        if source == "local_snapshot":
+            ticket = None
+        else:
+            ticket = ctx.call_port(
+                port,
+                "get_research_ticket",
+                ticket_id,
+                include_snapshot_fallback=False,
+                include_local_fallback=False,
+            )
         if not ticket:
             ctx.not_found("Research ticket", ticket_id)
         payload = dict(ticket)

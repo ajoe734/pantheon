@@ -303,6 +303,16 @@ class ResearchRouteContext:
             try:
                 sig = inspect.signature(method)
                 has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                if has_var_keyword:
+                    for delegate_attr in ("_active_delegate", "research_knowledge_source"):
+                        delegate = getattr(port, delegate_attr, None)
+                        if delegate is not None and hasattr(delegate, name):
+                            delegate_method = getattr(delegate, name)
+                            delegate_sig = inspect.signature(delegate_method)
+                            if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in delegate_sig.parameters.values()):
+                                sig = delegate_sig
+                                has_var_keyword = False
+                                break
                 if not has_var_keyword:
                     kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
             except (ValueError, TypeError):
