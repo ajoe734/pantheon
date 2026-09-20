@@ -2384,6 +2384,7 @@ def probe_demanded_delivery_health(
     demands: Iterable[Mapping[str, Any]],
     *,
     quiet: bool,
+    state: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Observe only exact endpoints requested by the pure evaluator.
 
@@ -2396,14 +2397,22 @@ def probe_demanded_delivery_health(
 
     max_refresh = delivery_health_settings(config)["refresh_max_per_cycle"]
     endpoint_ids: list[str] = []
+    demand_flags: dict[str, bool] = {}
     for raw in demands:
         if not isinstance(raw, Mapping) or str(raw.get("scope") or "") != "endpoint":
             continue
         endpoint_id = normalize_agent_id(str(raw.get("id") or ""))
         if endpoint_id and endpoint_id not in endpoint_ids:
             endpoint_ids.append(endpoint_id)
+            if raw.get("check_capacity"):
+                demand_flags[endpoint_id] = True
+        elif endpoint_id and raw.get("check_capacity"):
+            demand_flags[endpoint_id] = True
         if len(endpoint_ids) >= max_refresh:
             break
+
+    health = runtime_delivery_health(state) if state is not None else {}
+    accounts = health.get("accounts", {}) if isinstance(health, Mapping) else {}
 
     observations: list[dict[str, Any]] = []
     for endpoint_id in endpoint_ids:
@@ -2411,12 +2420,28 @@ def probe_demanded_delivery_health(
         account_id = agent_account_id(config, endpoint_id)
         if not provider_id or not account_id:
             continue
+        account_entry = accounts.get(account_id, {}) if isinstance(accounts, Mapping) else {}
+        needs_capacity = (
+            demand_flags.get(endpoint_id, False)
+            or account_entry.get("state") == "retry_after"
+            or account_entry.get("reason_kind") in (
+                "quota_terminal",
+                "quota",
+                "quota_reached",
+                "capacity",
+                "capacity_retryable",
+            )
+            or bool(account_entry.get("quota_reset_at"))
+        )
+        probe_kwargs: dict[str, Any] = {"force": True}
+        if needs_capacity:
+            probe_kwargs["check_capacity"] = True
         probe = _safe_phase(
             f"probe_delivery_health:{endpoint_id}",
             probe_provider_auth,
             config,
             provider_id,
-            force=True,
+            **probe_kwargs,
         )
         if not isinstance(probe, Mapping):
             probe = {
@@ -16601,6 +16626,7 @@ def run_once(
             config,
             probe_targets,
             quiet=quiet,
+            state=maintenance_runtime_snapshot,
         )
         task_state_projection_snapshot = _safe_phase(
             "prefetch_task_state_projection",

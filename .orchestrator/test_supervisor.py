@@ -5454,6 +5454,163 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertEqual(observations[0]["endpoint_id"], "codex")
         probe.assert_called_once_with(self.config, "codex", force=True)
 
+    def test_probe_demanded_delivery_health_checks_capacity_when_account_has_quota_failure(self) -> None:
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-shared",
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"]["claude-shared"] = 1
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "claude": {"state": "healthy", "valid_until": "2026-09-21T12:00:00Z"},
+                },
+                "accounts": {
+                    "claude_shared": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2026-09-21T12:00:00Z",
+                        "quota_reset_at": "2026-09-21T12:00:00Z",
+                    },
+                },
+            },
+        }
+        targets = [{"scope": "endpoint", "id": "claude"}]
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "claude_prompt"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config, targets, quiet=True, state=state,
+            )
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0]["endpoint_id"], "claude")
+        probe.assert_called_once_with(self.config, "claude", force=True, check_capacity=True)
+
+    def test_quota_exhaustion_fallback_selects_healthy_lane_preserving_reviewer(self) -> None:
+        task = {
+            "id": "TASK-FALLBACK-001",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "todo",
+            "generation": 1,
+        }
+        self.config["agents"] = {
+            "claude": {
+                "display_name": "Claude",
+                "provider": "claude",
+                "adapter": "claude_cli",
+                "max_parallel": 1,
+            },
+            "claude2": {
+                "display_name": "Claude2",
+                "provider": "claude2",
+                "adapter": "claude_cli",
+                "max_parallel": 1,
+            },
+            "antigravity": {
+                "display_name": "Antigravity",
+                "provider": "antigravity",
+                "adapter": "antigravity",
+                "max_parallel": 1,
+            },
+            "codex": {
+                "display_name": "Codex",
+                "provider": "codex",
+                "adapter": "codex",
+                "max_parallel": 1,
+            },
+        }
+        self.config["providers"] = {
+            "claude": {"delivery_mode": "claude_cli", "account": "claude-shared"},
+            "claude2": {"delivery_mode": "claude_cli", "account": "claude-shared"},
+            "antigravity": {"delivery_mode": "antigravity", "account": "antigravity-shared"},
+            "codex": {"delivery_mode": "codex", "account": "codex-shared"},
+        }
+        self.config.setdefault("worker_reassignment", {})["owner_fallbacks"] = {
+            "Claude": ["Claude2", "Antigravity"],
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"] = {
+            "claude-shared": 1,
+            "antigravity-shared": 1,
+            "codex-shared": 1,
+        }
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "claude": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                    "claude2": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                    "antigravity": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                    "codex": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "claude-shared": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2099-01-01T00:00:00Z",
+                    },
+                    "antigravity-shared": {
+                        "state": "healthy",
+                        "valid_until": "2099-01-01T00:00:00Z",
+                    },
+                    "codex-shared": {
+                        "state": "healthy",
+                        "valid_until": "2099-01-01T00:00:00Z",
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(
+                supervisor, "agent_can_take_task",
+                side_effect=lambda _cfg, name, _tsk, **_kw: name in {"Antigravity", "Codex"},
+            ),
+        ):
+            pair = supervisor.plan_task_assignment_pair(
+                self.config, task, state=state,
+            )
+        self.assertEqual(pair, ("Antigravity", "Codex"))
+
+    def test_operator_zero_capacity_hold_survives_probe_and_expired_retry(self) -> None:
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 0,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-shared",
+        }
+        state = {
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "claude": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "claude-shared": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                },
+            },
+        }
+        reason = supervisor.assignment_terminal_unavailability(
+            self.config, state, "claude",
+        )
+        self.assertEqual(reason, "configured_zero_capacity")
+
     def test_topology_reconciliation_migrates_shared_claude_health_once(self) -> None:
         """The former shared Claude row cannot survive a split topology.
 

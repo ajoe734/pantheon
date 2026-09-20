@@ -1601,6 +1601,91 @@ EOF
         self.assertEqual(probe["source"], "live")
         self.assertEqual(probe["provider"], "claude")
 
+    def test_claude_auth_probe_auth_only_does_not_invoke_cli_prompt(self) -> None:
+        with (
+            mock.patch.object(provider_permissions, "_claude_auth_status_payload", return_value={}),
+            mock.patch.object(provider_permissions, "claude_auth_ready", return_value=True),
+            mock.patch.object(provider_permissions, "run_command") as run_cmd,
+        ):
+            probe = provider_permissions._claude_auth_probe({}, "claude", "/usr/bin/claude", {}, check_capacity=False)
+        self.assertTrue(probe["ready"])
+        self.assertEqual(probe["method"], "claude_auth_status_refresh")
+        self.assertEqual(probe["status"], "ready")
+        run_cmd.assert_not_called()
+
+    def test_claude_auth_probe_check_capacity_invokes_cli_prompt_and_detects_quota(self) -> None:
+        quota_output = (
+            'Claude runs at 04:15 and 06:37 UTC returned a rejected seven_day rate_limit_event '
+            'and "You\'ve hit your weekly limit" with reset 2026-09-21 12:00 UTC.'
+        )
+        completed = subprocess.CompletedProcess(args=["/usr/bin/claude"], returncode=1, stdout="", stderr=quota_output)
+        with (
+            mock.patch.object(provider_permissions, "_claude_auth_status_payload", return_value={}),
+            mock.patch.object(provider_permissions, "claude_auth_ready", return_value=True),
+            mock.patch.object(provider_permissions, "run_command", return_value=completed) as run_cmd,
+        ):
+            probe = provider_permissions._claude_auth_probe({}, "claude", "/usr/bin/claude", {}, check_capacity=True)
+        self.assertFalse(probe["ready"])
+        self.assertEqual(probe["method"], "claude_prompt")
+        self.assertEqual(probe["status"], "quota_reached")
+        self.assertEqual(probe["quota_reset_at"], "2026-09-21T12:00:00Z")
+        run_cmd.assert_called_once()
+        self.assertIn("-p", run_cmd.call_args.args[0])
+
+    def test_claude_auth_probe_check_capacity_succeeds(self) -> None:
+        completed = subprocess.CompletedProcess(args=["/usr/bin/claude"], returncode=0, stdout="OK\n", stderr="")
+        with (
+            mock.patch.object(provider_permissions, "_claude_auth_status_payload", return_value={}),
+            mock.patch.object(provider_permissions, "claude_auth_ready", return_value=True),
+            mock.patch.object(provider_permissions, "run_command", return_value=completed) as run_cmd,
+        ):
+            probe = provider_permissions._claude_auth_probe({}, "claude", "/usr/bin/claude", {}, check_capacity=True)
+        self.assertTrue(probe["ready"])
+        self.assertEqual(probe["method"], "claude_prompt")
+        self.assertEqual(probe["status"], "ready")
+        run_cmd.assert_called_once()
+
+    def test_claude_probe_ready_classifications(self) -> None:
+        # 1. Quota reached
+        ready, err, status = provider_permissions._claude_probe_ready(1, "", "hit your weekly limit")
+        self.assertFalse(ready)
+        self.assertEqual(status, "quota_reached")
+
+        # 2. Auth failed
+        ready, err, status = provider_permissions._claude_probe_ready(1, "", "401 Unauthorized")
+        self.assertFalse(ready)
+        self.assertEqual(status, "auth_failed")
+
+        # 3. Empty output
+        ready, err, status = provider_permissions._claude_probe_ready(0, "", "")
+        self.assertFalse(ready)
+        self.assertEqual(status, "empty_output")
+
+        # 4. Unexpected output
+        ready, err, status = provider_permissions._claude_probe_ready(0, "NOT_OK\n", "")
+        self.assertFalse(ready)
+        self.assertEqual(status, "unexpected_output")
+
+        # 5. Ready
+        ready, err, status = provider_permissions._claude_probe_ready(0, "OK\n", "")
+        self.assertTrue(ready)
+        self.assertIsNone(err)
+        self.assertEqual(status, "ready")
+
+    def test_parse_quota_reset_at_formats(self) -> None:
+        self.assertEqual(
+            provider_permissions.parse_quota_reset_at("reset 2026-09-21 12:00 UTC"),
+            "2026-09-21T12:00:00Z",
+        )
+        self.assertEqual(
+            provider_permissions.parse_quota_reset_at("try again at 2026-09-22 08:30:00 UTC"),
+            "2026-09-22T08:30:00Z",
+        )
+        self.assertEqual(
+            provider_permissions.parse_quota_reset_at('resets_at: 1789999999'),
+            datetime.fromtimestamp(1789999999, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        )
+
     def test_targeted_pre_dispatch_probe_forces_selected_provider(self) -> None:
         config = {
             "providers": {

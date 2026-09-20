@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import enum
+import re
 from typing import Any, Mapping
 
 
@@ -41,6 +42,86 @@ _CAPACITY_PROBE_STATUS_MARKERS = (
     "cli_missing",
     "exit_",
 )
+_AUTH_ONLY_PROBE_METHODS = frozenset({
+    "claude_auth_status",
+    "claude_auth_status_refresh",
+    "gemini_auth_material",
+    "copilot_auth_material",
+    "codex_auth_file",
+    "antigravity_auth_material",
+})
+_RESET_DATETIME_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:reset(?:s)?(?:[_\s-]*at)?|try\s+again\s+at)\s*(?:on\s+)?"
+    r"(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}))?)",
+    re.IGNORECASE,
+)
+_RESET_EPOCH_PATTERN = re.compile(
+    r'"?resets?[_-]?at"?\s*[:=]\s*"?(?P<epoch>\d{10})"?',
+    re.IGNORECASE,
+)
+
+
+def is_auth_only_probe(probe: Mapping[str, Any]) -> bool:
+    """True when probe evidence only exercises credentials, not model capacity."""
+    if str(probe.get("probe_kind") or "").strip().lower() == "auth":
+        return True
+    if probe.get("capacity_checked") is False:
+        return True
+    method = str(probe.get("method") or "").strip().lower()
+    if not method:
+        return False
+    if method in _AUTH_ONLY_PROBE_METHODS:
+        return True
+    if any(
+        method.endswith(suffix)
+        for suffix in (
+            "_auth_status",
+            "_auth_status_refresh",
+            "_auth_material",
+            "_auth_file",
+        )
+    ):
+        return True
+    return False
+
+
+def _extract_reset_timestamp(text: str | None) -> str | None:
+    """Extract a reset timestamp string from freeform provider failure detail."""
+    if not text:
+        return None
+    raw = str(text)
+    m = _RESET_DATETIME_PATTERN.search(raw)
+    if m:
+        raw_ts = m.group("timestamp").strip()
+        raw_iso = raw_ts.replace(" ", "T").replace("UTC", "+00:00").replace("Z", "+00:00")
+        parts = raw_iso.split("T")
+        date_part = parts[0]
+        time_part = parts[1] if len(parts) > 1 else ""
+        tz = ""
+        if "+" in time_part:
+            time_part, tz = time_part.split("+", 1)
+            tz = "+" + tz
+        elif "-" in time_part:
+            time_part, tz = time_part.split("-", 1)
+            tz = "-" + tz
+        if len(time_part) == 5:
+            time_part += ":00"
+        if not tz:
+            tz = "+00:00"
+        try:
+            dt = datetime.fromisoformat(f"{date_part}T{time_part}{tz}")
+            return _iso(dt)
+        except ValueError:
+            pass
+
+    em = _RESET_EPOCH_PATTERN.search(raw)
+    if em:
+        try:
+            dt = datetime.fromtimestamp(int(em.group("epoch")), tz=timezone.utc)
+            return _iso(dt)
+        except (OverflowError, OSError, ValueError):
+            pass
+    return None
 
 
 def _utc_now() -> datetime:
@@ -262,6 +343,8 @@ def apply_probe(
             source="live_probe",
             evidence_endpoint=endpoint_id,
         )
+        if is_auth_only_probe(probe):
+            return result
         return _write_entry(
             result,
             bucket="accounts",
@@ -299,6 +382,8 @@ def apply_probe(
         evidence_endpoint=endpoint_id,
     )
     quota_reset = str(probe.get("quota_reset_at") or "").strip() or None
+    if quota_reset is None and detail:
+        quota_reset = _extract_reset_timestamp(detail)
     return _write_entry(
         result,
         bucket="accounts",
@@ -325,6 +410,7 @@ def apply_failure(
     valid_for_seconds: int = 300,
     retry_after_seconds: int = 60,
     detail: str | None = None,
+    quota_reset_at: str | None = None,
 ) -> dict[str, Any]:
     """Project one classified worker failure into the same health snapshot."""
 
@@ -357,17 +443,26 @@ def apply_failure(
         source="worker_failure",
         evidence_endpoint=endpoint_id,
     )
+    quota_reset = str(quota_reset_at or "").strip() or None
+    if quota_reset is None:
+        parsed_retry = _parse_time(retry_at)
+        if parsed_retry is not None:
+            quota_reset = _iso(parsed_retry)
+        elif detail:
+            quota_reset = _extract_reset_timestamp(detail)
+    effective_retry = quota_reset or retry_at
     return _write_entry(
         result,
         bucket="accounts",
         identity=account_id,
         state=DeliveryHealthState.RETRY_AFTER,
         observed_at=now,
-        retry_at=_retry_time(retry_at, now=now, default_retry_seconds=retry_after_seconds),
+        retry_at=_retry_time(effective_retry, now=now, default_retry_seconds=retry_after_seconds),
         reason_kind=kind,
         source="worker_failure",
         evidence_endpoint=endpoint_id,
         detail=detail,
+        quota_reset_at=quota_reset,
     )
 
 
