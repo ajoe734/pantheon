@@ -441,6 +441,11 @@
     "antigravity": {
       "delivery_mode": "antigravity",
       "account": "antigravity",
+      "runtime": {
+        "env": {
+          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
+        }
+      },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
@@ -468,6 +473,11 @@
     "antigravity2": {
       "delivery_mode": "antigravity",
       "account": "antigravity",
+      "runtime": {
+        "env": {
+          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
+        }
+      },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "config_home": "~/.gemini-agy2",
