@@ -241,14 +241,14 @@
     "claude": {
       "display_name": "Claude",
       "provider": "claude",
-      "max_parallel": 3,
+      "max_parallel": 0,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "claude2": {
       "display_name": "Claude2",
       "provider": "claude2",
-      "max_parallel": 1,
+      "max_parallel": 0,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },

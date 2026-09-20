@@ -74,6 +74,8 @@ components:
       - scripts/test_supervisor_watchdog_install.py
       - scripts/test_supervisor_launch_ownership.py
       - docs-site/js/dashboard-*.js
+      - docs-site/script.js
+      - docs-site/index.html
       - docs/02-architecture/component-boundary.yaml
       - docs/02-architecture/development-tooling-product-boundary.md
       - docs/orchestrator-portability.md
