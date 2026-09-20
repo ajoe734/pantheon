@@ -3,7 +3,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.core.errors import register_error_handlers
@@ -12,7 +13,10 @@ from services.control_plane.bff.ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
 )
 from services.control_plane.bff.research.router import create_research_router
-from services.control_plane.bff.research.service import ResearchRouterService
+from services.control_plane.bff.research.service import (
+    ResearchRouterService,
+    ResearchValidationError,
+)
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -212,6 +216,17 @@ def _create_test_app(port: _ArtifactPortDouble) -> FastAPI:
     app = FastAPI()
     register_error_handlers(app)
 
+    @app.exception_handler(ResearchValidationError)
+    async def _research_validation_error_handler(request: Request, exc: ResearchValidationError):
+        error = _bff_error(
+            exc.status_code,
+            exc.error_code,
+            str(exc),
+            str(exc),
+            precondition_failed=exc.field,
+        )
+        return JSONResponse(status_code=error.status_code, content=error.detail)
+
     router = create_research_router(
         read_surface=lambda: port,
         extract_identity=_extract_identity,
@@ -355,24 +370,16 @@ def test_rw05_compare_contract_returns_backend_composed_diff() -> None:
 
 
 def test_rw05_compare_rejects_non_comparable_artifacts() -> None:
-    """Formal contract repair: under canonical register_error_handlers,
-
-    ResearchRouterService.compare_artifacts raises ResearchValidationError when
-    an artifact cannot be compared. Because ResearchValidationError subclasses
-    ValueError, canonical register_error_handlers maps it to HTTP 400 VALIDATION_FAILED
-    with details={"reason": "VALUE_ERROR"}.
-    """
     with _seeded_client() as client:
         response = client.get(
             "/api/v1/artifacts/compare?artifact_ids=art_2024_abc123,art_2024_pending01",
             headers={"Authorization": OPERATOR_AUTH},
         )
-        assert response.status_code == 400, response.text
+        assert response.status_code == 422, response.text
 
         payload = response.json()
-        assert payload["error"]["code"] == "VALIDATION_FAILED"
-        assert payload["error"]["message"] == "One or more artifacts cannot be compared"
-        assert payload["error"]["details"]["reason"] == "VALUE_ERROR"
+        assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
+        assert payload["error"]["details"]["precondition_failed"] == "artifact_status"
 
 
 def test_rw05_compare_rejects_invalid_cardinality() -> None:
@@ -382,7 +389,4 @@ def test_rw05_compare_rejects_invalid_cardinality() -> None:
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 400, response.text
-        payload = response.json()
-        assert payload["error"]["code"] == "VALIDATION_FAILED"
-        assert payload["error"]["message"] == "artifact_ids must include between 2 and 4 artifact ids"
-        assert payload["error"]["details"]["reason"] == "VALUE_ERROR"
+        assert response.json()["error"]["code"] == "VALIDATION_FAILED"

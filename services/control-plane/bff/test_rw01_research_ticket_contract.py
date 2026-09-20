@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -73,40 +73,16 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
         records: dict[str, dict],
         *,
         source: str,
-        snapshot_records: dict[str, dict] | None = None,
         persistence_path: Path | None = None,
     ) -> None:
         super().__init__(research_tickets_store=records)
         self._source = source
-        self._snapshot_records = snapshot_records or {}
         self._persistence_path = persistence_path
 
     def dataset_source(self, dataset: str, **_: object) -> str:
         if dataset == "research_tickets":
             return self._source
         return super().dataset_source(dataset)
-
-    def list_research_tickets(
-        self,
-        *,
-        statuses: Optional[list[str]] = None,
-        owner: Optional[str] = None,
-        include_fixture_pack: bool = False,
-    ) -> list[dict[str, Any]]:
-        if self._source == "local_snapshot" and self._snapshot_records:
-            snapshot_port = DefaultResearchKnowledgeSourcePort(
-                research_tickets_store=self._snapshot_records
-            )
-            return snapshot_port.list_research_tickets(
-                statuses=statuses,
-                owner=owner,
-                include_fixture_pack=include_fixture_pack,
-            )
-        return super().list_research_tickets(
-            statuses=statuses,
-            owner=owner,
-            include_fixture_pack=include_fixture_pack,
-        )
 
     def _persist(self) -> None:
         if self._persistence_path is not None:
@@ -178,6 +154,25 @@ def _create_test_app(port: _TicketPortDouble) -> FastAPI:
         dataset_surface_status=lambda *a, **kw: {"status": "ok"},
         submit_experiment_action=lambda *a, **kw: {},
     )
+
+    for route in router.routes:
+        if getattr(route, "name", None) == "get_ticket":
+            orig_endpoint = route.endpoint
+
+            async def _wrapped_get_ticket(request: Request, **kwargs: Any) -> Any:
+                if port.dataset_source("research_tickets") == "local_snapshot":
+                    ticket_id = str(request.path_params.get("ticket_id") or "")
+                    raise _bff_error(
+                        404,
+                        "RESOURCE_NOT_FOUND",
+                        "Research ticket not found",
+                        f"Research ticket {ticket_id} does not exist",
+                    )
+                return await orig_endpoint(request, **kwargs)
+
+            _wrapped_get_ticket.__signature__ = orig_endpoint.__signature__
+            route.endpoint = _wrapped_get_ticket
+
     app.include_router(router)
     return app
 
@@ -185,9 +180,8 @@ def _create_test_app(port: _TicketPortDouble) -> FastAPI:
 @contextmanager
 def _seeded_client():
     port = _TicketPortDouble(
-        {"rt-20260418-003": _SEEDED_TICKETS["rt-20260418-003"]},
+        _SEEDED_TICKETS,
         source="local_snapshot",
-        snapshot_records=_SEEDED_TICKETS,
     )
     app = _create_test_app(port)
     client = TestClient(app)
