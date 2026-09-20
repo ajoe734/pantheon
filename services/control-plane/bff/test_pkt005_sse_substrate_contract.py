@@ -827,7 +827,8 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
 
-    from services.control_plane.bff import main
+    import importlib
+    main = importlib.import_module("services.control_plane.bff.main")
     from starlette.testclient import TestClient
 
     # Ensure buffer is empty before test
