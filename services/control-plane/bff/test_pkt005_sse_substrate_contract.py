@@ -143,6 +143,29 @@ _sse_format = sse_service.format_event
 _sse_buffers = sse_service.buffers
 _sse_subscribers = sse_service.subscribers
 
+
+def _make_finite_service(service: EventStreamService, limit: int = 20):
+    original_stream = service.stream
+
+    async def finite_stream(*args, **kwargs):
+        stream = original_stream(*args, **kwargs)
+        try:
+            for _ in range(limit):
+                try:
+                    item = await asyncio.wait_for(anext(stream), 0.1)
+                except (TimeoutError, asyncio.TimeoutError, StopAsyncIteration):
+                    break
+                yield item
+        finally:
+            await stream.aclose()
+
+    service.stream = finite_stream
+    return service
+
+
+_make_finite_service(sse_service)
+client = TestClient(app)
+
 stream_generic_events = next(r.endpoint for r in _events_router.routes if r.path == "/api/v1/stream/{channel}")
 stream_bff_events = next(r.endpoint for r in _events_router.routes if r.path == "/bff/events/stream")
 bff_events_stream_alias = lambda channel="system", last_event_id=None, authorization=None: stream_generic_events(channel, last_event_id, authorization)
@@ -300,10 +323,9 @@ def test_replay_unavailable_uses_final_error_envelope_with_resync_metadata() -> 
 
 
 def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> None:
-    for route, channel, resync in [
-        (stream_approval_events, "approval", "/bff/approvals,/bff/v5/interventions"),
+    for channel, resync in [
+        ("approval", "/bff/approvals,/bff/v5/interventions"),
         (
-            stream_ask_events,
             "ask",
             (
                 "/bff/management/ai/conversations,"
@@ -313,8 +335,9 @@ def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> Non
             ),
         ),
     ]:
-        response = asyncio.run(route(last_event_id=None, authorization=AUTH))
-        assert response.media_type == "text/event-stream"
+        response = client.get(f"/api/v1/stream/{channel}", headers={"Authorization": AUTH})
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
         assert response.headers["X-SSE-Channel"] == channel
         assert response.headers["X-SSE-Replay-Supported"] == "true"
         assert response.headers["X-SSE-Replay-Window-Events"] == "500"
@@ -342,46 +365,27 @@ def test_execute_plans_sse_compatibility_routes_are_registered() -> None:
 
 
 def test_execute_plans_sse_compatibility_aliases_share_replay_headers() -> None:
-    route_factories = [
-        (
-            lambda: bff_events_stream_alias(
-                channel="system", last_event_id=None, authorization=AUTH,
-            ),
-            "system",
-        ),
-        (lambda: bff_sse_notifications_alias(last_event_id=None, authorization=AUTH), "inbox"),
-        (lambda: bff_sse_cc_kpi_alias(last_event_id=None, authorization=AUTH), "ranking"),
-        (lambda: bff_sse_cc_events_alias(last_event_id=None, authorization=AUTH), "loop"),
-        (
-            lambda: bff_sse_job_progress_alias(
-                jobId="job-final-sse-001", last_event_id=None, authorization=AUTH,
-            ),
-            "tool",
-        ),
-        (lambda: bff_sse_alerts_alias(last_event_id=None, authorization=AUTH), "sentinel"),
-        (
-            lambda: bff_sse_incident_timeline_alias(
-                incidentId="inc-final-sse-001", last_event_id=None, authorization=AUTH,
-            ),
-            "journal",
-        ),
-        (lambda: bff_sse_deployment_events_alias(last_event_id=None, authorization=AUTH), "artifact"),
-        (lambda: bff_sse_review_updates_alias(last_event_id=None, authorization=AUTH), "approval"),
+    route_paths = [
+        ("/bff/events/stream?channel=system", "system"),
+        ("/bff/sse/notifications", "inbox"),
+        ("/bff/sse/command-center/kpi", "ranking"),
+        ("/bff/sse/command-center/events", "loop"),
+        ("/bff/sse/jobs/job-final-sse-001/progress", "tool"),
+        ("/bff/sse/alerts", "sentinel"),
+        ("/bff/sse/incidents/inc-final-sse-001/timeline", "journal"),
+        ("/bff/sse/deployment/events", "artifact"),
+        ("/bff/sse/review/updates", "approval"),
     ]
 
-    for response_factory, expected_channel in route_factories:
-        response = asyncio.run(response_factory())
-        assert response.media_type == "text/event-stream"
+    for path, expected_channel in route_paths:
+        response = client.get(path, headers={"Authorization": AUTH})
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
         assert response.headers["X-SSE-Channel"] == expected_channel
         assert response.headers["X-SSE-Replay-Supported"] == "true"
         assert response.headers["X-SSE-Replay-Window-Events"] == "500"
         assert response.headers["X-SSE-Replay-Store"] == "in-memory"
 
-    # Agora's signal/session SSE aliases are synchronous route handlers (not
-    # coroutines), unlike every other alias above, and resolve Last-Event-ID
-    # through a FastAPI Header() dependency default that only FastAPI's own
-    # request dependency-injection resolves to None; call them directly with
-    # that header dependency explicitly supplied rather than via asyncio.run.
     for sync_factory, expected_channel in [
         (
             lambda: bff_sse_agora_signals_alias(
@@ -405,19 +409,6 @@ def test_execute_plans_sse_compatibility_aliases_share_replay_headers() -> None:
         assert response.headers["X-SSE-Replay-Store"] == "in-memory"
 
 
-async def _first_sse_payload(response: Any) -> dict:
-    iterator = response.body_iterator
-    try:
-        chunk = await anext(iterator)
-    finally:
-        if hasattr(iterator, "aclose"):
-            await iterator.aclose()
-    if isinstance(chunk, bytes):
-        chunk = chunk.decode()
-    data_line = next(line for line in chunk.splitlines() if line.startswith("data: "))
-    return json.loads(data_line.removeprefix("data: "))
-
-
 def test_execute_plans_sse_alias_uses_same_envelope_shape_as_generic_stream() -> None:
     _publish_event(
         _sse_buffers["inbox"],
@@ -426,19 +417,20 @@ def test_execute_plans_sse_alias_uses_same_envelope_shape_as_generic_stream() ->
         {"notification_id": "note-final-sse-001"},
     )
 
-    async def compare_alias_to_generic() -> tuple[dict, dict]:
-        generic_response = await stream_generic_events(
-            channel="inbox", last_event_id=None, authorization=AUTH,
-        )
-        alias_response = await bff_sse_notifications_alias(
-            last_event_id=None, authorization=AUTH,
-        )
-        return (
-            await _first_sse_payload(generic_response),
-            await _first_sse_payload(alias_response),
-        )
+    generic_response = client.get("/api/v1/stream/inbox", headers={"Authorization": AUTH})
+    alias_response = client.get("/bff/sse/notifications", headers={"Authorization": AUTH})
 
-    generic_payload, alias_payload = asyncio.run(compare_alias_to_generic())
+    assert generic_response.status_code == 200
+    assert alias_response.status_code == 200
+
+    def _extract_payload(text: str) -> dict:
+        for line in text.splitlines():
+            if line.startswith("data: "):
+                return json.loads(line.removeprefix("data: "))
+        raise AssertionError(f"No data line in: {text!r}")
+
+    generic_payload = _extract_payload(generic_response.text)
+    alias_payload = _extract_payload(alias_response.text)
 
     assert alias_payload == generic_payload
     assert set(alias_payload) == {"id", "type", "timestamp", "data"}
@@ -447,16 +439,12 @@ def test_execute_plans_sse_alias_uses_same_envelope_shape_as_generic_stream() ->
 
 
 def test_execute_plans_sse_aliases_return_replay_unavailable_envelope() -> None:
-    with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(
-            bff_sse_notifications_alias(
-                last_event_id="evt-final-sse-missing",
-                authorization=AUTH,
-            )
-        )
-
-    assert exc_info.value.status_code == 409
-    error = exc_info.value.detail["error"]
+    resp = client.get(
+        "/bff/sse/notifications?last_event_id=evt-final-sse-missing",
+        headers={"Authorization": AUTH},
+    )
+    assert resp.status_code == 409
+    error = _response_error(resp)
     assert _error_code_value(error["code"]) == "RESOURCE_CONFLICT"
     assert error["details"]["reason"] == "SSE_REPLAY_HISTORY_MISSING"
     assert error["details"]["channel"] == "inbox"
@@ -464,21 +452,33 @@ def test_execute_plans_sse_aliases_return_replay_unavailable_envelope() -> None:
 
 
 def test_bff_events_stream_matches_lovable_shell_schema_without_auth() -> None:
-    response = asyncio.run(
-        stream_bff_events(
-            channels="system,loop",
-            last_event_id=None,
-            last_event_id_camel=None,
-        )
+    from services.control_plane.bff.events.router import (
+        _default_frontend_bff_event_stream,
     )
 
-    assert response.media_type == "text/event-stream"
+    async def _finite_frontend_stream(channels):
+        stream = _default_frontend_bff_event_stream(channels)
+        try:
+            yield await asyncio.wait_for(anext(stream), 0.5)
+        finally:
+            await stream.aclose()
+
+    test_router = create_events_router(
+        event_stream_service=sse_service,
+        frontend_bff_event_stream=_finite_frontend_stream,
+    )
+    test_app = FastAPI()
+    test_app.include_router(test_router)
+    test_client = TestClient(test_app)
+
+    response = test_client.get("/bff/events/stream?channels=system,loop")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
     assert response.headers["X-SSE-Channel"] == "bff"
     assert response.headers["X-SSE-Replay-Supported"] == "false"
 
-    first_chunk = asyncio.run(anext(response.body_iterator))
-    assert "event:" not in first_chunk
-    data_line = next(line for line in first_chunk.splitlines() if line.startswith("data: "))
+    assert "event:" not in response.text
+    data_line = next(line for line in response.text.splitlines() if line.startswith("data: "))
     payload = json.loads(data_line.removeprefix("data: "))
     assert payload["schemaVersion"] == 1
     assert payload["channel"] == "system"
@@ -853,24 +853,20 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     assert replay_file.exists(), f"Replay file should be created under {tmp_path}/sse_replay/approval.jsonl"
 
     # 3. Verify mounted reader endpoint (/api/v1/stream/{channel}) on main._events_router
-    stream_endpoint = next(
-        r.endpoint for r in main._events_router.routes if r.path == "/api/v1/stream/{channel}"
-    )
-
-    # 3a. Replay from mounted endpoint with last_event_id=first_id: must return 200 and second event
-    resp = asyncio.run(stream_endpoint("approval", first_id, AUTH))
-    assert resp.headers["X-SSE-Replay-Store"] == "file"
-    assert resp.headers["X-SSE-Channel"] == "approval"
-    it = resp.body_iterator
+    _make_finite_service(main._events_router.event_stream_service)
+    client = TestClient(main.app)
 
     async def _read_chunk(iterator):
         return await asyncio.wait_for(anext(iterator), timeout=2.0)
 
-    chunk = asyncio.run(_read_chunk(it))
-    asyncio.run(it.aclose())
-    assert second_id in chunk
-    assert first_id not in chunk
-    assert "second-approval" in chunk
+    # 3a. Replay from mounted endpoint with last_event_id=first_id: must return 200 and second event
+    resp = client.get(f"/api/v1/stream/approval?last_event_id={first_id}", headers={"Authorization": AUTH})
+    assert resp.status_code == 200
+    assert resp.headers["X-SSE-Replay-Store"] == "file"
+    assert resp.headers["X-SSE-Channel"] == "approval"
+    assert second_id in resp.text
+    assert first_id not in resp.text
+    assert "second-approval" in resp.text
 
     # 3b. Verify old handler also returns 200 and replays the second event
     old_resp = asyncio.run(main.stream_generic_events("approval", first_id, AUTH))
@@ -885,21 +881,13 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     main._sse_buffers["approval"].clear()
     assert len(main._sse_buffers["approval"]) == 0
 
-    resp_restart = asyncio.run(stream_endpoint("approval", None, AUTH))
+    resp_restart = client.get("/api/v1/stream/approval", headers={"Authorization": AUTH})
+    assert resp_restart.status_code == 200
     assert resp_restart.headers["X-SSE-Replay-Store"] == "file"
-    it_restart = resp_restart.body_iterator
-
-    async def _read_restart_chunks(iterator):
-        c1 = await asyncio.wait_for(anext(iterator), timeout=2.0)
-        c2 = await asyncio.wait_for(anext(iterator), timeout=2.0)
-        return c1, c2
-
-    chunk1, chunk2 = asyncio.run(_read_restart_chunks(it_restart))
-    asyncio.run(it_restart.aclose())
-    assert first_id in chunk1
-    assert "first-approval" in chunk1
-    assert second_id in chunk2
-    assert "second-approval" in chunk2
+    assert first_id in resp_restart.text
+    assert "first-approval" in resp_restart.text
+    assert second_id in resp_restart.text
+    assert "second-approval" in resp_restart.text
 
     # 5. Unavailable cursor fails closed with 409 SSE_REPLAY_HISTORY_MISSING on mounted app
     client = TestClient(main.app)

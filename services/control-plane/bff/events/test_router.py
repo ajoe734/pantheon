@@ -178,3 +178,164 @@ def test_events_router_stream_invalid_channel():
     data = resp.json()
     err = data["error"] if "error" in data else data.get("detail", {}).get("error", {})
     assert err.get("code") == "VALIDATION_FAILED"
+
+
+def test_events_router_native_sse_routes_flag():
+    router = create_events_router()
+    sse_paths = {
+        "/bff/events/stream",
+        "/api/v1/stream/{channel}",
+        "/bff/sse/notifications",
+        "/bff/sse/command-center/kpi",
+        "/bff/sse/command-center/events",
+        "/bff/sse/jobs/{jobId}/progress",
+        "/bff/sse/alerts",
+        "/bff/sse/incidents/{incidentId}/timeline",
+        "/bff/sse/deployment/events",
+        "/bff/sse/agora/signals",
+        "/bff/sse/agora/sessions/{sessionId}",
+        "/bff/sse/review/updates",
+    }
+    for route in router.routes:
+        if getattr(route, "path", None) in sse_paths:
+            assert getattr(route, "is_sse_stream", False) is True, f"Route {route.path} must have is_sse_stream == True"
+
+
+def _make_finite_service(service: EventStreamService, limit: int = 10):
+    original_stream = service.stream
+
+    async def finite_stream(*args, **kwargs):
+        stream = original_stream(*args, **kwargs)
+        try:
+            for _ in range(limit):
+                yield await asyncio.wait_for(anext(stream), 0.1)
+        except (TimeoutError, asyncio.TimeoutError):
+            pass
+        finally:
+            await stream.aclose()
+
+    service.stream = finite_stream
+    return service
+
+
+def test_events_router_tenant_isolation_in_memory_and_file_replay(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from events.service import EventStreamService
+
+    # 1. In-memory tenant isolation test
+    service = EventStreamService(channels=("approval", "tool"))
+    for tenant in ("tenant-a", "tenant-b"):
+        service.publish(
+            service.buffers["approval"],
+            service.subscribers["approval"],
+            "approval.created",
+            {"tenant_id": tenant, "secret": tenant + "-private-payload"},
+        )
+    _make_finite_service(service)
+
+    def extract_tenant_a(*args, **kwargs):
+        return SimpleNamespace(operator_id="alice", tenant_id="tenant-a", roles={"viewer"}, is_authenticated=True)
+
+    router = create_events_router(
+        event_stream_service=service,
+        extract_identity=extract_tenant_a,
+        require_read_role=lambda ident: None,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    resp = client.get("/api/v1/stream/approval", headers={"Authorization": "Bearer token"})
+    assert resp.status_code == 200
+    assert "tenant-a-private-payload" in resp.text
+    assert "tenant-b-private-payload" not in resp.text
+
+    # 2. File-based tenant isolation test
+    monkeypatch.setenv("PANTHEON_BFF_SSE_REPLAY_STORE", "file")
+    file_service = EventStreamService(channels=("approval", "tool"), data_dir=str(tmp_path))
+    for tenant in ("tenant-a", "tenant-b"):
+        file_service.publish(
+            file_service.buffers["approval"],
+            file_service.subscribers["approval"],
+            "approval.created",
+            {"tenant_id": tenant, "secret": tenant + "-file-private-payload"},
+        )
+    _make_finite_service(file_service)
+
+    router_file = create_events_router(
+        event_stream_service=file_service,
+        extract_identity=extract_tenant_a,
+        require_read_role=lambda ident: None,
+    )
+    app_file = FastAPI()
+    app_file.include_router(router_file)
+    client_file = TestClient(app_file)
+
+    resp_file = client_file.get("/api/v1/stream/approval", headers={"Authorization": "Bearer token"})
+    assert resp_file.status_code == 200
+    assert "tenant-a-file-private-payload" in resp_file.text
+    assert "tenant-b-file-private-payload" not in resp_file.text
+
+
+def test_events_router_cursor_handling_and_409_conflict():
+    from types import SimpleNamespace
+    from events.service import EventStreamService
+
+    service = EventStreamService(channels=("approval",))
+    id_1 = service.publish(
+        service.buffers["approval"],
+        service.subscribers["approval"],
+        "approval.created",
+        {"tenant_id": "tenant-a", "seq": 1},
+    )
+    id_2 = service.publish(
+        service.buffers["approval"],
+        service.subscribers["approval"],
+        "approval.created",
+        {"tenant_id": "tenant-a", "seq": 2},
+    )
+    _make_finite_service(service)
+
+    router = create_events_router(
+        event_stream_service=service,
+        extract_identity=lambda *a, **k: SimpleNamespace(operator_id="alice", tenant_id="tenant-a", roles={"viewer"}, is_authenticated=True),
+        require_read_role=lambda ident: None,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    # 1. Last-Event-ID header cursor excludes cursor event from replay
+    resp = client.get(
+        "/api/v1/stream/approval",
+        headers={"Authorization": "Bearer token", "Last-Event-ID": id_1},
+    )
+    assert resp.status_code == 200
+    assert f"id: {id_1}\n" not in resp.text
+    assert f"id: {id_2}\n" in resp.text
+
+    # 2. Unknown cursor returns HTTP 409 with replay headers
+    resp_missing = client.get(
+        "/api/v1/stream/approval",
+        headers={"Authorization": "Bearer token", "Last-Event-ID": "unknown-cursor-xyz"},
+    )
+    assert resp_missing.status_code == 409
+    assert resp_missing.headers.get("X-SSE-Replay-Supported") == "true"
+    assert resp_missing.headers.get("X-SSE-Channel") == "approval"
+
+    # 3. bff/events/stream honors the same Last-Event-ID header and returns 409 for unknown
+    resp_bff_missing = client.get(
+        "/bff/events/stream?channel=approval",
+        headers={"Authorization": "Bearer token", "Last-Event-ID": "unknown-cursor-xyz"},
+    )
+    assert resp_bff_missing.status_code == 409
+    assert resp_bff_missing.headers.get("X-SSE-Replay-Supported") == "true"
+
+    resp_bff_known = client.get(
+        "/bff/events/stream?channel=approval",
+        headers={"Authorization": "Bearer token", "Last-Event-ID": id_1},
+    )
+    assert resp_bff_known.status_code == 200
+    assert f"id: {id_1}\n" not in resp_bff_known.text
+    assert f"id: {id_2}\n" in resp_bff_known.text
+
