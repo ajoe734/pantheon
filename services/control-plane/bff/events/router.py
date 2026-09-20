@@ -228,7 +228,7 @@ def create_events_router(
         subscribers=sse_subscribers,
         data_dir=data_dir,
     )
-    router.event_stream_service = _event_stream  # type: ignore[attr-defined]
+    router.event_stream_service = _event_stream
     _active_sse_channels = frozenset(_event_stream.channels)
     _buffers = _event_stream.buffers
     _subscribers = _event_stream.subscribers

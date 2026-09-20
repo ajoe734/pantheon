@@ -85,15 +85,23 @@ class EventStreamService:
             self.subscribers.setdefault(channel, [])
         self.incident_buffer = incident_buffer if incident_buffer is not None else deque(maxlen=max_events)
         self.incident_subscribers = incident_subscribers if incident_subscribers is not None else []
-        self.data_dir = (
-            data_dir
-            or os.getenv("PANTHEON_BFF_DATA_DIR")
-            or os.getenv("BFF_DATA_DIR")
-            or "data"
-        )
-        self._custom_data_dir = data_dir
+        self._data_dir = data_dir
         routes = resync_routes or DEFAULT_SSE_RESYNC_ROUTES
         self.resync_routes = {channel: tuple(values) for channel, values in routes.items()}
+
+    @property
+    def data_dir(self) -> str:
+        if self._data_dir is not None:
+            return str(self._data_dir)
+        return (
+            os.getenv("PANTHEON_BFF_DATA_DIR")
+            or os.getenv("BFF_DATA_DIR")
+            or "/tmp/pantheon/bff"
+        )
+
+    @data_dir.setter
+    def data_dir(self, value: Optional[Union[str, Path]]) -> None:
+        self._data_dir = value
 
     @staticmethod
     def _shared_replay_enabled() -> bool:
@@ -112,17 +120,7 @@ class EventStreamService:
     def _shared_replay_file(self, channel: str) -> Path:
         if channel not in self.channel_set:
             raise ValueError(f"Unknown SSE channel: {channel}")
-        resolved_data_dir = (
-            self._custom_data_dir
-            if self._custom_data_dir is not None
-            else (
-                os.getenv("PANTHEON_BFF_DATA_DIR")
-                or os.getenv("BFF_DATA_DIR")
-                or self.data_dir
-                or "data"
-            )
-        )
-        replay_dir = Path(resolved_data_dir) / "sse_replay"
+        replay_dir = Path(self.data_dir) / "sse_replay"
         replay_dir.mkdir(parents=True, exist_ok=True)
         return replay_dir / f"{channel}.jsonl"
 

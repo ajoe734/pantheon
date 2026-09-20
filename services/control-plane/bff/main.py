@@ -16459,8 +16459,7 @@ def _sse_channel_for_buffer(buffer: deque) -> Optional[str]:
 def _sse_shared_replay_file(channel: str) -> str:
     if channel not in SSE_CHANNELS:
         raise ValueError(f"Unknown SSE channel: {channel}")
-    effective_data_dir = os.getenv("BFF_DATA_DIR", BFF_DATA_DIR)
-    replay_dir = os.path.join(effective_data_dir, "sse_replay")
+    replay_dir = os.path.join(BFF_DATA_DIR, "sse_replay")
     os.makedirs(replay_dir, exist_ok=True)
     return os.path.join(replay_dir, f"{channel}.jsonl")
 def _read_shared_sse_events(channel: str) -> list[dict]:
@@ -17989,7 +17988,6 @@ _events_router = _create_events_router(
     sse_subscribers=_sse_subscribers,
     sse_channels=SSE_CHANNELS,
     handle_sse_stream=_handle_sse_stream,
-    data_dir=BFF_DATA_DIR,
     include_domain_sse_aliases=False,
 )
 app.include_router(_events_router)
