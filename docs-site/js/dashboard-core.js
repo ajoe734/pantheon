@@ -745,7 +745,7 @@ export function buildWorkerCapacity(status, orchState, dashboardBundle = null, a
       label: workerLaneLabel(key, agent?.name || key),
       agent,
       capacity,
-      capacitySource: target?.source || "observed",
+      capacitySource: "observed",
       liveOccupied,
       running,
       pending,
