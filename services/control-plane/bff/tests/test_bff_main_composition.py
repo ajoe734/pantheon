@@ -266,6 +266,7 @@ def test_bootstrap_app_dependencies_contract() -> None:
     mock_read_surface = object()
     mock_ranking = object()
     mock_persona = object()
+    mock_strategy = object()
     mock_cmd = object()
     mock_settings = object()
 
@@ -276,12 +277,14 @@ def test_bootstrap_app_dependencies_contract() -> None:
         command_store=mock_cmd,
         persona_write_owner=mock_persona,
         ranking_write_owner=mock_ranking,
+        strategy_write_owner=mock_strategy,
         settings_store=mock_settings,
     )
     assert deps.deployment_queries is mock_queries
     assert deps.deployment_commands is mock_commands
     assert deps.read_surface is mock_read_surface
     assert deps.ranking_write_owner is mock_ranking
+    assert deps.strategy_write_owner is mock_strategy
     assert not hasattr(deps, "queries")
     assert not hasattr(deps, "read_store")
 
@@ -385,3 +388,16 @@ def test_deployment_adapters_concrete_read_surface_and_canonical_write_owner() -
     cmd_adapter = DeploymentCommandAdapter()
     commands = DefaultDeploymentCommands(write_owner=cmd_adapter)
     assert commands._write_owner is cmd_adapter
+
+
+def test_research_domain_and_capabilities_mounted() -> None:
+    """Verify research search and capabilities routes are mounted on bff_main.app."""
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.test_normalized_route_uniqueness import scan_fastapi_routes
+
+    entries = scan_fastapi_routes(bff_main.app)
+    paths = {e.raw_path for e in entries}
+    assert "/bff/capabilities" in paths, "Expected /bff/capabilities mounted on bff_main.app"
+    assert "/api/v1/research/search" in paths, "Expected /api/v1/research/search mounted on bff_main.app"
+    assert "/api/v1/research/tickets" in paths, "Expected /api/v1/research/tickets mounted on bff_main.app"
+

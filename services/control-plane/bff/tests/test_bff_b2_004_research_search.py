@@ -179,9 +179,19 @@ def _create_test_app() -> FastAPI:
 
     app.include_router(router)
 
-    import importlib
-    prod_main = importlib.import_module("services.control_plane.bff.main")
-    app.include_router(create_core_router({"sem_bff_capabilities": prod_main.sem_bff_capabilities}))
+    from services.control_plane.bff.core.app_factory import create_capabilities_handler
+
+    app.include_router(
+        create_core_router(
+            {
+                "sem_bff_capabilities": create_capabilities_handler(
+                    extract_identity=_extract_identity,
+                    require_read_role=_require_read_role,
+                    utc_now=lambda: "2026-05-23T00:00:00Z",
+                )
+            }
+        )
+    )
 
     return app
 

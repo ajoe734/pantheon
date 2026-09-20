@@ -191,12 +191,27 @@ class ResearchRouteContext:
             ) from exc
         if isinstance(exc, ResearchValidationError):
             error_code = getattr(ErrorCode, exc.error_code, ErrorCode.VALIDATION_FAILED)
+            details = getattr(exc, "details", None) or {}
+            try:
+                sig = inspect.signature(self.bff_error)
+                has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                has_details_extra = "details_extra" in sig.parameters
+            except (ValueError, TypeError):
+                has_kwargs = True
+                has_details_extra = False
+
+            call_kwargs: Dict[str, Any] = {"precondition_failed": exc.field}
+            if has_details_extra:
+                call_kwargs["details_extra"] = details
+            if has_kwargs or not has_details_extra:
+                call_kwargs.update(details)
+
             raise self.bff_error(
                 exc.status_code,
                 error_code,
                 str(exc),
                 str(exc),
-                precondition_failed=exc.field,
+                **call_kwargs,
             ) from exc
         raise exc
 

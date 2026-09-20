@@ -87,9 +87,9 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw02_search_contract.py": {
-      "sha256": "6e429a7e5f4ba895caac8685ff6ccc6cd888e4cfd2b411510fcfdb8d87cc49c5",
-      "bytes": 17571,
-      "lines": 420,
+      "sha256": "764db74f9de25252262c09af7ab047e7bf4aa292d33bbeee656829e6af368df6",
+      "bytes": 17127,
+      "lines": 411,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -111,17 +111,17 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw05_artifact_compare_contract.py": {
-      "sha256": "336ebcb4d27e3f5341ae8f3dec9872620df7787b96fb7245376fa80a4a570efc",
-      "bytes": 15747,
-      "lines": 413,
+      "sha256": "f9a4ae2f54f782223ca524d8bce1495c29ae285a395caa31543712a72e4a9371",
+      "bytes": 14726,
+      "lines": 396,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/tests/test_bff_b2_004_research_search.py": {
-      "sha256": "dcb83c9e74bd1ab257f738233d614dfb7377ce90353a5f1d7d3089c8cc01c9f5",
-      "bytes": 22697,
-      "lines": 558,
+      "sha256": "c61e40c957bf94a5e8a99eaa0bc704199bc7adabf4876f4a02369d89a4a5271d",
+      "bytes": 22946,
+      "lines": 568,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -165,11 +165,11 @@
     "test_pkt016_knowledge_workbench_contract": "Mounted create_research_router on isolated FastAPI app with knowledge read ports fixture and in-memory ports double.",
     "test_bff_knowledge_inbox": "Mounted create_knowledge_router on isolated FastAPI app with knowledge_read_port_fixtures in-memory double.",
     "test_rw01_research_ticket_contract": "Mounted create_research_router on isolated FastAPI app without endpoint monkeypatching; tests actual router fallback contract with 200 degraded for seeded tickets and 404 for non-existent tickets.",
-    "test_rw02_search_contract": "Mounted create_research_router on isolated FastAPI app with snapshot_meta attaching governed_evidence from port and _bff_error including unavailable surfaces for missing index adapter 503.",
+    "test_rw02_search_contract": "Mounted create_research_router on isolated FastAPI app with production tickets.py route attaching governed_evidence from port and unavailable surfaces on missing index adapter 503; test uses clean _bff_error and _snapshot_meta without test-only injections.",
     "test_rw03_analyze_contract": "Mounted create_research_router on isolated FastAPI app with unmodified ResearchRouterService and asserted canonical surface status dicts ({status: ok, source: service_client}).",
     "test_rw04_experiment_launch_contract": "Mounted create_research_router on isolated FastAPI app with _FakeResearchWriteOwner injected into create_in_memory_read_surface_ports.",
-    "test_rw05_artifact_compare_contract": "Mounted create_research_router on isolated FastAPI app with canonical register_error_handlers and ResearchValidationError handler preserving non_comparable_artifacts detail contract under 422 OPERATION_NOT_ALLOWED.",
-    "test_bff_b2_004_research_search": "Mounted create_research_router(include_prepared_subrouters=True) and create_core_router with real production sem_bff_capabilities handler from main.py exercised through the authorized core router seam with 0 static main imports.",
+    "test_rw05_artifact_compare_contract": "Mounted create_research_router on isolated FastAPI app with canonical register_error_handlers; ResearchRouterService.compare_artifacts attaches non_comparable_artifacts to ResearchValidationError details and raise_service_error maps them to bff_error details without test-only exception handlers.",
+    "test_bff_b2_004_research_search": "Mounted create_research_router(include_prepared_subrouters=True) and create_core_router with canonical sem_bff_capabilities from core.app_factory shared between main.app and test app with 0 static or dynamic main imports.",
     "test_console_research_projection": "Mounted create_knowledge_router, create_research_router, and create_agora_router on isolated FastAPI app.",
     "test_exp002_bff_research_experiments_contract": "Mounted create_research_router(include_prepared_subrouters=True) on isolated FastAPI app with _FakeResearchWriteOwner injected into read surface ports.",
     "test_mgmt_qlib_006_artifact_research_linkage": "Mounted create_research_router and create_strategies_router on isolated FastAPI app with DefaultResearchKnowledgeSourcePort and create_read_surface_ports.",
@@ -178,21 +178,27 @@
   "verification_evidence": [
     {
       "description": "Pytest run for all 13 migrated test suites",
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_rw04_experiment_launch_contract.py services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/tests/test_console_research_projection.py services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
+      "command": "pytest -q services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_rw04_experiment_launch_contract.py services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/tests/test_console_research_projection.py services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
       "exit_code": 0,
-      "result": "126 passed, 3 warnings in 57.65s"
+      "result": "126 passed, 1 warning in 25.10s"
     },
     {
-      "description": "Pytest run for architectural invariant gate test suite",
-      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "description": "Pytest run for architectural invariant gate and research router test suites",
+      "command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_research_router.py",
       "exit_code": 0,
-      "result": "8 passed in 12.10s"
+      "result": "23 passed in 14.52s"
     },
     {
       "description": "AST scan verifying 0 main imports and 0 sys.path mutations across all 13 files",
       "command": "python3 -c \"import ast; [ast.parse(open(f).read()) for f in targets]\"",
       "exit_code": 0,
       "result": "ALL 13 FILES ARE COMPLETELY CLEAN!"
+    },
+    {
+      "description": "Runtime module isolation scan verifying 0 BFF main module presence in sys.modules",
+      "command": "python3 -c \"import importlib.util; [verify_no_bff_main(f) for f in targets]\"",
+      "exit_code": 0,
+      "result": "PASS (0 BFF main imports at runtime across all 13 test suites)"
     }
   ]
 }

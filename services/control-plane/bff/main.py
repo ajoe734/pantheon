@@ -17299,19 +17299,12 @@ async def sem_bff_health_alias():
 async def sem_bff_readiness_alias():
     payload = _sem_bff_health_payload()
     return JSONResponse(payload, status_code=readiness_status_code(payload))
-async def sem_bff_capabilities(authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
-    return {
-        "data": {
-            "feature_flags": {
-                "executePlansBff": True,
-                "sessionAuthMe": True,
-                "oodaPackets": _ooda_packet_routes_enabled(),
-                "synthesisConflictLogs": _synthesis_conflict_log_routes_enabled(),
-            }
-        },
-        "meta": {"snapshot_at": utc_now()},
-    }
+from .core.app_factory import create_capabilities_handler as _create_capabilities_handler
+sem_bff_capabilities = _create_capabilities_handler(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    utc_now=utc_now,
+)
 def _sem_final_registry_meta(surface_key: str, *, snapshot_at: Optional[str] = None, total: Optional[int] = None) -> Dict[str, Any]:
     snapshot_at = snapshot_at or utc_now()
     meta: Dict[str, Any] = {

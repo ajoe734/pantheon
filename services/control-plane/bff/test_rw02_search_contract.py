@@ -202,10 +202,7 @@ def _bff_error(
         "reason": reason or message,
         "details": details,
     }
-    content: dict[str, Any] = {"error": error_dict}
-    if reason == "SEARCH_RESULTS_UNAVAILABLE" or (status_code == 503 and "search" in message.lower()):
-        content["surfaces"] = {"search_results": "unavailable"}
-    return HTTPException(status_code=status_code, detail=content)
+    return HTTPException(status_code=status_code, detail={"error": error_dict})
 
 
 def _create_test_app(port: _SearchPortDouble) -> FastAPI:
@@ -226,13 +223,7 @@ def _create_test_app(port: _SearchPortDouble) -> FastAPI:
         return "fresh"
 
     def _snapshot_meta(snapshot_at: str, **kw: Any) -> dict[str, Any]:
-        meta: dict[str, Any] = {"snapshot_at": snapshot_at, **kw}
-        get_refs = getattr(port, "get_last_governed_search_refs", None)
-        if callable(get_refs):
-            refs = get_refs()
-            if refs:
-                meta["governed_evidence"] = refs
-        return meta
+        return {"snapshot_at": snapshot_at, **kw}
 
     router = create_research_router(
         read_surface=lambda: port,
