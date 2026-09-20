@@ -7,7 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "functional",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "c7058742f7d009503026a672b7c8f4bdaf53fb24",
+  "base_sha": "9fbf1c2ebee21fedf08118aeaf4f585dd5b696da",
   "summary": "Externalized Pantheon LEAN extensions from the fork into an external local library at integrations/lean/pantheon_algo, pinned upstream LEAN master commit 23b735d99a357807dc0df9f4c51d30f05fe0d277 and pinned Docker image quantconnect/lean:18070 (sha256:373b03b8ef5e39a923b1ed2e7e469abdef21b2fef31dd78fb4f7b05464ac69b4). Proved actual upstream LEAN engine acceptance via isolated 2-phase Docker replay (runtime context, bridge events, SignalConsumer intake, order fill, ObjectStore persistence across restart). Wired concrete PendingSignalStore and SignalConsumer in PantheonAlgoBase without mocking. Updated broker and execution Dockerfiles to consume lockfiles as constraints during pip install. Reconciled bootstrap defaults to UPSTREAM_LEAN_REMOTE and PANTHEON_EXTERNAL_LIBRARY_PATH. All 118 unit tests and standalone smoke test pass cleanly.",
   "source_packet": {
     "packet_id": "pkt-llm-oss-simplification-execution-20260906-v2-01",
