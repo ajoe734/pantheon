@@ -534,23 +534,9 @@ def create_research_test_app(
     app = build_bff_app()
     get_store = port_or_getter if callable(port_or_getter) else (lambda: port_or_getter)
 
-    def _default_extract_identity(auth: Optional[str]) -> Any:
-        if not auth or not auth.startswith("Bearer "):
-            raise auth_policy.bff_error(
-                401,
-                auth_policy.ErrorCode.AUTH_REQUIRED,
-                "Missing or invalid Authorization header",
-                "Token is absent or not a Bearer token",
-                suggestion="Re-authenticate and include a valid Bearer token",
-            )
-        try:
-            return auth_policy.extract_identity(auth)
-        except HTTPException:
-            return auth_policy.extract_identity_stub(auth)
-
     router_kwargs: dict[str, Any] = {
         "read_surface": get_store,
-        "extract_identity": extract_identity or _default_extract_identity,
+        "extract_identity": extract_identity or auth_policy.extract_identity,
         "require_read_role": require_read_role or auth_policy.require_read_role,
         "require_operator_role": require_operator_role or auth_policy.require_operator_role,
         "bff_error": bff_error_fn or auth_policy.bff_error,

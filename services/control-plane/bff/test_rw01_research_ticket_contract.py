@@ -402,3 +402,49 @@ def test_rw01_create_and_patch_persist_to_service_store() -> None:
         assert persisted[created["ticket_id"]]["status"] == "closed"
         assert persisted[created["ticket_id"]]["owner"] == "persona-beta"
         assert persisted[created["ticket_id"]]["lifecycle_history"][-1]["to_status"] == "closed"
+
+
+def test_rw01_read_surface_ports_composition_contract() -> None:
+    from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+
+    ports = create_in_memory_read_surface_ports(
+        research_knowledge_source_kwargs={
+            "research_tickets_store": {
+                "rt-existing-001": {
+                    "ticket_id": "rt-existing-001",
+                    "title": "Existing ticket",
+                    "status": "open",
+                    "created_at": "2026-05-23T00:00:00Z",
+                    "updated_at": "2026-05-23T00:00:00Z",
+                    "owner": "persona-alpha",
+                }
+            }
+        }
+    )
+    app = create_research_test_app(ports)
+    client = TestClient(app)
+
+    missing_response = client.get(
+        "/api/v1/research/tickets/missing-ticket",
+        headers={"Authorization": OPERATOR_AUTH},
+    )
+    assert missing_response.status_code == 404, missing_response.text
+    assert missing_response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+    read_response = client.get(
+        "/api/v1/research/tickets/rt-existing-001",
+        headers={"Authorization": OPERATOR_AUTH},
+    )
+    assert read_response.status_code == 200, read_response.text
+    assert read_response.json()["ticket_id"] == "rt-existing-001"
+
+    double = _TicketPortDouble(_SEEDED_TICKETS, source="local_snapshot")
+    wrapped = create_in_memory_read_surface_ports()
+    wrapped.research_knowledge_source = double
+    wrapped_client = TestClient(create_research_test_app(wrapped))
+    snapshot_response = wrapped_client.get(
+        "/api/v1/research/tickets/rt-20260419-007",
+        headers={"Authorization": OPERATOR_AUTH},
+    )
+    assert snapshot_response.status_code == 404, snapshot_response.text
+

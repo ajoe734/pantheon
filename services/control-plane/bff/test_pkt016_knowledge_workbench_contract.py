@@ -72,3 +72,33 @@ def test_pkt016_knowledge_workbench_example_matches_builder() -> None:
     expected = _build_knowledge_workbench_overview(ctx, "2026-04-22T00:00:00Z")
     example = json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
     assert example == expected
+
+
+def test_pkt016_strict_mode_rejects_stub_auth() -> None:
+    import os
+    orig_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE")
+    orig_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB")
+    try:
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "strict"
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "0"
+        app = create_research_test_app(
+            lambda: None,
+            utc_now=lambda: "2026-04-22T00:00:00Z",
+        )
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/workbench/knowledge",
+            headers={"Authorization": "Bearer reviewer:operator"},
+        )
+        assert response.status_code == 401, response.text
+        assert response.json()["error"]["code"] == "AUTH_REQUIRED"
+    finally:
+        if orig_mode is None:
+            os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
+        else:
+            os.environ["PANTHEON_BFF_AUTH_MODE"] = orig_mode
+        if orig_stub is None:
+            os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
+        else:
+            os.environ["PANTHEON_BFF_AUTH_STUB"] = orig_stub
+

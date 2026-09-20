@@ -46,11 +46,11 @@
   },
   "test_summary": {
     "target_suites_count": 13,
-    "target_suites_tests_passed": 126,
+    "target_suites_tests_passed": 128,
     "target_suites_tests_failed": 0,
     "target_suites_tests_skipped": 0,
     "architecture_gate_tests_passed": 8,
-    "total_tests_passed": 134,
+    "total_tests_passed": 136,
     "composition_suite_status": {
       "command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_bff_main_composition.py",
       "exit_code": 1,
@@ -69,9 +69,9 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py": {
-      "sha256": "17051239bee58acd589d72eb28c4c2f132571810d4e53560393edea9a0e78cd8",
-      "bytes": 2848,
-      "lines": 74,
+      "sha256": "7f4ef5d6e817ad8d5bc0d70c42eb6a55291e1000b12172c764139f33e836591f",
+      "bytes": 3930,
+      "lines": 104,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -85,9 +85,9 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw01_research_ticket_contract.py": {
-      "sha256": "dd165fb00b5f05c32f9492934eb0911eb665092c7703340d309db037aef80813",
-      "bytes": 14807,
-      "lines": 404,
+      "sha256": "906dfb81648fb22adb71cacdebe06244b519a1770695540b75d467d655b6b3a6",
+      "bytes": 16573,
+      "lines": 450,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -165,7 +165,7 @@
       "disposition": "DECOUPLED"
     }
   },
-  "rebase_reconciliation_note": "Origin/dev advanced to 688578ce499edb86fdbb518bb504f316f219f604. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (134 passed total). Point 1-5 reviewer rejection points resolved: search limit alias in ResearchRouteContext.page, RW-01 ticket fallback contract in ports/tickets.py, removed dead function in main.py preserving 36 baseline dead functions, shared product auth/error assembly in knowledge_read_port_fixtures, and updated evidence.json.",
+  "rebase_reconciliation_note": "Origin/dev advanced to 688578ce499edb86fdbb518bb504f316f219f604. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (136 passed total). Point 1-5 reviewer rejection points resolved: search limit alias in ResearchRouteContext.page, RW-01 ticket fallback contract in ports/tickets.py, removed dead function in main.py preserving 36 baseline dead functions, shared product auth/error assembly in knowledge_read_port_fixtures, ReadSurfacePorts kwargs/fallback composition forwarding, strict auth extraction rejection, and updated evidence.json.",
   "decoupling_approach": {
     "test_jobs_source_owner_contract": "Mounted create_jobs_router on isolated FastAPI app with fake JobReadPort injected into test client via shared create_research_test_app instead of bff_main.",
     "test_pkt016_knowledge_workbench_contract": "Mounted create_research_router on isolated FastAPI app with knowledge read ports fixture and in-memory ports double via shared create_research_test_app.",
@@ -186,7 +186,7 @@
       "description": "Pytest run for all 13 migrated test suites",
       "command": "pytest -q services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_rw04_experiment_launch_contract.py services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/tests/test_console_research_projection.py services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
       "exit_code": 0,
-      "result": "126 passed, 4 warnings in 48.00s"
+      "result": "128 passed, 4 warnings in 49.06s"
     },
     {
       "description": "Pytest run for architectural invariant gate",
@@ -198,7 +198,7 @@
       "description": "Pytest run for combined architecture, router, and main composition suites",
       "command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_bff_main_composition.py",
       "exit_code": 1,
-      "result": "75 passed, 3 failed, 4 warnings in 38.53s (3 baseline failures: test_all_canonical_domain_routers_mounted missing /api/v1/operator/commands; test_zero_unreferenced_dead_functions_in_main_py 36 baseline dead functions; test_main_py_zero_lambda_read_store_service_locator_seams 2 lambda read_store seams)"
+      "result": "75 passed, 3 failed, 4 warnings in 39.05s (3 baseline failures: test_all_canonical_domain_routers_mounted missing /api/v1/operator/commands; test_zero_unreferenced_dead_functions_in_main_py 36 baseline dead functions; test_main_py_zero_lambda_read_store_service_locator_seams 2 lambda read_store seams)"
     },
     {
       "description": "AST scan verifying 0 main imports and 0 sys.path mutations across all 13 files",

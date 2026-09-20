@@ -202,7 +202,14 @@ class ResearchKnowledgeSourcePort:
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
-    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_ticket(
+        self,
+        ticket_id: Optional[str],
+        *,
+        include_snapshot_fallback: bool = True,
+        include_local_fallback: bool = True,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     def create_research_ticket(
@@ -1937,8 +1944,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         )
         return [self._project_research_ticket_summary(t) for t in tickets if isinstance(t, dict)]
 
-    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_ticket(
+        self,
+        ticket_id: Optional[str],
+        *,
+        include_snapshot_fallback: bool = True,
+        include_local_fallback: bool = True,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
         if not ticket_id:
+            return None
+        source_fn = getattr(self, "dataset_source", None)
+        source = str(source_fn("research_tickets") or "") if callable(source_fn) else ""
+        if source == "local_snapshot" and not (include_snapshot_fallback and include_local_fallback):
             return None
         ticket = self._tickets.get(str(ticket_id))
         return self._project_research_ticket_detail(ticket) if isinstance(ticket, dict) else None
