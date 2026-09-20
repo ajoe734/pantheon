@@ -34,6 +34,35 @@ unchanged.
 
 ## Delivery boundary
 
+### Antigravity CLI completion
+
+AGY 1.2.6 changed headless background-command draining: once the root agent
+stops, unfinished commands get five seconds instead of the remaining
+`--print-timeout`. AGY 1.2.7 reproduces this behavior and can still report
+`SUCCESS` after cancelling the commands. A successful CLI exit is not task
+completion.
+
+The existing AGY adapter adds `.orchestrator/antigravity/` from its command
+runtime as a secondary workspace for task deliveries. Its vendor-native
+`.agents/hooks.json` Stop hook requests continuation only when AGY reports
+`fullyIdle: false`, a normal model stop, and no error. The same conversation
+then collects the pending command results. Cancellation, errors, execution
+limits and the two-hour print timeout remain effective. The hook does not
+read or mutate canonical tasks, launch processes or implement a scheduler.
+Loading it from the runtime covers older task branches and cross-repository
+worktrees without editing their files or the operator's global AGY settings.
+
+Both AGY providers disable CLI self-updates for supervisor-launched workers
+and auth probes. Qualify future CLI upgrades with a command lasting longer
+than five seconds: deliberately let the agent answer while it is pending,
+then require terminal output, exit status, and a follow-up response in the
+same conversation. A missing completion marker or a
+`terminating ... background task(s) on exit` message fails that check.
+
+Vendor contract: https://antigravity.google/docs/hooks (Stop / `fullyIdle`).
+
+### Activation
+
 Merging this source change does not prove that live policy is active. The
 existing exact-runtime promotion flow must project the reviewed repository
 config and pass its normal preflight before a live supervisor uses it. A later
