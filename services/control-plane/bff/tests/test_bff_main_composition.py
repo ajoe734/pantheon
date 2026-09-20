@@ -401,3 +401,81 @@ def test_research_domain_and_capabilities_mounted() -> None:
     assert "/api/v1/research/search" in paths, "Expected /api/v1/research/search mounted on bff_main.app"
     assert "/api/v1/research/tickets" in paths, "Expected /api/v1/research/tickets mounted on bff_main.app"
 
+
+def test_research_search_full_app_minimal_app_parity() -> None:
+    """Verify full-app (bff_main.app) and minimal-app (create_research_test_app) emit identical responses for search."""
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.test_rw02_search_contract import _SearchPortDouble, OPERATOR_AUTH
+    from services.control_plane.bff.tests.knowledge_read_port_fixtures import create_research_test_app
+
+    port = _SearchPortDouble(available=True)
+    minimal_app = create_research_test_app(
+        port,
+        utc_now=lambda: "2026-04-19T20:14:30Z",
+        submit_experiment_action=lambda *a, **kw: {},
+    )
+    minimal_client = TestClient(minimal_app)
+
+    original_store = bff_main.read_store
+    original_utc = bff_main.utc_now
+    try:
+        bff_main.read_store = port
+        bff_main.utc_now = lambda: "2026-04-19T20:14:30Z"
+        full_client = TestClient(bff_main.app)
+
+        query = "/api/v1/research/search?q=momentum%20decay%20volatility&match_type=all&page_size=2"
+        headers = {"Authorization": OPERATOR_AUTH}
+        full_resp = full_client.get(query, headers=headers)
+        minimal_resp = minimal_client.get(query, headers=headers)
+
+        assert full_resp.status_code == 200
+        assert minimal_resp.status_code == 200
+        full_json = full_resp.json()
+        minimal_json = minimal_resp.json()
+
+        assert full_json["data"] == minimal_json["data"]
+        assert full_json["page_info"] == minimal_json["page_info"]
+        full_surf = full_json["meta"]["surfaces"]["search_results"]
+        min_surf = minimal_json["meta"]["surfaces"]["search_results"]
+        assert full_surf["status"] == min_surf["status"] == "degraded"
+        assert full_surf["source"] == min_surf["source"] == "local_snapshot"
+        assert full_surf["note"] == min_surf["note"] == "Served from local BFF snapshot fallback instead of a backend-owned read store."
+        assert full_surf["staleness"]["served_from"] == min_surf["staleness"]["served_from"] == "local_snapshot"
+        assert full_surf["staleness"]["last_known_at"] == full_json["meta"]["snapshot_at"]
+        assert min_surf["staleness"]["last_known_at"] == minimal_json["meta"]["snapshot_at"]
+        assert min_surf["staleness"]["last_known_at"] == "2026-04-19T20:14:30Z"
+
+        # Boundary / limit alias scoping parity on both apps
+        full_bound_0 = full_client.get(
+            "/api/v1/research/search?q=momentum&page_size=1&limit=0",
+            headers=headers,
+        )
+        min_bound_0 = minimal_client.get(
+            "/api/v1/research/search?q=momentum&page_size=1&limit=0",
+            headers=headers,
+        )
+        assert full_bound_0.status_code == 200
+        assert min_bound_0.status_code == 200
+        assert len(full_bound_0.json()["data"]) == 1
+        assert len(min_bound_0.json()["data"]) == 1
+        assert full_bound_0.json()["page_info"] == min_bound_0.json()["page_info"]
+
+        full_bound_999 = full_client.get(
+            "/api/v1/research/search?q=momentum&page_size=1&limit=999",
+            headers=headers,
+        )
+        min_bound_999 = minimal_client.get(
+            "/api/v1/research/search?q=momentum&page_size=1&limit=999",
+            headers=headers,
+        )
+        assert full_bound_999.status_code == 200
+        assert min_bound_999.status_code == 200
+        assert len(full_bound_999.json()["data"]) == 1
+        assert len(min_bound_999.json()["data"]) == 1
+        assert full_bound_999.json()["page_info"] == min_bound_999.json()["page_info"]
+    finally:
+        bff_main.read_store = original_store
+        bff_main.utc_now = original_utc
+
+

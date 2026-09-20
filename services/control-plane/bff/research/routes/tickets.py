@@ -295,7 +295,7 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
                 err.detail["surfaces"] = {"search_results": "unavailable"}
             raise err
         records = list(ctx.call_port(port, "list_research_search_results", query=query, match_type=match_type, status=status, date_range=date_range) or [])
-        items, next_token = ctx.page(records, request, 25)
+        items, next_token = ctx.page(records, request, default_size=25, allow_limit=False, max_size=100)
         meta = ctx.meta(snapshot_at, "search_results", "research_search", bool(records))
         meta["index_adapter"] = index
         if hasattr(port, "get_last_governed_search_refs"):

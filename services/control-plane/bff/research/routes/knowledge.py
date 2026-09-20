@@ -1731,7 +1731,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
                         name_value = raw.get("name") or item_id
                         if _matches(item_id) or _matches(name_value):
                             records.append({"id": item_id, "type": "capital_pool", "name": str(name_value), "state": raw.get("status"), "owner": raw.get("owner") or "pantheon-bff", "risk": raw.get("risk_level") or "medium", "updatedAt": raw.get("updated_at") or raw.get("created_at") or snapshot_at})
-        items, next_token = ctx.page(records, request)
+        items, next_token = ctx.page(records, request, default_size=effective_page_size, allow_limit=True, max_size=100)
         return {"data": items, "items": items, "page_info": {"next_page_token": next_token, "total": len(records), "returned": len(items)}, "meta": ctx.meta(snapshot_at, "search", "personas", bool(records))}
 
     auth = _authorization()

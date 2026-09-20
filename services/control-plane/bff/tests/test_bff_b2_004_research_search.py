@@ -507,3 +507,27 @@ def test_bff_search_limit_alias_matches_page_size() -> None:
             )
         finally:
             _bff.read_store = original_store
+
+
+def test_bff_search_pagination_boundary_validations() -> None:
+    """GET /bff/search validates page_size and limit within [1, 100]."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = _bff.read_store
+        try:
+            client = _fresh_client(td)
+            for i in range(3):
+                _bff.read_store.create_strategy_bff(
+                    strategy_id=f"limit-bound-strat-{i}",
+                    name=f"limit-bound-strat-{i}",
+                    state="draft",
+                    owner="test",
+                    updated_at="2026-05-23T00:00:00Z",
+                )
+            # /bff/search validates limit: ge=1, le=100
+            assert client.get("/bff/search?q=limit-bound&limit=0", headers=OPERATOR_HEADERS).status_code == 422
+            assert client.get("/bff/search?q=limit-bound&limit=101", headers=OPERATOR_HEADERS).status_code == 422
+            assert client.get("/bff/search?q=limit-bound&page_size=0", headers=OPERATOR_HEADERS).status_code == 422
+            assert client.get("/bff/search?q=limit-bound&page_size=101", headers=OPERATOR_HEADERS).status_code == 422
+        finally:
+            _bff.read_store = original_store
+

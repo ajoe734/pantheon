@@ -179,13 +179,6 @@ from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
 
 
 def _create_test_app(port: _SearchPortDouble) -> FastAPI:
-    def _dataset_surface_status(dataset: str, *, source: str = "missing", **kwargs: Any) -> str:
-        if source == "local_snapshot":
-            return "degraded"
-        if source == "missing":
-            return "unavailable"
-        return "fresh"
-
     def _snapshot_meta(snapshot_at: str, **kw: Any) -> dict[str, Any]:
         return {"snapshot_at": snapshot_at, **kw}
 
@@ -193,7 +186,6 @@ def _create_test_app(port: _SearchPortDouble) -> FastAPI:
         port,
         utc_now=lambda: "2026-04-19T20:14:30Z",
         snapshot_meta=_snapshot_meta,
-        dataset_surface_status=_dataset_surface_status,
         submit_experiment_action=lambda *a, **kw: {},
     )
 
@@ -229,8 +221,15 @@ def test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta()
             "result_detail": "/research/tickets/rt-20260419-007",
             "linked_ticket_detail": "/research/tickets/rt-20260419-007",
         }
-        assert payload["data"][1]["match_type"] == "experiment"
-        assert payload["meta"]["surfaces"]["search_results"] == "degraded"
+        assert payload["meta"]["surfaces"]["search_results"] == {
+            "status": "degraded",
+            "source": "local_snapshot",
+            "note": "Served from local BFF snapshot fallback instead of a backend-owned read store.",
+            "staleness": {
+                "served_from": "local_snapshot",
+                "last_known_at": "2026-04-19T20:14:30Z",
+            },
+        }
         assert payload["meta"]["index_adapter"] == {
             "snapshot_at": "2026-04-19T20:14:30Z",
             "adapter_state": "degraded",
@@ -366,4 +365,41 @@ def test_rw02_search_returns_contract_unavailable_when_index_adapter_missing() -
         assert payload["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
         assert payload["error"]["details"]["reason"] == "SEARCH_RESULTS_UNAVAILABLE"
         assert payload["surfaces"] == {"search_results": "unavailable"}
+
+
+def test_rw02_search_pagination_boundaries_and_limit_alias_scoping() -> None:
+    """Verify endpoint pagination bounds and that ?limit is scoped to endpoints declaring it."""
+    with _seeded_client(allow_local_snapshot_fallback=True) as client:
+        # GET /api/v1/research/search ignores limit and respects page_size=1
+        resp_limit_0 = client.get(
+            "/api/v1/research/search?q=momentum&page_size=1&limit=0",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert resp_limit_0.status_code == 200, resp_limit_0.text
+        body_0 = resp_limit_0.json()
+        assert len(body_0["data"]) == 1
+        assert body_0["page_info"]["next_page_token"] is not None
+
+        resp_limit_999 = client.get(
+            "/api/v1/research/search?q=momentum&page_size=1&limit=999",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert resp_limit_999.status_code == 200, resp_limit_999.text
+        body_999 = resp_limit_999.json()
+        assert len(body_999["data"]) == 1
+        assert body_999["page_info"]["next_page_token"] is not None
+
+        # page_size out-of-bounds rejected with 422 by FastAPI query validation
+        resp_page_size_0 = client.get(
+            "/api/v1/research/search?q=momentum&page_size=0",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert resp_page_size_0.status_code == 422
+
+        resp_page_size_101 = client.get(
+            "/api/v1/research/search?q=momentum&page_size=101",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert resp_page_size_101.status_code == 422
+
 

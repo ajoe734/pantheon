@@ -87,8 +87,40 @@ def _default_snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
     return {"snapshot_at": snapshot_at}
 
 
-def _default_surface_status(dataset: str, *, snapshot_at: str, **_: Any) -> Dict[str, Any]:
-    return {"status": "available", "dataset": dataset, "snapshot_at": snapshot_at}
+def _default_surface_status(
+    dataset: str,
+    *,
+    snapshot_at: Optional[str] = None,
+    source: Optional[str] = None,
+    has_data: Optional[bool] = None,
+    missing_message: Optional[str] = None,
+    **_: Any,
+) -> Dict[str, Any]:
+    effective_source = source or "missing"
+    surface: Dict[str, Any] = {"status": "ok", "source": effective_source}
+    if effective_source == "local_snapshot":
+        surface["status"] = "degraded"
+        surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
+        surface["staleness"] = {
+            "served_from": "local_snapshot",
+            "last_known_at": snapshot_at or "",
+        }
+    elif effective_source == "missing":
+        surface["status"] = "unavailable"
+        surface["staleness"] = {
+            "served_from": "unverifiable",
+            "last_known_at": snapshot_at or "",
+        }
+    if has_data is False:
+        if surface.get("status") == "ok":
+            surface["status"] = "unavailable"
+        if missing_message:
+            surface["message"] = missing_message
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or ""},
+        )
+    return surface
 
 
 def _filter_by_status_csv(records: List[Dict[str, Any]], status_csv: Optional[str]) -> List[Dict[str, Any]]:
@@ -240,14 +272,28 @@ class ResearchRouteContext:
         except Exception:
             return {}
 
-    def page(self, records: List[Dict[str, Any]], request: Request, default_size: int = 20) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-        limit_val = self.query(request, "limit")
+    def page(
+        self,
+        records: List[Dict[str, Any]],
+        request: Request,
+        default_size: int = 20,
+        *,
+        allow_limit: Optional[bool] = None,
+        min_size: int = 1,
+        max_size: int = 200,
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        if allow_limit is None:
+            path = getattr(request, "url", None)
+            path_str = str(getattr(path, "path", "") or "").rstrip("/")
+            allow_limit = path_str.endswith("/bff/search")
+        limit_val = self.query(request, "limit") if allow_limit else None
         page_size_val = self.query(request, "page_size")
         raw_size = limit_val if limit_val is not None else page_size_val
         try:
             page_size = int(raw_size if raw_size is not None else default_size)
         except (TypeError, ValueError):
             page_size = default_size
+        page_size = max(min_size, min(page_size, max_size))
         return self.page_slice(records, self.query(request, "page_token"), page_size)
 
     def meta(self, snapshot_at: str, surface_name: str, dataset: str, has_data: bool) -> Dict[str, Any]:
