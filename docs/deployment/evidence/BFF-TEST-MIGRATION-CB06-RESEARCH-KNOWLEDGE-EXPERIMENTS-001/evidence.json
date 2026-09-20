@@ -2,11 +2,11 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
   "branch": "task/BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
-  "owner": "Antigravity",
+  "owner": "Antigravity2",
   "reviewer": "Codex",
   "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
   "delivery_state": "ready_for_review",
-  "base_sha": "74cb063bd511619bee5cbb6cd82034dcd5b679a6",
+  "base_sha": "9fbf1c2ebee21fedf08118aeaf4f585dd5b696da",
   "depends_on": [
     "BFF-TEST-MIGRATION-REPARTITION-PLAN-002"
   ],
@@ -79,17 +79,17 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw01_research_ticket_contract.py": {
-      "sha256": "4f716ab5da917e882704d2dd46a8226c370d0d3f6fa3e8201f136e4065b6adfd",
-      "bytes": 16645,
-      "lines": 449,
+      "sha256": "ee95b311499ba1b246bd67d3753832d7cc1a874e7738c266443c119d8a8f255d",
+      "bytes": 16222,
+      "lines": 440,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw02_search_contract.py": {
-      "sha256": "cb2fb37e2f6b1c353b5ffc84844cd6cdc7a23ceb0218ce9b774910ca0e0c70df",
-      "bytes": 16606,
-      "lines": 398,
+      "sha256": "6e429a7e5f4ba895caac8685ff6ccc6cd888e4cfd2b411510fcfdb8d87cc49c5",
+      "bytes": 17571,
+      "lines": 420,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -111,17 +111,17 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw05_artifact_compare_contract.py": {
-      "sha256": "d4fa6a2ecd6fe79f14b7f2e896dba115bc3db55e224790197644c0d4baf951e8",
-      "bytes": 14678,
-      "lines": 392,
+      "sha256": "336ebcb4d27e3f5341ae8f3dec9872620df7787b96fb7245376fa80a4a570efc",
+      "bytes": 15747,
+      "lines": 413,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/tests/test_bff_b2_004_research_search.py": {
-      "sha256": "cacf704eef746cecdf40996985b1baf352af92d75372ead82e54504ff169c443",
-      "bytes": 23328,
-      "lines": 570,
+      "sha256": "dcb83c9e74bd1ab257f738233d614dfb7377ce90353a5f1d7d3089c8cc01c9f5",
+      "bytes": 22697,
+      "lines": 558,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -164,12 +164,12 @@
     "test_jobs_source_owner_contract": "Mounted create_jobs_router on isolated FastAPI app with fake JobReadPort injected into test client instead of bff_main.",
     "test_pkt016_knowledge_workbench_contract": "Mounted create_research_router on isolated FastAPI app with knowledge read ports fixture and in-memory ports double.",
     "test_bff_knowledge_inbox": "Mounted create_knowledge_router on isolated FastAPI app with knowledge_read_port_fixtures in-memory double.",
-    "test_rw01_research_ticket_contract": "Mounted create_research_router on isolated FastAPI app with full _SEEDED_TICKETS in double and wrapped ticket detail route to reject local_snapshot fallback with 404, matching canonical route contract without synthetic double overrides.",
-    "test_rw02_search_contract": "Mounted create_research_router on isolated FastAPI app with canonical error and snapshot meta helpers without synthetic surfaces or governed_evidence injection; verified search contract projections and index adapter metadata.",
+    "test_rw01_research_ticket_contract": "Mounted create_research_router on isolated FastAPI app without endpoint monkeypatching; tests actual router fallback contract with 200 degraded for seeded tickets and 404 for non-existent tickets.",
+    "test_rw02_search_contract": "Mounted create_research_router on isolated FastAPI app with snapshot_meta attaching governed_evidence from port and _bff_error including unavailable surfaces for missing index adapter 503.",
     "test_rw03_analyze_contract": "Mounted create_research_router on isolated FastAPI app with unmodified ResearchRouterService and asserted canonical surface status dicts ({status: ok, source: service_client}).",
     "test_rw04_experiment_launch_contract": "Mounted create_research_router on isolated FastAPI app with _FakeResearchWriteOwner injected into create_in_memory_read_surface_ports.",
-    "test_rw05_artifact_compare_contract": "Mounted create_research_router on isolated FastAPI app using unmodified ResearchRouterService compare_artifacts with canonical register_error_handlers and dedicated ResearchValidationError exception handler mapping OPERATION_NOT_ALLOWED to HTTP 422.",
-    "test_bff_b2_004_research_search": "Mounted create_research_router(include_prepared_subrouters=True) and create_core_router with sem_bff_capabilities handler on isolated FastAPI app; verified capabilities feature-flags envelope and research/search facades with 0 main imports.",
+    "test_rw05_artifact_compare_contract": "Mounted create_research_router on isolated FastAPI app with canonical register_error_handlers and ResearchValidationError handler preserving non_comparable_artifacts detail contract under 422 OPERATION_NOT_ALLOWED.",
+    "test_bff_b2_004_research_search": "Mounted create_research_router(include_prepared_subrouters=True) and create_core_router with real production sem_bff_capabilities handler from main.py exercised through the authorized core router seam with 0 static main imports.",
     "test_console_research_projection": "Mounted create_knowledge_router, create_research_router, and create_agora_router on isolated FastAPI app.",
     "test_exp002_bff_research_experiments_contract": "Mounted create_research_router(include_prepared_subrouters=True) on isolated FastAPI app with _FakeResearchWriteOwner injected into read surface ports.",
     "test_mgmt_qlib_006_artifact_research_linkage": "Mounted create_research_router and create_strategies_router on isolated FastAPI app with DefaultResearchKnowledgeSourcePort and create_read_surface_ports.",

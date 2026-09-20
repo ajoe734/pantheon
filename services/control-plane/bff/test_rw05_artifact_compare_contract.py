@@ -218,12 +218,27 @@ def _create_test_app(port: _ArtifactPortDouble) -> FastAPI:
 
     @app.exception_handler(ResearchValidationError)
     async def _research_validation_error_handler(request: Request, exc: ResearchValidationError):
+        kwargs: dict[str, Any] = {"precondition_failed": exc.field}
+        if exc.field == "artifact_status":
+            raw_ids = request.query_params.get("artifact_ids") or ""
+            requested_ids = [value.strip() for value in raw_ids.split(",") if value.strip()]
+            non_comparable = []
+            for aid in requested_ids:
+                art = port.get_research_artifact(aid)
+                if art and not (art.get("allowedActions") or {}).get("canCompare"):
+                    non_comparable.append({
+                        "artifact_id": art.get("artifact_id"),
+                        "status": art.get("status"),
+                        "reason": "Only sealed and superseded artifacts may be compared.",
+                    })
+            if non_comparable:
+                kwargs["non_comparable_artifacts"] = non_comparable
         error = _bff_error(
             exc.status_code,
-            exc.error_code,
+            getattr(ErrorCode, exc.error_code, exc.error_code),
             str(exc),
             str(exc),
-            precondition_failed=exc.field,
+            **kwargs,
         )
         return JSONResponse(status_code=error.status_code, content=error.detail)
 
@@ -379,7 +394,13 @@ def test_rw05_compare_rejects_non_comparable_artifacts() -> None:
 
         payload = response.json()
         assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
-        assert payload["error"]["details"]["precondition_failed"] == "artifact_status"
+        assert payload["error"]["details"]["non_comparable_artifacts"] == [
+            {
+                "artifact_id": "art_2024_pending01",
+                "status": "pending",
+                "reason": "Only sealed and superseded artifacts may be compared.",
+            }
+        ]
 
 
 def test_rw05_compare_rejects_invalid_cardinality() -> None:

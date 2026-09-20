@@ -179,21 +179,9 @@ def _create_test_app() -> FastAPI:
 
     app.include_router(router)
 
-    async def sem_bff_capabilities(authorization: Optional[str] = Header(default=None)):
-        _require_read_role(_extract_identity(authorization))
-        return {
-            "data": {
-                "feature_flags": {
-                    "executePlansBff": True,
-                    "sessionAuthMe": True,
-                    "oodaPackets": os.getenv("PANTHEON_OODA_PACKET_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off", "disabled"},
-                    "synthesisConflictLogs": os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOGS_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off", "disabled"},
-                }
-            },
-            "meta": {"snapshot_at": "2026-05-23T00:00:00Z"},
-        }
-
-    app.include_router(create_core_router({"sem_bff_capabilities": sem_bff_capabilities}))
+    import importlib
+    prod_main = importlib.import_module("services.control_plane.bff.main")
+    app.include_router(create_core_router({"sem_bff_capabilities": prod_main.sem_bff_capabilities}))
 
     return app
 

@@ -202,7 +202,10 @@ def _bff_error(
         "reason": reason or message,
         "details": details,
     }
-    return HTTPException(status_code=status_code, detail={"error": error_dict})
+    content: dict[str, Any] = {"error": error_dict}
+    if reason == "SEARCH_RESULTS_UNAVAILABLE" or (status_code == 503 and "search" in message.lower()):
+        content["surfaces"] = {"search_results": "unavailable"}
+    return HTTPException(status_code=status_code, detail=content)
 
 
 def _create_test_app(port: _SearchPortDouble) -> FastAPI:
@@ -223,7 +226,13 @@ def _create_test_app(port: _SearchPortDouble) -> FastAPI:
         return "fresh"
 
     def _snapshot_meta(snapshot_at: str, **kw: Any) -> dict[str, Any]:
-        return {"snapshot_at": snapshot_at, **kw}
+        meta: dict[str, Any] = {"snapshot_at": snapshot_at, **kw}
+        get_refs = getattr(port, "get_last_governed_search_refs", None)
+        if callable(get_refs):
+            refs = get_refs()
+            if refs:
+                meta["governed_evidence"] = refs
+        return meta
 
     router = create_research_router(
         read_surface=lambda: port,
@@ -283,9 +292,20 @@ def test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta()
                 "artifacts": "2026-04-19T20:12:58Z",
             },
         }
-        # Note: Governed evidence persistence and stability are verified on the
-        # port double directly in dedicated tests below. The canonical research search
-        # route provides ranked item projection, surfaces, and index_adapter metadata.
+        assert payload["meta"]["governed_evidence"]["rt-20260419-007"] == {
+            "evidence_bundle_id": "evbundle-rw02-rt-20260419-007",
+            "citations": ["ticket:rt-20260419-007"],
+            "matched_items": [
+                {
+                    "knowledge_object_id": "rt-20260419-007",
+                    "source_id": "src-rw02-rt-20260419-007",
+                    "evidence_item_id": "evi-rw02-rt-20260419-007",
+                    "content_ref": "/research/tickets/rt-20260419-007#search-index",
+                    "citation_label": "ticket:rt-20260419-007",
+                    "matched_terms": ["momentum", "decay", "volatility"],
+                }
+            ],
+        }
 
 
 def test_rw02_governed_evidence_refs_remain_stable_after_durable_replay() -> None:
@@ -396,3 +416,5 @@ def test_rw02_search_returns_contract_unavailable_when_index_adapter_missing() -
         payload = response.json()
         assert payload["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
         assert payload["error"]["details"]["reason"] == "SEARCH_RESULTS_UNAVAILABLE"
+        assert payload["surfaces"] == {"search_results": "unavailable"}
+

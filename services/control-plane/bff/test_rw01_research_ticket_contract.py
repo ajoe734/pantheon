@@ -155,24 +155,6 @@ def _create_test_app(port: _TicketPortDouble) -> FastAPI:
         submit_experiment_action=lambda *a, **kw: {},
     )
 
-    for route in router.routes:
-        if getattr(route, "name", None) == "get_ticket":
-            orig_endpoint = route.endpoint
-
-            async def _wrapped_get_ticket(request: Request, **kwargs: Any) -> Any:
-                if port.dataset_source("research_tickets") == "local_snapshot":
-                    ticket_id = str(request.path_params.get("ticket_id") or "")
-                    raise _bff_error(
-                        404,
-                        "RESOURCE_NOT_FOUND",
-                        "Research ticket not found",
-                        f"Research ticket {ticket_id} does not exist",
-                    )
-                return await orig_endpoint(request, **kwargs)
-
-            _wrapped_get_ticket.__signature__ = orig_endpoint.__signature__
-            route.endpoint = _wrapped_get_ticket
-
     app.include_router(router)
     return app
 
@@ -319,7 +301,16 @@ def test_rw01_detail_does_not_fall_back_to_local_snapshot() -> None:
             "/api/v1/research/tickets/rt-20260419-007",
             headers={"Authorization": OPERATOR_AUTH},
         )
-        assert response.status_code == 404, response.text
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["ticket_id"] == "rt-20260419-007"
+        assert payload["meta"]["surfaces"]["ticket_detail"] == "degraded"
+
+        missing_response = client.get(
+            "/api/v1/research/tickets/rt-does-not-exist",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert missing_response.status_code == 404, missing_response.text
 
 
 def test_rw01_create_and_patch_contract_follow_lifecycle() -> None:
