@@ -6,7 +6,7 @@
   "reviewer": "Codex",
   "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
   "delivery_state": "ready_for_review",
-  "base_sha": "688578ce499edb86fdbb518bb504f316f219f604",
+  "base_sha": "74cb063bd511619bee5cbb6cd82034dcd5b679a6",
   "depends_on": [
     "BFF-TEST-MIGRATION-REPARTITION-PLAN-002"
   ],
