@@ -160,41 +160,19 @@ class _JobsOnlyReadStore:
         return "canonical_store"
 
 
-def _extract_identity(authorization: Optional[str]) -> Optional[Any]:
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    token = authorization[len("Bearer "):].strip()
-    if ":" in token:
-        op_id, roles_str = token.split(":", 1)
-        roles = {r.strip() for r in roles_str.split(",") if r.strip()}
-    else:
-        op_id = token
-        roles = {"operator", "viewer"}
-    from types import SimpleNamespace
-    return SimpleNamespace(operator_id=op_id, roles=roles)
-
-
-def _require_read_role(identity: Optional[Any]) -> None:
-    if identity is None:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-
-def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
-    return HTTPException(
-        status_code=status_code,
-        detail={"error": {"code": getattr(code, "value", str(code)), "message": message, "reason": reason or message, **kwargs}},
-    )
+from services.control_plane.bff.core.app_factory import build_bff_app
+from services.control_plane.bff.auth import policy as auth_policy
 
 
 def _fresh_client() -> TestClient:
     store = _JobsOnlyReadStore(JobReadPort(http_get=lambda url: (True, None)))
-    app = FastAPI()
+    app = build_bff_app()
     app.include_router(
         create_jobs_router(
             read_surface=lambda: store,
-            extract_identity=_extract_identity,
-            require_read_role=_require_read_role,
-            bff_error=_bff_error,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            bff_error=auth_policy.bff_error,
             utc_now=lambda: "2026-09-13T00:00:00Z",
             page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
             read_surface_meta=lambda name, kind, **kw: {"surface": name, **kw},

@@ -14,22 +14,8 @@ from services.control_plane.bff.ports.read_surface_ports import create_in_memory
 OPERATOR_HEADERS = {"Authorization": "Bearer op-knowledge:operator,reviewer"}
 
 
-def _extract_identity(auth: Optional[str]) -> Optional[Any]:
-    if not auth or not auth.startswith("Bearer "):
-        return None
-    token = auth[len("Bearer "):].strip()
-    if ":" in token:
-        op_id, roles_str = token.split(":", 1)
-        roles = {r.strip() for r in roles_str.split(",") if r.strip()}
-    else:
-        op_id = token
-        roles = {"operator", "reviewer"}
-    return SimpleNamespace(operator_id=op_id, roles=roles)
-
-
-def _require_read_role(identity: Optional[Any]) -> None:
-    if identity is None:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+from services.control_plane.bff.core.app_factory import build_bff_app
+from services.control_plane.bff.auth import policy as auth_policy
 
 
 def _dataset_surface_status(
@@ -55,10 +41,10 @@ def _dataset_surface_status(
 
 
 def _create_app(store_getter: Callable[[], Any]) -> FastAPI:
-    app = FastAPI()
+    app = build_bff_app()
     router = create_knowledge_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
         read_store_getter=store_getter,
         utc_now=lambda: "2026-06-15T08:10:00Z",
         dataset_surface_status=_dataset_surface_status,

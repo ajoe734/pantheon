@@ -241,9 +241,12 @@ class ResearchRouteContext:
             return {}
 
     def page(self, records: List[Dict[str, Any]], request: Request, default_size: int = 20) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        limit_val = self.query(request, "limit")
+        page_size_val = self.query(request, "page_size")
+        raw_size = limit_val if limit_val is not None else page_size_val
         try:
-            page_size = int(self.query(request, "page_size", str(default_size)) or default_size)
-        except ValueError:
+            page_size = int(raw_size if raw_size is not None else default_size)
+        except (TypeError, ValueError):
             page_size = default_size
         return self.page_slice(records, self.query(request, "page_token"), page_size)
 
@@ -296,6 +299,14 @@ class ResearchRouteContext:
 
     def call_port(self, port: Any, name: str, *args: Any, **kwargs: Any) -> Any:
         method = self.port_method(port, name)
+        if kwargs:
+            try:
+                sig = inspect.signature(method)
+                has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                if not has_var_keyword:
+                    kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+            except (ValueError, TypeError):
+                pass
         try:
             return method(*args, **kwargs)
         except HTTPException:

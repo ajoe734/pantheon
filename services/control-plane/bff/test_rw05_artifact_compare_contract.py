@@ -187,56 +187,18 @@ class _ArtifactPortDouble(DefaultResearchKnowledgeSourcePort):
         }
 
 
-def _extract_identity(auth_header: Optional[str]) -> Dict[str, Any]:
-    if not auth_header:
-        return {"sub": "anonymous", "roles": []}
-    return {
-        "sub": "test-operator",
-        "roles": ["operator", "researcher", "admin"],
-    }
-
-
-def _bff_error(
-    status_code: int,
-    code: Any,
-    message: str,
-    reason: Optional[str] = None,
-    precondition_failed: Optional[str] = None,
-    details_extra: Optional[Dict[str, Any]] = None,
-    **kwargs: Any,
-) -> HTTPException:
-    details: Dict[str, Any] = {**kwargs}
-    if details_extra:
-        details.update(details_extra)
-    if reason:
-        details["reason"] = reason
-    if precondition_failed:
-        details["precondition_failed"] = precondition_failed
-    error_dict = {
-        "code": getattr(code, "value", str(code)),
-        "message": message,
-        "reason": reason or message,
-        "details": details,
-    }
-    return HTTPException(status_code=status_code, detail={"error": error_dict})
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
 
 
 def _create_test_app(port: _ArtifactPortDouble) -> FastAPI:
-    app = FastAPI()
-    register_error_handlers(app)
-
-    router = create_research_router(
-        read_surface=lambda: port,
-        extract_identity=_extract_identity,
-        require_read_role=lambda ident: None,
-        require_operator_role=lambda ident: None,
-        bff_error=_bff_error,
+    return create_research_test_app(
+        port,
         utc_now=lambda: "2026-04-20T00:00:00Z",
         dataset_surface_status=port.dataset_surface_status,
         include_prepared_subrouters=False,
     )
-    app.include_router(router)
-    return app
 
 
 _CURRENT_PORT: Optional[_ArtifactPortDouble] = None

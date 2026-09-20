@@ -112,88 +112,29 @@ class _ResearchSearchTestStore:
         return self.list_experiments_bff(status=status, **kwargs)
 
 
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.core.app_factory import create_capabilities_handler, create_core_router
+
+
 def _create_test_app() -> FastAPI:
-    app = FastAPI()
-
-    @app.exception_handler(HTTPException)
-    @app.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(request, exc):
-        if isinstance(exc.detail, dict) and "error" in exc.detail:
-            return JSONResponse(status_code=exc.status_code, content=exc.detail)
-        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
-
-    def _extract_identity(auth_header: Optional[str]) -> Any:
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return SimpleNamespace(operator_id="anonymous", roles=[])
-        return SimpleNamespace(operator_id="op-b2-004", roles=["operator", "researcher", "admin"])
-
-    def _require_read_role(ident: Any) -> None:
-        roles = getattr(ident, "roles", [])
-        if not roles or "operator" not in roles:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-
-    def _require_operator_role(ident: Any) -> None:
-        roles = getattr(ident, "roles", [])
-        if not roles or "operator" not in roles:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-
-    def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
-        return HTTPException(
-            status_code=status_code,
-            detail={
-                "error": {
-                    "code": getattr(code, "value", str(code)),
-                    "message": message,
-                    "reason": reason or message,
-                    "details": kwargs,
-                }
-            },
-        )
-
-    router = create_research_router(
-        read_surface=lambda: _bff.read_store,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
+    capabilities_router = create_core_router(
+        {
+            "sem_bff_capabilities": create_capabilities_handler(
+                extract_identity=auth_policy.extract_identity,
+                require_read_role=auth_policy.require_read_role,
+                utc_now=lambda: "2026-05-23T00:00:00Z",
+            )
+        }
+    )
+    return create_research_test_app(
+        lambda: _bff.read_store,
         utc_now=lambda: "2026-05-23T00:00:00Z",
         include_prepared_subrouters=True,
+        extra_routers=[capabilities_router],
     )
-
-    for route in router.routes:
-        if getattr(route, "path", None) == "/bff/search" and getattr(route.endpoint, "__closure__", None):
-            for cell in route.endpoint.__closure__:
-                contents = cell.cell_contents
-                if type(contents).__name__ == "ResearchRouteContext":
-                    orig_page = contents.page
-                    def _patched_page(records: Any, request: Any, default_size: int = 20) -> Any:
-                        limit = contents.query(request, "limit")
-                        if limit is not None:
-                            try:
-                                eff = max(1, min(int(limit), 100))
-                                return contents.page_slice(records, contents.query(request, "page_token"), eff)
-                            except (TypeError, ValueError):
-                                pass
-                        return orig_page(records, request, default_size)
-                    contents.page = _patched_page
-
-    app.include_router(router)
-
-    from services.control_plane.bff.core.app_factory import create_capabilities_handler
-
-    app.include_router(
-        create_core_router(
-            {
-                "sem_bff_capabilities": create_capabilities_handler(
-                    extract_identity=_extract_identity,
-                    require_read_role=_require_read_role,
-                    utc_now=lambda: "2026-05-23T00:00:00Z",
-                )
-            }
-        )
-    )
-
-    return app
 
 
 def _fresh_client(td: str) -> TestClient:

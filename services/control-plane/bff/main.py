@@ -15340,11 +15340,6 @@ def _ooda_packet_list_payload(
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
     }
-def _synthesis_conflict_log_routes_enabled() -> bool:
-    raw = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
-    if raw is None:
-        return True
-    return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
 _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (

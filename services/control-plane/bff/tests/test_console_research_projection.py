@@ -203,31 +203,13 @@ def _projected_bff(monkeypatch) -> Iterator[TestClient]:
         yield TestClient(app)
 
 
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+from services.control_plane.bff.auth import policy as auth_policy
+
+
 def _create_console_projection_app(ports: Any) -> FastAPI:
-    app = FastAPI()
-
-    @app.exception_handler(HTTPException)
-    @app.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(request, exc):
-        if isinstance(exc.detail, dict) and "error" in exc.detail:
-            return JSONResponse(status_code=exc.status_code, content=exc.detail)
-        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
-
-    def _extract_identity(auth_header: Optional[str]) -> Any:
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return SimpleNamespace(operator_id="anonymous", roles=[])
-        return SimpleNamespace(operator_id="op-dev", roles=["operator", "admin"])
-
-    def _require_read_role(ident: Any) -> None:
-        roles = getattr(ident, "roles", [])
-        if not roles or ("operator" not in roles and "admin" not in roles):
-            raise HTTPException(status_code=401, detail="Unauthorized")
-
-    def _require_operator_role(ident: Any) -> None:
-        roles = getattr(ident, "roles", [])
-        if not roles or ("operator" not in roles and "admin" not in roles):
-            raise HTTPException(status_code=401, detail="Unauthorized")
-
     def _dataset_surface_status(
         dataset: str,
         *,
@@ -242,52 +224,29 @@ def _create_console_projection_app(ports: Any) -> FastAPI:
             "snapshot_at": snapshot_at,
         }
 
-    def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
-        return HTTPException(
-            status_code=status_code,
-            detail={
-                "error": {
-                    "code": getattr(code, "value", str(code)),
-                    "message": message,
-                    "reason": reason or message,
-                    "details": kwargs,
-                }
-            },
-        )
-
     knowledge_router = create_knowledge_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
         read_store_getter=lambda: ports,
         utc_now=lambda: "2026-06-15T11:00:00Z",
         dataset_surface_status=_dataset_surface_status,
     )
-    app.include_router(knowledge_router)
-
-    research_router = create_research_router(
-        read_surface=lambda: ports,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=lambda: "2026-06-15T11:00:00Z",
-        dataset_surface_status=_dataset_surface_status,
-        include_prepared_subrouters=False,
-    )
-    app.include_router(research_router)
-
     agora_router = create_agora_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_write_role=_require_operator_role,
-        bff_error=_bff_error,
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        require_write_role=auth_policy.require_operator_role,
+        bff_error=auth_policy.bff_error,
         utc_now=lambda: "2026-06-15T11:00:00Z",
         read_surface=ports,
         sync_servant_agent=lambda payload: payload,
     )
-    app.include_router(agora_router)
-
-    return app
+    return create_research_test_app(
+        ports,
+        utc_now=lambda: "2026-06-15T11:00:00Z",
+        dataset_surface_status=_dataset_surface_status,
+        include_prepared_subrouters=False,
+        extra_routers=[knowledge_router, agora_router],
+    )
 
 
 def test_projector_does_not_promote_artifact_only_runs_to_evidence(monkeypatch) -> None:

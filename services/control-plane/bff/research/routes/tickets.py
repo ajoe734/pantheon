@@ -237,7 +237,13 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
         port = ctx.get_read_store()
         snapshot_at = ctx.utc_now()
         ticket_id = str(request.path_params.get("ticket_id") or "")
-        ticket = ctx.call_port(port, "get_research_ticket", ticket_id)
+        ticket = ctx.call_port(
+            port,
+            "get_research_ticket",
+            ticket_id,
+            include_snapshot_fallback=False,
+            include_local_fallback=False,
+        )
         if not ticket:
             ctx.not_found("Research ticket", ticket_id)
         payload = dict(ticket)

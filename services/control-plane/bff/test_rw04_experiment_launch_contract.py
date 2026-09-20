@@ -166,53 +166,18 @@ class _FakeResearchWriteOwner:
         return dict(rec)
 
 
-def _extract_identity(auth_header: Optional[str]) -> Dict[str, Any]:
-    if not auth_header:
-        return {"sub": "anonymous", "roles": []}
-    return {
-        "sub": "test-operator",
-        "roles": ["operator", "researcher", "admin"],
-    }
-
-
-def _bff_error(
-    status_code: int,
-    code: Any,
-    message: str,
-    reason: Optional[str] = None,
-    **kwargs: Any,
-) -> HTTPException:
-    error_dict = {
-        "code": getattr(code, "value", str(code)),
-        "message": message,
-        "reason": reason or message,
-        "details": {**kwargs, "reason": reason or message} if kwargs else {"reason": reason or message},
-    }
-    return HTTPException(status_code=status_code, detail={"error": error_dict})
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
 
 
 def _create_test_app(port: Any) -> FastAPI:
-    app = FastAPI()
-
-    @app.exception_handler(HTTPException)
-    @app.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(request, exc):
-        if isinstance(exc.detail, dict) and "error" in exc.detail:
-            return JSONResponse(status_code=exc.status_code, content=exc.detail)
-        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
-
-    router = create_research_router(
-        read_surface=lambda: port,
-        extract_identity=_extract_identity,
-        require_read_role=lambda ident: None,
-        require_operator_role=lambda ident: None,
-        bff_error=_bff_error,
+    return create_research_test_app(
+        port,
         utc_now=lambda: "2026-04-20T00:00:00Z",
         dataset_surface_status=lambda *args, **kwargs: "fresh",
         include_prepared_subrouters=False,
     )
-    app.include_router(router)
-    return app
 
 
 @contextmanager

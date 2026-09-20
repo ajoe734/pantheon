@@ -173,48 +173,12 @@ class _SearchPortDouble(DefaultResearchKnowledgeSourcePort):
         return matches
 
 
-def _extract_identity(authorization: Optional[str]) -> Optional[Any]:
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    token = authorization[len("Bearer "):].strip()
-    if ":" in token:
-        op_id, roles_str = token.split(":", 1)
-        roles = {r.strip() for r in roles_str.split(",") if r.strip()}
-    else:
-        op_id = token
-        roles = {"operator", "viewer"}
-    return SimpleNamespace(operator_id=op_id, roles=roles)
-
-
-def _bff_error(
-    status_code: int,
-    code: Any,
-    message: str,
-    reason: Optional[str] = None,
-    **kwargs: Any,
-) -> HTTPException:
-    details = dict(kwargs)
-    if reason:
-        details["reason"] = reason
-    error_dict = {
-        "code": getattr(code, "value", str(code)),
-        "message": message,
-        "reason": reason or message,
-        "details": details,
-    }
-    return HTTPException(status_code=status_code, detail={"error": error_dict})
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
 
 
 def _create_test_app(port: _SearchPortDouble) -> FastAPI:
-    app = FastAPI()
-
-    @app.exception_handler(HTTPException)
-    @app.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(request, exc):
-        if isinstance(exc.detail, dict) and "error" in exc.detail:
-            return JSONResponse(status_code=exc.status_code, content=exc.detail)
-        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
-
     def _dataset_surface_status(dataset: str, *, source: str = "missing", **kwargs: Any) -> str:
         if source == "local_snapshot":
             return "degraded"
@@ -225,19 +189,13 @@ def _create_test_app(port: _SearchPortDouble) -> FastAPI:
     def _snapshot_meta(snapshot_at: str, **kw: Any) -> dict[str, Any]:
         return {"snapshot_at": snapshot_at, **kw}
 
-    router = create_research_router(
-        read_surface=lambda: port,
-        extract_identity=_extract_identity,
-        require_read_role=lambda ident: None,
-        require_operator_role=lambda ident: None,
-        bff_error=_bff_error,
+    return create_research_test_app(
+        port,
         utc_now=lambda: "2026-04-19T20:14:30Z",
         snapshot_meta=_snapshot_meta,
         dataset_surface_status=_dataset_surface_status,
         submit_experiment_action=lambda *a, **kw: {},
     )
-    app.include_router(router)
-    return app
 
 
 @contextmanager

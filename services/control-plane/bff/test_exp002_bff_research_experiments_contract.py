@@ -186,31 +186,12 @@ class _FakeResearchWriteOwner:
         return dict(rec)
 
 
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+
+
 def _create_test_app(store: Any) -> FastAPI:
-    app = FastAPI()
-
-    @app.exception_handler(HTTPException)
-    @app.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(request, exc):
-        if isinstance(exc.detail, dict) and "error" in exc.detail:
-            return JSONResponse(status_code=exc.status_code, content=exc.detail)
-        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
-
-    def _extract_identity(auth_header: Optional[str]) -> Any:
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return SimpleNamespace(operator_id="anonymous", roles=[])
-        return SimpleNamespace(operator_id="exp002-op", roles=["operator", "researcher", "admin"])
-
-    def _require_read_role(ident: Any) -> None:
-        roles = getattr(ident, "roles", [])
-        if not roles or "operator" not in roles:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-
-    def _require_operator_role(ident: Any) -> None:
-        roles = getattr(ident, "roles", [])
-        if not roles or "operator" not in roles:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-
     def _dataset_surface_status(
         dataset: str,
         *,
@@ -221,37 +202,12 @@ def _create_test_app(store: Any) -> FastAPI:
     ) -> Dict[str, Any]:
         return {"status": "ok", "source": source or "local_snapshot", "snapshot_at": snapshot_at}
 
-    def _bff_error(
-        status_code: int,
-        code: Any,
-        message: str,
-        reason: Optional[str] = None,
-        **kwargs: Any,
-    ) -> HTTPException:
-        return HTTPException(
-            status_code=status_code,
-            detail={
-                "error": {
-                    "code": getattr(code, "value", str(code)),
-                    "message": message,
-                    "reason": reason or message,
-                    "details": kwargs,
-                }
-            },
-        )
-
-    router = create_research_router(
-        get_read_store=lambda: store,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
+    return create_research_test_app(
+        store,
         utc_now=lambda: "2026-04-20T00:00:00Z",
         dataset_surface_status=_dataset_surface_status,
         include_prepared_subrouters=True,
     )
-    app.include_router(router)
-    return app
 
 
 @contextmanager

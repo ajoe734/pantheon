@@ -167,25 +167,13 @@ def _seed_qlib_management_linkage() -> tuple[Any, dict]:
     return store, packet
 
 
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+from services.control_plane.bff.auth import policy as auth_policy
+
+
 def _create_app(store: Any) -> FastAPI:
-    app = FastAPI()
-
-    @app.exception_handler(HTTPException)
-    @app.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(request, exc):
-        if isinstance(exc.detail, dict) and "error" in exc.detail:
-            return JSONResponse(status_code=exc.status_code, content=exc.detail)
-        return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
-
-    def _extract_identity(auth_header: Optional[str]) -> Any:
-        return SimpleNamespace(operator_id="op-mgmt-qlib", roles=["operator", "reviewer"], token_kind="operator")
-
-    def _require_read_role(ident: Any) -> None:
-        pass
-
-    def _require_operator_role(ident: Any) -> None:
-        pass
-
     def _dataset_surface_status(
         dataset: str,
         *,
@@ -196,46 +184,21 @@ def _create_app(store: Any) -> FastAPI:
     ) -> Dict[str, Any]:
         return {"status": "ok", "source": source or "local_snapshot", "snapshot_at": snapshot_at}
 
-    def _bff_error(
-        status_code: int,
-        code: Any,
-        message: str,
-        reason: Optional[str] = None,
-        **kwargs: Any,
-    ) -> HTTPException:
-        return HTTPException(
-            status_code=status_code,
-            detail={
-                "error": {
-                    "code": getattr(code, "value", str(code)),
-                    "message": message,
-                    "reason": reason or message,
-                    "details": kwargs,
-                }
-            },
-        )
-
-    research_router = create_research_router(
+    strategies_router = create_strategies_router(
         get_read_store=lambda: store,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        require_operator_role=auth_policy.require_operator_role,
+        bff_error=auth_policy.bff_error,
+        utc_now=lambda: "2026-05-15T17:30:00Z",
+    )
+    return create_research_test_app(
+        store,
         utc_now=lambda: "2026-05-15T17:30:00Z",
         dataset_surface_status=_dataset_surface_status,
         include_prepared_subrouters=True,
+        extra_routers=[strategies_router],
     )
-    strategies_router = create_strategies_router(
-        get_read_store=lambda: store,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=lambda: "2026-05-15T17:30:00Z",
-    )
-    app.include_router(research_router)
-    app.include_router(strategies_router)
-    return app
 
 
 @contextmanager

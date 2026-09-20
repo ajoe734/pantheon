@@ -11,7 +11,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional
 
 _BFF_DIR = Path(__file__).resolve().parent.parent
 if str(_BFF_DIR) not in sys.path:
@@ -502,3 +502,75 @@ def _clone(value: Any) -> Any:
 
 def _clone_records(records: Mapping[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     return {str(key): _clone(record) for key, record in records.items()}
+
+
+def create_research_test_app(
+    port_or_getter: Any = None,
+    *,
+    extract_identity: Optional[Callable[[Optional[str]], Any]] = None,
+    require_read_role: Optional[Callable[[Any], None]] = None,
+    require_operator_role: Optional[Callable[[Any], None]] = None,
+    bff_error_fn: Optional[Callable[..., Exception]] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+    page_slice: Optional[Any] = None,
+    snapshot_meta: Optional[Any] = None,
+    dataset_surface_status: Optional[Any] = None,
+    submit_experiment_action: Optional[Any] = None,
+    include_prepared_subrouters: bool = True,
+    extra_routers: Optional[Iterable[Any]] = None,
+    **extra_router_kwargs: Any,
+) -> Any:
+    """Build a test FastAPI application with shared product auth and error assembly."""
+    from fastapi import FastAPI, HTTPException
+    from services.control_plane.bff.core.app_factory import build_bff_app
+    from services.control_plane.bff.auth import policy as auth_policy
+    from services.control_plane.bff.research.router import create_research_router
+
+    if "PANTHEON_BFF_AUTH_STUB" not in os.environ:
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+    if "PANTHEON_BFF_AUTH_MODE" not in os.environ:
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+
+    app = build_bff_app()
+    get_store = port_or_getter if callable(port_or_getter) else (lambda: port_or_getter)
+
+    def _default_extract_identity(auth: Optional[str]) -> Any:
+        if not auth or not auth.startswith("Bearer "):
+            raise auth_policy.bff_error(
+                401,
+                auth_policy.ErrorCode.AUTH_REQUIRED,
+                "Missing or invalid Authorization header",
+                "Token is absent or not a Bearer token",
+                suggestion="Re-authenticate and include a valid Bearer token",
+            )
+        try:
+            return auth_policy.extract_identity(auth)
+        except HTTPException:
+            return auth_policy.extract_identity_stub(auth)
+
+    router_kwargs: dict[str, Any] = {
+        "read_surface": get_store,
+        "extract_identity": extract_identity or _default_extract_identity,
+        "require_read_role": require_read_role or auth_policy.require_read_role,
+        "require_operator_role": require_operator_role or auth_policy.require_operator_role,
+        "bff_error": bff_error_fn or auth_policy.bff_error,
+        "utc_now": utc_now or (lambda: "2026-05-23T00:00:00Z"),
+        "include_prepared_subrouters": include_prepared_subrouters,
+    }
+    if page_slice is not None:
+        router_kwargs["page_slice"] = page_slice
+    if snapshot_meta is not None:
+        router_kwargs["snapshot_meta"] = snapshot_meta
+    if dataset_surface_status is not None:
+        router_kwargs["dataset_surface_status"] = dataset_surface_status
+    if submit_experiment_action is not None:
+        router_kwargs["submit_experiment_action"] = submit_experiment_action
+    router_kwargs.update(extra_router_kwargs)
+
+    router = create_research_router(**router_kwargs)
+    app.include_router(router)
+    if extra_routers:
+        for r in extra_routers:
+            app.include_router(r)
+    return app
+

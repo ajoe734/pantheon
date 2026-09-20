@@ -17,24 +17,17 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 EXAMPLE_PATH = Path(__file__).resolve().parents[3] / "docs" / "examples" / "PKT-knowledge-workbench.json"
 
 
-def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
-    return HTTPException(
-        status_code=status_code,
-        detail={"error": {"code": getattr(code, "value", str(code)), "message": message, "reason": reason or message, **kwargs}},
-    )
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
 
 
 def test_pkt016_knowledge_workbench_returns_truthful_overview_payload() -> None:
-    app = FastAPI()
-    router = create_research_router(
-        get_read_store=lambda: None,
-        extract_identity=lambda _: SimpleNamespace(operator_id="op-2", roles={"operator"}),
-        require_read_role=lambda _: None,
-        require_operator_role=lambda _: None,
-        bff_error=_bff_error,
+    app = create_research_test_app(
+        lambda: None,
         utc_now=lambda: "2026-04-22T00:00:00Z",
     )
-    app.include_router(router)
     client = TestClient(app)
 
     response = client.get(
@@ -73,7 +66,7 @@ def test_pkt016_knowledge_workbench_example_matches_builder() -> None:
         get_read_store=lambda: None,
         extract_identity=lambda _: None,
         require_read_role=lambda _: None,
-        bff_error=_bff_error,
+        bff_error=auth_policy.bff_error,
         utc_now=lambda: "2026-04-22T00:00:00Z",
     )
     expected = _build_knowledge_workbench_overview(ctx, "2026-04-22T00:00:00Z")

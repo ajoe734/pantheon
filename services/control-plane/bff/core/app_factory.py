@@ -65,8 +65,6 @@ def bff_feature_flags() -> dict[str, bool]:
     ooda = os.getenv("PANTHEON_OODA_PACKET_ENABLED")
     ooda_enabled = True if ooda is None else ooda.strip().lower() not in {"0", "false", "no", "off", "disabled"}
     synthesis = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
-    if synthesis is None:
-        synthesis = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOGS_ENABLED")
     synthesis_enabled = True if synthesis is None else synthesis.strip().lower() not in {"0", "false", "no", "off", "disabled"}
     return {
         "executePlansBff": True,
