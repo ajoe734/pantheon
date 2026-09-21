@@ -2788,6 +2788,20 @@ _GENERATED_WORKER_TASK_BRIEF_MARKER = (
 )
 
 
+def _generated_task_brief_bullets(task: Mapping[str, Any], field: str) -> list[str]:
+    """Render the canonical task list fields without inventing fallback scope."""
+
+    values = task.get(field)
+    if not isinstance(values, list):
+        return ["- (none)"]
+    normalized = [str(value).strip() for value in values if str(value).strip()]
+    if not normalized:
+        return ["- (none)"]
+    if field == "acceptance":
+        return [f"{index}. {value}" for index, value in enumerate(normalized, start=1)]
+    return [f"- {value}" for value in normalized]
+
+
 def _replace_request_context_path(
     request: DeliveryRequest,
     source_path: str,
@@ -2840,6 +2854,9 @@ def _generated_worker_task_brief(
                 f"- Next: {task.get('next') or '-'}",
             ]
         )
+    acceptance_lines = _generated_task_brief_bullets(task, "acceptance")
+    artifact_lines = _generated_task_brief_bullets(task, "artifacts")
+    dependency_lines = _generated_task_brief_bullets(task, "depends_on")
     return "\n".join(
         [
             f"# Task Brief: {task.get('id') or task_id}",
@@ -2851,6 +2868,15 @@ def _generated_worker_task_brief(
             "",
             "## Summary",
             str(task.get("summary_zh") or "-"),
+            "",
+            "## Acceptance",
+            *acceptance_lines,
+            "",
+            "## Scoped Artifacts",
+            *artifact_lines,
+            "",
+            "## Prerequisites",
+            *dependency_lines,
             "",
             "## Coordination Root",
             "- Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.",
