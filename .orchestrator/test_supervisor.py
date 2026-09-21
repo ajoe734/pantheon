@@ -289,17 +289,23 @@ class V2StartupCacheTests(unittest.TestCase):
             mock.patch.object(supervisor, "pid_is_alive", return_value=False),
             mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
             mock.patch.object(supervisor, "canonical_worker_terminal_status", return_value=None),
+            mock.patch.object(
+                supervisor,
+                "record_delivery_health_for_reaped_worker",
+                return_value="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 39h.",
+            ) as record_failure,
             mock.patch.object(supervisor, "recover_lost_worker_lease", return_value=True) as recover,
             mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
         ):
             self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
 
+        record_failure.assert_called_once_with(config, state, worker)
         recover.assert_called_once_with(
             config,
             state,
             worker,
             reason_kind="worker_process_missing",
-            reason="Worker process missing during supervisor boot reconciliation.",
+            reason="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 39h.",
             status=status,
         )
 
@@ -1174,7 +1180,12 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
                 "title": "Keep task briefs clean",
                 "summary_zh": "brief hygiene",
                 "next": "owner implementation",
+                "acceptance": [
+                    "Preserve the canonical task contract.",
+                    "Do not create a test-only fallback.",
+                ],
                 "artifacts": [".orchestrator/supervisor.py"],
+                "depends_on": ["UPSTREAM-BRIEF-CONTRACT-001"],
             }
         )
         return config, task, status_root, source_root
@@ -1323,7 +1334,15 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             self.assertIn(f"- {generated_path}", owner_request.message)
             self.assertNotIn(f"- {self.BRIEF_PATH}", owner_request.message)
             self.assertTrue(generated_file.is_file())
-            self.assertIn("Status: todo", generated_file.read_text(encoding="utf-8"))
+            generated_text = generated_file.read_text(encoding="utf-8")
+            self.assertIn("Status: todo", generated_text)
+            self.assertIn("## Acceptance", generated_text)
+            self.assertIn("1. Preserve the canonical task contract.", generated_text)
+            self.assertIn("2. Do not create a test-only fallback.", generated_text)
+            self.assertIn("## Scoped Artifacts", generated_text)
+            self.assertIn("- .orchestrator/supervisor.py", generated_text)
+            self.assertIn("## Prerequisites", generated_text)
+            self.assertIn("- UPSTREAM-BRIEF-CONTRACT-001", generated_text)
             self.assertEqual(
                 self._git(workspace, "check-ignore", generated_path),
                 generated_path,
@@ -2143,15 +2162,16 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                 for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
                     self.assertNotIn("max_parallel", config["agents"][slot_id])
 
-    def test_repo_claude_quota_pause_survives_healthy_auth_probe(self) -> None:
+    def test_repo_claude_dispatch_uses_the_shared_account_cap(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         account = supervisor.agent_account_id(config, "claude")
         self.assertTrue(bool(account) and account == supervisor.agent_account_id(config, "claude2"))
         self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 3)
-        for agent_id in ("claude", "claude2"):
-            with self.subTest(agent_id=agent_id):
+        expected_capacity = {"claude": 3, "claude2": 0}
+        for agent_id, capacity in expected_capacity.items():
+            with self.subTest(agent_id=agent_id, capacity=capacity):
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
-                self.assertEqual(lane.max_parallel, 0)
+                self.assertEqual(lane.max_parallel, capacity)
                 self.assertTrue(all(endpoint.account_id == account for endpoint in lane.endpoints))
                 health = supervisor.rewrite_provider_health.apply_probe(
                     {}, endpoint_id=agent_id, account_id=account,
@@ -2161,7 +2181,7 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                     supervisor.assignment_terminal_unavailability(
                         config, {"delivery_health": health}, agent_id,
                     ),
-                    "configured_zero_capacity",
+                    None if capacity else "configured_zero_capacity",
                 )
 
     def test_retired_capacity_fields_fail_closed(self) -> None:
@@ -5496,6 +5516,40 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertEqual(len(observations), 1)
         self.assertEqual(observations[0]["endpoint_id"], "claude")
         probe.assert_called_once_with(self.config, "claude", force=True, check_capacity=True)
+
+    def test_probe_demanded_delivery_health_uses_antigravity_zero_token_capacity_probe(self) -> None:
+        self.config["agents"]["antigravity"] = {
+            "display_name": "Antigravity",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["antigravity"] = {
+            "delivery_mode": "antigravity",
+            "account": "antigravity-shared",
+        }
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {"antigravity": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"}},
+                "accounts": {"antigravity_shared": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"}},
+            },
+        }
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "agy_usage"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config,
+                [{"scope": "endpoint", "id": "antigravity"}],
+                quiet=True,
+                state=state,
+            )
+        self.assertEqual(len(observations), 1)
+        probe.assert_called_once_with(self.config, "antigravity", force=True, check_capacity=True)
 
     def test_bootstrap_cold_start_refresh_to_admission_probes_capacity(self) -> None:
         """Cold-start lane with no account health probes capacity before admission."""
