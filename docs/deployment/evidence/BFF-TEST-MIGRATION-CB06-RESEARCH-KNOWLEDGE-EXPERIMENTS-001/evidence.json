@@ -46,11 +46,11 @@
   },
   "test_summary": {
     "target_suites_count": 13,
-    "target_suites_tests_passed": 132,
+    "target_suites_tests_passed": 138,
     "target_suites_tests_failed": 0,
     "target_suites_tests_skipped": 0,
     "architecture_gate_tests_passed": 8,
-    "total_tests_passed": 140,
+    "total_tests_passed": 146,
     "composition_suite_status": {
       "command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_bff_main_composition.py",
       "exit_code": 1,
@@ -77,9 +77,9 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/tests/test_bff_knowledge_inbox.py": {
-      "sha256": "71c8b3f65a9e0d4afbd4799459aef8791e98f3025ff6c819757ff65dd1b13ef4",
-      "bytes": 7066,
-      "lines": 186,
+      "sha256": "868cd43f7753a7a0e5a8fe86f15c3965ea02b1fdd9009a05ba6a6a6397899e23",
+      "bytes": 7688,
+      "lines": 200,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -133,9 +133,9 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/tests/test_console_research_projection.py": {
-      "sha256": "dd772c274021efbf594b2d83720851f929dd7cae12e7cd6ddb453ad0e427cca3",
-      "bytes": 15834,
-      "lines": 382,
+      "sha256": "75034df932cdc266fad7f9165ce83432fb3430d88d3283fdc1f7423448885439",
+      "bytes": 17681,
+      "lines": 426,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -165,7 +165,7 @@
       "disposition": "DECOUPLED"
     }
   },
-  "rebase_reconciliation_note": "Origin/dev advanced to f4bdc9e2178062431b7b84f68d71b5ff1bfe0c68. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (140 passed total). Review feedback resolved: 1) Surface assembly parity: Unified format_dataset_surface_status across minimal app (research/routes/common.py) and full app (main.py) so BFF_READ_SURFACE_STATE (fresh, degraded, unavailable) behaves identically on both apps, and added parity tests in test_bff_main_composition.py; 2) Test-only fake status removal: Removed test-only dataset_surface_status lambdas/stubs across test_rw04, test_rw01, test_exp002, test_research_oss_preactivation, and test_mgmt_qlib_006 to exercise canonical production surface status assembly, and added regression tests for BFF_READ_SURFACE_STATE=unavailable on GET /api/v1/experiments and GET /api/v1/experiments/{id}; 3) Restored match_type assertion in test_rw02_search_contract.py.",
+  "rebase_reconciliation_note": "Origin/dev advanced to f4bdc9e2178062431b7b84f68d71b5ff1bfe0c68. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (146 passed total: 138 target + 8 architecture). Review feedback resolved: 1) Surface assembly parity: Unified format_dataset_surface_status across minimal app (research/routes/common.py) and full app (main.py) so BFF_READ_SURFACE_STATE (fresh, degraded, unavailable) behaves identically on both apps, and added parity tests in test_bff_main_composition.py; 2) Test-only fake status removal: Removed test-only dataset_surface_status callbacks across test_bff_knowledge_inbox.py and test_console_research_projection.py (as well as test_rw04, test_rw01, test_exp002, test_research_oss_preactivation, and test_mgmt_qlib_006) to exercise canonical production surface status assembly, and added fresh/degraded/unavailable parity and negative regressions; 3) Restored match_type assertion in test_rw02_search_contract.py.",
   "decoupling_approach": {
     "test_jobs_source_owner_contract": "Mounted create_jobs_router on isolated FastAPI app with fake JobReadPort injected into test client via shared create_research_test_app instead of bff_main.",
     "test_pkt016_knowledge_workbench_contract": "Mounted create_research_router on isolated FastAPI app with knowledge read ports fixture and in-memory ports double via shared create_research_test_app.",
@@ -186,7 +186,7 @@
       "description": "Pytest run for all 13 migrated test suites",
       "command": "pytest -q services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_rw04_experiment_launch_contract.py services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/tests/test_console_research_projection.py services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
       "exit_code": 0,
-      "result": "132 passed, 4 warnings in 50.52s"
+      "result": "138 passed, 4 warnings in 58.76s"
     },
     {
       "description": "Pytest run for architectural invariant gate",

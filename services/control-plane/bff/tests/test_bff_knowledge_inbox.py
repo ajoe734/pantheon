@@ -4,11 +4,13 @@ import tempfile
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Optional
 
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.console_gap.knowledge import create_knowledge_router
 from services.control_plane.bff.ports.read_surface_ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.research.routes.common import format_dataset_surface_status
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-knowledge:operator,reviewer"}
@@ -18,28 +20,6 @@ from services.control_plane.bff.core.app_factory import build_bff_app
 from services.control_plane.bff.auth import policy as auth_policy
 
 
-def _dataset_surface_status(
-    dataset: str,
-    *,
-    snapshot_at: str = "2026-06-15T08:00:00Z",
-    source: Optional[str] = None,
-    has_data: Optional[bool] = None,
-    missing_message: Optional[str] = None,
-) -> Dict[str, Any]:
-    if source == "missing" or has_data is False:
-        return {
-            "status": "unavailable",
-            "source": source or "missing",
-            "snapshot_at": snapshot_at,
-            "message": missing_message or f"{dataset} has no readable records",
-        }
-    return {
-        "status": "ok",
-        "source": source or "service_store",
-        "snapshot_at": snapshot_at,
-    }
-
-
 def _create_app(store_getter: Callable[[], Any]) -> FastAPI:
     app = build_bff_app()
     router = create_knowledge_router(
@@ -47,7 +27,12 @@ def _create_app(store_getter: Callable[[], Any]) -> FastAPI:
         require_read_role=auth_policy.require_read_role,
         read_store_getter=store_getter,
         utc_now=lambda: "2026-06-15T08:10:00Z",
-        dataset_surface_status=_dataset_surface_status,
+        dataset_surface_status=lambda dataset, *args, **kwargs: format_dataset_surface_status(
+            dataset,
+            *args,
+            utc_now=lambda: "2026-06-15T08:10:00Z",
+            **kwargs,
+        ),
     )
     app.include_router(router)
     return app
@@ -184,3 +169,32 @@ def test_bff_knowledge_inbox_auth_and_openapi_contract() -> None:
     schema = app.openapi()
     assert "/bff/knowledge" in schema["paths"]
     assert "get" in schema["paths"]["/bff/knowledge"]
+
+
+@pytest.mark.parametrize(
+    "state,expected_meta,expected_notes",
+    [
+        ("fresh", "ok", "ok"),
+        ("degraded", "degraded", "degraded"),
+        ("unavailable", "degraded", "unavailable"),
+    ],
+)
+def test_bff_knowledge_inbox_surface_state_parity(
+    state: str,
+    expected_meta: str,
+    expected_notes: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BFF_READ_SURFACE_STATE", state)
+    with tempfile.TemporaryDirectory() as td:
+        store = _knowledge_store(td)
+        app = _create_app(lambda: store)
+        client = TestClient(app)
+
+        response = client.get("/bff/knowledge", headers=OPERATOR_HEADERS)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["meta"]["status"] == expected_meta
+        assert body["meta"]["surfaces"]["knowledge_inbox"]["status"] == expected_meta
+        assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["status"] == expected_notes
+

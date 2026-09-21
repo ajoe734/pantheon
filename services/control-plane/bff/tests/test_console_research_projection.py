@@ -5,14 +5,12 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
-
-from fastapi.testclient import TestClient
-
-from types import SimpleNamespace
 from typing import Any, Dict, Iterator, Optional
 
+import pytest
 from fastapi import FastAPI, HTTPException, Request
+from services.control_plane.bff.research.routes.common import format_dataset_surface_status
+
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -213,16 +211,27 @@ def _create_console_projection_app(ports: Any) -> FastAPI:
     def _dataset_surface_status(
         dataset: str,
         *,
-        snapshot_at: str = "2026-06-15T08:00:00Z",
+        snapshot_at: Optional[str] = None,
         source: Optional[str] = None,
         has_data: Optional[bool] = None,
         missing_message: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
-        return {
-            "status": "ok",
-            "source": source or "test_projection",
-            "snapshot_at": snapshot_at,
-        }
+        resolved_source = (
+            source
+            or (ports.dataset_source(dataset) if hasattr(ports, "dataset_source") else None)
+            or "test_projection"
+        )
+        return format_dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at or "2026-06-15T08:00:00Z",
+            source=resolved_source,
+            has_data=has_data,
+            missing_message=missing_message,
+            utc_now=lambda: "2026-06-15T11:00:00Z",
+        )
+
+    ports.dataset_surface_status = _dataset_surface_status
 
     knowledge_router = create_knowledge_router(
         extract_identity=auth_policy.extract_identity,
@@ -380,3 +389,38 @@ def test_projected_research_console_surfaces_return_ok_counts(monkeypatch) -> No
         assert tasks_body["page_info"]["total"] > 0
         assert tasks_body["meta"]["surfaces"]["research_task_list"]["status"] == "ok"
         assert tasks_body["items"][0]["ticket_id"] == "rtask-console-001"
+
+
+@pytest.mark.parametrize(
+    "state,expected_inbox,expected_analysis,expected_tasks",
+    [
+        ("fresh", "ok", "ok", "ok"),
+        ("degraded", "degraded", "degraded", "degraded"),
+        ("unavailable", "degraded", "unavailable", "unavailable"),
+    ],
+)
+def test_projected_research_console_surfaces_state_parity(
+    state: str,
+    expected_inbox: str,
+    expected_analysis: str,
+    expected_tasks: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BFF_READ_SURFACE_STATE", state)
+    with _projected_bff(monkeypatch) as client:
+        knowledge = client.get("/bff/knowledge", headers=HEADERS)
+        assert knowledge.status_code == 200, knowledge.text
+        assert knowledge.json()["meta"]["surfaces"]["knowledge_inbox"]["status"] == expected_inbox
+
+        analyses = client.get("/bff/research-analyses", headers=HEADERS)
+        assert analyses.status_code == 200, analyses.text
+        analysis_surface = (
+            analyses.json()["meta"]["surfaces"].get("analysis_results")
+            or analyses.json()["meta"]["surfaces"].get("research_analyses")
+        )
+        assert analysis_surface is not None and analysis_surface["status"] == expected_analysis
+
+        tasks = client.get("/bff/research/tasks", headers=HEADERS)
+        assert tasks.status_code == 200, tasks.text
+        assert tasks.json()["meta"]["surfaces"]["research_task_list"]["status"] == expected_tasks
+
