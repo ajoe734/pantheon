@@ -1174,7 +1174,12 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
                 "title": "Keep task briefs clean",
                 "summary_zh": "brief hygiene",
                 "next": "owner implementation",
+                "acceptance": [
+                    "Preserve the canonical task contract.",
+                    "Do not create a test-only fallback.",
+                ],
                 "artifacts": [".orchestrator/supervisor.py"],
+                "depends_on": ["UPSTREAM-BRIEF-CONTRACT-001"],
             }
         )
         return config, task, status_root, source_root
@@ -1323,7 +1328,15 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             self.assertIn(f"- {generated_path}", owner_request.message)
             self.assertNotIn(f"- {self.BRIEF_PATH}", owner_request.message)
             self.assertTrue(generated_file.is_file())
-            self.assertIn("Status: todo", generated_file.read_text(encoding="utf-8"))
+            generated_text = generated_file.read_text(encoding="utf-8")
+            self.assertIn("Status: todo", generated_text)
+            self.assertIn("## Acceptance", generated_text)
+            self.assertIn("1. Preserve the canonical task contract.", generated_text)
+            self.assertIn("2. Do not create a test-only fallback.", generated_text)
+            self.assertIn("## Scoped Artifacts", generated_text)
+            self.assertIn("- .orchestrator/supervisor.py", generated_text)
+            self.assertIn("## Prerequisites", generated_text)
+            self.assertIn("- UPSTREAM-BRIEF-CONTRACT-001", generated_text)
             self.assertEqual(
                 self._git(workspace, "check-ignore", generated_path),
                 generated_path,
