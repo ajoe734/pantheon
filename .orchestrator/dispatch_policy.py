@@ -410,7 +410,9 @@ def build_delivery_admission_snapshot(
             continue
         # Queue rows predate V2 endpoint binding.  Their logical target still
         # reserves capacity, but only new V2 events reserve an exact slot.
-        endpoint = normalize_agent_id(str(record.get("delivery_endpoint_id") or ""))
+        intent = record.get("intent")
+        binding = intent if isinstance(intent, Mapping) else record
+        endpoint = normalize_agent_id(str(binding.get("delivery_endpoint_id") or ""))
         if endpoint:
             reserved_endpoints.add(endpoint)
     # Planning uses an in-memory event sink and deliberately does not write
