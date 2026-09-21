@@ -241,7 +241,7 @@
     "claude": {
       "display_name": "Claude",
       "provider": "claude",
-      "max_parallel": 0,
+      "max_parallel": 3,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
