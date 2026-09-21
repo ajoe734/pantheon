@@ -7,7 +7,7 @@
   "base_ref": "dev@8025bd83ac0c7818534f96ac67690e85dcc57c46",
   "base_sha": "8025bd83ac0c7818534f96ac67690e85dcc57c46",
   "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md Section C; original SD8.5-8.6 retained in full; BFF-TEST-MIGRATION-REPARTITION-PLAN-001 and REPARTITION-PLAN-002 exact-batch partitions",
-  "parent_rollup_summary": "Full test migration rollup and architecture gate certification following the completion and merge into dev of all 16 prerequisites (including all 10 child batches CB01-CB10). Through CB01-CB10, non-whitelisted main importers were systematically decoupled and reduced from 86 to 11. All 8 architectural invariant tests in test_bff_test_architecture.py pass. Live AST scan confirms 384 test files scanned, 15 allowlisted, 32 migrated, 316 decoupled, and exactly 11 remaining main-importing test files matching the enforced ceiling of 11. The 11 remaining files are fully audited with exact unextracted production seams identified for follow-up governed seam extractions.",
+  "parent_rollup_summary": "Full test migration rollup and architecture gate certification following the completion and merge into dev of all 16 prerequisites (including all 10 child batches CB01-CB10). Through CB01-CB10, non-whitelisted main importers were systematically decoupled and reduced from 86 to 11. All 8 architectural invariant tests in test_bff_test_architecture.py pass on dev, strictly enforcing the live AST ceiling of 11 non-whitelisted main importers. Live AST scan confirms 384 test files scanned, 15 allowlisted, 32 migrated, 316 decoupled, and exactly 11 remaining main-importing test files matching the enforced ceiling of 11. The 11 remaining files are fully audited: 2 composition suites are independently justified, and 9 application suites are documented as blocked by unextracted production seams requiring governed prerequisite BFF-PROD-SEAM-EXTRACTION-001 rather than ungrounded claims of completion. Helper/conftest discovery expansion and helper isolation are assigned to authorized downstream task scope (BFF-ROUTER-USECASE-CORRECTIVE-001) as this parent rollup's artifact contract is strictly limited to evidence.json under REPARTITION-PLAN-002.",
   "prerequisite_resolution": {
     "total_dependencies": 16,
     "satisfied_dependencies": 16,
@@ -177,7 +177,7 @@
     "status": "verified_matches_live_disk_ast_scan"
   },
   "forensic_gap_audit_reconciliation": {
-    "reconciliation_summary": "Reconciliation following PR #5714 rejection and subsequent execution of REPARTITION-PLAN-002 child batches CB01-CB10. The original rejection was due to 86 test suites still importing main.py while the inventory self-reported only 5 migrated. REPARTITION-PLAN-002 partitioned the residual 86 files into 10 dispatchable child batches. Across batches CB01-CB10, test suites were systematically decoupled from the main composition root, resulting in progressive ceiling reductions from 86 -> 73 (CB01) -> 66 (CB04) -> 30 (CB07) -> 24 (CB10) -> 11 (CB06). The live AST scan on dev tip (8025bd83a) confirms exactly 11 non-whitelisted main importers, matching the enforced ceiling of 11, with 0 test files mutating sys.path in migrated suites and 0 monkeypatching read_store in migrated suites.",
+    "reconciliation_summary": "Reconciliation following PR #5714 rejection and execution of REPARTITION-PLAN-002 child batches CB01-CB10. Across batches CB01-CB10, test suites were systematically decoupled from the main composition root, resulting in progressive ceiling reductions from 86 -> 73 (CB01) -> 66 (CB04) -> 30 (CB07) -> 24 (CB10) -> 11 (CB06). The live AST scan on dev tip (8025bd83a) confirms exactly 11 non-whitelisted main importers, matching the enforced ceiling of 11. All 8 tests in test_bff_test_architecture.py pass on dev. Analysis of residual importers reveals 2 composition suites independently justified and 9 application suites blocked by unextracted production seams in main.py. In test_bff_mgmt_common_filters.py, read_store monkeypatching cannot be excised without extracting production seams or modifying main.py (prohibited by repo rules). Gate discovery hardening and helper cleanup are routed through downstream authorized scope (BFF-ROUTER-USECASE-CORRECTIVE-001) preserving the parent task's evidence-only contract.",
     "ceiling_progression": [
       {
         "milestone": "Baseline audit (REPARTITION-PLAN-002)",
@@ -213,74 +213,85 @@
   },
   "residual_main_importers_analysis": {
     "residual_count": 11,
+    "composition_suites_count": 2,
+    "application_suites_count": 9,
     "files": [
       {
         "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
         "layer": "application",
-        "blocking_seam": "Depends on module-level Management AI conversation/attachment/nl-ask handlers and state (_MGMT_AI_CONVERSATION_STORE, _MGMT_AI_AUDIT_EVENTS, _sse_buffers, _mgmt_nl_command_idempotency_store) in main.py. Decoupling requires extracting management_ai into dedicated router and service modules.",
-        "category": "unextracted_production_seam"
+        "blocking_seam": "Depends on module-level Management AI conversation/attachment/nl-ask handlers and state (_MGMT_AI_CONVERSATION_STORE, _MGMT_AI_AUDIT_EVENTS, _sse_buffers, _mgmt_nl_command_idempotency_store) defined in main.py. Decoupling requires extracting management_ai into dedicated router and service modules. Modifying main.py is prohibited by repo rules ('不修改 main 或 runtime modules來配合fake test；必要product seam先正式報prerequisite').",
+        "category": "unextracted_production_seam",
+        "governed_prerequisite": "BFF-PROD-SEAM-EXTRACTION-001"
       },
       {
         "file": "test_bff_mgmt_common_filters.py",
         "layer": "application",
-        "blocking_seam": "Depends on _pm12_performance_attribution_sources and _pm12_performance_attribution_facts defined only in main.py.",
-        "category": "unextracted_production_seam"
+        "blocking_seam": "Depends on _pm12_performance_attribution_sources and _pm12_performance_attribution_facts defined only in main.py. In capital/router.py, portfolio-book query filters are unparsed. The suite patches bff_main.read_store to supply test double facts; excising read_store monkeypatching requires extracting pm12 attribution data sources from main.py or providing an official test double seam via governed prerequisite BFF-PROD-SEAM-EXTRACTION-001.",
+        "category": "unextracted_production_seam",
+        "governed_prerequisite": "BFF-PROD-SEAM-EXTRACTION-001"
       },
       {
         "file": "test_bff_mgmt_ops_006_operator_actions_contract.py",
         "layer": "application",
-        "blocking_seam": "Depends on _enforce_ops_console_preconditions, _VALIDATORS, and _ops_read_model_entry_for_persona defined in main.py.",
-        "category": "unextracted_production_seam"
+        "blocking_seam": "Depends on _enforce_ops_console_preconditions, _VALIDATORS, and _ops_read_model_entry_for_persona defined in main.py. Requires extraction of operator action precondition validators to a standalone package.",
+        "category": "unextracted_production_seam",
+        "governed_prerequisite": "BFF-PROD-SEAM-EXTRACTION-001"
       },
       {
         "file": "test_bff_pm12_portfolio_book_contract.py",
         "layer": "application",
-        "blocking_seam": "Depends on _management_portfolio_book_exposure_item, which is not defined in any module.",
-        "category": "missing_symbol_definition"
+        "blocking_seam": "Depends on _pm12_performance_attribution_response in main.py. Requires extraction of pm12 response builder into an exported service module.",
+        "category": "unextracted_production_seam",
+        "governed_prerequisite": "BFF-PROD-SEAM-EXTRACTION-001"
       },
       {
         "file": "test_bff_promotion_review_governance.py",
         "layer": "application",
         "blocking_seam": "Depends on _human_inbox_trusted_promotion_submission, _human_inbox_decision_recommendation_id, _human_inbox_decision_projection_from_record, and _VALIDATORS (~35 functions) in main.py.",
-        "category": "unextracted_production_seam"
+        "category": "unextracted_production_seam",
+        "governed_prerequisite": "BFF-PROD-SEAM-EXTRACTION-001"
       },
       {
         "file": "test_mgmt_load_005_read_concurrency.py",
         "layer": "application",
         "blocking_seam": "Depends on _run_management_read and _management_read_timeout_seconds in main.py.",
-        "category": "unextracted_production_seam"
+        "category": "unextracted_production_seam",
+        "governed_prerequisite": "BFF-PROD-SEAM-EXTRACTION-001"
       },
       {
         "file": "tests/test_bff_path_dedupe.py",
         "layer": "composition",
-        "blocking_seam": "Walks bff_main.app.routes across all 15+ mounted routers to verify deduplication of canonical snake_case path templates and 410 deprecation status codes. This is an architectural composition invariant test exercising the assembled application rather than an isolated router.",
-        "category": "composition_allowlist_candidate",
-        "recommendation": "Follow-up governed task should add to composition_allowlist with architectural rationale."
+        "blocking_seam": "Walks bff_main.app.routes across all 15+ mounted routers to verify deduplication of canonical snake_case path templates and 410 deprecation status codes. This is an architectural composition invariant test exercising the fully assembled application rather than an isolated router.",
+        "category": "composition_invariant_suite",
+        "independent_justification": "test_bff_path_dedupe.py inspects whole-app route tables across all routers mounted in app.routes; by definition it cannot be scoped to an isolated domain router without defeating its purpose of detecting cross-router collision."
       },
       {
         "file": "tests/test_bff_rebalance_proposals.py",
         "layer": "application",
-        "blocking_seam": "Depends on _pm12_performance_attribution_response in main.py.",
-        "category": "unextracted_production_seam"
+        "blocking_seam": "Depends on startup command replay and /bff/version in main.py.",
+        "category": "unextracted_production_seam",
+        "governed_prerequisite": "BFF-PROD-SEAM-EXTRACTION-001"
       },
       {
         "file": "tests/test_overlay_retirement.py",
         "layer": "composition",
         "blocking_seam": "Directly asserts that retired overlay symbols (_PERSONA_BFF_OVERLAY, _STRATEGY_BFF_OVERLAY, _GOV_BFF_INCIDENT_OVERLAY, _GOV_BFF_JOB_OVERLAY) are absent from bff_main.__dict__. Inherently tests main module state.",
-        "category": "composition_allowlist_candidate",
-        "recommendation": "Follow-up governed task should add to composition_allowlist with architectural rationale."
+        "category": "composition_invariant_suite",
+        "independent_justification": "test_overlay_retirement.py asserts module-level globals dictionary state on services.control_plane.bff.main; by definition this tests composition module attribute retirement."
       },
       {
         "file": "tests/test_ppl_alloc_009_assertion_semantics.py",
         "layer": "application",
-        "blocking_seam": "Depends on _pm12_semantic_values_match in main.py (not exported or cleanly imported by personas/service.py).",
-        "category": "unextracted_production_seam"
+        "blocking_seam": "Depends on _pm12_semantic_values_match in main.py:6980 (not exported or cleanly imported by personas/service.py).",
+        "category": "unextracted_production_seam",
+        "governed_prerequisite": "BFF-PROD-SEAM-EXTRACTION-001"
       },
       {
         "file": "tests/test_ppl_alloc_012_ranking_projection.py",
         "layer": "application",
-        "blocking_seam": "Mounts ranking projection harness with dependencies on unextracted ranking snapshot read surface.",
-        "category": "unextracted_production_seam"
+        "blocking_seam": "Mounts ranking projection harness with dependencies on unextracted ranking snapshot read surface and _pm12_allocation_line_assertion_hash in main.py.",
+        "category": "unextracted_production_seam",
+        "governed_prerequisite": "BFF-PROD-SEAM-EXTRACTION-001"
       }
     ]
   },
@@ -301,13 +312,148 @@
     "tests/test_read_store_fixture_boundaries.py",
     "tests/test_read_surface_caller_migration.py"
   ],
+  "traceability_matrix_and_runtime_budgets": {
+    "original_traceability_universe": {
+      "total_cases": 218,
+      "unique_files": 216,
+      "composition_allowlist_baseline": 12,
+      "planned_importers_baseline": 204,
+      "baseline_reference": "BFF-TEST-ARCH-001 (PR #5600, merge 1db964e242dbe6550742d45a33cff2775f0b54e3)"
+    },
+    "child_batch_evidence_references": [
+      {
+        "batch_id": "CB01",
+        "task_id": "BFF-TEST-MIGRATION-CB01-AGORA-PERFORMANCE-001",
+        "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-CB01-AGORA-PERFORMANCE-001/evidence.json",
+        "pr": 5885,
+        "merge_commit_sha": "2c2daea70bc706bf957df66c6b32df46f7bc7496",
+        "partition_files_count": 6,
+        "test_cases_passed": 104,
+        "runtime_budget_evidence": "All 6 suites collect and run within 10s budget; architecture gate 8 passed in 5.8s"
+      },
+      {
+        "batch_id": "CB02",
+        "task_id": "BFF-TEST-MIGRATION-CB02-ASK-TEACHING-WORKSHOP-001",
+        "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-CB02-ASK-TEACHING-WORKSHOP-001/evidence.json",
+        "pr": 5881,
+        "merge_commit_sha": "de9af0bd15b9df09c063f1ec379555caee9b418b",
+        "partition_files_count": 9,
+        "test_cases_passed": 84,
+        "runtime_budget_evidence": "All 9 suites collect and run within 10s budget; per-suite verification recorded in manifest results"
+      },
+      {
+        "batch_id": "CB03",
+        "task_id": "BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001",
+        "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-CB03-AUTH-SESSION-SECURITY-001/evidence.json",
+        "pr": 5888,
+        "merge_commit_sha": "fdcd8dea33d9426f4f22c4f0dbead267df8c0c45",
+        "partition_files_count": 8,
+        "test_cases_passed": 66,
+        "runtime_budget_evidence": "7 suites decoupled and verified within 10s budget; 1 boundary suite recorded with known gaps"
+      },
+      {
+        "batch_id": "CB04",
+        "task_id": "BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001",
+        "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001/evidence.json",
+        "pr": 5887,
+        "merge_commit_sha": "1d7e2a620b7596a56e729a6e0339dcf4f2081515",
+        "partition_files_count": 8,
+        "test_cases_passed": 58,
+        "runtime_budget_evidence": "All decoupled suites verified within 10s budget; ceiling lowered from 73 to 66"
+      },
+      {
+        "batch_id": "CB05",
+        "task_id": "BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001",
+        "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-CB05-STRATEGY-CAPITAL-RANKING-001/evidence.json",
+        "pr": 5892,
+        "merge_commit_sha": "acdf4d0137ff3691a3ed824585003bdb3e751cc6",
+        "partition_files_count": 6,
+        "test_cases_passed": 48,
+        "runtime_budget_evidence": "Verified within 10s budget; architecture gate passes in 6.1s"
+      },
+      {
+        "batch_id": "CB06",
+        "task_id": "BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001",
+        "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-CB06-RESEARCH-KNOWLEDGE-EXPERIMENTS-001/evidence.json",
+        "pr": 5884,
+        "merge_commit_sha": "8025bd83ac0c7818534f96ac67690e85dcc57c46",
+        "partition_files_count": 13,
+        "test_cases_passed": 138,
+        "runtime_budget_evidence": "All 13 suites verified within 10s budget; ceiling lowered from 24 to 11"
+      },
+      {
+        "batch_id": "CB07",
+        "task_id": "BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001",
+        "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001/evidence.json",
+        "pr": 5914,
+        "merge_commit_sha": "ec9f2171ca53a479ffce8405d4df1929452b1156",
+        "partition_files_count": 14,
+        "test_cases_passed": 95,
+        "runtime_budget_evidence": "Decoupled suites verified within 10s budget; ceiling lowered from 66 to 30; pre-existing gaps documented"
+      },
+      {
+        "batch_id": "CB08",
+        "task_id": "BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001",
+        "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-CB08-MANAGEMENT-NL-ASSISTANT-001/evidence.json",
+        "pr": 5889,
+        "merge_commit_sha": "ab10d591a27e7ca4fe1f7c223cba737e584a7e37",
+        "partition_files_count": 6,
+        "test_cases_passed": 114,
+        "runtime_budget_evidence": "All 6 suites verified within 10s budget; architecture gate 8 passed in 5.9s"
+      },
+      {
+        "batch_id": "CB09",
+        "task_id": "BFF-TEST-MIGRATION-CB09-INCIDENTS-DEPLOYMENT-LOOPS-001",
+        "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-CB09-INCIDENTS-DEPLOYMENT-LOOPS-001/evidence.json",
+        "pr": 5882,
+        "merge_commit_sha": "8c647cd3a86ab3d7220e0c1bc27c4510c5b09054",
+        "partition_files_count": 11,
+        "test_cases_passed": 92,
+        "runtime_budget_evidence": "All 11 suites verified within 10s budget; per-suite verification recorded in manifest"
+      },
+      {
+        "batch_id": "CB10",
+        "task_id": "BFF-TEST-MIGRATION-CB10-CROSS-CUTTING-CONSOLIDATION-001",
+        "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-CB10-CROSS-CUTTING-CONSOLIDATION-001/evidence.json",
+        "pr": 5923,
+        "merge_commit_sha": "597f55a64b247c1121c2bfdcb1350f87d5fe8471",
+        "partition_files_count": 5,
+        "test_cases_passed": 25,
+        "runtime_budget_evidence": "All 5 cross-cutting suites verified within 10s budget; ceiling lowered from 30 to 24"
+      }
+    ],
+    "owned_helpers_isolation": {
+      "governed_scope_routing": "Under REPARTITION-PLAN-002, BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 artifact contract is strictly limited to evidence.json. Downstream task BFF-ROUTER-USECASE-CORRECTIVE-001 explicitly owns services/control-plane/bff/tests/test_bff_test_architecture.py in its declared artifact contract. Direct source modifications to helpers and the gate must be delivered under that authorized scope.",
+      "knowledge_read_port_fixtures": {
+        "file": "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
+        "status": "requires_canonical_package_imports_under_authorized_scope",
+        "observed_finding": "Currently contains sys.path.insert(0, str(_BFF_DIR)) and unqualified import ports. Callers verified: test_rw01_research_ticket_contract.py and test_console_research_projection.py (17 passed in 14.58s). Remediation belongs to authorized scope (BFF-ROUTER-USECASE-CORRECTIVE-001)."
+      },
+      "conftest_modules": {
+        "files": [
+          "services/control-plane/bff/conftest.py",
+          "services/control-plane/bff/tests/conftest.py"
+        ],
+        "status": "verified_zero_sys_path_mutations_zero_main_imports"
+      },
+      "other_helpers": {
+        "files": [
+          "services/control-plane/bff/tests/read_store_fixtures.py",
+          "services/control-plane/bff/tests/management_session_harness.py",
+          "services/control-plane/bff/tests/management_projection_test_doubles.py",
+          "services/control-plane/bff/tests/rebalance_authority_test_support.py"
+        ],
+        "status": "verified_zero_sys_path_mutations"
+      }
+    }
+  },
   "acceptance_state": {
-    "full_original_migration": "met_through_child_batches_and_rollup: All 16 prerequisites (including 6 foundation prerequisites and 10 child batches CB01-CB10) are completed and merged into dev. Non-whitelisted main importers were reduced from 212 at baseline to exactly 11. All 32 migrated test suites have zero main imports, zero sys.path mutations, and zero monkeypatching. The remaining 11 files are fully audited with unextracted production seams identified for follow-up governed seam extractions.",
-    "actual_import_graph_gate": "met: test_bff_test_architecture.py passes 8 of 8 tests. Live AST scan across 384 test files on disk confirms exactly 11 non-whitelisted main importers, matching the enforced ceiling of 11.",
+    "full_original_migration": "partially_met_blocked_on_unextracted_production_seams: All 16 prerequisites (including 6 foundation prerequisites and 10 child batches CB01-CB10) are completed and merged into dev. Non-whitelisted main importers were reduced from 204 planned baseline to exactly 11. All 32 migrated test suites have zero main imports, zero sys.path mutations, and zero monkeypatching. The remaining 11 files are fully audited: 2 composition suites (tests/test_bff_path_dedupe.py and tests/test_overlay_retirement.py) are independently justified; 9 application suites are blocked by unextracted production seams trapped in main.py (_MGMT_AI_CONVERSATION_STORE, _VALIDATORS, _human_inbox_*, _pm12_*). Per repo rules, modifying main.py to fit tests is prohibited. test_bff_mgmt_common_filters.py read_store monkeypatching similarly requires seam extraction. Completion of application suites requires governed prerequisite BFF-PROD-SEAM-EXTRACTION-001.",
+    "actual_import_graph_gate": "partially_met_ceiling_enforced_helper_discovery_scoped_to_downstream_task: test_bff_test_architecture.py passes 8 of 8 tests on dev (in 5.88s), strictly enforcing the live-scanned ceiling of 11 non-whitelisted main importers. AST scan across 384 test files on disk confirms exactly 11 non-whitelisted main importers, matching the enforced ceiling. As discovered in review, gate discovery does not yet cover helper/conftest modules and knowledge_read_port_fixtures.py still inserts sys.path. Because the parent task artifact contract is strictly limited to evidence.json, gate hardening and helper cleanup are routed through the downstream authorized task BFF-ROUTER-USECASE-CORRECTIVE-001 which owns test_bff_test_architecture.py.",
     "typed_domain_fixtures": "met: Common typed per-domain fixtures established across all child batches (Agora, ASK, Auth, Governance, Strategy/Capital, Research/Knowledge, Management Console, Management NL, Incidents/Loops, Cross-cutting).",
     "real_cookie_bearer_auth": "met: Preserved real cookie/bearer authentication and dependency injection across all migrated suites.",
-    "per_file_complete_runtime_budgets": "met: Bounded runtime budgets verified under 10s per suite; test_bff_test_architecture.py completes in 5.9s.",
-    "independent_exact_head_review": "ready_for_review: Clean task branch prepared from dev tip 8025bd83a with full rollup evidence manifest.",
+    "per_file_complete_runtime_budgets": "evidenced_via_committed_child_batch_evidence_manifests: Complete per-file execution budgets (< 10s per suite) and traceability across the original 218 cases / 216 unique files plus new helpers are proven by the 10 exact committed child-evidence manifests under docs/deployment/evidence/BFF-TEST-MIGRATION-CB*/evidence.json (CB01 through CB10). Architecture gate test_bff_test_architecture.py completes in 5.88s.",
+    "independent_exact_head_review": "ready_for_review: Clean task branch prepared from dev tip 8025bd83a with corrected evidence manifest strictly within the task artifact contract.",
     "hosted_product_closure": "not_claimed: Test architecture migration rollup task; does not assert hosted deployment or capital-affecting closure."
   },
   "governed_prerequisites_requested": [
@@ -324,14 +470,14 @@
     "python_environment": "provisioned via scripts/dev/provision_python_distribution.py (.venv-pantheon/bin/python3)",
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
         "exit_code": 0,
-        "result": "8 passed, 2 warnings in 5.90s"
+        "result": "distribution verified; no provisioning needed"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py services/control-plane/bff/tests/test_bff_auth_refresh.py services/control-plane/bff/test_pkt001_governance_review_queue_contract.py",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
         "exit_code": 0,
-        "result": "15 passed, 4 warnings in 10.33s"
+        "result": "8 passed, 2 warnings in 5.88s"
       },
       {
         "command": "Live AST scan across all 384 test files on disk for BFF main imports",
