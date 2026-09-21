@@ -127,7 +127,6 @@ def _create_test_app(port: _TicketPortDouble) -> FastAPI:
         utc_now=lambda: "2026-04-20T05:30:00Z",
         page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
         snapshot_meta=lambda stamp, **kw: {"snapshot_at": stamp, **kw},
-        dataset_surface_status=lambda *a, **kw: {"status": "ok"},
         submit_experiment_action=lambda *a, **kw: {},
     )
 

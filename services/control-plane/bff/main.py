@@ -4418,6 +4418,8 @@ def _loop_run_controller_is_formal(metadata: Mapping[str, Any]) -> bool:
         and str(controller.get("mode") or "").strip().lower() == "live"
         and str(controller.get("truth_level") or "").strip().lower() == "canonical_live"
     )
+from .research.routes.common import format_dataset_surface_status as _format_dataset_surface_status
+
 def _dataset_surface_status(
     dataset: str,
     *,
@@ -4425,49 +4427,18 @@ def _dataset_surface_status(
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
     source: Optional[str] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
-    surface = dict(_surface_status())
     source = source or read_store.dataset_source(dataset)
-    surface["source"] = source
-
-    if source == "local_snapshot":
-        if surface.get("status") == "ok":
-            surface["status"] = "degraded"
-        surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
-        surface["staleness"] = {
-            "served_from": "local_snapshot",
-            "last_known_at": snapshot_at or utc_now(),
-        }
-    elif source == _LEGACY_LOOP_RUN_SOURCE:
-        surface["status"] = "degraded"
-        surface["note"] = (
-            "Incident-derived loop reconstruction is a legacy backfill view; "
-            "it is not canonical lifecycle-projector or live controller truth."
-        )
-        surface["projection_mode"] = "backfill"
-        surface["accepted_live"] = False
-        surface["staleness"] = {
-            "served_from": _LEGACY_LOOP_RUN_SOURCE,
-            "last_known_at": snapshot_at or utc_now(),
-        }
-    elif source == "missing":
-        surface["status"] = "unavailable"
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
-        )
-
-    if has_data is False:
-        if surface.get("status") == "ok":
-            surface["status"] = "unavailable"
-        if missing_message:
-            surface["message"] = missing_message
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
-        )
-
-    return surface
+    return _format_dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+        missing_message=missing_message,
+        source=source,
+        utc_now=utc_now,
+        **kwargs,
+    )
 def _loop_run_surface_status(
     available: bool,
     *,

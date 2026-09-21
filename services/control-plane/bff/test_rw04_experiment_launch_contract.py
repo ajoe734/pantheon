@@ -9,6 +9,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from contextlib import contextmanager
 
+import pytest
+
 from services.control_plane.bff.ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
 )
@@ -175,7 +177,6 @@ def _create_test_app(port: Any) -> FastAPI:
     return create_research_test_app(
         port,
         utc_now=lambda: "2026-04-20T00:00:00Z",
-        dataset_surface_status=lambda *args, **kwargs: "fresh",
         include_prepared_subrouters=False,
     )
 
@@ -265,7 +266,9 @@ def test_rw04_list_returns_seeded_experiments() -> None:
         assert "exp-20260419-012" in ids
         assert "exp-20260418-009" in ids
         assert "exp-20260417-004" in ids
-        assert payload["meta"]["surfaces"]["experiment_history"] in {"fresh", "stale", "degraded"}
+        exp_history = payload["meta"]["surfaces"]["experiment_history"]
+        history_status = exp_history.get("status") if isinstance(exp_history, dict) else exp_history
+        assert history_status in {"ok", "fresh", "stale", "degraded"}
 
 
 def test_rw04_list_filters_by_status() -> None:
@@ -348,7 +351,9 @@ def test_rw04_detail_returns_full_contract() -> None:
         assert payload["allowedActions"]["canCancel"] is False
         assert payload["links"]["self"] == "/api/v1/experiments/exp-20260419-012"
         assert payload["links"]["linked_ticket_detail"] == "/research/tickets/rt-20260419-007"
-        assert payload["meta"]["surfaces"]["experiment_status"] in {"fresh", "stale", "degraded"}
+        exp_status = payload["meta"]["surfaces"]["experiment_status"]
+        detail_status = exp_status.get("status") if isinstance(exp_status, dict) else exp_status
+        assert detail_status in {"ok", "fresh", "stale", "degraded"}
 
 
 def test_rw04_detail_running_can_cancel_true() -> None:
@@ -554,3 +559,35 @@ def test_rw04_no_fallback_missing_experiment_returns_404() -> None:
         )
         assert resp.status_code == 404
         assert resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+
+def test_rw04_list_unavailable_when_read_surface_state_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BFF_READ_SURFACE_STATE", "unavailable")
+    with _seeded_client() as client:
+        response = client.get(
+            "/api/v1/experiments",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["data"] == []
+        assert payload["page_info"]["total"] == 0
+        exp_history = payload["meta"]["surfaces"]["experiment_history"]
+        history_status = exp_history.get("status") if isinstance(exp_history, dict) else exp_history
+        assert history_status == "unavailable"
+
+
+def test_rw04_detail_unavailable_when_read_surface_state_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BFF_READ_SURFACE_STATE", "unavailable")
+    with _seeded_client() as client:
+        response = client.get(
+            "/api/v1/experiments/exp-20260419-012",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["experiment_id"] == "exp-20260419-012"
+        exp_status = payload["meta"]["surfaces"]["experiment_status"]
+        detail_status = exp_status.get("status") if isinstance(exp_status, dict) else exp_status
+        assert detail_status == "unavailable"
+

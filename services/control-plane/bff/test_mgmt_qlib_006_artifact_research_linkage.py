@@ -174,16 +174,6 @@ from services.control_plane.bff.auth import policy as auth_policy
 
 
 def _create_app(store: Any) -> FastAPI:
-    def _dataset_surface_status(
-        dataset: str,
-        *,
-        snapshot_at: str = "2026-05-15T17:30:00Z",
-        source: Optional[str] = None,
-        has_data: Optional[bool] = None,
-        missing_message: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        return {"status": "ok", "source": source or "local_snapshot", "snapshot_at": snapshot_at}
-
     strategies_router = create_strategies_router(
         get_read_store=lambda: store,
         extract_identity=auth_policy.extract_identity,
@@ -195,7 +185,6 @@ def _create_app(store: Any) -> FastAPI:
     return create_research_test_app(
         store,
         utc_now=lambda: "2026-05-15T17:30:00Z",
-        dataset_surface_status=_dataset_surface_status,
         include_prepared_subrouters=True,
         extra_routers=[strategies_router],
     )

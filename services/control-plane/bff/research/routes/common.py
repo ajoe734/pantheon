@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -87,30 +88,71 @@ def _default_snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
     return {"snapshot_at": snapshot_at}
 
 
-def _default_surface_status(
+def format_dataset_surface_status(
     dataset: str,
     *,
     snapshot_at: Optional[str] = None,
     source: Optional[str] = None,
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
+    utc_now: Optional[Callable[[], str]] = None,
     **_: Any,
 ) -> Dict[str, Any]:
+    state = os.getenv("BFF_READ_SURFACE_STATE", "fresh")
+    now_fn = utc_now or (lambda: snapshot_at or "")
+    now_str = now_fn() if callable(now_fn) else str(now_fn)
+
+    if state == "fresh":
+        surface: Dict[str, Any] = {"status": "ok"}
+    elif state in {"degraded", "stale"}:
+        surface = {
+            "status": "degraded",
+            "staleness": {
+                "served_from": "cache",
+                "last_known_at": now_str,
+            },
+        }
+    elif state == "unavailable":
+        surface = {
+            "status": "unavailable",
+            "staleness": {
+                "served_from": "cache",
+                "last_known_at": now_str,
+            },
+        }
+    else:
+        surface = {"status": "ok"}
+
     effective_source = source or "missing"
-    surface: Dict[str, Any] = {"status": "ok", "source": effective_source}
+    surface["source"] = effective_source
+
     if effective_source == "local_snapshot":
-        surface["status"] = "degraded"
+        if surface.get("status") == "ok":
+            surface["status"] = "degraded"
         surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
         surface["staleness"] = {
             "served_from": "local_snapshot",
-            "last_known_at": snapshot_at or "",
+            "last_known_at": snapshot_at or now_str,
+        }
+    elif effective_source == "legacy_incident_backfill":
+        surface["status"] = "degraded"
+        surface["note"] = (
+            "Incident-derived loop reconstruction is a legacy backfill view; "
+            "it is not canonical lifecycle-projector or live controller truth."
+        )
+        surface["projection_mode"] = "backfill"
+        surface["accepted_live"] = False
+        surface["staleness"] = {
+            "served_from": "legacy_incident_backfill",
+            "last_known_at": snapshot_at or now_str,
         }
     elif effective_source == "missing":
         surface["status"] = "unavailable"
-        surface["staleness"] = {
-            "served_from": "unverifiable",
-            "last_known_at": snapshot_at or "",
-        }
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or now_str},
+        )
+
     if has_data is False:
         if surface.get("status") == "ok":
             surface["status"] = "unavailable"
@@ -118,9 +160,13 @@ def _default_surface_status(
             surface["message"] = missing_message
         surface.setdefault(
             "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at or ""},
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or now_str},
         )
+
     return surface
+
+
+_default_surface_status = format_dataset_surface_status
 
 
 def _filter_by_status_csv(records: List[Dict[str, Any]], status_csv: Optional[str]) -> List[Dict[str, Any]]:
@@ -300,12 +346,21 @@ class ResearchRouteContext:
         port = self.get_read_store()
         source_fn = getattr(port, "dataset_source", None)
         source = str(source_fn(dataset) or "missing") if callable(source_fn) else "missing"
-        surface = self.dataset_surface_status(
-            dataset,
-            snapshot_at=snapshot_at,
-            source=source,
-            has_data=has_data,
-        )
+        try:
+            surface = self.dataset_surface_status(
+                dataset,
+                snapshot_at=snapshot_at,
+                source=source,
+                has_data=has_data,
+                utc_now=self.utc_now,
+            )
+        except TypeError:
+            surface = self.dataset_surface_status(
+                dataset,
+                snapshot_at=snapshot_at,
+                source=source,
+                has_data=has_data,
+            )
         result = dict(self.snapshot_meta(snapshot_at))
         result["surfaces"] = {surface_name: surface}
         return result

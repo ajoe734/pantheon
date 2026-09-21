@@ -46,15 +46,15 @@
   },
   "test_summary": {
     "target_suites_count": 13,
-    "target_suites_tests_passed": 130,
+    "target_suites_tests_passed": 132,
     "target_suites_tests_failed": 0,
     "target_suites_tests_skipped": 0,
     "architecture_gate_tests_passed": 8,
-    "total_tests_passed": 138,
+    "total_tests_passed": 140,
     "composition_suite_status": {
       "command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_bff_main_composition.py",
       "exit_code": 1,
-      "passed": 76,
+      "passed": 81,
       "failed": 3,
       "note": "Known frozen baseline debt: test_all_canonical_domain_routers_mounted (missing /api/v1/operator/commands), test_zero_unreferenced_dead_functions_in_main_py (36 baseline dead functions), test_main_py_zero_lambda_read_store_service_locator_seams (2 lambda read_store seams). 0 new regressions."
     }
@@ -85,17 +85,17 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw01_research_ticket_contract.py": {
-      "sha256": "906dfb81648fb22adb71cacdebe06244b519a1770695540b75d467d655b6b3a6",
-      "bytes": 16573,
-      "lines": 450,
+      "sha256": "a1071bd2aad4ae6f42527b5734064028b07a6217dc0f201d944407f18dd4e44e",
+      "bytes": 16507,
+      "lines": 449,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw02_search_contract.py": {
-      "sha256": "7e2c2675cfbdf27ca6c1066ec4f43b0c73363d50f76cef84e7256c33e8c84f9e",
-      "bytes": 17207,
-      "lines": 405,
+      "sha256": "b3e5295d6e7b1d61f2041413cdbb733eb80e1ff4ad3f1f02962dae6789246e83",
+      "bytes": 17271,
+      "lines": 406,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -109,9 +109,9 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_rw04_experiment_launch_contract.py": {
-      "sha256": "03ab53ce96a21bbbc64971778b59f6d6f93a4e7da76cb5733cfc577fd4f6ca1d",
-      "bytes": 22391,
-      "lines": 556,
+      "sha256": "44b8865aaf108c790475452830abe7d77b138657ad5a9dfda9419d352660dfce",
+      "bytes": 24094,
+      "lines": 593,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
@@ -141,31 +141,31 @@
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_exp002_bff_research_experiments_contract.py": {
-      "sha256": "2feb45f7d9ae9ad20580f188a3b8a60c87213bca93ff223be4a82fb57f6af92a",
-      "bytes": 18674,
-      "lines": 442,
+      "sha256": "4018db27e8b2078cb3709a435af62b437a81a814be990b88c90711b12359a01a",
+      "bytes": 18251,
+      "lines": 431,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py": {
-      "sha256": "f14bfa47249a21f54fcb4247f14c62334dd5f7fba7dfc3dad4de0fba55866f32",
-      "bytes": 10864,
-      "lines": 281,
+      "sha256": "ab1245fcf9e6b7b09840d96e57e59a2025a2b771796a14432dbfddedef243d6c",
+      "bytes": 10441,
+      "lines": 270,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     },
     "services/control-plane/bff/test_research_oss_preactivation_contract.py": {
-      "sha256": "2f87b5f1eb2990590783ecee05054400ced2227fe31936d4799bbf41caa21d04",
-      "bytes": 23437,
-      "lines": 551,
+      "sha256": "c7157e743c58a59fb873b75a7d699b10841db5ab9e1100e38762e0b36ba1ecbd",
+      "bytes": 23014,
+      "lines": 540,
       "main_imports": 0,
       "sys_path_mutations": 0,
       "disposition": "DECOUPLED"
     }
   },
-  "rebase_reconciliation_note": "Origin/dev advanced to 688578ce499edb86fdbb518bb504f316f219f604. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (138 passed total). Review feedback resolved: scoped limit pagination alias strictly to /bff/search, enforced search pagination bounds [1, 100] (default [1, 200]) in ResearchRouteContext.page, removed test-only response formatting in test_rw02_search_contract.py to use product canonical surface status assembly, and verified minimal-app vs full-app parity in test_bff_main_composition.py with 0 new regressions.",
+  "rebase_reconciliation_note": "Origin/dev advanced to 688578ce499edb86fdbb518bb504f316f219f604. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (140 passed total). Review feedback resolved: 1) Surface assembly parity: Unified format_dataset_surface_status across minimal app (research/routes/common.py) and full app (main.py) so BFF_READ_SURFACE_STATE (fresh, degraded, unavailable) behaves identically on both apps, and added parity tests in test_bff_main_composition.py; 2) Test-only fake status removal: Removed test-only dataset_surface_status lambdas/stubs across test_rw04, test_rw01, test_exp002, test_research_oss_preactivation, and test_mgmt_qlib_006 to exercise canonical production surface status assembly, and added regression tests for BFF_READ_SURFACE_STATE=unavailable on GET /api/v1/experiments and GET /api/v1/experiments/{id}; 3) Restored match_type assertion in test_rw02_search_contract.py.",
   "decoupling_approach": {
     "test_jobs_source_owner_contract": "Mounted create_jobs_router on isolated FastAPI app with fake JobReadPort injected into test client via shared create_research_test_app instead of bff_main.",
     "test_pkt016_knowledge_workbench_contract": "Mounted create_research_router on isolated FastAPI app with knowledge read ports fixture and in-memory ports double via shared create_research_test_app.",
@@ -186,19 +186,19 @@
       "description": "Pytest run for all 13 migrated test suites",
       "command": "pytest -q services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_rw04_experiment_launch_contract.py services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/tests/test_console_research_projection.py services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
       "exit_code": 0,
-      "result": "130 passed, 4 warnings in 50.39s"
+      "result": "132 passed, 4 warnings in 50.52s"
     },
     {
       "description": "Pytest run for architectural invariant gate",
       "command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
       "exit_code": 0,
-      "result": "8 passed, 2 warnings in 4.66s"
+      "result": "8 passed, 2 warnings in 5.39s"
     },
     {
       "description": "Pytest run for combined architecture, router, and main composition suites",
       "command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_bff_main_composition.py",
       "exit_code": 1,
-      "result": "76 passed, 3 failed, 4 warnings in 36.56s (3 baseline failures: test_all_canonical_domain_routers_mounted missing /api/v1/operator/commands; test_zero_unreferenced_dead_functions_in_main_py 36 baseline dead functions; test_main_py_zero_lambda_read_store_service_locator_seams 2 lambda read_store seams)"
+      "result": "81 passed, 3 failed, 4 warnings in 41.5s (3 baseline failures: test_all_canonical_domain_routers_mounted missing /api/v1/operator/commands; test_zero_unreferenced_dead_functions_in_main_py 36 baseline dead functions; test_main_py_zero_lambda_read_store_service_locator_seams 2 lambda read_store seams)"
     },
     {
       "description": "AST scan verifying 0 main imports and 0 sys.path mutations across all 13 files",

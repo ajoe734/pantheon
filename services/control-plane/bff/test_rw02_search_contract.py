@@ -221,6 +221,7 @@ def test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta()
             "result_detail": "/research/tickets/rt-20260419-007",
             "linked_ticket_detail": "/research/tickets/rt-20260419-007",
         }
+        assert payload["data"][1]["match_type"] == "experiment"
         assert payload["meta"]["surfaces"]["search_results"] == {
             "status": "degraded",
             "source": "local_snapshot",

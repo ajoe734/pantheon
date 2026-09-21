@@ -29,20 +29,9 @@ from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
 
 
 def _create_test_app(store: Any) -> FastAPI:
-    def _dataset_surface_status(
-        dataset: str,
-        *,
-        snapshot_at: str = "2026-04-20T00:00:00Z",
-        source: Optional[str] = None,
-        has_data: Optional[bool] = None,
-        missing_message: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        return {"status": "ok", "source": source or "local_snapshot", "snapshot_at": snapshot_at}
-
     return create_research_test_app(
         store,
         utc_now=lambda: "2026-04-20T00:00:00Z",
-        dataset_surface_status=_dataset_surface_status,
         include_prepared_subrouters=True,
     )
 

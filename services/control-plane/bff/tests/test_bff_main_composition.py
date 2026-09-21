@@ -402,8 +402,12 @@ def test_research_domain_and_capabilities_mounted() -> None:
     assert "/api/v1/research/tickets" in paths, "Expected /api/v1/research/tickets mounted on bff_main.app"
 
 
-def test_research_search_full_app_minimal_app_parity() -> None:
+@pytest.mark.parametrize("surface_state", ["fresh", "degraded", "unavailable"])
+def test_research_search_full_app_minimal_app_parity(
+    surface_state: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Verify full-app (bff_main.app) and minimal-app (create_research_test_app) emit identical responses for search."""
+    monkeypatch.setenv("BFF_READ_SURFACE_STATE", surface_state)
     from fastapi.testclient import TestClient
     from services.control_plane.bff import main as bff_main
     from services.control_plane.bff.test_rw02_search_contract import _SearchPortDouble, OPERATOR_AUTH
@@ -438,7 +442,8 @@ def test_research_search_full_app_minimal_app_parity() -> None:
         assert full_json["page_info"] == minimal_json["page_info"]
         full_surf = full_json["meta"]["surfaces"]["search_results"]
         min_surf = minimal_json["meta"]["surfaces"]["search_results"]
-        assert full_surf["status"] == min_surf["status"] == "degraded"
+        expected_status = "unavailable" if surface_state == "unavailable" else "degraded"
+        assert full_surf["status"] == min_surf["status"] == expected_status
         assert full_surf["source"] == min_surf["source"] == "local_snapshot"
         assert full_surf["note"] == min_surf["note"] == "Served from local BFF snapshot fallback instead of a backend-owned read store."
         assert full_surf["staleness"]["served_from"] == min_surf["staleness"]["served_from"] == "local_snapshot"
@@ -477,5 +482,20 @@ def test_research_search_full_app_minimal_app_parity() -> None:
     finally:
         bff_main.read_store = original_store
         bff_main.utc_now = original_utc
+
+
+@pytest.mark.parametrize("state", ["fresh", "degraded", "unavailable"])
+def test_dataset_surface_status_full_app_parity(state: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify format_dataset_surface_status and bff_main._dataset_surface_status emit identical results across all states."""
+    monkeypatch.setenv("BFF_READ_SURFACE_STATE", state)
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.research.routes.common import format_dataset_surface_status
+
+    for source in ["primary", "local_snapshot", "missing", "legacy_incident_backfill"]:
+        full_res = bff_main._dataset_surface_status("test_ds", snapshot_at="2026-04-20T00:00:00Z", source=source)
+        min_res = format_dataset_surface_status(
+            "test_ds", snapshot_at="2026-04-20T00:00:00Z", source=source, utc_now=bff_main.utc_now
+        )
+        assert full_res == min_res
 
 
