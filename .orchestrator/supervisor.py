@@ -2447,7 +2447,9 @@ def probe_demanded_delivery_health(
         probe_kwargs: dict[str, Any] = {"force": True}
         provider_cfg = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
         delivery_mode = str(provider_cfg.get("delivery_mode") or provider_id).strip().lower()
-        if needs_capacity and (delivery_mode == "claude_cli" or demand_flags.get(endpoint_id, False)):
+        if delivery_mode == "antigravity" or (
+            needs_capacity and (delivery_mode == "claude_cli" or demand_flags.get(endpoint_id, False))
+        ):
             probe_kwargs["check_capacity"] = True
         probe = _safe_phase(
             f"probe_delivery_health:{endpoint_id}",
@@ -2788,6 +2790,20 @@ _GENERATED_WORKER_TASK_BRIEF_MARKER = (
 )
 
 
+def _generated_task_brief_bullets(task: Mapping[str, Any], field: str) -> list[str]:
+    """Render the canonical task list fields without inventing fallback scope."""
+
+    values = task.get(field)
+    if not isinstance(values, list):
+        return ["- (none)"]
+    normalized = [str(value).strip() for value in values if str(value).strip()]
+    if not normalized:
+        return ["- (none)"]
+    if field == "acceptance":
+        return [f"{index}. {value}" for index, value in enumerate(normalized, start=1)]
+    return [f"- {value}" for value in normalized]
+
+
 def _replace_request_context_path(
     request: DeliveryRequest,
     source_path: str,
@@ -2840,6 +2856,9 @@ def _generated_worker_task_brief(
                 f"- Next: {task.get('next') or '-'}",
             ]
         )
+    acceptance_lines = _generated_task_brief_bullets(task, "acceptance")
+    artifact_lines = _generated_task_brief_bullets(task, "artifacts")
+    dependency_lines = _generated_task_brief_bullets(task, "depends_on")
     return "\n".join(
         [
             f"# Task Brief: {task.get('id') or task_id}",
@@ -2851,6 +2870,15 @@ def _generated_worker_task_brief(
             "",
             "## Summary",
             str(task.get("summary_zh") or "-"),
+            "",
+            "## Acceptance",
+            *acceptance_lines,
+            "",
+            "## Scoped Artifacts",
+            *artifact_lines,
+            "",
+            "## Prerequisites",
+            *dependency_lines,
             "",
             "## Coordination Root",
             "- Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.",
@@ -12395,15 +12423,16 @@ def poll_workers(
                 if lease_expired
                 else "worker_process_missing"
             )
+            reaped_failure_reason = (
+                record_delivery_health_for_reaped_worker(config, state, worker)
+                if lease_expired or missing_process
+                else None
+            )
             reason = (
                 str(worker.get("review_pr_dirty_reason") or "")
                 or "Reviewer worker paused: bound review PR reports a merge conflict."
                 if worker.get("review_pr_dirty_hold")
-                else (
-                    record_delivery_health_for_reaped_worker(config, state, worker)
-                    if lease_expired
-                    else None
-                ) or (
+                else reaped_failure_reason or (
                     (
                         "Worker lease expired after observed work progress became stale."
                         if worker_lease_requires_work_progress(config)
@@ -14158,11 +14187,16 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             if expired_lease
             else "worker_process_missing"
         )
+        reaped_failure_reason = (
+            record_delivery_health_for_reaped_worker(config, state, worker)
+            if missing_process or expired_lease
+            else None
+        )
         reason = (
             str(worker.get("review_pr_dirty_reason") or "")
             or "Reviewer worker paused: bound review PR reports a merge conflict."
             if worker.get("review_pr_dirty_hold")
-            else (
+            else reaped_failure_reason or (
                 "Worker lease expired during supervisor boot reconciliation."
                 if expired_lease
                 else "Worker process missing during supervisor boot reconciliation."
