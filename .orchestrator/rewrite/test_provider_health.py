@@ -292,6 +292,50 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
         self.assertEqual(entry["quota_reset_at"], "2026-09-22T08:30:00Z")
         self.assertEqual(entry["retry_at"], "2026-09-22T08:30:00Z")
 
+    def test_relative_reset_horizon_is_recorded_from_worker_failure(self) -> None:
+        snapshot = provider_health.apply_failure(
+            provider_health.empty_delivery_health(),
+            endpoint_id="antigravity",
+            account_id="antigravity",
+            failure_kind="quota_terminal",
+            observed_at=self.now,
+            detail="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 39h.",
+        )
+
+        entry = snapshot["accounts"]["antigravity"]
+        expected = (self.now + timedelta(hours=39)).isoformat().replace("+00:00", "Z")
+        self.assertEqual(entry["quota_reset_at"], expected)
+        self.assertEqual(entry["retry_at"], expected)
+
+    def test_generic_capacity_probe_keeps_prior_reset_horizon(self) -> None:
+        snapshot = provider_health.apply_failure(
+            provider_health.empty_delivery_health(),
+            endpoint_id="antigravity",
+            account_id="antigravity",
+            failure_kind="quota_terminal",
+            observed_at=self.now,
+            detail="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 39h.",
+        )
+
+        post_probe = provider_health.apply_probe(
+            snapshot,
+            endpoint_id="antigravity2",
+            account_id="antigravity",
+            probe={
+                "source": "live",
+                "ready": False,
+                "status": "rotation_models_cooling",
+                "error": "Every Antigravity rotation model is cooling after quota exhaustion.",
+            },
+            observed_at=self.now + timedelta(minutes=5),
+        )
+
+        entry = post_probe["accounts"]["antigravity"]
+        expected = (self.now + timedelta(hours=39)).isoformat().replace("+00:00", "Z")
+        self.assertEqual(entry["reason_kind"], "quota_terminal")
+        self.assertEqual(entry["quota_reset_at"], expected)
+        self.assertEqual(entry["retry_at"], expected)
+
     def test_extract_reset_timestamp_preserves_timezone_offsets(self) -> None:
         self.assertEqual(
             provider_health._extract_reset_timestamp("reset 2026-09-21 12:00 +08:00"),

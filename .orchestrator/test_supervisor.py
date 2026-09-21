@@ -289,17 +289,23 @@ class V2StartupCacheTests(unittest.TestCase):
             mock.patch.object(supervisor, "pid_is_alive", return_value=False),
             mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
             mock.patch.object(supervisor, "canonical_worker_terminal_status", return_value=None),
+            mock.patch.object(
+                supervisor,
+                "record_delivery_health_for_reaped_worker",
+                return_value="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 39h.",
+            ) as record_failure,
             mock.patch.object(supervisor, "recover_lost_worker_lease", return_value=True) as recover,
             mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
         ):
             self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
 
+        record_failure.assert_called_once_with(config, state, worker)
         recover.assert_called_once_with(
             config,
             state,
             worker,
             reason_kind="worker_process_missing",
-            reason="Worker process missing during supervisor boot reconciliation.",
+            reason="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 39h.",
             status=status,
         )
 
