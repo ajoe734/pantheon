@@ -12421,15 +12421,16 @@ def poll_workers(
                 if lease_expired
                 else "worker_process_missing"
             )
+            reaped_failure_reason = (
+                record_delivery_health_for_reaped_worker(config, state, worker)
+                if lease_expired or missing_process
+                else None
+            )
             reason = (
                 str(worker.get("review_pr_dirty_reason") or "")
                 or "Reviewer worker paused: bound review PR reports a merge conflict."
                 if worker.get("review_pr_dirty_hold")
-                else (
-                    record_delivery_health_for_reaped_worker(config, state, worker)
-                    if lease_expired
-                    else None
-                ) or (
+                else reaped_failure_reason or (
                     (
                         "Worker lease expired after observed work progress became stale."
                         if worker_lease_requires_work_progress(config)
@@ -14184,11 +14185,16 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             if expired_lease
             else "worker_process_missing"
         )
+        reaped_failure_reason = (
+            record_delivery_health_for_reaped_worker(config, state, worker)
+            if missing_process or expired_lease
+            else None
+        )
         reason = (
             str(worker.get("review_pr_dirty_reason") or "")
             or "Reviewer worker paused: bound review PR reports a merge conflict."
             if worker.get("review_pr_dirty_hold")
-            else (
+            else reaped_failure_reason or (
                 "Worker lease expired during supervisor boot reconciliation."
                 if expired_lease
                 else "Worker process missing during supervisor boot reconciliation."

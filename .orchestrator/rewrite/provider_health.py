@@ -63,6 +63,15 @@ _RESET_EPOCH_PATTERN = re.compile(
     r'"?resets?[_-]?at"?\s*[:=]\s*"?(?P<epoch>\d{10})"?',
     re.IGNORECASE,
 )
+_RESET_DURATION_PATTERN = re.compile(
+    r"\breset(?:s)?\s+in\s*(?P<duration>"
+    r"(?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m)\s*)+)",
+    re.IGNORECASE,
+)
+_RESET_DURATION_COMPONENT_PATTERN = re.compile(
+    r"(?P<amount>\d+)\s*(?P<unit>days?|d|hours?|hrs?|h|minutes?|mins?|m)\b",
+    re.IGNORECASE,
+)
 
 
 def is_auth_only_probe(probe: Mapping[str, Any]) -> bool:
@@ -89,7 +98,9 @@ def is_auth_only_probe(probe: Mapping[str, Any]) -> bool:
     return False
 
 
-def _extract_reset_timestamp(text: str | None) -> str | None:
+def _extract_reset_timestamp(
+    text: str | None, *, now: datetime | None = None
+) -> str | None:
     """Extract a reset timestamp string from freeform provider failure detail."""
     if not text:
         return None
@@ -123,7 +134,29 @@ def _extract_reset_timestamp(text: str | None) -> str | None:
             return _iso(dt)
         except (OverflowError, OSError, ValueError):
             pass
+
+    duration_match = _RESET_DURATION_PATTERN.search(raw)
+    if duration_match:
+        seconds = 0
+        for component in _RESET_DURATION_COMPONENT_PATTERN.finditer(
+            duration_match.group("duration")
+        ):
+            amount = int(component.group("amount"))
+            unit = component.group("unit").lower()
+            if unit in {"d", "day", "days"}:
+                seconds += amount * 24 * 60 * 60
+            elif unit in {"h", "hr", "hrs", "hour", "hours"}:
+                seconds += amount * 60 * 60
+            else:
+                seconds += amount * 60
+        if seconds > 0:
+            return _iso((now or _utc_now()) + timedelta(seconds=seconds))
     return None
+
+
+def _future_reset_timestamp(value: object, *, now: datetime) -> str | None:
+    parsed = _parse_time(value)
+    return _iso(parsed) if parsed is not None and parsed > now else None
 
 
 def _utc_now() -> datetime:
@@ -385,7 +418,24 @@ def apply_probe(
     )
     quota_reset = str(probe.get("quota_reset_at") or "").strip() or None
     if quota_reset is None and detail:
-        quota_reset = _extract_reset_timestamp(detail)
+        quota_reset = _extract_reset_timestamp(detail, now=now)
+    observed_reset = quota_reset is not None
+    existing_account = account_health_entry(snapshot, account_id, now=now)
+    if quota_reset is None:
+        quota_reset = _future_reset_timestamp(
+            existing_account.get("quota_reset_at"), now=now
+        )
+    if quota_reset is not None and not _future_reset_timestamp(quota_reset, now=now):
+        quota_reset = None
+    if quota_reset is not None and not observed_reset:
+        # A generic capacity probe can prove that the account remains closed,
+        # but it cannot replace a prior provider-supplied reset horizon with a
+        # one-minute fallback. Keep the original quota diagnostic until a
+        # capacity-success probe proves the account available.
+        prior_kind = str(existing_account.get("reason_kind") or "").strip()
+        if prior_kind:
+            failure_kind = prior_kind
+        detail = str(existing_account.get("detail") or "").strip() or detail
     return _write_entry(
         result,
         bucket="accounts",
@@ -451,7 +501,7 @@ def apply_failure(
         if parsed_retry is not None:
             quota_reset = _iso(parsed_retry)
         elif detail:
-            quota_reset = _extract_reset_timestamp(detail)
+            quota_reset = _extract_reset_timestamp(detail, now=now)
     effective_retry = quota_reset or retry_at
     return _write_entry(
         result,
