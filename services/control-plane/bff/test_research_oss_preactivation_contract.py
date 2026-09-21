@@ -6,17 +6,34 @@ import sys
 import tempfile
 from unittest import mock
 
+from typing import Any, Dict, Optional
+from types import SimpleNamespace
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import (
+from services.control_plane.bff.ports import (
     CompositeOperationsConsultationPort,
     DomainOpenClawOperationsPort,
     InMemoryOperationsConsultationPort,
     create_read_surface_ports,
 )
+from services.control_plane.bff.research.router import create_research_router
+
+
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+
+
+def _create_test_app(store: Any) -> FastAPI:
+    return create_research_test_app(
+        store,
+        utc_now=lambda: "2026-04-20T00:00:00Z",
+        include_prepared_subrouters=True,
+    )
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -393,7 +410,6 @@ def test_operator_research_oss_preactivation_aggregates_fail_closed_services() -
     responses = _service_payloads()
 
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         with mock.patch.dict(
             os.environ,
             {
@@ -404,15 +420,11 @@ def test_operator_research_oss_preactivation_aggregates_fail_closed_services() -
             },
             clear=False,
         ):
-            bff_main.read_store = _oss_ports(responses)
-            client = TestClient(bff_main.app)
-            try:
-                response = client.get(
-                    "/api/v1/operator/research/oss-preactivation",
-                    headers={"Authorization": OPERATOR_AUTH},
-                )
-            finally:
-                bff_main.read_store = original_store
+            client = TestClient(_create_test_app(_oss_ports(responses)), raise_server_exceptions=False)
+            response = client.get(
+                "/api/v1/operator/research/oss-preactivation",
+                headers={"Authorization": OPERATOR_AUTH},
+            )
 
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -456,7 +468,6 @@ def test_operator_research_oss_activation_ready_reports_offline_artifacts_logs_a
     responses = _activation_ready_service_payloads()
 
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         with mock.patch.dict(
             os.environ,
             {
@@ -467,15 +478,11 @@ def test_operator_research_oss_activation_ready_reports_offline_artifacts_logs_a
             },
             clear=False,
         ):
-            bff_main.read_store = _oss_ports(responses)
-            client = TestClient(bff_main.app)
-            try:
-                response = client.get(
-                    "/api/v1/operator/research/oss-activation-ready?activity_limit=10",
-                    headers={"Authorization": OPERATOR_AUTH},
-                )
-            finally:
-                bff_main.read_store = original_store
+            client = TestClient(_create_test_app(_oss_ports(responses)), raise_server_exceptions=False)
+            response = client.get(
+                "/api/v1/operator/research/oss-activation-ready?activity_limit=10",
+                headers={"Authorization": OPERATOR_AUTH},
+            )
 
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -516,16 +523,11 @@ def test_operator_research_oss_activation_ready_reports_offline_artifacts_logs_a
 
 def test_operator_research_oss_preactivation_degrades_without_enabling_activation() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _oss_ports()
-        client = TestClient(bff_main.app)
-        try:
-            response = client.get(
-                "/api/v1/operator/research/oss-preactivation",
-                headers={"Authorization": OPERATOR_AUTH},
-            )
-        finally:
-            bff_main.read_store = original_store
+        client = TestClient(_create_test_app(_oss_ports()), raise_server_exceptions=False)
+        response = client.get(
+            "/api/v1/operator/research/oss-preactivation",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
 
     assert response.status_code == 200, response.text
     payload = response.json()

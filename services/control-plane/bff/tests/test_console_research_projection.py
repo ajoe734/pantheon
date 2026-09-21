@@ -5,20 +5,22 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Dict, Iterator, Optional
 
+import pytest
+from fastapi import FastAPI, HTTPException, Request
+from services.control_plane.bff.research.routes.common import format_dataset_surface_status
+
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-BFF_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(BFF_ROOT))
-
-from scripts import cleanup_legacy_research_evidence_refs as legacy_cleanup  # noqa: E402
-from scripts import project_research_to_bff_surfaces as projector  # noqa: E402
-
-import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from scripts import cleanup_legacy_research_evidence_refs as legacy_cleanup
+from scripts import project_research_to_bff_surfaces as projector
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.console_gap.knowledge import create_knowledge_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
@@ -180,7 +182,6 @@ def _projected_bff(monkeypatch) -> Iterator[TestClient]:
             monkeypatch.setenv(key, str(value))
         monkeypatch.delenv("PANTHEON_MEMORY_API_URL", raising=False)
 
-        original_store = bff_main.read_store
         ports = create_in_memory_read_surface_ports(
             research_knowledge_source_kwargs={
                 "research_tickets_store": stores["research_tickets"],
@@ -196,11 +197,65 @@ def _projected_bff(monkeypatch) -> Iterator[TestClient]:
             stores["institutional_memory_entries"].values()
         )
         ports.dataset_source = lambda _dataset: "test_projection"
-        bff_main.read_store = ports
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
+        app = _create_console_projection_app(ports)
+        yield TestClient(app)
+
+
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+from services.control_plane.bff.auth import policy as auth_policy
+
+
+def _create_console_projection_app(ports: Any) -> FastAPI:
+    def _dataset_surface_status(
+        dataset: str,
+        *,
+        snapshot_at: Optional[str] = None,
+        source: Optional[str] = None,
+        has_data: Optional[bool] = None,
+        missing_message: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        resolved_source = (
+            source
+            or (ports.dataset_source(dataset) if hasattr(ports, "dataset_source") else None)
+            or "test_projection"
+        )
+        return format_dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at or "2026-06-15T08:00:00Z",
+            source=resolved_source,
+            has_data=has_data,
+            missing_message=missing_message,
+            utc_now=lambda: "2026-06-15T11:00:00Z",
+        )
+
+    ports.dataset_surface_status = _dataset_surface_status
+
+    knowledge_router = create_knowledge_router(
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        read_store_getter=lambda: ports,
+        utc_now=lambda: "2026-06-15T11:00:00Z",
+        dataset_surface_status=_dataset_surface_status,
+    )
+    agora_router = create_agora_router(
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        require_write_role=auth_policy.require_operator_role,
+        bff_error=auth_policy.bff_error,
+        utc_now=lambda: "2026-06-15T11:00:00Z",
+        read_surface=ports,
+        sync_servant_agent=lambda payload: payload,
+    )
+    return create_research_test_app(
+        ports,
+        utc_now=lambda: "2026-06-15T11:00:00Z",
+        dataset_surface_status=_dataset_surface_status,
+        include_prepared_subrouters=False,
+        extra_routers=[knowledge_router, agora_router],
+    )
 
 
 def test_projector_does_not_promote_artifact_only_runs_to_evidence(monkeypatch) -> None:
@@ -334,3 +389,38 @@ def test_projected_research_console_surfaces_return_ok_counts(monkeypatch) -> No
         assert tasks_body["page_info"]["total"] > 0
         assert tasks_body["meta"]["surfaces"]["research_task_list"]["status"] == "ok"
         assert tasks_body["items"][0]["ticket_id"] == "rtask-console-001"
+
+
+@pytest.mark.parametrize(
+    "state,expected_inbox,expected_analysis,expected_tasks",
+    [
+        ("fresh", "ok", "ok", "ok"),
+        ("degraded", "degraded", "degraded", "degraded"),
+        ("unavailable", "degraded", "unavailable", "unavailable"),
+    ],
+)
+def test_projected_research_console_surfaces_state_parity(
+    state: str,
+    expected_inbox: str,
+    expected_analysis: str,
+    expected_tasks: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BFF_READ_SURFACE_STATE", state)
+    with _projected_bff(monkeypatch) as client:
+        knowledge = client.get("/bff/knowledge", headers=HEADERS)
+        assert knowledge.status_code == 200, knowledge.text
+        assert knowledge.json()["meta"]["surfaces"]["knowledge_inbox"]["status"] == expected_inbox
+
+        analyses = client.get("/bff/research-analyses", headers=HEADERS)
+        assert analyses.status_code == 200, analyses.text
+        analysis_surface = (
+            analyses.json()["meta"]["surfaces"].get("analysis_results")
+            or analyses.json()["meta"]["surfaces"].get("research_analyses")
+        )
+        assert analysis_surface is not None and analysis_surface["status"] == expected_analysis
+
+        tasks = client.get("/bff/research/tasks", headers=HEADERS)
+        assert tasks.status_code == 200, tasks.text
+        assert tasks.json()["meta"]["surfaces"]["research_task_list"]["status"] == expected_tasks
+

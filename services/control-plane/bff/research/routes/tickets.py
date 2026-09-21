@@ -237,7 +237,21 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
         port = ctx.get_read_store()
         snapshot_at = ctx.utc_now()
         ticket_id = str(request.path_params.get("ticket_id") or "")
-        ticket = ctx.call_port(port, "get_research_ticket", ticket_id)
+        source_fn = getattr(port, "dataset_source", None)
+        if not callable(source_fn):
+            delegate = getattr(port, "_active_delegate", None) or getattr(port, "research_knowledge_source", None)
+            source_fn = getattr(delegate, "dataset_source", None)
+        source = str(source_fn("research_tickets") or "") if callable(source_fn) else ""
+        if source == "local_snapshot":
+            ticket = None
+        else:
+            ticket = ctx.call_port(
+                port,
+                "get_research_ticket",
+                ticket_id,
+                include_snapshot_fallback=False,
+                include_local_fallback=False,
+            )
         if not ticket:
             ctx.not_found("Research ticket", ticket_id)
         payload = dict(ticket)
@@ -276,11 +290,18 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
         date_range = _validate_research_search_date_range(ctx.query(request, "date_range"))
         index = ctx.call_port(port, "get_research_search_index")
         if not index:
-            raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Search results are unavailable", "SEARCH_RESULTS_UNAVAILABLE")
+            err = ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Search results are unavailable", "SEARCH_RESULTS_UNAVAILABLE")
+            if isinstance(getattr(err, "detail", None), dict):
+                err.detail["surfaces"] = {"search_results": "unavailable"}
+            raise err
         records = list(ctx.call_port(port, "list_research_search_results", query=query, match_type=match_type, status=status, date_range=date_range) or [])
-        items, next_token = ctx.page(records, request, 25)
+        items, next_token = ctx.page(records, request, default_size=25, allow_limit=False, max_size=100)
         meta = ctx.meta(snapshot_at, "search_results", "research_search", bool(records))
         meta["index_adapter"] = index
+        if hasattr(port, "get_last_governed_search_refs"):
+            governed = ctx.call_port(port, "get_last_governed_search_refs")
+            if governed:
+                meta["governed_evidence"] = governed
         return {"data": items, "page_info": {"next_page_token": next_token, "total": len(records)}, "meta": meta}
 
     async def endpoint_source_connectors(request: Request, **_kwargs: Any) -> Dict[str, Any]:

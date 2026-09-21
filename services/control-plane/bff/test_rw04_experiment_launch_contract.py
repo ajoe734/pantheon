@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-import os
-import sys
-import tempfile
+from typing import Any, Dict, Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 from contextlib import contextmanager
 
-from fastapi.testclient import TestClient
+import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+)
+from services.control_plane.bff.research.router import create_research_router
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -96,31 +100,105 @@ LAUNCH_PAYLOAD = {
 }
 
 
+class _FakeResearchWriteOwner:
+    _CANCELABLE = frozenset({"queued", "running"})
+
+    def __init__(self, seed: dict) -> None:
+        self._experiments = {}
+        for k, v in seed.items():
+            rec = dict(v)
+            if "allowedActions" not in rec:
+                rec["allowedActions"] = {"canCancel": rec.get("status") in self._CANCELABLE}
+            self._experiments[k] = rec
+
+    def list_research_experiments(self, *, ticket_id=None, status=None):
+        items = list(self._experiments.values())
+        if ticket_id:
+            items = [e for e in items if e.get("ticket_id") == ticket_id]
+        if status:
+            items = [e for e in items if e.get("status") == status]
+        return [dict(e) for e in items]
+
+    def get_research_experiment(self, experiment_id):
+        rec = self._experiments.get(str(experiment_id))
+        return dict(rec) if rec else None
+
+    def create_research_experiment(
+        self,
+        *,
+        ticket_id,
+        experiment_name,
+        strategy_selector,
+        parameter_set,
+        run_config,
+        launch_context,
+        queued_at=None,
+        experiment_id=None,
+    ):
+        timestamp = queued_at or "2026-04-20T00:00:00Z"
+        date_part = timestamp[:10].replace("-", "")
+        exp_id = experiment_id or f"exp-{date_part}-{len(self._experiments) + 1:03d}"
+        record = {
+            "experiment_id": exp_id,
+            "ticket_id": ticket_id,
+            "experiment_name": experiment_name,
+            "status": "queued",
+            "queued_at": timestamp,
+            "started_at": None,
+            "completed_at": None,
+            "strategy_selector": strategy_selector,
+            "parameter_set": parameter_set,
+            "run_config": run_config,
+            "launch_context": launch_context,
+            "validation_warnings": [],
+            "artifact_ids": [],
+            "failure": {"reason_code": None, "message": None},
+            "allowedActions": {"canCancel": True},
+        }
+        self._experiments[exp_id] = record
+        return dict(record)
+
+    def cancel_research_experiment(self, experiment_id, *, completed_at=None):
+        rec = self._experiments.get(str(experiment_id))
+        if not rec or rec.get("status") not in self._CANCELABLE:
+            return None
+        rec["status"] = "canceled"
+        rec["completed_at"] = completed_at or "2026-04-20T00:00:00Z"
+        rec["allowedActions"] = {"canCancel": False}
+        return dict(rec)
+
+
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+
+
+def _create_test_app(port: Any) -> FastAPI:
+    return create_research_test_app(
+        port,
+        utc_now=lambda: "2026-04-20T00:00:00Z",
+        include_prepared_subrouters=False,
+    )
+
+
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = DefaultResearchKnowledgeSourcePort(
-            research_experiments_store=_SEEDED_EXPERIMENTS,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = DefaultResearchKnowledgeSourcePort(
+        research_write_owner=_FakeResearchWriteOwner(_SEEDED_EXPERIMENTS),
+    )
+    app = _create_test_app(port)
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client
 
 
 @contextmanager
 def _no_fallback_client():
-    """Client with allow_local_snapshot_fallback=False — the production path."""
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = DefaultResearchKnowledgeSourcePort()
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = DefaultResearchKnowledgeSourcePort(
+        research_write_owner=_FakeResearchWriteOwner({}),
+    )
+    app = _create_test_app(port)
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +266,9 @@ def test_rw04_list_returns_seeded_experiments() -> None:
         assert "exp-20260419-012" in ids
         assert "exp-20260418-009" in ids
         assert "exp-20260417-004" in ids
-        assert payload["meta"]["surfaces"]["experiment_history"] in {"fresh", "stale", "degraded"}
+        exp_history = payload["meta"]["surfaces"]["experiment_history"]
+        history_status = exp_history.get("status") if isinstance(exp_history, dict) else exp_history
+        assert history_status in {"ok", "fresh", "stale", "degraded"}
 
 
 def test_rw04_list_filters_by_status() -> None:
@@ -271,7 +351,9 @@ def test_rw04_detail_returns_full_contract() -> None:
         assert payload["allowedActions"]["canCancel"] is False
         assert payload["links"]["self"] == "/api/v1/experiments/exp-20260419-012"
         assert payload["links"]["linked_ticket_detail"] == "/research/tickets/rt-20260419-007"
-        assert payload["meta"]["surfaces"]["experiment_status"] in {"fresh", "stale", "degraded"}
+        exp_status = payload["meta"]["surfaces"]["experiment_status"]
+        detail_status = exp_status.get("status") if isinstance(exp_status, dict) else exp_status
+        assert detail_status in {"ok", "fresh", "stale", "degraded"}
 
 
 def test_rw04_detail_running_can_cancel_true() -> None:
@@ -477,3 +559,35 @@ def test_rw04_no_fallback_missing_experiment_returns_404() -> None:
         )
         assert resp.status_code == 404
         assert resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+
+def test_rw04_list_unavailable_when_read_surface_state_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BFF_READ_SURFACE_STATE", "unavailable")
+    with _seeded_client() as client:
+        response = client.get(
+            "/api/v1/experiments",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["data"] == []
+        assert payload["page_info"]["total"] == 0
+        exp_history = payload["meta"]["surfaces"]["experiment_history"]
+        history_status = exp_history.get("status") if isinstance(exp_history, dict) else exp_history
+        assert history_status == "unavailable"
+
+
+def test_rw04_detail_unavailable_when_read_surface_state_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BFF_READ_SURFACE_STATE", "unavailable")
+    with _seeded_client() as client:
+        response = client.get(
+            "/api/v1/experiments/exp-20260419-012",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["experiment_id"] == "exp-20260419-012"
+        exp_status = payload["meta"]["surfaces"]["experiment_status"]
+        detail_status = exp_status.get("status") if isinstance(exp_status, dict) else exp_status
+        assert detail_status == "unavailable"
+

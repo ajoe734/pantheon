@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
+from types import SimpleNamespace
+from typing import Any, Optional
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+)
+from services.control_plane.bff.research.router import create_research_router
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -99,12 +103,19 @@ class _SearchPortDouble(DefaultResearchKnowledgeSourcePort):
         self._available = available
 
     def dataset_source(self, dataset: str, **_: object) -> str:
-        if dataset in {"research_search_documents", "research_search_index"}:
+        if dataset in {"research_search_documents", "research_search_index", "research_search"}:
             return "local_snapshot" if self._available else "missing"
         return super().dataset_source(dataset)
 
     def get_research_search_index(self) -> dict | None:
-        return dict(_SEARCH_INDEX) if self._available else None
+        if not self._available:
+            return None
+        return {
+            "snapshot_at": _SEARCH_INDEX["snapshot_at"],
+            "adapter_state": "degraded" if self.dataset_source("research_search") == "local_snapshot" else "fresh",
+            "indexed_match_types": list(_SEARCH_INDEX["indexed_match_types"]),
+            "source_watermarks": dict(_SEARCH_INDEX["source_watermarks"]),
+        }
 
     def list_research_search_results(
         self,
@@ -162,18 +173,31 @@ class _SearchPortDouble(DefaultResearchKnowledgeSourcePort):
         return matches
 
 
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+
+
+def _create_test_app(port: _SearchPortDouble) -> FastAPI:
+    def _snapshot_meta(snapshot_at: str, **kw: Any) -> dict[str, Any]:
+        return {"snapshot_at": snapshot_at, **kw}
+
+    return create_research_test_app(
+        port,
+        utc_now=lambda: "2026-04-19T20:14:30Z",
+        snapshot_meta=_snapshot_meta,
+        submit_experiment_action=lambda *a, **kw: {},
+    )
+
+
 @contextmanager
 def _seeded_client(*, allow_local_snapshot_fallback: bool):
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _SearchPortDouble(
-            available=allow_local_snapshot_fallback,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = _SearchPortDouble(
+        available=allow_local_snapshot_fallback,
+    )
+    app = _create_test_app(port)
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client
 
 
 def test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta() -> None:
@@ -198,7 +222,15 @@ def test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta()
             "linked_ticket_detail": "/research/tickets/rt-20260419-007",
         }
         assert payload["data"][1]["match_type"] == "experiment"
-        assert payload["meta"]["surfaces"]["search_results"] == "degraded"
+        assert payload["meta"]["surfaces"]["search_results"] == {
+            "status": "degraded",
+            "source": "local_snapshot",
+            "note": "Served from local BFF snapshot fallback instead of a backend-owned read store.",
+            "staleness": {
+                "served_from": "local_snapshot",
+                "last_known_at": "2026-04-19T20:14:30Z",
+            },
+        }
         assert payload["meta"]["index_adapter"] == {
             "snapshot_at": "2026-04-19T20:14:30Z",
             "adapter_state": "degraded",
@@ -334,3 +366,41 @@ def test_rw02_search_returns_contract_unavailable_when_index_adapter_missing() -
         assert payload["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
         assert payload["error"]["details"]["reason"] == "SEARCH_RESULTS_UNAVAILABLE"
         assert payload["surfaces"] == {"search_results": "unavailable"}
+
+
+def test_rw02_search_pagination_boundaries_and_limit_alias_scoping() -> None:
+    """Verify endpoint pagination bounds and that ?limit is scoped to endpoints declaring it."""
+    with _seeded_client(allow_local_snapshot_fallback=True) as client:
+        # GET /api/v1/research/search ignores limit and respects page_size=1
+        resp_limit_0 = client.get(
+            "/api/v1/research/search?q=momentum&page_size=1&limit=0",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert resp_limit_0.status_code == 200, resp_limit_0.text
+        body_0 = resp_limit_0.json()
+        assert len(body_0["data"]) == 1
+        assert body_0["page_info"]["next_page_token"] is not None
+
+        resp_limit_999 = client.get(
+            "/api/v1/research/search?q=momentum&page_size=1&limit=999",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert resp_limit_999.status_code == 200, resp_limit_999.text
+        body_999 = resp_limit_999.json()
+        assert len(body_999["data"]) == 1
+        assert body_999["page_info"]["next_page_token"] is not None
+
+        # page_size out-of-bounds rejected with 422 by FastAPI query validation
+        resp_page_size_0 = client.get(
+            "/api/v1/research/search?q=momentum&page_size=0",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert resp_page_size_0.status_code == 422
+
+        resp_page_size_101 = client.get(
+            "/api/v1/research/search?q=momentum&page_size=101",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert resp_page_size_101.status_code == 422
+
+

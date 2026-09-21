@@ -200,7 +200,11 @@ def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
     # Legacy inventory endpoints
     async def endpoint_compare_artifacts_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
-        return ctx.service.compare_artifacts(ctx.required_text({"artifact_ids": ctx.query(request, "artifact_ids")}, "artifact_ids"))
+        try:
+            return ctx.service.compare_artifacts(ctx.required_text({"artifact_ids": ctx.query(request, "artifact_ids")}, "artifact_ids"))
+        except (ResearchNotFoundError, ResearchValidationError) as exc:
+            ctx.raise_service_error(exc)
+            raise AssertionError("unreachable")
 
     async def endpoint_list_artifacts_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
