@@ -7618,6 +7618,60 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                 "run-replacement-1",
             )
 
+    def test_lost_reviewer_reuses_healthy_incumbent_when_alternate_is_unavailable(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="review", owner="Antigravity", reviewer="Codex")
+        self.task["delivery_binding"] = review_admission_binding()
+        supervisor.write_status(self.config, self.status, source="test-reviewer-retry")
+        state = self._state()
+        state["delivery_health"]["endpoints"]["codex2"]["state"] = "unavailable"
+        worker = self._worker()
+        worker["request_snapshot"]["reason"] = supervisor.REASON_REVIEW_READY
+        self._store_started(state, worker)
+        with mock.patch.object(
+            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+        ):
+            self.assertTrue(supervisor.recover_lost_worker_lease(
+                self.config, state, worker, reason_kind="worker_process_missing",
+                reason="reviewer process disappeared",
+            ))
+            recovered = supervisor.load_status(self.config)
+            task = recovered["tasks"][0]
+            self.assertEqual((task["owner"], task["reviewer"]), ("Antigravity", "Codex"))
+            self.assertEqual(task["generation"], 3)
+            self.assertEqual(task["worker_recovery"]["status"], "reassigned")
+            plan = supervisor.build_dispatch_plan(
+                self.config, state, recovered, supervisor.queue_events(state), live_total=0,
+            )
+            self.assertEqual(len(plan["events"]), 1)
+            self.assertEqual(plan["events"][0]["target_agent"], "Codex")
+            self.assertEqual(plan["events"][0]["reason"], supervisor.REASON_REVIEW_READY)
+            self.assertTrue(supervisor.reserve_dispatch_plan(self.config, state, plan))
+            self.assertFalse(supervisor.reserve_dispatch_plan(self.config, state, plan))
+
+    def test_lost_reviewer_retry_keeps_health_capacity_and_reason_fences(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="review", owner="Antigravity", reviewer="Codex")
+        self.task["delivery_binding"] = review_admission_binding()
+        receipt = {"recovery_role": "reviewer", "reason_kind": "worker_process_missing",
+                   "worker": {"agent": "Codex"}}
+        state = self._state()
+        state["delivery_health"]["endpoints"]["codex2"]["state"] = "unavailable"
+        for condition in ("auth", "capacity", "lease_expired"):
+            with self.subTest(condition=condition):
+                candidate_state = copy.deepcopy(state)
+                config = copy.deepcopy(self.config)
+                candidate_receipt = copy.deepcopy(receipt)
+                if condition == "auth":
+                    candidate_state["delivery_health"]["endpoints"]["codex"]["state"] = "unavailable"
+                elif condition == "capacity":
+                    config["agents"]["codex"]["max_parallel"] = 0
+                else:
+                    candidate_receipt["reason_kind"] = "lease_expired"
+                self.assertIsNone(supervisor.worker_recovery_assignment_pair(
+                    config, candidate_state, self.status, self.task, candidate_receipt,
+                ))
+
     def test_approved_closeout_recovery_preserves_exact_reviewer_binding(self) -> None:
         self.task.update(
             {

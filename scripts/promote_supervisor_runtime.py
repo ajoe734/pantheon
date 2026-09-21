@@ -33,6 +33,7 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 import auto_integrator  # noqa: E402  (shared stable integration lock)
+import auto_integrator_install  # noqa: E402
 import runtime_state  # noqa: E402  (canonical runtime-admission lock)
 import supervisor  # noqa: E402  (existing reserved-phase recovery authority)
 
@@ -1649,7 +1650,7 @@ def replace_supervisor(
     """Validate and switch config while excluding the canonical merge owner."""
 
     with auto_integrator.lock_file(status_root / auto_integrator.DEFAULT_LOCK):
-        return _replace_supervisor_locked(
+        result = _replace_supervisor_locked(
             repo_root,
             status_root=status_root,
             live_config_path=live_config_path,
@@ -1663,6 +1664,11 @@ def replace_supervisor(
             requirements_path=requirements_path,
             migrate_storage=migrate_storage,
         )
+        if result.get("outcome") == "launched":
+            result["auto_integrator_cron_rebound"] = auto_integrator_install.rebind_installed_cron(
+                repo_root, status_root, live_config_path,
+            )
+        return result
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
