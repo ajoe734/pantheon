@@ -2447,7 +2447,9 @@ def probe_demanded_delivery_health(
         probe_kwargs: dict[str, Any] = {"force": True}
         provider_cfg = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
         delivery_mode = str(provider_cfg.get("delivery_mode") or provider_id).strip().lower()
-        if needs_capacity and (delivery_mode == "claude_cli" or demand_flags.get(endpoint_id, False)):
+        if delivery_mode == "antigravity" or (
+            needs_capacity and (delivery_mode == "claude_cli" or demand_flags.get(endpoint_id, False))
+        ):
             probe_kwargs["check_capacity"] = True
         probe = _safe_phase(
             f"probe_delivery_health:{endpoint_id}",

@@ -1262,6 +1262,7 @@ def _antigravity_auth_probe(
     binary: str | None,
     *,
     force: bool = False,
+    check_capacity: bool = False,
 ) -> dict[str, Any]:
     # See _codex_auth_probe: this is always a live observation.
     _ = force
@@ -1295,6 +1296,134 @@ def _antigravity_auth_probe(
     prompt = str(settings.get("probe_prompt") or AUTH_PROBE_PROMPT)
     timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
     print_timeout = str(settings.get("print_timeout") or provider_settings.get("probe_print_timeout") or "90s").strip()
+
+    if check_capacity:
+        # AGY supports `/usage` as a non-turn, zero-token command.  Prefer its
+        # server-supplied quota state to a synthetic model prompt: a prompt can
+        # wait behind provider retries and used to be misclassified as capacity
+        # exhaustion when the local health timeout fired first.
+        usage_command = [
+            binary,
+            "--output-format",
+            "json",
+            "--print-timeout",
+            print_timeout,
+            "--prompt",
+            "/usage",
+        ]
+        try:
+            usage_result = run_command(usage_command, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=False,
+                method="agy_usage",
+                error=f"Antigravity usage probe timed out after {timeout:g}s.",
+                status="probe_timeout",
+                metadata=metadata,
+            )
+        except OSError as exc:
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=False,
+                method="agy_usage",
+                error=f"{type(exc).__name__}: {exc}",
+                status="probe_error",
+                metadata=metadata,
+            )
+        usage_output = "\n".join(part for part in (usage_result.stdout, usage_result.stderr) if part)
+        try:
+            usage_payload = json.loads((usage_result.stdout or "").strip())
+        except json.JSONDecodeError:
+            usage_payload = None
+        if usage_result.returncode != 0 or not isinstance(usage_payload, dict) or usage_payload.get("status") != "SUCCESS":
+            ready, error, status = _antigravity_probe_ready(
+                usage_result.returncode,
+                (usage_result.stdout or "").strip(),
+                usage_output,
+            )
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=False,
+                method="agy_usage",
+                error=error or "Antigravity usage probe did not return a usable payload.",
+                status=status if status != "ready" else "usage_unparseable",
+                metadata=metadata,
+            )
+
+        usage_data = ((usage_payload.get("command") or {}).get("data") or {})
+        groups = usage_data.get("groups") if isinstance(usage_data, dict) else None
+        groups = groups if isinstance(groups, list) else []
+
+        def capacity_for_model(model_name: str) -> tuple[bool | None, str | None]:
+            family = "claude and gpt models" if any(token in model_name.lower() for token in ("claude", "gpt")) else "gemini models"
+            group = next(
+                (item for item in groups if isinstance(item, dict) and str(item.get("name") or "").strip().lower() == family),
+                None,
+            )
+            buckets = group.get("buckets") if isinstance(group, dict) else None
+            if not isinstance(buckets, list):
+                return None, None
+            weekly = next((item for item in buckets if isinstance(item, dict) and item.get("window") == "weekly"), None)
+            five_hour = next((item for item in buckets if isinstance(item, dict) and item.get("window") == "5h"), None)
+            if not isinstance(weekly, dict) or not isinstance(five_hour, dict):
+                return None, None
+            try:
+                weekly_remaining = float(weekly.get("remaining_fraction") or 0)
+                five_hour_remaining = float(five_hour.get("remaining_fraction") or 0)
+            except (TypeError, ValueError):
+                return None, None
+            if weekly_remaining <= 0:
+                return False, str(weekly.get("reset_time") or "").strip() or None
+            if bool(five_hour.get("disabled")):
+                return True, None
+            if five_hour_remaining <= 0:
+                return False, str(five_hour.get("reset_time") or "").strip() or None
+            return True, None
+
+        rotation = model_rotation.rotation_settings(config, provider_id)
+        primary_model = str(rotation.get("primary") or provider_settings.get("model") or "").strip()
+        candidates: list[tuple[str | None, str]] = [(model_rotation.SLOT_PRIMARY if rotation.get("enabled") else None, primary_model)]
+        fallback_model = str(rotation.get("fallback") or "").strip()
+        if rotation.get("enabled") and fallback_model:
+            candidates.append((model_rotation.SLOT_FALLBACK, fallback_model))
+        reset_times: list[str] = []
+        unavailable_slots: list[str] = []
+        for slot, candidate_model in candidates:
+            available, reset_at = capacity_for_model(candidate_model)
+            if reset_at:
+                reset_times.append(reset_at)
+            if available is not True:
+                if slot is not None and available is False:
+                    unavailable_slots.append(slot)
+                continue
+            for unavailable_slot in unavailable_slots:
+                model_rotation.cool_slot(config, provider_id, unavailable_slot)
+            if slot is not None:
+                model_rotation.clear_slot(config, provider_id, slot)
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=True,
+                method="agy_usage",
+                metadata={**metadata, "probe_model": candidate_model, "rotation_slot": slot},
+            )
+
+        record = _auth_probe_record(
+            provider_id,
+            "antigravity",
+            ready=False,
+            method="agy_usage",
+            error="No configured Antigravity model currently has usable quota.",
+            status="quota_reached",
+            metadata=metadata,
+        )
+        if reset_times:
+            record["quota_reset_at"] = min(reset_times)
+        return record
 
     # The probe must exercise the same model the dispatch adapter would pick:
     # auth (the OAuth token) and per-model-family quota are separate failure
@@ -1528,7 +1657,13 @@ def probe_provider_auth(
         )
     if delivery_mode == "antigravity":
         binary = _configured_provider_binary(config, provider_key, "antigravity", "agy")
-        return _antigravity_auth_probe(config, provider_key, binary, force=force)
+        return _antigravity_auth_probe(
+            config,
+            provider_key,
+            binary,
+            force=force,
+            check_capacity=check_capacity,
+        )
     if delivery_mode == "gemini":
         settings = _gemini_settings(config, provider_key)
         oauth_creds_path = _gemini_oauth_creds_path(config, provider_key)
