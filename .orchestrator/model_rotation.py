@@ -200,3 +200,19 @@ def cool_slot(
     entry[_SLOT_UNTIL_KEY[slot]] = until_iso
     _save_all(config, data)
     return until_iso
+
+
+def clear_slot(config: dict[str, Any], provider_id: str, slot: str) -> bool:
+    """Clear one cached cooldown after fresh provider evidence proves it usable."""
+    if slot not in _SLOT_UNTIL_KEY:
+        return False
+    data = _load_all(config)
+    state_key = rotation_state_key(config, provider_id)
+    entry = data.get(state_key)
+    if not isinstance(entry, dict) or _SLOT_UNTIL_KEY[slot] not in entry:
+        return False
+    entry.pop(_SLOT_UNTIL_KEY[slot], None)
+    if not entry:
+        data.pop(state_key, None)
+    _save_all(config, data)
+    return True

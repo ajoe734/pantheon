@@ -5516,6 +5516,40 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertEqual(observations[0]["endpoint_id"], "claude")
         probe.assert_called_once_with(self.config, "claude", force=True, check_capacity=True)
 
+    def test_probe_demanded_delivery_health_uses_antigravity_zero_token_capacity_probe(self) -> None:
+        self.config["agents"]["antigravity"] = {
+            "display_name": "Antigravity",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["antigravity"] = {
+            "delivery_mode": "antigravity",
+            "account": "antigravity-shared",
+        }
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {"antigravity": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"}},
+                "accounts": {"antigravity_shared": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"}},
+            },
+        }
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "agy_usage"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config,
+                [{"scope": "endpoint", "id": "antigravity"}],
+                quiet=True,
+                state=state,
+            )
+        self.assertEqual(len(observations), 1)
+        probe.assert_called_once_with(self.config, "antigravity", force=True, check_capacity=True)
+
     def test_bootstrap_cold_start_refresh_to_admission_probes_capacity(self) -> None:
         """Cold-start lane with no account health probes capacity before admission."""
         self.config["agents"]["claude"] = {
