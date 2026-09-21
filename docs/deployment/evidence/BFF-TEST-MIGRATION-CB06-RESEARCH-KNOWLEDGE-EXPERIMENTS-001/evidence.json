@@ -6,7 +6,7 @@
   "reviewer": "Codex",
   "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
   "delivery_state": "ready_for_review",
-  "base_sha": "9fbf1c2ebee21fedf08118aeaf4f585dd5b696da",
+  "base_sha": "f4bdc9e2178062431b7b84f68d71b5ff1bfe0c68",
   "depends_on": [
     "BFF-TEST-MIGRATION-REPARTITION-PLAN-002"
   ],
@@ -165,7 +165,7 @@
       "disposition": "DECOUPLED"
     }
   },
-  "rebase_reconciliation_note": "Origin/dev advanced to 688578ce499edb86fdbb518bb504f316f219f604. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (140 passed total). Review feedback resolved: 1) Surface assembly parity: Unified format_dataset_surface_status across minimal app (research/routes/common.py) and full app (main.py) so BFF_READ_SURFACE_STATE (fresh, degraded, unavailable) behaves identically on both apps, and added parity tests in test_bff_main_composition.py; 2) Test-only fake status removal: Removed test-only dataset_surface_status lambdas/stubs across test_rw04, test_rw01, test_exp002, test_research_oss_preactivation, and test_mgmt_qlib_006 to exercise canonical production surface status assembly, and added regression tests for BFF_READ_SURFACE_STATE=unavailable on GET /api/v1/experiments and GET /api/v1/experiments/{id}; 3) Restored match_type assertion in test_rw02_search_contract.py.",
+  "rebase_reconciliation_note": "Origin/dev advanced to f4bdc9e2178062431b7b84f68d71b5ff1bfe0c68. Reconciled inventory with merged batches, progressing ceiling from 24 to 11 (24 - 13 = 11). Decoupled all 13 suites completely with 0 main imports and 0 sys.path mutations. Live AST scan confirms exactly 11 non-whitelisted main importers remaining. All 8 architectural invariant tests and all 13 decoupled test suites pass cleanly (140 passed total). Review feedback resolved: 1) Surface assembly parity: Unified format_dataset_surface_status across minimal app (research/routes/common.py) and full app (main.py) so BFF_READ_SURFACE_STATE (fresh, degraded, unavailable) behaves identically on both apps, and added parity tests in test_bff_main_composition.py; 2) Test-only fake status removal: Removed test-only dataset_surface_status lambdas/stubs across test_rw04, test_rw01, test_exp002, test_research_oss_preactivation, and test_mgmt_qlib_006 to exercise canonical production surface status assembly, and added regression tests for BFF_READ_SURFACE_STATE=unavailable on GET /api/v1/experiments and GET /api/v1/experiments/{id}; 3) Restored match_type assertion in test_rw02_search_contract.py.",
   "decoupling_approach": {
     "test_jobs_source_owner_contract": "Mounted create_jobs_router on isolated FastAPI app with fake JobReadPort injected into test client via shared create_research_test_app instead of bff_main.",
     "test_pkt016_knowledge_workbench_contract": "Mounted create_research_router on isolated FastAPI app with knowledge read ports fixture and in-memory ports double via shared create_research_test_app.",
