@@ -696,6 +696,41 @@ class DependencyContractBatchTests(unittest.TestCase):
                 self.assertEqual(self._snapshot(), before)
                 self.state['tasks'][1].pop(field)
 
+    def test_settled_materialized_review_requeue_allows_held_dependency_revision(self):
+        dep = self.state['tasks'][0]
+        dep['status'] = 'blocked'
+        dep['waiting_for'] = 'Human/Ops'
+        materialized = {
+            'schema_version': ai_status.REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
+            'intent_id': 'review-requeue-' + 'a' * 64,
+            'status': 'materialized',
+            'task_id': 'DEP',
+            'task_generation': 1,
+            'owner': 'Codex',
+            'reviewer': 'Claude',
+            'reopened_at': '2026-09-21T00:00:00Z',
+            'reopened_by': 'Claude',
+            'reason': 'The owner recorded a concrete source prerequisite.',
+            'queue_event_id': 'evt-review-requeue-settled',
+            'event_key': 'review-requeue-settled-key',
+            'materialized_at': '2026-09-21T00:01:00Z',
+        }
+        dep[ai_status.REVIEW_REQUEUE_INTENT_KEY] = deepcopy(materialized)
+        self._seed()
+
+        before = self._snapshot()
+        code, result = self._run(self._request())
+        self.assertEqual(code, 0)
+        self.assertEqual(result['status'], 'committed')
+
+        after = self._snapshot()
+        self.assertEqual(after['event_count'], before['event_count'] + 1)
+        updated = ai_status.get_task(after['state'], 'DEP')
+        self.assertEqual(updated['status'], 'blocked')
+        self.assertEqual(updated['waiting_for'], 'Human/Ops')
+        self.assertEqual(updated['depends_on'], ['COVERAGE'])
+        self.assertEqual(updated[ai_status.REVIEW_REQUEUE_INTENT_KEY], materialized)
+
     def test_hosted_dependency_cleanup_preserves_authority_and_hold(self):
         task = self.state['tasks'][0]
         task['dev_bridge'] = {'work_class': 'hosted', 'task_spec_hash': 'a' * 64}
