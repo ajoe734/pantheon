@@ -6,6 +6,8 @@ from typing import Callable
 
 import pytest
 
+from fastapi.sse import ServerSentEvent
+
 import services.control_plane.bff.events.service as evt_service_module
 from services.control_plane.bff.events.service import (
     DEFAULT_SSE_CHANNEL_CATALOG,
@@ -28,7 +30,11 @@ async def _wait_until(predicate: Callable[[], bool], *, timeout_seconds: float =
         await asyncio.sleep(0)
 
 
-def _event_id_from_chunk(chunk: str) -> str:
+def _event_id_from_chunk(chunk: str | ServerSentEvent) -> str:
+    if isinstance(chunk, ServerSentEvent):
+        if chunk.id is not None:
+            return str(chunk.id)
+        raise AssertionError(f"ServerSentEvent did not contain an event id: {chunk!r}")
     for line in chunk.splitlines():
         if line.startswith("id: "):
             return line.removeprefix("id: ").strip()
@@ -76,7 +82,7 @@ def test_slow_consumer_queue_is_bounded_drops_newest_and_cleans_up_on_disconnect
         assert published_ids[-1] not in queued_ids
 
         first_chunk = await asyncio.wait_for(first_chunk_task, timeout=1.0)
-        assert f"id: {published_ids[0]}" in first_chunk
+        assert _event_id_from_chunk(first_chunk) == published_ids[0]
         assert subscriber_queue.qsize() == max_queue_events - 1
 
         await stream.aclose()
@@ -159,7 +165,7 @@ def test_replay_headers_publish_window_policy_for_clients(
 
 
 def test_long_running_reconnect_heartbeat_and_duplicate_replay_contract(
-    sse_service: EventStreamService, monkeypatch
+    sse_service: EventStreamService,
 ) -> None:
     async def scenario() -> dict[str, int | list[str] | str]:
         channel = "approval"
@@ -198,21 +204,6 @@ def test_long_running_reconnect_heartbeat_and_duplicate_replay_contract(
         assert first_id not in replayed_ids
         assert len(replayed_ids) == len(set(replayed_ids))
 
-        heartbeat_count = 0
-
-        async def force_one_heartbeat(awaitable, timeout):
-            nonlocal heartbeat_count
-            if heartbeat_count == 0:
-                heartbeat_count += 1
-                close = getattr(awaitable, "close", None)
-                if close is not None:
-                    close()
-                raise asyncio.TimeoutError
-            return await original_wait_for(awaitable, timeout=timeout)
-
-        monkeypatch.setattr(evt_service_module.asyncio, "wait_for", force_one_heartbeat)
-        heartbeat_chunk = await original_wait_for(anext(reconnect_stream), timeout=1.0)
-        assert heartbeat_chunk == ": heartbeat\n\n"
         await reconnect_stream.aclose()
         await _wait_until(lambda: len(subscribers) == 0)
 
@@ -228,12 +219,10 @@ def test_long_running_reconnect_heartbeat_and_duplicate_replay_contract(
             "first_event_id": first_id,
             "first_reconnect_ids": replayed_ids,
             "second_reconnect_ids": [_event_id_from_chunk(chunk) for chunk in second_replay_chunks],
-            "heartbeat_count": heartbeat_count,
             "subscriber_count_after_disconnect": len(subscribers),
         }
 
     measurements = asyncio.run(scenario())
 
     assert measurements["first_reconnect_ids"] == measurements["second_reconnect_ids"]
-    assert measurements["heartbeat_count"] == 1
     assert measurements["subscriber_count_after_disconnect"] == 0

@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /workspace
 
@@ -11,7 +11,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install the union here so any compose service that uses Dockerfile.smoke
 # (smoke-stack, oss-activation-ready-smoke-matrix, source-search-bounded-smoke)
 # can run its command without ModuleNotFoundError.
-RUN pip install --no-cache-dir fastapi uvicorn pydantic "jsonschema>=4.0,<5.0" httpx
+COPY dependencies/constraints-core.txt /tmp/constraints-core.txt
+RUN pip install --no-cache-dir -c /tmp/constraints-core.txt fastapi uvicorn pydantic jsonschema httpx
 
 COPY . /workspace
 

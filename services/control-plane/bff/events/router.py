@@ -10,8 +10,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+from pathlib import Path
 from collections import deque
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import (
     Any,
     AsyncGenerator,
@@ -25,12 +28,33 @@ from typing import (
     Union,
 )
 
-from fastapi import APIRouter, Body, Cookie, Header, HTTPException, Query, Request, Response
+from fastapi import (
+    APIRouter,
+    Body,
+    Cookie,
+    Depends,
+    Header,
+    HTTPException,
+    Path as FastApiPath,
+    Query,
+    Request,
+    Response,
+)
+from fastapi.sse import EventSourceResponse, ServerSentEvent, format_sse_event
 from starlette.responses import JSONResponse, StreamingResponse
 
 from .service import EventStreamService
 
-from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
+
+try:
+    from services.control_plane.bff.auth.policy import (
+        bff_me_tenant_payload as _auth_bff_me_tenant_payload,
+        get_session_state as _auth_get_session_state,
+    )
+except ImportError:
+    _auth_bff_me_tenant_payload = None
+    _auth_get_session_state = None
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +79,283 @@ DEFAULT_SSE_CHANNELS: frozenset[str] = frozenset({
 })
 
 _FRONTEND_SSE_SCHEMA_VERSION = 1
+
+
+@dataclass
+class _StreamSubscription:
+    channel: str
+    cursor: Optional[str]
+    filter_func: Optional[Callable[[Dict[str, Any]], bool]]
+    is_liveness: bool = False
+    requested_channels: Tuple[str, ...] = ("system",)
+
+
+def _resolve_cursor(
+    last_event_id: Optional[str] = None,
+    last_event_id_camel: Optional[str] = None,
+    last_event_id_header: Optional[str] = None,
+) -> Optional[str]:
+    for cand in (last_event_id, last_event_id_camel, last_event_id_header):
+        if isinstance(cand, str) and cand.strip():
+            return cand.strip()
+    return None
+
+
+def _first_nonblank(*candidates: Any) -> Optional[str]:
+    for cand in candidates:
+        if isinstance(cand, str) and cand.strip():
+            return cand.strip()
+    return None
+
+
+def _extract_field(obj: Any, *field_names: str) -> Optional[str]:
+    for name in field_names:
+        if isinstance(obj, dict):
+            val = obj.get(name)
+        else:
+            val = getattr(obj, name, None)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    claims = getattr(obj, "claims", None)
+    if claims is None and isinstance(obj, dict):
+        claims = obj.get("claims")
+    if isinstance(claims, dict):
+        for name in field_names:
+            val = claims.get(name)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+            if "." in name:
+                cur: Any = claims
+                for part in name.split("."):
+                    if not isinstance(cur, dict):
+                        cur = None
+                        break
+                    cur = cur.get(part)
+                if isinstance(cur, str) and cur.strip():
+                    return cur.strip()
+    return None
+
+
+def _get_event_candidates(event: Dict[str, Any], *field_names: str) -> Set[str]:
+    candidates: Set[str] = set()
+
+    def _collect(val: Any) -> None:
+        if isinstance(val, str) and val.strip():
+            candidates.add(val.strip())
+        elif isinstance(val, (list, tuple, set)):
+            for item in val:
+                if isinstance(item, str) and item.strip():
+                    candidates.add(item.strip())
+
+    for name in field_names:
+        _collect(event.get(name))
+    for sub in ("data", "payload"):
+        sub_obj = event.get(sub)
+        if isinstance(sub_obj, dict):
+            for name in field_names:
+                _collect(sub_obj.get(name))
+    return candidates
+
+
+def _resolve_caller_tenant_scope(
+    identity: Any,
+    requested_tenant: Optional[str] = None,
+    session_store: Optional[Any] = None,
+    tenant_payload_fn: Optional[Callable[..., Dict[str, Any]]] = None,
+    bff_error: Optional[Callable[..., HTTPException]] = None,
+) -> Tuple[Optional[str], Set[str], bool]:
+    """Resolve caller effective tenant, allowed tenants set, and global scope flag.
+
+    Enforces allowed tenant boundaries and fails closed for unauthorized requests.
+    """
+    session_tenant = None
+    if session_store is not None and _auth_get_session_state is not None:
+        try:
+            s_state = _auth_get_session_state(identity, session_store)
+            if isinstance(s_state, dict):
+                session_tenant = _first_nonblank(s_state.get("tenant_id"), s_state.get("tenantId"))
+        except Exception:
+            session_tenant = None
+
+    target_tenant = _first_nonblank(requested_tenant, session_tenant)
+
+    effective_tenant: Optional[str] = None
+    allowed_tenants: Set[str] = set()
+    is_global: bool = False
+
+    fn = tenant_payload_fn or _auth_bff_me_tenant_payload
+    if fn is not None:
+        try:
+            policy_ident = identity
+            if not hasattr(identity, "claims") or not isinstance(getattr(identity, "claims", None), dict):
+                claims: Dict[str, Any] = {}
+                t_id = _extract_field(identity, "tenant_id", "tenantId", "tenant")
+                if t_id:
+                    claims["tenant_id"] = t_id
+                t_allowed = getattr(identity, "allowed_tenants", None) or getattr(identity, "allowedTenants", None)
+                if t_allowed:
+                    if isinstance(t_allowed, (list, tuple, set)):
+                        claims["allowed_tenants"] = list(t_allowed)
+                    elif isinstance(t_allowed, str):
+                        claims["allowed_tenants"] = [t.strip() for t in t_allowed.split(",") if t.strip()]
+                op_id = getattr(identity, "operator_id", None) or getattr(identity, "actor_id", "op-user")
+                roles = getattr(identity, "roles", [])
+                if isinstance(roles, set):
+                    roles = sorted(roles)
+                elif not isinstance(roles, list):
+                    roles = list(roles) if roles else ["viewer"]
+                policy_ident = OperatorIdentity(
+                    operator_id=str(op_id),
+                    roles=roles,
+                    claims=claims,
+                    mfa_verified=bool(getattr(identity, "mfa_verified", False)),
+                )
+            t_payload = fn(policy_ident, requested_tenant=target_tenant)
+            effective_tenant = t_payload.get("id")
+            allowed_list = t_payload.get("allowed_ids") or []
+            allowed_tenants = set(allowed_list)
+            is_global = (t_payload.get("scope") == "global") or ("*" in allowed_tenants)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            log.warning("Tenant payload policy resolution fallback: %s", exc)
+
+    if effective_tenant is None and not is_global:
+        claims = getattr(identity, "claims", None)
+        if claims is None and isinstance(identity, dict):
+            claims = identity.get("claims")
+        if not isinstance(claims, dict):
+            claims = {}
+
+        claim_tenant = _first_nonblank(
+            claims.get("tenant_id"),
+            claims.get("tenantId"),
+            claims.get("tenant"),
+            claims.get("tid"),
+            claims.get("org_id"),
+            _extract_field(identity, "tenant_id", "tenantId", "tenant"),
+        )
+
+        allowed_list = []
+        for k in ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants"):
+            val = claims.get(k)
+            if isinstance(val, (list, tuple, set)):
+                allowed_list.extend([str(x).strip() for x in val if str(x).strip()])
+            elif isinstance(val, str) and val.strip():
+                allowed_list.extend([x.strip() for x in val.split(",") if x.strip()])
+        top_allowed = getattr(identity, "allowed_tenants", None) or getattr(identity, "allowedTenants", None)
+        if isinstance(top_allowed, (list, tuple, set)):
+            allowed_list.extend([str(x).strip() for x in top_allowed if str(x).strip()])
+        elif isinstance(top_allowed, str) and top_allowed.strip():
+            allowed_list.extend([x.strip() for x in top_allowed.split(",") if x.strip()])
+
+        if allowed_list:
+            allowed_tenants = set(allowed_list)
+        elif claim_tenant:
+            allowed_tenants = {claim_tenant}
+
+        is_global = "*" in allowed_tenants
+
+        default_tenant = _first_nonblank(
+            claim_tenant,
+            os.getenv("PANTHEON_BFF_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+            os.getenv("PANTHEON_TENANT_ID"),
+            "pantheon-dev",
+        )
+
+        eff = target_tenant or default_tenant
+        if allowed_tenants and not is_global and eff not in allowed_tenants:
+            err_fn = bff_error or _default_bff_error
+            raise err_fn(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Tenant access denied",
+                "Requested tenant is outside the caller tenant scope",
+                precondition_failed="tenant_scope",
+                suggestion="Switch to an allowed tenant or request access from an administrator",
+                details_extra={"tenantId": eff, "allowedTenantIds": sorted(allowed_tenants)},
+            )
+        effective_tenant = eff
+
+    return effective_tenant, allowed_tenants, is_global
+
+
+def _make_scope_filter(
+    identity: Any,
+    extra_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
+    clean_tenant: Optional[str] = None,
+    allowed_tenants: Optional[Set[str]] = None,
+    is_global: bool = False,
+    requested_tenant: Optional[str] = None,
+) -> Optional[Callable[[Dict[str, Any]], bool]]:
+    if clean_tenant is None and not is_global:
+        clean_tenant = _extract_field(
+            identity,
+            "tenant_id", "tenantId", "tenant", "tid", "org_id",
+        )
+    clean_operator = _extract_field(identity, "operator_id", "operatorId", "actor", "user_id")
+
+    def _filter(event: Dict[str, Any]) -> bool:
+        # Tenant isolation
+        event_tenants = _get_event_candidates(
+            event,
+            "tenant_id", "tenantId", "tenant",
+            "tenant_ids", "tenantIds", "tenants",
+            "allowed_tenants", "allowedTenants",
+        )
+        if event_tenants:
+            if is_global and not requested_tenant:
+                pass  # Global caller with no specific tenant constraint sees all
+            elif clean_tenant:
+                if clean_tenant not in event_tenants:
+                    return False
+            else:
+                # Unresolved scope fails closed on tenant-scoped events
+                return False
+
+        # Operator / actor isolation
+        if clean_operator:
+            target_actors = _get_event_candidates(
+                event, "target_operator_id", "target_operator", "target_actor", "recipient_id"
+            )
+            if target_actors and clean_operator not in target_actors:
+                return False
+
+        if extra_filter is not None and not extra_filter(event):
+            return False
+
+        return True
+
+    return _filter
+
+
+def _parse_sse_wire_chunk(chunk: Union[str, ServerSentEvent, Dict[str, Any]]) -> ServerSentEvent:
+    if isinstance(chunk, ServerSentEvent):
+        return chunk
+    if isinstance(chunk, dict):
+        return ServerSentEvent(data=chunk)
+    if isinstance(chunk, str):
+        lines = chunk.splitlines()
+        evt_id = None
+        evt_event = None
+        data_parts = []
+        comment = None
+        for line in lines:
+            if line.startswith("id:"):
+                evt_id = line[3:].strip()
+            elif line.startswith("event:"):
+                evt_event = line[6:].strip()
+            elif line.startswith("data:"):
+                data_parts.append(line[5:].lstrip())
+            elif line.startswith(":"):
+                comment = line[1:].strip()
+        if data_parts:
+            return ServerSentEvent(raw_data="\n".join(data_parts), id=evt_id, event=evt_event, comment=comment)
+        elif comment:
+            return ServerSentEvent(comment=comment)
+        return ServerSentEvent(raw_data=chunk)
+    return ServerSentEvent(data=chunk)
 
 
 def _default_utc_now() -> str:
@@ -157,7 +458,7 @@ def _frontend_sse_event(
 def _frontend_sse_format(event: Dict[str, Any]) -> str:
     event_id = str(event.get("id", ""))
     data_str = json.dumps(event, ensure_ascii=False)
-    return f"id: {event_id}\ndata: {data_str}\n\n"
+    return format_sse_event(data_str=data_str, id=event_id if event_id else None).decode("utf-8")
 
 
 async def _default_frontend_bff_event_stream(
@@ -182,63 +483,6 @@ async def _default_frontend_bff_event_stream(
         )
 
 
-async def _default_sse_stream(
-    buffer: deque,
-    subscribers: list,
-    last_event_id: Optional[str],
-    channel: str,
-    event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
-) -> AsyncGenerator[str, None]:
-    q: asyncio.Queue = asyncio.Queue()
-    subscribers.append(q)
-    try:
-        yield f": connected to {channel}\n\n"
-        while True:
-            try:
-                event = await asyncio.wait_for(q.get(), timeout=15.0)
-                if isinstance(event, dict):
-                    if event_filter is not None and not event_filter(event):
-                        continue
-                    event_id = event.get("id", "")
-                    event_type = event.get("type", "message")
-                    data_str = json.dumps(event, ensure_ascii=False)
-                    yield f"id: {event_id}\nevent: {event_type}\ndata: {data_str}\n\n"
-                elif event_filter is None:
-                    yield f"data: {str(event)}\n\n"
-            except asyncio.TimeoutError:
-                yield ": heartbeat\n\n"
-    finally:
-        if q in subscribers:
-            subscribers.remove(q)
-
-
-def _default_handle_sse_stream(
-    channel: str,
-    buffer: Any,
-    subscribers: Any,
-    last_event_id: Optional[str],
-    extra_headers: Optional[Dict[str, str]] = None,
-    event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
-) -> StreamingResponse:
-    headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-        "X-SSE-Channel": channel,
-        "X-SSE-Replay-Supported": "true",
-    }
-    if extra_headers:
-        headers.update(extra_headers)
-
-    buf = buffer if isinstance(buffer, deque) else deque()
-    subs = subscribers if isinstance(subscribers, list) else []
-    return StreamingResponse(
-        _default_sse_stream(buf, subs, last_event_id, channel, event_filter=event_filter),
-        media_type="text/event-stream",
-        headers=headers,
-    )
-
-
 def create_events_router(
     *,
     read_surface: Optional[Any] = None,
@@ -259,7 +503,10 @@ def create_events_router(
     frontend_bff_event_stream: Optional[Callable[..., Any]] = None,
     resolve_session_kind: Optional[Callable[..., str]] = None,
     event_stream_service: Optional[EventStreamService] = None,
+    data_dir: Optional[Union[str, Path]] = None,
     include_domain_sse_aliases: bool = True,
+    session_lifecycle_store: Optional[Any] = None,
+    bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None,
 ) -> APIRouter:
     """Create canonical BFF Events router.
 
@@ -274,6 +521,18 @@ def create_events_router(
     _extract_ident = extract_identity or _default_extract_identity
     _require_read = require_read_role or _default_require_read_role
     _err = bff_error or _default_bff_error
+    _tenant_payload_fn = bff_me_tenant_payload or _auth_bff_me_tenant_payload
+    _session_store = session_lifecycle_store
+    if _session_store is None:
+        store_dir = data_dir or os.getenv("PANTHEON_BFF_DATA_DIR") or os.getenv("BFF_DATA_DIR")
+        if store_dir:
+            store_path = os.path.join(str(store_dir), "session_lifecycle.json")
+            if os.path.exists(store_path):
+                try:
+                    from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+                    _session_store = SessionLifecycleStore(store_path)
+                except Exception:
+                    pass
     # ``EventStreamService`` owns replay, connection management, and internal
     # delivery.  The assembly layer can inject the live BFF buffers later;
     # this prepared router deliberately does not import ``main``.
@@ -281,7 +540,9 @@ def create_events_router(
         channels=sse_channels,
         buffers=sse_buffers,
         subscribers=sse_subscribers,
+        data_dir=data_dir,
     )
+    router.event_stream_service = _event_stream
     _active_sse_channels = frozenset(_event_stream.channels)
     _buffers = _event_stream.buffers
     _subscribers = _event_stream.subscribers
@@ -292,12 +553,21 @@ def create_events_router(
             return get_read_store()
         return read_surface
 
-    def _stream_channel(
+    def _validate_subscription(
+        response: Response,
         channel: str,
-        last_event_id: Optional[str],
-        authorization: Optional[str],
-        event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
-    ) -> StreamingResponse:
+        last_event_id: Optional[str] = None,
+        last_event_id_camel: Optional[str] = None,
+        last_event_id_header: Optional[str] = None,
+        authorization: Optional[str] = None,
+        x_mfa_token: Optional[str] = None,
+        pantheon_session: Optional[str] = None,
+        extra_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
+        x_tenant_id: Optional[str] = None,
+        x_pantheon_tenant: Optional[str] = None,
+        tenant_query: Optional[str] = None,
+    ) -> _StreamSubscription:
+        cursor = _resolve_cursor(last_event_id, last_event_id_camel, last_event_id_header)
         if channel not in _active_sse_channels:
             raise _err(
                 400,
@@ -305,37 +575,80 @@ def create_events_router(
                 f"Unknown SSE channel: {channel}",
                 f"Channel must be one of {sorted(_active_sse_channels)}",
             )
-        identity = _extract_ident(authorization)
+        identity = _extract_ident(
+            authorization,
+            mfa_token=x_mfa_token,
+            session_cookie=pantheon_session,
+        )
         _require_read(identity)
-        extra_headers: Dict[str, str] = {}
+
+        req_tenant = _first_nonblank(x_tenant_id, x_pantheon_tenant, tenant_query)
+        eff_tenant, allowed_set, is_glob = _resolve_caller_tenant_scope(
+            identity=identity,
+            requested_tenant=req_tenant,
+            session_store=_session_store,
+            tenant_payload_fn=_tenant_payload_fn,
+            bff_error=_err,
+        )
+
+        if eff_tenant:
+            response.headers["X-Tenant-Id"] = eff_tenant
+
+        if hasattr(_event_stream, "replay_headers"):
+            for k, v in _event_stream.replay_headers(channel).items():
+                response.headers[k] = v
+        else:
+            response.headers["X-SSE-Channel"] = channel
+            response.headers["X-SSE-Replay-Supported"] = "true"
         if resolve_session_kind is not None:
-            extra_headers["X-BFF-Session-Kind"] = resolve_session_kind(identity)
-        if handle_sse_stream is not None:
-            try:
-                return handle_sse_stream(
-                    channel,
-                    _buffers[channel],
-                    _subscribers[channel],
-                    last_event_id,
-                    extra_headers=extra_headers or None,
-                    event_filter=event_filter,
-                )
-            except TypeError:
-                # Backward compatibility for an injected handle_sse_stream
-                # callable that predates the event_filter kwarg.
-                return handle_sse_stream(
-                    channel,
-                    _buffers[channel],
-                    _subscribers[channel],
-                    last_event_id,
-                    extra_headers=extra_headers or None,
-                )
+            response.headers["X-BFF-Session-Kind"] = resolve_session_kind(identity)
+
+        if hasattr(_event_stream, "check_replay"):
+            _event_stream.check_replay(
+                channel,
+                cursor,
+                bff_error=_err,
+                conflict_code=ErrorCode.RESOURCE_CONFLICT,
+            )
+        filter_func = _make_scope_filter(
+            identity,
+            extra_filter,
+            clean_tenant=eff_tenant,
+            allowed_tenants=allowed_set,
+            is_global=is_glob,
+            requested_tenant=req_tenant,
+        )
+        return _StreamSubscription(
+            channel=channel,
+            cursor=cursor,
+            filter_func=filter_func,
+        )
+
+    def _stream_channel(
+        channel: str,
+        last_event_id: Optional[str],
+        authorization: Optional[str],
+        event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
+        x_tenant_id: Optional[str] = None,
+        x_pantheon_tenant: Optional[str] = None,
+        tenant_query: Optional[str] = None,
+    ) -> EventSourceResponse:
+        sub = _validate_subscription(
+            response=Response(),
+            channel=channel,
+            last_event_id=last_event_id,
+            authorization=authorization,
+            extra_filter=event_filter,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            tenant_query=tenant_query,
+        )
         return _event_stream.stream_response(
             channel,
-            last_event_id,
+            sub.cursor,
             bff_error=_err,
             conflict_code=ErrorCode.RESOURCE_CONFLICT,
-            extra_headers=extra_headers or None,
+            event_filter=sub.filter_func,
         )
 
     @router.get(
@@ -408,8 +721,8 @@ def create_events_router(
             "meta": meta,
         }
 
-    @router.get("/bff/events/stream")
-    async def stream_bff_events(
+    async def _bff_events_stream_dep(
+        response: Response,
         channels: Optional[str] = Query(default=None),
         channel: Optional[str] = Query(default=None),
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
@@ -418,25 +731,16 @@ def create_events_router(
         authorization: Optional[str] = Header(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         pantheon_session: Optional[str] = Cookie(default=None),
-    ):
-        """BFF-wide SSE stream for the frontend shell.
-
-        lastEventId is accepted for the browser client, but this transitional
-        liveness stream only applies to unauthenticated callers. Authenticated
-        cookie or Bearer callers use the real replay-capable SSE substrate.
-        """
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+        tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+        tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
+    ) -> _StreamSubscription:
         channels_value = channels if isinstance(channels, str) else None
         channel_value = channel if isinstance(channel, str) else None
-        last_event_id_value = last_event_id if isinstance(last_event_id, str) else None
-        last_event_id_camel_value = last_event_id_camel if isinstance(last_event_id_camel, str) else None
-        last_event_id_header_value = last_event_id_header if isinstance(last_event_id_header, str) else None
         authorization_value = authorization if isinstance(authorization, str) else None
-        x_mfa_token_value = x_mfa_token if isinstance(x_mfa_token, str) else None
         pantheon_session_value = pantheon_session if isinstance(pantheon_session, str) else None
-
-        resolved_last_event_id = (
-            last_event_id_value or last_event_id_camel_value or last_event_id_header_value
-        )
 
         requested = tuple(
             ch.strip()
@@ -445,101 +749,195 @@ def create_events_router(
         )
         if authorization_value or pantheon_session_value:
             selected_channel = requested[0] if requested else "system"
-            if selected_channel not in _active_sse_channels:
-                raise _err(
-                    400,
-                    ErrorCode.VALIDATION_FAILED,
-                    f"Unknown SSE channel: {selected_channel}",
-                    f"Channel must be one of {sorted(list(_active_sse_channels))}",
-                )
-            identity = _extract_ident(
-                authorization_value,
-                mfa_token=x_mfa_token_value,
-                session_cookie=pantheon_session_value,
-            )
-            _require_read(identity)
-            extra_headers: Dict[str, str] = {}
-            if resolve_session_kind is not None:
-                extra_headers["X-BFF-Session-Kind"] = resolve_session_kind(identity)
-            if handle_sse_stream is not None:
-                return handle_sse_stream(
-                    selected_channel,
-                    _buffers[selected_channel],
-                    _subscribers[selected_channel],
-                    resolved_last_event_id,
-                    extra_headers=extra_headers or None,
-                )
-            return _event_stream.stream_response(
-                selected_channel,
-                resolved_last_event_id,
-                bff_error=_err,
-                conflict_code=ErrorCode.RESOURCE_CONFLICT,
-                extra_headers=extra_headers or None,
+            return _validate_subscription(
+                response=response,
+                channel=selected_channel,
+                last_event_id=last_event_id,
+                last_event_id_camel=last_event_id_camel,
+                last_event_id_header=last_event_id_header,
+                authorization=authorization,
+                x_mfa_token=x_mfa_token,
+                pantheon_session=pantheon_session,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
+                tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
             )
 
-        headers = {
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "X-SSE-Channel": "bff",
-            "X-SSE-Replay-Supported": "false",
-            "X-SSE-Replay-Store": "liveness-only",
-            "X-SSE-Resync-Routes": "/health,/readyz",
-        }
-        return StreamingResponse(
-            _frontend_stream(requested),
-            media_type="text/event-stream",
-            headers=headers,
+        response.headers["Cache-Control"] = "no-cache"
+        response.headers["X-Accel-Buffering"] = "no"
+        response.headers["X-SSE-Channel"] = "bff"
+        response.headers["X-SSE-Replay-Supported"] = "false"
+        response.headers["X-SSE-Replay-Store"] = "liveness-only"
+        response.headers["X-SSE-Resync-Routes"] = "/health,/readyz"
+        return _StreamSubscription(
+            channel="bff",
+            cursor=None,
+            filter_func=None,
+            is_liveness=True,
+            requested_channels=requested,
         )
 
-    @router.get("/api/v1/stream/{channel}")
+    async def _stream_events(
+        sub: _StreamSubscription,
+    ) -> AsyncGenerator[ServerSentEvent, None]:
+        buffer = _buffers.get(sub.channel)
+        subscribers = _subscribers.get(sub.channel)
+        if hasattr(_event_stream, "stream"):
+            async for event in _event_stream.stream(
+                sub.channel, buffer, subscribers, sub.cursor, event_filter=sub.filter_func
+            ):
+                yield event
+        elif hasattr(_event_stream, "stream_response"):
+            resp = _event_stream.stream_response(
+                sub.channel,
+                sub.cursor,
+                bff_error=_err,
+                conflict_code=ErrorCode.RESOURCE_CONFLICT,
+                event_filter=sub.filter_func,
+            )
+            async for chunk in resp.body_iterator:
+                yield _parse_sse_wire_chunk(chunk)
+
+    @router.get(
+        "/bff/events/stream",
+        response_class=EventSourceResponse,
+        summary="BFF-wide SSE stream for the frontend shell.",
+    )
+    async def stream_bff_events(
+        sub: _StreamSubscription = Depends(_bff_events_stream_dep),
+    ) -> AsyncGenerator[ServerSentEvent, None]:
+        """BFF-wide SSE stream for the frontend shell.
+
+        lastEventId is accepted for the browser client, but this transitional
+        liveness stream only applies to unauthenticated callers. Authenticated
+        cookie or Bearer callers use the real replay-capable SSE substrate.
+        """
+        if sub.is_liveness:
+            async for chunk in _frontend_stream(sub.requested_channels):
+                yield _parse_sse_wire_chunk(chunk)
+        else:
+            async for event in _stream_events(sub):
+                yield event
+
+    async def _generic_sub_dep(
+        response: Response,
+        channel: str = FastApiPath(...),
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        last_event_id_camel: Optional[str] = Query(default=None, alias="lastEventId"),
+        last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+        authorization: Optional[str] = Header(default=None),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+        tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+        tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
+    ) -> _StreamSubscription:
+        return _validate_subscription(
+            response=response,
+            channel=channel,
+            last_event_id=last_event_id,
+            last_event_id_camel=last_event_id_camel,
+            last_event_id_header=last_event_id_header,
+            authorization=authorization,
+            x_mfa_token=x_mfa_token,
+            pantheon_session=pantheon_session,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
+        )
+
+    @router.get(
+        "/api/v1/stream/{channel}",
+        response_class=EventSourceResponse,
+        summary="Authenticated replay-capable stream for a catalog channel.",
+    )
     async def stream_generic_events(
         channel: str,
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
+        sub: _StreamSubscription = Depends(_generic_sub_dep),
+    ) -> AsyncGenerator[ServerSentEvent, None]:
         """Authenticated replay-capable stream for a catalog channel."""
-        return _stream_channel(channel, last_event_id, authorization)
+        async for event in _stream_events(sub):
+            yield event
+
+    def _make_channel_sub_dep(channel_name: str):
+        async def _dep(
+            response: Response,
+            last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+            last_event_id_camel: Optional[str] = Query(default=None, alias="lastEventId"),
+            last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+            authorization: Optional[str] = Header(default=None),
+            x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+            pantheon_session: Optional[str] = Cookie(default=None),
+            x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+            x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+            tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+            tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+            tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
+        ) -> _StreamSubscription:
+            return _validate_subscription(
+                response=response,
+                channel=channel_name,
+                last_event_id=last_event_id,
+                last_event_id_camel=last_event_id_camel,
+                last_event_id_header=last_event_id_header,
+                authorization=authorization,
+                x_mfa_token=x_mfa_token,
+                pantheon_session=pantheon_session,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
+                tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
+            )
+        return _dep
+
+    _dep_inbox = _make_channel_sub_dep("inbox")
+    _dep_cc_kpi = _make_channel_sub_dep("ranking")
+    _dep_cc_events = _make_channel_sub_dep("loop")
+    _dep_alerts = _make_channel_sub_dep("sentinel")
+    _dep_deployment = _make_channel_sub_dep("artifact")
+    _dep_signals = _make_channel_sub_dep("signal")
+    _dep_reviews = _make_channel_sub_dep("approval")
 
     # Execute-plans compatibility subscriptions.  These aliases intentionally
     # delegate to the same generic subscription path and therefore retain one
     # replay/error/header contract.
-    @router.get("/bff/sse/notifications")
+    @router.get("/bff/sse/notifications", response_class=EventSourceResponse)
     async def bff_sse_notifications_alias(
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
-        return _stream_channel("inbox", last_event_id, authorization)
+        sub: _StreamSubscription = Depends(_dep_inbox),
+    ) -> AsyncGenerator[ServerSentEvent, None]:
+        async for event in _stream_events(sub):
+            yield event
 
-    @router.get("/bff/sse/command-center/kpi")
+    @router.get("/bff/sse/command-center/kpi", response_class=EventSourceResponse)
     async def bff_sse_cc_kpi_alias(
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
-        return _stream_channel("ranking", last_event_id, authorization)
+        sub: _StreamSubscription = Depends(_dep_cc_kpi),
+    ) -> AsyncGenerator[ServerSentEvent, None]:
+        async for event in _stream_events(sub):
+            yield event
 
-    @router.get("/bff/sse/command-center/events")
+    @router.get("/bff/sse/command-center/events", response_class=EventSourceResponse)
     async def bff_sse_cc_events_alias(
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
-        return _stream_channel("loop", last_event_id, authorization)
+        sub: _StreamSubscription = Depends(_dep_cc_events),
+    ) -> AsyncGenerator[ServerSentEvent, None]:
+        async for event in _stream_events(sub):
+            yield event
 
-    @router.get("/bff/sse/jobs/{jobId}/progress")
-    async def bff_sse_job_progress_alias(
+    async def _job_progress_sub_dep(
         jobId: str,
+        response: Response,
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        last_event_id_camel: Optional[str] = Query(default=None, alias="lastEventId"),
+        last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
         authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
-        """Subscription is channel-based AND server-side filtered by jobId.
-
-        BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001: previously this
-        stream only carried a channel-level subscription and relied entirely
-        on the client to discard events for other jobs. It now also filters
-        every replayed and live event on the ``tool`` channel so a client
-        subscribed to job A never receives job B's events, matching the
-        conventions of the ``incidentId``-aware sibling route.
-        """
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+        tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+        tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
+    ) -> _StreamSubscription:
         clean_job_id = str(jobId or "").strip()
 
         def _matches_job(event: Dict[str, Any]) -> bool:
@@ -558,52 +956,140 @@ def create_events_router(
             candidate_ids.discard("")
             return clean_job_id in candidate_ids
 
-        return _stream_channel("tool", last_event_id, authorization, event_filter=_matches_job)
+        return _validate_subscription(
+            response=response,
+            channel="tool",
+            last_event_id=last_event_id,
+            last_event_id_camel=last_event_id_camel,
+            last_event_id_header=last_event_id_header,
+            authorization=authorization,
+            x_mfa_token=x_mfa_token,
+            pantheon_session=pantheon_session,
+            extra_filter=_matches_job,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
+        )
 
-    @router.get("/bff/sse/alerts")
+    @router.get("/bff/sse/jobs/{jobId}/progress", response_class=EventSourceResponse)
+    async def bff_sse_job_progress_alias(
+        jobId: str,
+        sub: _StreamSubscription = Depends(_job_progress_sub_dep),
+    ) -> AsyncGenerator[ServerSentEvent, None]:
+        """Subscription is channel-based AND server-side filtered by jobId.
+
+        BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001: previously this
+        stream only carried a channel-level subscription and relied entirely
+        on the client to discard events for other jobs. It now also filters
+        every replayed and live event on the ``tool`` channel so a client
+        subscribed to job A never receives job B's events, matching the
+        conventions of the ``incidentId``-aware sibling route.
+        """
+        async for event in _stream_events(sub):
+            yield event
+
+    @router.get("/bff/sse/alerts", response_class=EventSourceResponse)
     async def bff_sse_alerts_alias(
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
-        return _stream_channel("sentinel", last_event_id, authorization)
+        sub: _StreamSubscription = Depends(_dep_alerts),
+    ) -> AsyncGenerator[ServerSentEvent, None]:
+        async for event in _stream_events(sub):
+            yield event
 
-    @router.get("/bff/sse/incidents/{incidentId}/timeline")
+    async def _incident_timeline_sub_dep(
+        incidentId: str,
+        response: Response,
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        last_event_id_camel: Optional[str] = Query(default=None, alias="lastEventId"),
+        last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+        authorization: Optional[str] = Header(default=None),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+        tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+        tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
+    ) -> _StreamSubscription:
+        return _validate_subscription(
+            response=response,
+            channel="journal",
+            last_event_id=last_event_id,
+            last_event_id_camel=last_event_id_camel,
+            last_event_id_header=last_event_id_header,
+            authorization=authorization,
+            x_mfa_token=x_mfa_token,
+            pantheon_session=pantheon_session,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
+        )
+
+    @router.get("/bff/sse/incidents/{incidentId}/timeline", response_class=EventSourceResponse)
     async def bff_sse_incident_timeline_alias(
         incidentId: str,
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
-        return _stream_channel("journal", last_event_id, authorization)
+        sub: _StreamSubscription = Depends(_incident_timeline_sub_dep),
+    ) -> AsyncGenerator[ServerSentEvent, None]:
+        async for event in _stream_events(sub):
+            yield event
 
     if include_domain_sse_aliases:
-        @router.get("/bff/sse/deployment/events")
+        @router.get("/bff/sse/deployment/events", response_class=EventSourceResponse)
         async def bff_sse_deployment_events_alias(
-            last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-            authorization: Optional[str] = Header(default=None),
-        ) -> StreamingResponse:
-            return _stream_channel("artifact", last_event_id, authorization)
+            sub: _StreamSubscription = Depends(_dep_deployment),
+        ) -> AsyncGenerator[ServerSentEvent, None]:
+            async for event in _stream_events(sub):
+                yield event
 
-        @router.get("/bff/sse/agora/signals")
+        @router.get("/bff/sse/agora/signals", response_class=EventSourceResponse)
         async def bff_sse_agora_signals_alias(
-            last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-            authorization: Optional[str] = Header(default=None),
-        ) -> StreamingResponse:
-            return _stream_channel("signal", last_event_id, authorization)
+            sub: _StreamSubscription = Depends(_dep_signals),
+        ) -> AsyncGenerator[ServerSentEvent, None]:
+            async for event in _stream_events(sub):
+                yield event
 
-        @router.get("/bff/sse/agora/sessions/{sessionId}")
+        async def _agora_session_sub_dep(
+            sessionId: str,
+            response: Response,
+            last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+            last_event_id_camel: Optional[str] = Query(default=None, alias="lastEventId"),
+            last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+            authorization: Optional[str] = Header(default=None),
+            x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+            pantheon_session: Optional[str] = Cookie(default=None),
+            x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+            x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+            tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
+            tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
+            tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
+        ) -> _StreamSubscription:
+            return _validate_subscription(
+                response=response,
+                channel="ask",
+                last_event_id=last_event_id,
+                last_event_id_camel=last_event_id_camel,
+                last_event_id_header=last_event_id_header,
+                authorization=authorization,
+                x_mfa_token=x_mfa_token,
+                pantheon_session=pantheon_session,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
+                tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
+            )
+
+        @router.get("/bff/sse/agora/sessions/{sessionId}", response_class=EventSourceResponse)
         async def bff_sse_agora_session_alias(
             sessionId: str,
-            last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-            authorization: Optional[str] = Header(default=None),
-        ) -> StreamingResponse:
-            return _stream_channel("ask", last_event_id, authorization)
+            sub: _StreamSubscription = Depends(_agora_session_sub_dep),
+        ) -> AsyncGenerator[ServerSentEvent, None]:
+            async for event in _stream_events(sub):
+                yield event
 
-    @router.get("/bff/sse/review/updates")
+    @router.get("/bff/sse/review/updates", response_class=EventSourceResponse)
     async def bff_sse_review_updates_alias(
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
-        return _stream_channel("approval", last_event_id, authorization)
+        sub: _StreamSubscription = Depends(_dep_reviews),
+    ) -> AsyncGenerator[ServerSentEvent, None]:
+        async for event in _stream_events(sub):
+            yield event
 
     @router.post("/api/v1/internal/sse/publish")
     async def publish_sse_event(
