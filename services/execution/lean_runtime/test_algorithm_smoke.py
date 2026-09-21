@@ -234,3 +234,95 @@ def test_lean_algorithm_smoke_from_binding_loads_strategy_packet_targets() -> No
     assert result.fill_events[0]["signal_id"] == targets[0]["signal_id"]
     assert result.fill_events[0]["symbol"] == "MSFT"
     assert result.artifact_payload_checksum == result.loaded_metadata["checksum"]
+
+
+def test_lean_algorithm_smoke_restart_replay_preserves_runtime_identity_and_contracts() -> None:
+    plan = {
+        "plan_id": "lean-plan-restart-replay-smoke",
+        "approval_decision_id": "lean-approval-restart-replay-smoke",
+        "artifact_id": f"reg-{SMOKE_STRATEGY_ID}-{SMOKE_VERSION}",
+        "artifact_version": SMOKE_VERSION,
+        "artifact_type": "execution_bundle",
+        "target_stage": "paper",
+        "capital_pool_id": "pool-restart-smoke",
+        "strategy_id": SMOKE_STRATEGY_ID,
+    }
+    binding = SimpleNamespace(
+        binding_id="lean-binding-restart-smoke",
+        runtime_id="lean-runtime-restart-smoke",
+        plan_id=plan["plan_id"],
+        artifact_id=plan["artifact_id"],
+        artifact_version=plan["artifact_version"],
+        capital_pool_id=plan["capital_pool_id"],
+        deployment_mode="paper",
+        persona_capital_binding_id="pcb-restart-smoke",
+    )
+    packet = {
+        "packet_ref": "lean-strategy-packet://restart-smoke/generation1",
+        "policy_id": "policy-restart-smoke-gen1",
+        "generation": 1,
+        "validation_window": "future_holdout",
+    }
+    targets = [
+        {
+            "target_ref": "lean-packet-target://restart-smoke/generation1/leg0",
+            "leg_index": 0,
+            "instrument": "US_AAPL",
+            "execution_symbol": "AAPL.US",
+            "lean_symbol": "AAPL",
+            "generation": 1,
+            "signal_id": "sig-restart-smoke-0",
+            "quantity": 5,
+            "quantity_type": "SHARES",
+            "order_type": "MARKET",
+            "signal": {
+                "signal_id": "sig-restart-smoke-0",
+                "version": "1.0",
+                "strategy_id": SMOKE_STRATEGY_ID,
+                "timestamp": "2026-01-05T14:30:00Z",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 5,
+                "quantity_type": "SHARES",
+                "order_type": "MARKET",
+                "metadata": {
+                    "strategy_packet_ref": packet["packet_ref"],
+                    "packet_target_ref": "lean-packet-target://restart-smoke/generation1/leg0",
+                    "tenant_id": "tenant-ops",
+                    "session_id": "session-restart-001",
+                },
+            },
+        },
+    ]
+
+    # First run: initial launch
+    initial_run = run_algorithm_smoke_from_binding(
+        plan,
+        binding,
+        strategy_packet=packet,
+        packet_targets=targets,
+    )
+    assert initial_run.fill_count == 1
+    assert initial_run.runtime_context["runtime_id"] == "lean-runtime-restart-smoke"
+    assert initial_run.runtime_context["runtime_binding_id"] == "lean-binding-restart-smoke"
+    assert initial_run.runtime_context["deployment_plan_id"] == "lean-plan-restart-replay-smoke"
+    assert initial_run.runtime_context["deployment_stage"] == "paper"
+
+    # Second run: simulated engine restart with identical runtime context and strategy replay
+    restart_run = run_algorithm_smoke_from_binding(
+        plan,
+        binding,
+        strategy_packet=packet,
+        packet_targets=targets,
+    )
+
+    # Prove identical runtime execution identity and deterministic replay
+    assert restart_run.runtime_context["runtime_id"] == initial_run.runtime_context["runtime_id"]
+    assert restart_run.runtime_context["runtime_binding_id"] == initial_run.runtime_context["runtime_binding_id"]
+    assert restart_run.runtime_context["deployment_plan_id"] == initial_run.runtime_context["deployment_plan_id"]
+    assert restart_run.artifact_payload_checksum == initial_run.artifact_payload_checksum
+    assert restart_run.fill_count == initial_run.fill_count
+    assert restart_run.fill_events[0]["signal_id"] == initial_run.fill_events[0]["signal_id"]
+    assert restart_run.fill_events[0]["symbol"] == initial_run.fill_events[0]["symbol"]
+    assert all(all(exec_info["replay"].values()) for exec_info in restart_run.packet_target_executions)
