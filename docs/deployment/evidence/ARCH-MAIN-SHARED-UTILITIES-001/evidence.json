@@ -1,0 +1,139 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "ARCH-MAIN-SHARED-UTILITIES-001",
+  "worker": "Claude",
+  "reviewer": "Antigravity",
+  "phase": "migration_pass_1_group_c",
+  "governing_spec": {
+    "document": "docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md",
+    "section": "附錄 B: main.py 未分類函式的二階分類",
+    "predecessor_evidence": "docs/deployment/evidence/BFF-AUDIT-ADMISSION-PERSONA-DUPLICATE-CORRECTIVE-001/evidence.json",
+    "base_commit": "dev@46022edc9"
+  },
+  "summary": {
+    "status": "partial_delivery_group_c_migrated",
+    "total_helpers_in_scope": 49,
+    "reverified_duplication": "confirmed at delivery start: all 49 names still have a top-level definition in BOTH services/control-plane/bff/main.py AND services/control-plane/bff/personas/service.py at current dev head; predecessor task's category-4 deferral was still accurate before this pass",
+    "code_migration_performed": true,
+    "this_delivery": "Human/Ops approved the artifact-contract revision (2026-09-16T23:20:46Z) adding services/control-plane/bff/promotion_review/service.py and services/control-plane/bff/shared/cross_domain_utils.py, and confirmed the Group B divergence claim below. This pass migrates the 9 of Group C's 10 helpers that are safely movable (byte-identical bodies in both main.py and personas/service.py, or a same-canonical-function import-alias-only difference) into the newly authorized services/control-plane/bff/shared/cross_domain_utils.py, deletes both duplicate definitions, repoints both files to import the shared owner, and updates the AST-source-extraction test fixtures that previously parsed the deleted definitions directly out of main.py. Groups A and B, plus 1 Group C member, remain deferred per the contract-split rule below.",
+    "contract_gap": "resolved for the two paths added 2026-09-16T23:20:46Z; no further contract revision needed to deliver the remaining Group A (promotion_review/service.py) helpers. Group B has no contract gap (personas/service.py is already a declared artifact) but requires per-function behavioral adjudication before merge, which Human/Ops has now directed this task to perform rather than continuing to defer."
+  },
+  "reclassification_49": {
+    "note": "Supersedes the predecessor task's flat 'Category 4 (Main Domain & Cross-Domain Utilities / Promotion Review / PM12 League)' label (which was a single boilerplate bucket) with three semantically distinct groups, consistent with REBASELINE Appendix B's instruction that cross-domain shared tools must not be folded into a single domain owner.",
+    "group_A_promotion_review_human_inbox_pm12": {
+      "member_count": 33,
+      "description": "A cohesive Promotion Review / Human Inbox / PM12 League bounded context. These functions call each other extensively (e.g. _human_inbox_decision_projection_from_record -> _human_inbox_decision_recommendation_id -> _promotion_review_clean_id / _promotion_review_target_id / _promotion_review_revision_recommendation_id / _promotion_review_revision_id). This is governance/human-gate domain logic, not persona domain and not a generic utility; it does not fit personas/service.py or auth/policy.py.",
+      "proposed_owner": "new module, e.g. services/control-plane/bff/promotion_review/service.py (directory does not yet exist; services/control-plane/bff/governance/service.py and services/control-plane/bff/command_adapters/service.py are existing sibling domain-service modules with the same shape and are the closest precedent for the target module layout)",
+      "members": [
+        "_foundation_audit_for_command_record",
+        "_human_inbox_decision_projection_from_record",
+        "_human_inbox_decision_recommendation_id",
+        "_human_inbox_sanitize_promotion_snapshot",
+        "_latest_promotion_review_command",
+        "_latest_promotion_review_submission",
+        "_list_governance_audit_events",
+        "_materialize_terminal_persona_provisioning_ledger",
+        "_pm12_add_recommendation_action",
+        "_pm12_current_quarter_id",
+        "_pm12_iso_z",
+        "_pm12_quarter_window",
+        "_pm12_quarterly_recommendation_item",
+        "_pm12_recommendation_action_ids",
+        "_pm12_resolve_quarterly_recommendation_submit_params",
+        "_promotion_review_clean_id",
+        "_promotion_review_decision_projection",
+        "_promotion_review_quarter_from_id",
+        "_promotion_review_record_revision_id",
+        "_promotion_review_revision_id",
+        "_promotion_review_revision_recommendation_id",
+        "_promotion_review_stage_path",
+        "_promotion_review_submission_projection",
+        "_promotion_review_target_id",
+        "_raise_if_promotion_review_direct_mutation_requested",
+        "_request_dry_run_requested",
+        "_sem_command_response",
+        "_strategy_persona_action_command",
+        "_strategy_persona_idempotency_check",
+        "_submitted_promotion_review_record_from_command",
+        "_submitted_promotion_review_records",
+        "_validate_quarterly_ranking_recommendation_submit",
+        "_deprecated_bff_path_response"
+      ]
+    },
+    "group_B_persona_fleet_projection": {
+      "member_count": 6,
+      "description": "Conceptually persona domain (fleet health/lifecycle projection), but the predecessor task deliberately kept these in main.py because personas/service.py already holds an independently-evolved second implementation under the same name with a real behavioral or signature difference (documented in predecessor evidence.json divergent_adjudication_19). Folding these requires per-function adjudication of which body is canonical, not a blind move.",
+      "proposed_owner": "services/control-plane/bff/personas/service.py (already a declared artifact of this task -- no contract revision needed for this group, but the merge itself is nontrivial and out of scope for this delivery)",
+      "members": [
+        "_is_persona_lifecycle_operational",
+        "_persona_fleet_runtime_matches",
+        "_project_persona_dto",
+        "_project_persona_fleet_health",
+        "_project_persona_fleet_item",
+        "_read_store_fixture_records"
+      ],
+      "known_divergences": [
+        {"name": "_project_persona_fleet_item", "divergence": "main.py returns Tuple[Dict[str, Any], List[Dict[str, Any]]] consumed positionally by main.py's _project_persona_fleet_health; personas/service.py's own copy returns Dict[str, Any] only for its domain router."},
+        {"name": "_project_persona_dto", "divergence": "main.py calls persona_service.overlay_source_health_truth (via the imported service object); personas/service.py's own copy calls the module-local _overlay_source_health_truth directly."},
+        {"name": "_persona_fleet_runtime_matches", "divergence": "marked DIVERGENT in predecessor audit_matrix_82; predecessor task did not need to adjudicate it because both copies stayed in place under category-4 deferral."}
+      ]
+    },
+    "group_C_generic_cross_domain_utility": {
+      "member_count": 10,
+      "description": "Stateless, side-effect-free helpers (float coercion, nested-dict lookup, record sorting/merging, generic param resolution) with no domain semantics. These are the closest fit to REBASELINE Appendix B's '通用工具/型別轉換/聚合' buckets and must not be folded into either persona or promotion-review domain modules.",
+      "owner": "services/control-plane/bff/shared/cross_domain_utils.py",
+      "delivered_members": [
+        "_management_as_float",
+        "_management_first_float",
+        "_management_nested_value",
+        "_management_telemetry_rollup",
+        "_merge_registry_records",
+        "_ppl_alloc_009_paper_environment_guard",
+        "_resolve_param",
+        "_sort_records_latest_first",
+        "_surface_degradation_reason"
+      ],
+      "deferred_members": [
+        {
+          "name": "_project_final_command_response",
+          "reason": "Body (identical in both main.py and personas/service.py) calls three helpers -- _action_command_status_from_command_status, _project_command_submission_response, _command_dual_write_receipts -- that are defined only in main.py and are not part of the Group C scope. personas/service.py's own copy calls these same three names but never imports or defines them: this is a pre-existing latent defect (NameError at runtime if personas/service.py's copy is actually invoked, e.g. at personas/service.py:1037) that predates this task. Moving this function into the shared module without first resolving that dependency would require pulling in the three helpers too, which are cross-domain-scoped to Group A's promotion-review/command bounded context, not Group C's generic-utility scope. Left both copies in place unchanged; the pre-existing NameError defect is flagged for a separate follow-up, not fixed by this task."
+        }
+      ]
+    }
+  },
+  "verification_performed": {
+    "duplication_reverification": "grep -n '^def <name>(\\|^async def <name>(' services/control-plane/bff/main.py services/control-plane/bff/personas/service.py for all 49 names before this pass; all 49 confirmed present as top-level defs in both files",
+    "byte_level_identity_check": "AST-extracted each of the 10 Group C function bodies (source text including decorators) from both main.py and personas/service.py and diffed them; 9 of 10 were byte-identical, 1 (_ppl_alloc_009_paper_environment_guard) differed only in an import-alias style (main.py: auth_policy.bool_from_env(...); personas/service.py: bool_from_env(...)) both resolving to the same canonical services/control-plane/bff/auth/policy.py:bool_from_env, confirmed not a behavioral divergence. Re-diffed the new shared-module copies against the original main.py bodies after writing them to confirm exact match (module-alias substitution excepted).",
+    "dependency_check": "For each of the 10 members, checked whether the function body calls any name not itself in Group C; found _project_final_command_response depends on three main.py-only helpers outside Group C scope (see group_C_generic_cross_domain_utility.deferred_members above) and left it in place; the other 9 have no such external dependency beyond auth/policy.py (already canonical) and stdlib/typing/fastapi.",
+    "ast_isolation_test_dependency": "test_pathreon_market_persona_fleet_contract.py, tests/test_bff_persona_provisioning_baseline_500.py, tests/test_bff_pm12_persona_league.py, management_read_models/test_persona_fleet_read_failures.py, and tests/test_mgmt_read_001_persona_fleet_owner_observations.py all ast.parse() main.py directly and re-exec extracted top-level ast.FunctionDef nodes by name for isolated testing without importing the full FastAPI app graph. Updated each to inject the migrated functions (imported from services.control_plane.bff.shared.cross_domain_utils) into the exec namespace instead of relying on the now-deleted main.py source nodes."
+  },
+  "verification_this_pass": {
+    "focused_suite": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/management_read_models/test_management_service_context_observations.py services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/tests/test_console_data_rankings_projection.py",
+    "focused_suite_result": "7 failed, 152 passed (independently re-run by the task owner in .venv-pantheon, matching the delivering worker's own run)",
+    "focused_suite_pre_existing_failure_confirmation": "test_tw_qlib_research_experiment_drilldown_is_governed_default_not_seed fails on a missing Postgres research-write-owner DSN (sandbox has no live Postgres), unrelated to Group C. test_bff_main_composition.py::test_all_canonical_domain_routers_mounted / test_zero_unreferenced_dead_functions_in_main_py / test_bootstrap_app_dependencies_contract / test_main_py_zero_lambda_read_store_service_locator_seams fail on unrelated pre-existing composition drift (missing router mount, unrelated dead-function inventory, AppDependencies missing strategy_write_owner, and lambda read_store seams already present before this change) -- none reference any of the 9 migrated names. test_read_surface_caller_migration.py::test_main_py_all_read_store_attributes_are_inventoried_and_mapped fails on a hardcoded read_store attribute count (40 vs an expected 44) that is unrelated to Group C (none of the 9 migrated functions reference read_store). Manually inspected each failure's assertion output to confirm none names a migrated Group C function.",
+    "full_bff_suite": "pytest -q services/control-plane/bff (with 8 pre-existing collection-time ImportError files ignored, confirmed unrelated to this change): 382 failed, 4018 passed, 45 skipped, 1 error; spot-checked a broad sample of the 382 failures and found root causes unrelated to Group C (retired ReadSurfacePorts._ranking_snapshots attribute, business-logic/fixture mismatches, Postgres connection-refused in ~40 cases) -- none reference the moved functions. Did not have budget for a byte-for-byte baseline diff of the full 4000+ test suite; the targeted verification above is the primary regression evidence for this change."
+  },
+  "contract_split": {
+    "governing_acceptance_criterion": "\"若無法於單一交付完成全部 49 個須以正式 contract 修訂切分並明確列出已完成與未完成清單；不得部分完成卻標記為 completed\"",
+    "delivered_this_pass": "9 of 49 helpers migrated (all of Group C except _project_final_command_response): new module services/control-plane/bff/shared/cross_domain_utils.py created; duplicate top-level definitions deleted from both main.py and personas/service.py with no forwarding wrappers or re-exports; both files import the shared owner; 5 AST-source-extraction test fixtures updated to source the moved functions from the new module.",
+    "delivered_helpers": [
+      "_management_as_float",
+      "_management_first_float",
+      "_management_nested_value",
+      "_management_telemetry_rollup",
+      "_merge_registry_records",
+      "_ppl_alloc_009_paper_environment_guard",
+      "_resolve_param",
+      "_sort_records_latest_first",
+      "_surface_degradation_reason"
+    ],
+    "deferred_helpers_count": 40,
+    "deferred_helpers": {
+      "group_A_promotion_review_human_inbox_pm12": "33 helpers, unchanged from reclassification_49.group_A_promotion_review_human_inbox_pm12.members above -- artifact contract now authorizes services/control-plane/bff/promotion_review/service.py but the migration itself (including adjudicating the 7 members with documented port-injection divergence: _latest_promotion_review_command, _latest_promotion_review_submission, _list_governance_audit_events, _materialize_terminal_persona_provisioning_ledger, _sem_command_response, _strategy_persona_action_command, _submitted_promotion_review_records) was not attempted in this pass",
+      "group_B_persona_fleet_projection": "6 helpers, unchanged from reclassification_49.group_B_persona_fleet_projection.members above -- requires per-function behavioral adjudication before merge into personas/service.py; not attempted in this pass",
+      "group_C_remainder": "1 helper (_project_final_command_response) -- see group_C_generic_cross_domain_utility.deferred_members above"
+    },
+    "deferred_reason": "Group A and B require substantially more adjudication/migration work than fits in a single bounded delivery; splitting after Group C keeps this delivery narrow, reviewable, and independently verifiable rather than bundling a large, harder-to-review Group A/B migration into the same PR. No new contract gap remains for Group A (path already authorized); Group B has no contract gap.",
+    "successor_scope": "A follow-on delivery on this same task (still in_progress, not superseded) should migrate Group A into services/control-plane/bff/promotion_review/service.py and perform the Group B per-function adjudication into personas/service.py."
+  }
+}

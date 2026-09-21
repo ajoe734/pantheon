@@ -1,0 +1,13 @@
+{
+  "algorithm": "sha256",
+  "description": "Cryptographic SHA-256 seal of all evidence files in docs/deployment/evidence/S5-REPORT-001/ (excluding evidence.json to remain strictly acyclic).",
+  "files": {
+    "docs/deployment/evidence/S5-REPORT-001/README.md": "bac6b47813c7a5d4e68653233522306f326d7dcdadfd1998597f415a194cd1c4",
+    "docs/deployment/evidence/S5-REPORT-001/reconciled-artifacts-manifest.json": "01e1fffc5d169542c1b2101e9363a1c09a0a386490fa9be5a46568ee3a38b8fb",
+    "docs/deployment/evidence/S5-REPORT-001/reconciled-journeys-summary.json": "44145f2e2371f770348f1726f02e410ea757b659dbdce662138847d9ffec7641",
+    "docs/deployment/evidence/S5-REPORT-001/reconciled-loops-summary.json": "2cc12a9b60da90f935648674be978d4d6d02caa28f0b465203afda6f328fca1c",
+    "docs/deployment/evidence/S5-REPORT-001/reconciled-release-identities.json": "99670b7d7fd72565b6314530f2b00e2506c899784d019f1cca39cae7da256854",
+    "docs/deployment/evidence/S5-REPORT-001/reconciled-rollback-drill-summary.json": "eb554af2f1519e5f9a20d7ae0a10680a9897a992cd52762708727d160e554789",
+    "docs/deployment/evidence/S5-REPORT-001/remaining-product-gaps-reconciliation.json": "f3ed9da8575e27b2010865fa7b512c46f4be9550aae87fcc60cf252df9e3e490"
+  }
+}

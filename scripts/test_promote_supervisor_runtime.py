@@ -24,6 +24,7 @@ _REAL_VERIFY_WORKER_SANDBOX = promotion.verify_worker_sandbox
 
 @pytest.fixture(autouse=True)
 def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(promotion.auto_integrator_install, "current_crontab", lambda: [])
     # Existing replacement fixtures use fake PIDs/minimal source trees. Health
     # and capability are exercised explicitly by the promotion-drain tests.
     monkeypatch.setattr(promotion, "verify_promotion_health", lambda *a, **k: {"verified": True})
@@ -431,6 +432,8 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     candidate, status_root = _candidate(tmp_path)
+    cron_rebind = mock.Mock(return_value=True)
+    monkeypatch.setattr(promotion.auto_integrator_install, "rebind_installed_cron", cron_rebind)
     live_config = tmp_path / "runtime" / "live.json"
     events: list[str] = []
     def stop(pid_path: Path, *, timeout_seconds: float) -> int:
@@ -457,6 +460,8 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
     assert result["stopped_pid"] == 41
     assert result["launched_pid"] == 42
     assert events == ["stop", "launch"]
+    cron_rebind.assert_called_once_with(candidate, status_root, live_config)
+    assert result["auto_integrator_cron_rebound"] is True
     installed = json.loads(live_config.read_text(encoding="utf-8"))
     assert installed["task_state_store"]["mode"] == "authoritative"
     assert json.loads((status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json").read_text(encoding="utf-8"))["version"] == 2

@@ -325,6 +325,7 @@ def test_persona_opinion_ensure_and_invoke_send_exact_agent_admission() -> None:
             operator_id="operator-1",
             agent_id=admission["agent_id"],
             persona_admission=admission,
+            idempotency_key="idemp-opinion-001",
         )
 
     ensure_body = captured[0]["body"]

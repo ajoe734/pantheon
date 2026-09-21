@@ -71,9 +71,11 @@ DEFAULT_LOCK = ".orchestrator/auto-integrator.lock"
 DEFAULT_MERGE_METHOD = "merge"
 UNBLOCK_REQUEST_SCHEMA = unblock_contract.REQUEST_SCHEMA
 UNBLOCK_REQUEST_INBOX = unblock_contract.REQUEST_INBOX
-DEFAULT_LIVE_CONFIG = Path(
-    "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
-)
+DEFAULT_DEPLOY_ROOT = Path.home() / "pantheon-ci-deploy"
+DEPLOY_ROOT = Path(
+    os.environ.get("PANTHEON_DEPLOY_ROOT") or DEFAULT_DEPLOY_ROOT
+).expanduser()
+DEFAULT_LIVE_CONFIG = DEPLOY_ROOT / "runtime" / "live-supervisor-mainroot-config.json"
 LIVE_CONFIG_ENV = "PANTHEON_LIVE_SUPERVISOR_CONFIG"
 FINAL_MERGE_TIMEOUT_SECONDS = 60.0
 LOCK_SCHEMA = "pantheon-auto-integrator-lock/v2"
@@ -112,7 +114,7 @@ class Settings:
     dev_branch: str = DEFAULT_DEV_BRANCH
     task_branch_prefix: str = DEFAULT_TASK_PREFIX
     lock_path: Path = ROOT / DEFAULT_LOCK
-    max_tasks_per_run: int = 1
+    max_tasks_per_run: int = 2
     smoke_commands: tuple[str, ...] = ()
     unblock_owner: str | None = None
     unblock_reviewer: str | None = None
@@ -437,7 +439,7 @@ def load_settings(path: Path | None = None, *, status_root: Path | None = None) 
         dev_branch=dev_branch,
         task_branch_prefix=task_prefix,
         lock_path=lock_path,
-        max_tasks_per_run=int(auto.get("max_tasks_per_run") or 1),
+        max_tasks_per_run=int(auto.get("max_tasks_per_run") or 2),
         smoke_commands=smoke_commands,
         unblock_owner=str(auto.get("unblock_owner") or "").strip() or None,
         unblock_reviewer=str(auto.get("unblock_reviewer") or "").strip() or None,
@@ -3377,6 +3379,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 live_config_path, runner, command_root=ROOT
             )
         except (ExecuteAuthorityError, OSError, ValueError) as exc:
+            print(
+                f"ALERT: auto-integrator live execute authority binding failed: {exc}",
+                file=sys.stderr,
+            )
             parser.error(f"live execute authority binding failed: {exc}")
     else:
         if args.status_file is not None:

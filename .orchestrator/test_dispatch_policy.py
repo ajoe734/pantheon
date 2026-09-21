@@ -1204,3 +1204,24 @@ def test_end_to_end_parity_compose_with_receipt_repair_task() -> None:
     # Integrator sees the unreceipted candidate for receipt repair
     candidates = auto_integrator.integration_candidates({"tasks": [task_fe, task_repair]}, config=config)
     assert [c.task_id for c in candidates] == [task_fe["id"]]
+
+
+@pytest.mark.parametrize("status", ["queued", "started", "waiting_retry"])
+def test_v2_queue_intent_reserves_endpoint_before_worker_launch(status):
+    state = {"queue": {"events": {
+        "live": {"status": status, "intent": {"delivery_endpoint_id": "codex1_1"}},
+        "finished": {"status": "completed", "intent": {"delivery_endpoint_id": "codex1_2"}},
+        "failed": {"status": "failed", "intent": {"delivery_endpoint_id": "codex1_3"}},
+    }}}
+    snapshot = dispatch_policy.build_delivery_admission_snapshot(
+        {}, state, active_task_ids=set(), pending_task_ids={"TASK-1"},
+        agent_loads={}, active_account_loads={}, pending_account_loads={},
+    )
+    assert snapshot.reserved_endpoint_ids == frozenset({"codex1_1"})
+    # The launcher consumes its own reservation rather than blocking itself.
+    state["queue"]["events"].pop("live")
+    consumed = dispatch_policy.build_delivery_admission_snapshot(
+        {}, state, active_task_ids=set(), pending_task_ids=set(),
+        agent_loads={}, active_account_loads={}, pending_account_loads={},
+    )
+    assert consumed.reserved_endpoint_ids == frozenset()

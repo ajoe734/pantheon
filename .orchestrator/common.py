@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import local
-from typing import Any, Mapping, Generator, Callable, Iterable
+from typing import Any, Mapping, Generator, Callable, Iterable, IO
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -1455,16 +1455,22 @@ def run_command(
     timeout: float | None = None,
     check: bool = False,
     env: dict[str, str] | None = None,
+    stdin: int | IO[Any] | None = subprocess.DEVNULL,
+    input: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=str(cwd or ROOT),
-        check=check,
-        timeout=timeout,
-        text=True,
-        capture_output=True,
-        env=env,
-    )
+    kwargs: dict[str, Any] = {
+        "cwd": str(cwd or ROOT),
+        "check": check,
+        "timeout": timeout,
+        "text": True,
+        "capture_output": True,
+        "env": env,
+    }
+    if input is not None:
+        kwargs["input"] = input
+    else:
+        kwargs["stdin"] = stdin
+    return subprocess.run(command, **kwargs)
 
 
 def claude_credentials_path(env: dict[str, str] | None = None) -> Path:
@@ -2012,6 +2018,10 @@ def durable_write_bytes(
         temp_path.unlink(missing_ok=True)
 
 
+class FileSnapshotChangedError(RuntimeError):
+    """A regular file was atomically replaced while its snapshot was read."""
+
+
 def read_regular_file_snapshot(
     path: Path,
     *,
@@ -2039,10 +2049,10 @@ def read_regular_file_snapshot(
         if (
             not stat.S_ISREG(descriptor_stat.st_mode)
             or stat.S_ISLNK(path_stat.st_mode)
-            or (path_stat.st_dev, path_stat.st_ino)
-            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
         ):
             raise RuntimeError(f"{source} must be a stable regular file: {path}")
+        if (path_stat.st_dev, path_stat.st_ino) != (descriptor_stat.st_dev, descriptor_stat.st_ino):
+            raise FileSnapshotChangedError(f"{source} changed during read: {path}")
         chunks: list[bytes] = []
         while True:
             chunk = os.read(descriptor, 1024 * 1024)
@@ -2050,12 +2060,10 @@ def read_regular_file_snapshot(
                 break
             chunks.append(chunk)
         after_stat = path.lstat()
-        if (
-            stat.S_ISLNK(after_stat.st_mode)
-            or (after_stat.st_dev, after_stat.st_ino)
-            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
-        ):
-            raise RuntimeError(f"{source} changed during read: {path}")
+        if not stat.S_ISREG(after_stat.st_mode):
+            raise RuntimeError(f"{source} must be a stable regular file: {path}")
+        if (after_stat.st_dev, after_stat.st_ino) != (descriptor_stat.st_dev, descriptor_stat.st_ino):
+            raise FileSnapshotChangedError(f"{source} changed during read: {path}")
         return b"".join(chunks), descriptor_stat
     finally:
         os.close(descriptor)

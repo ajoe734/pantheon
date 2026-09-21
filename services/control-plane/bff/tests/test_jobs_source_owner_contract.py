@@ -16,16 +16,13 @@ Proves, with real business-logic assertions (not fixture-fake shortcuts):
 """
 from __future__ import annotations
 
-import os
-import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
 import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-import main as bff_main
+from services.control_plane.bff.jobs.router import create_jobs_router
 from services.control_plane.bff.ports.job_read import (
     JobReadPort,
     JobSourceUnavailableError,
@@ -163,9 +160,30 @@ class _JobsOnlyReadStore:
         return "canonical_store"
 
 
+from services.control_plane.bff.core.app_factory import build_bff_app
+from services.control_plane.bff.auth import policy as auth_policy
+
+
 def _fresh_client() -> TestClient:
-    bff_main.read_store = _JobsOnlyReadStore(JobReadPort(http_get=lambda url: (True, None)))
-    return TestClient(bff_main.app)
+    store = _JobsOnlyReadStore(JobReadPort(http_get=lambda url: (True, None)))
+    app = build_bff_app()
+    app.include_router(
+        create_jobs_router(
+            read_surface=lambda: store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=lambda: "2026-09-13T00:00:00Z",
+            page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
+            read_surface_meta=lambda name, kind, **kw: {"surface": name, **kw},
+            dataset_surface_status=lambda *a, **kw: {"status": "available"},
+            raise_if_read_surface_unavailable=lambda *a, **kw: None,
+            reject_body_idempotency_key=lambda b: None,
+            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            submit_job_action=lambda *a, **kw: {},
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def test_unknown_job_id_returns_404() -> None:

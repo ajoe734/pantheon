@@ -1,0 +1,82 @@
+{
+  "loop_index": 8,
+  "canonical_id": "promotion_deployment",
+  "loop_name": "Promotion & Deployment (RuntimeBinding)",
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+  "canonical_contract_spec": {
+    "module": "services/runtime_manager/runtime_binding.py",
+    "architecture_docs": [
+      "TARGET_ARCHITECTURE.md",
+      "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+      "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md"
+    ],
+    "mandatory_properties": [
+      "owner_write_authority_runtime_manager",
+      "bound_runtime_identity",
+      "deployment_plan_identity",
+      "persona_capital_binding_linkage",
+      "guarded_status_transitions",
+      "durable_reload_and_crash_recovery"
+    ],
+    "paper_json_insufficient_rule": "A static paper JSON object alone is insufficient without the executable store, active status transitions, runtime manager write authority, and durable recovery."
+  },
+  "deployed_evidence_audit": {
+    "strategy_target": {
+      "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+      "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+      "current_mode": "research_only",
+      "promoted_to_paper_binding": false
+    },
+    "runtime_binding_instance": {
+      "binding_id": null,
+      "runtime_id": null,
+      "plan_id": null,
+      "status": null,
+      "execution_state": "deferred",
+      "persisted_store_entry": null
+    },
+    "deferral_record": {
+      "gap_id": "DEFERRED-DEPLOYMENT-PIPELINE",
+      "functional_owner": "Human/Ops",
+      "directive_timestamp": "2026-09-17T00:30:51Z",
+      "reason": "Deferred per Human/Ops directive until deployment pipeline prerequisites are fixed."
+    }
+  },
+  "five_field_receipt_check": {
+    "trigger_id": {
+      "value": null,
+      "present": false,
+      "gap": "MISSING_TRIGGER"
+    },
+    "terminal_output_id": {
+      "value": null,
+      "present": false,
+      "gap": "MISSING_RUNTIME_BINDING_TERMINAL"
+    },
+    "next_consumer_receipt_id": {
+      "value": null,
+      "present": false,
+      "gap": "MISSING_DOWNSTREAM_RUNTIME_RECEIPT"
+    },
+    "owner_worker_identity": {
+      "value": null,
+      "present": false,
+      "gap": "MISSING_OWNER_WORKER"
+    },
+    "durable_reload_readback": {
+      "value": null,
+      "present": false,
+      "verified": false,
+      "gap": "MISSING_RELOAD_READBACK"
+    },
+    "status": "UNACCEPTED",
+    "deferral_status": "DEFERRED",
+    "fields_present_count": 0,
+    "fields_required_count": 5
+  },
+  "fail_closed_verdict": {
+    "accepted": false,
+    "verdict": "FAIL_CLOSED_UNACCEPTED",
+    "reason": "Loop 8 fails closed truthfully because no executable RuntimeBinding was produced, loaded, or transitioned on the causal stimulus chain. Strategy R1 remains research_only. Paper JSON alone is insufficient."
+  }
+}

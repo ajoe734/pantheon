@@ -1,0 +1,9 @@
+{
+  "observed_at": "2026-09-15T03:20:08Z",
+  "payload": {
+    "connector_id": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+    "trigger_type": "manual",
+    "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7"
+  },
+  "status": "job_post_begun"
+}

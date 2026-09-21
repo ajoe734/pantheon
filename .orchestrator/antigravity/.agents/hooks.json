@@ -1,0 +1,11 @@
+{
+  "pantheon-worker-command-completion": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 ../command_completion.py",
+        "timeout": 5
+      }
+    ]
+  }
+}

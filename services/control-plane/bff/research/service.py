@@ -31,11 +31,13 @@ class ResearchValidationError(ValueError):
         field: str,
         status_code: int = 422,
         error_code: str = "VALIDATION_FAILED",
+        details: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(message)
         self.field = field
         self.status_code = status_code
         self.error_code = error_code
+        self.details = dict(details) if details else {}
 
 
 class ResearchNotFoundError(LookupError):
@@ -283,6 +285,7 @@ class ResearchRouterService:
                 "One or more artifacts cannot be compared",
                 field="artifact_status",
                 error_code="OPERATION_NOT_ALLOWED",
+                details={"non_comparable_artifacts": non_comparable},
             )
         snapshot_at = self.utc_now()
         payload = dict(port.compare_research_artifacts(requested_ids) or {})

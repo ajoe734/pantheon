@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Optional
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
-
+from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.research.router import create_research_router
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
 
@@ -89,6 +90,7 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
         *,
         include_snapshot_fallback: bool = True,
         include_local_fallback: bool = True,
+        **kwargs: Any,
     ) -> dict | None:
         if self._source == "local_snapshot" and not (
             include_snapshot_fallback and include_local_fallback
@@ -114,19 +116,30 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
         return ticket
 
 
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+
+
+def _create_test_app(port: _TicketPortDouble) -> FastAPI:
+    return create_research_test_app(
+        port,
+        utc_now=lambda: "2026-04-20T05:30:00Z",
+        page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
+        snapshot_meta=lambda stamp, **kw: {"snapshot_at": stamp, **kw},
+        submit_experiment_action=lambda *a, **kw: {},
+    )
+
+
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _TicketPortDouble(
-            _SEEDED_TICKETS,
-            source="local_snapshot",
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = _TicketPortDouble(
+        _SEEDED_TICKETS,
+        source="local_snapshot",
+    )
+    app = _create_test_app(port)
+    client = TestClient(app)
+    yield client
 
 
 @contextmanager
@@ -176,17 +189,16 @@ def _service_backed_client():
 
         os.environ["PANTHEON_BFF_RESEARCH_TICKET_STORE"] = str(ticket_store)
 
-        original_store = bff_main.read_store
-        bff_main.read_store = _TicketPortDouble(
+        port = _TicketPortDouble(
             json.loads(ticket_store.read_text(encoding="utf-8")),
             source="service_client",
             persistence_path=ticket_store,
         )
-        client = TestClient(bff_main.app)
+        app = _create_test_app(port)
+        client = TestClient(app)
         try:
             yield client, ticket_store
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -196,14 +208,10 @@ def _service_backed_client():
 
 @contextmanager
 def _unavailable_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _TicketPortDouble({}, source="missing")
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = _TicketPortDouble({}, source="missing")
+    app = _create_test_app(port)
+    client = TestClient(app)
+    yield client
 
 
 def test_rw01_list_contract_returns_ticket_projection() -> None:
@@ -393,3 +401,49 @@ def test_rw01_create_and_patch_persist_to_service_store() -> None:
         assert persisted[created["ticket_id"]]["status"] == "closed"
         assert persisted[created["ticket_id"]]["owner"] == "persona-beta"
         assert persisted[created["ticket_id"]]["lifecycle_history"][-1]["to_status"] == "closed"
+
+
+def test_rw01_read_surface_ports_composition_contract() -> None:
+    from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+
+    ports = create_in_memory_read_surface_ports(
+        research_knowledge_source_kwargs={
+            "research_tickets_store": {
+                "rt-existing-001": {
+                    "ticket_id": "rt-existing-001",
+                    "title": "Existing ticket",
+                    "status": "open",
+                    "created_at": "2026-05-23T00:00:00Z",
+                    "updated_at": "2026-05-23T00:00:00Z",
+                    "owner": "persona-alpha",
+                }
+            }
+        }
+    )
+    app = create_research_test_app(ports)
+    client = TestClient(app)
+
+    missing_response = client.get(
+        "/api/v1/research/tickets/missing-ticket",
+        headers={"Authorization": OPERATOR_AUTH},
+    )
+    assert missing_response.status_code == 404, missing_response.text
+    assert missing_response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+    read_response = client.get(
+        "/api/v1/research/tickets/rt-existing-001",
+        headers={"Authorization": OPERATOR_AUTH},
+    )
+    assert read_response.status_code == 200, read_response.text
+    assert read_response.json()["ticket_id"] == "rt-existing-001"
+
+    double = _TicketPortDouble(_SEEDED_TICKETS, source="local_snapshot")
+    wrapped = create_in_memory_read_surface_ports()
+    wrapped.research_knowledge_source = double
+    wrapped_client = TestClient(create_research_test_app(wrapped))
+    snapshot_response = wrapped_client.get(
+        "/api/v1/research/tickets/rt-20260419-007",
+        headers={"Authorization": OPERATOR_AUTH},
+    )
+    assert snapshot_response.status_code == 404, snapshot_response.text
+

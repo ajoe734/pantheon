@@ -15,19 +15,21 @@ from __future__ import annotations
 
 import math
 import os
-import tempfile
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any, Iterator
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 
 import json
-from services.control_plane.bff import main as bff_main  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-from services.control_plane.bff.ports import ReadSurfacePorts  # noqa: E402
-from services.control_plane.bff.operations_read_model import (  # noqa: E402
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.management_read_models.router import (
+    create_management_router,
+)
+from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.operations_read_model import (
     DataConfidence,
     SourceState,
     build_operations_identity,
@@ -140,14 +142,16 @@ class OperationsReadModelTestReadPorts(ReadSurfacePorts):
         return self._telemetries.get(str(runtime_id or ""))
 
 
+def _mounted_app(store: OperationsReadModelTestReadPorts) -> FastAPI:
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(create_management_router(read_surface=store))
+    return app
+
+
 @contextmanager
 def _client_with_store(store: OperationsReadModelTestReadPorts) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    bff_main.read_store = store
-    try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
-    finally:
-        bff_main.read_store = original_store
+    yield TestClient(_mounted_app(store), raise_server_exceptions=False)
 
 
 def _fresh_store(*, allow_local_snapshot_fallback: bool) -> OperationsReadModelTestReadPorts:
@@ -172,8 +176,9 @@ def _response_schema_ref(schema: dict[str, Any], path: str) -> str:
 
 
 def test_operations_read_model_publishes_typed_openapi_envelope() -> None:
-    bff_main.app.openapi_schema = None
-    schema = TestClient(bff_main.app).get("/openapi.json").json()
+    store = _fresh_store(allow_local_snapshot_fallback=False)
+    app = _mounted_app(store)
+    schema = TestClient(app).get("/openapi.json").json()
     path = "/bff/management/operations-read-model/{persona_id}"
 
     assert path in schema["paths"]

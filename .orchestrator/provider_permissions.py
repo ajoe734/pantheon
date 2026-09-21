@@ -82,12 +82,32 @@ CODEX_QUOTA_MARKERS = (
     "quota_reached",
     "credit balance is too low",
 )
+CLAUDE_QUOTA_MARKERS = (
+    "hit your weekly limit",
+    "hit your limit",
+    "hit your usage limit",
+    "usage limit reached",
+    "quota_reached",
+    "seven_day",
+    "rate_limit_event",
+    "credit balance is too low",
+    "credit balance too low",
+)
 CODEX_MODELS_CACHE_SCHEMA_MARKERS = (
     "models_cache.json",
     "supports_reasoning_summaries",
     "missing field",
 )
 CODEX_MODELS_CACHE_FILENAME = "models_cache.json"
+_QUOTA_RESET_DATETIME_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:reset(?:s)?(?:[_\s-]*at)?|try\s+again\s+at)\s*(?:on\s+)?"
+    r"(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}))?)",
+    re.IGNORECASE,
+)
+_QUOTA_RESET_TS_COMPONENTS_PATTERN = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})[T ](?P<time>\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)(?:\s*(?P<tz>Z|UTC|[+-]\d{2}:?\d{2}))?$",
+    re.IGNORECASE,
+)
 _CODEX_QUOTA_RESET_ISO_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])(?:reset(?:s)?(?:[_\s-]*at)?|try\s+again\s+at)"
     r"(?![A-Za-z0-9])[^0-9]{0,32}"
@@ -95,7 +115,7 @@ _CODEX_QUOTA_RESET_ISO_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _CODEX_QUOTA_RESET_EPOCH_PATTERN = re.compile(
-    r'"?resetsAt"?\s*[:=]\s*"?(?P<epoch>\d{10})"?',
+    r'"?resets?[_-]?at"?\s*[:=]\s*"?(?P<epoch>\d{10})"?',
     re.IGNORECASE,
 )
 _CODEX_QUOTA_RESET_HUMAN_DATE_PATTERN = re.compile(
@@ -323,7 +343,7 @@ def _codex_models_cache_schema_incompatible(output: str | None) -> bool:
     return all(marker.lower() in normalized for marker in CODEX_MODELS_CACHE_SCHEMA_MARKERS)
 
 
-def _codex_quota_reset_at(
+def parse_quota_reset_at(
     output: str | None,
     *,
     now: datetime | None = None,
@@ -331,6 +351,29 @@ def _codex_quota_reset_at(
     """Extract one reset-context-bound UTC timestamp without retaining payloads."""
 
     text = str(output or "")
+    m = _QUOTA_RESET_DATETIME_PATTERN.search(text)
+    if m:
+        raw_ts = m.group("timestamp").strip()
+        tm = _QUOTA_RESET_TS_COMPONENTS_PATTERN.match(raw_ts)
+        if tm:
+            date_part = tm.group("date")
+            time_part = tm.group("time")
+            tz_part = (tm.group("tz") or "").strip().upper()
+            if len(time_part) == 5:
+                time_part += ":00"
+            if not tz_part or tz_part in ("Z", "UTC"):
+                tz_norm = "+00:00"
+            else:
+                tz_norm = tm.group("tz").strip()
+                if len(tz_norm) == 5 and (tz_norm.startswith("+") or tz_norm.startswith("-")) and ":" not in tz_norm:
+                    tz_norm = f"{tz_norm[:3]}:{tz_norm[3:]}"
+            try:
+                parsed = datetime.fromisoformat(f"{date_part}T{time_part}{tz_norm}")
+                if parsed.tzinfo is not None:
+                    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            except ValueError:
+                pass
+
     match = _CODEX_QUOTA_RESET_ISO_PATTERN.search(text)
     if match:
         try:
@@ -392,6 +435,9 @@ def _codex_quota_reset_at(
                 candidate += timedelta(days=1)
             return candidate.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     return None
+
+
+_codex_quota_reset_at = parse_quota_reset_at
 
 
 def _codex_cache_identity(path: Path) -> dict[str, Any] | None:
@@ -638,7 +684,7 @@ def _gemini_auth_ready(
         if source.get("GOOGLE_APPLICATION_CREDENTIALS"):
             return True
         gcloud = command_exists("gcloud")
-        return bool(gcloud) and run_command([gcloud, "auth", "application-default", "print-access-token"]).returncode == 0
+        return bool(gcloud) and run_command([gcloud, "auth", "application-default", "print-access-token"], stdin=subprocess.DEVNULL).returncode == 0
     return False
 
 
@@ -724,7 +770,7 @@ def _codex_auth_probe(
         if cache_path is not None:
             cache_identity_before_probe = _codex_cache_identity(cache_path)
     try:
-        result = run_command(command, timeout=timeout, env=env)
+        result = run_command(command, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return _auth_probe_record(
             provider_id,
@@ -775,7 +821,7 @@ def _codex_auth_probe(
             )
         metadata["models_cache_recovery"] = cache_recovery
         try:
-            result = run_command(command, timeout=timeout, env=env)
+            result = run_command(command, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
             return _auth_probe_record(
                 provider_id,
@@ -821,6 +867,35 @@ def _codex_auth_probe(
     return record
 
 
+def _claude_probe_ready(
+    returncode: int,
+    stdout: str | None,
+    stderr: str | None,
+    *,
+    expected_output: str | None = AUTH_PROBE_EXPECTED_OUTPUT,
+) -> tuple[bool, str | None, str]:
+    output = "\n".join(part for part in (stdout, stderr) if part)
+    compact_error = _compact_auth_error(output)
+    if _contains_any_marker(output, CLAUDE_QUOTA_MARKERS):
+        return False, "Claude usage limit reached.", "quota_reached"
+    if returncode != 0:
+        status = (
+            "auth_failed"
+            if _contains_any_marker(output, ("401", "unauthorized", "auth failed"))
+            else f"exit_{returncode}"
+        )
+        return False, compact_error, status
+    if _contains_any_marker(output, ("401", "unauthorized", "auth failed")):
+        return False, compact_error or "Claude authentication probe reported an auth failure.", "auth_failed"
+    stripped_lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not stripped_lines:
+        return False, "Claude probe exited 0 but returned no output.", "empty_output"
+    expected = str(expected_output or "").strip()
+    if expected and expected not in stripped_lines:
+        return False, compact_error or "Claude probe returned unexpected output.", "unexpected_output"
+    return True, None, "ready"
+
+
 def _claude_auth_probe(
     config: dict[str, Any],
     provider_id: str,
@@ -828,6 +903,7 @@ def _claude_auth_probe(
     env: dict[str, str],
     *,
     force: bool = False,
+    check_capacity: bool = False,
 ) -> dict[str, Any]:
     # See _codex_auth_probe: this is always a live observation.
     _ = force
@@ -878,15 +954,104 @@ def _claude_auth_probe(
             ),
             **exc.as_probe(),
         }
+    if not ready:
+        record = _auth_probe_record(
+            provider_id,
+            "claude",
+            ready=False,
+            method="claude_auth_status_refresh",
+            error="Claude CLI authentication is missing or OAuth refresh failed.",
+            status="auth_not_ready",
+            metadata=metadata,
+        )
+        if account_identity:
+            record["account_identity"] = account_identity
+        if account_group:
+            record["account_group"] = account_group
+        return record
+
+    if not check_capacity:
+        record = _auth_probe_record(
+            provider_id,
+            "claude",
+            ready=True,
+            method="claude_auth_status_refresh",
+            error=None,
+            status="ready",
+            metadata=metadata,
+        )
+        if account_identity:
+            record["account_identity"] = account_identity
+        if account_group:
+            record["account_group"] = account_group
+        return record
+
+    settings = _auth_probe_settings(config, provider_id)
+    prompt = str(settings.get("probe_prompt") or AUTH_PROBE_PROMPT)
+    expected_output = str(settings.get("probe_expected_output") or AUTH_PROBE_EXPECTED_OUTPUT)
+    timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
+    command = [
+        binary,
+        "-p",
+        prompt,
+        "--output-format",
+        "text",
+        "--no-session-persistence",
+    ]
+    try:
+        result = run_command(command, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        record = _auth_probe_record(
+            provider_id,
+            "claude",
+            ready=False,
+            method="claude_prompt",
+            error=f"Claude capacity probe timed out after {timeout:g}s.",
+            status="probe_timeout",
+            metadata=metadata,
+        )
+        if account_identity:
+            record["account_identity"] = account_identity
+        if account_group:
+            record["account_group"] = account_group
+        return record
+    except OSError as exc:
+        record = _auth_probe_record(
+            provider_id,
+            "claude",
+            ready=False,
+            method="claude_prompt",
+            error=f"{type(exc).__name__}: {exc}",
+            status="probe_error",
+            metadata=metadata,
+        )
+        if account_identity:
+            record["account_identity"] = account_identity
+        if account_group:
+            record["account_group"] = account_group
+        return record
+
+    cap_ready, error, status = _claude_probe_ready(
+        result.returncode,
+        result.stdout,
+        result.stderr,
+        expected_output=expected_output,
+    )
     record = _auth_probe_record(
         provider_id,
         "claude",
-        ready=ready,
-        method="claude_auth_status_refresh",
-        error=None if ready else "Claude CLI authentication is missing or OAuth refresh failed.",
-        status="ready" if ready else "auth_not_ready",
+        ready=cap_ready,
+        method="claude_prompt",
+        error=error,
+        status=status,
         metadata=metadata,
     )
+    if status == "quota_reached":
+        reset_at = parse_quota_reset_at(
+            "\n".join(part for part in (result.stdout, result.stderr) if part)
+        )
+        if reset_at:
+            record["quota_reset_at"] = reset_at
     if account_identity:
         record["account_identity"] = account_identity
     if account_group:
@@ -903,7 +1068,7 @@ def _claude_auth_status_payload(
     settings = _auth_probe_settings(config, provider_id)
     timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
     try:
-        result = run_command([binary, "auth", "status"], timeout=timeout, env=env)
+        result = run_command([binary, "auth", "status"], timeout=timeout, env=env, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
         return {}
     if result.returncode != 0 or not result.stdout:
@@ -1067,12 +1232,20 @@ def _antigravity_probe_ready(
             native_auth_failed = True
         elif "authenticated successfully" in event:
             native_auth_failed = False
-    if any(marker in combined.lower() for marker in auth_failures) or native_auth_failed:
-        return (
-            False,
-            "Antigravity CLI is not logged in (silent print-mode failure).",
-            "not_logged_in",
-        )
+    not_logged_in = (
+        False,
+        "Antigravity CLI is not logged in (silent print-mode failure).",
+        "not_logged_in",
+    )
+    if any(marker in combined.lower() for marker in auth_failures):
+        return not_logged_in
+    # The native log is only decisive for the silent case.  The CLI's userInfo
+    # cache refresh races its OAuth result and can log a trailing "You are not
+    # logged into Antigravity" microseconds after "authenticated successfully"
+    # even though the prompt round-trip then completes; non-empty model output
+    # proves the credential worked, so that trailing marker must not veto it.
+    if native_auth_failed and not stdout.strip():
+        return not_logged_in
     if not stdout.strip():
         return (
             False,
@@ -1172,7 +1345,7 @@ def _antigravity_auth_probe(
         command.extend(["--log-file", str(native_log_path)])
         command.extend(["--prompt", prompt])
         try:
-            result = run_command(command, timeout=timeout, env=env)
+            result = run_command(command, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
             return _auth_probe_record(
                 provider_id,
@@ -1316,6 +1489,7 @@ def probe_provider_auth(
     *,
     force: bool = True,
     recover_incompatible_models_cache: bool = False,
+    check_capacity: bool = False,
 ) -> dict[str, Any]:
     """Return one fresh, concrete endpoint observation.
 
@@ -1350,6 +1524,7 @@ def probe_provider_auth(
             binary,
             _provider_runtime_env(config, provider_key),
             force=force,
+            check_capacity=check_capacity,
         )
     if delivery_mode == "antigravity":
         binary = _configured_provider_binary(config, provider_key, "antigravity", "agy")

@@ -1,0 +1,66 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-DEV-RELEASE-CAPTURE-DRIFT-FORWARDING-CORRECTIVE-001",
+  "worker": "Antigravity",
+  "reviewer": "Claude",
+  "title": "Forward drift baseline inputs into remote capture driver",
+  "status": "completed",
+  "reproduction": {
+    "failing_run_id": "35174807588",
+    "failing_stage": "capture",
+    "exit_code": 75,
+    "error_code": "DEV_ARTIFACT_OPERATION_FAILED",
+    "failure_location": "dev_release_artifact_driver.py:363",
+    "observed_live_bff_sha": "dc15751a9b20f8bc0931529d68af8898e691c898",
+    "previous_backend_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "incident_description": "Failed deployment run 35174807588 exported PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE ending in +live_bff_drift_recovery and PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA equal to dc15751a9b20f8bc0931529d68af8898e691c898, but scripts/capture_dev_artifact_baseline.py built the remote driver command from the FIELDS whitelist and exports without forwarding either drift input. On the VM, the driver received empty baseline source and observed sha, resolving _drift_recovery_source to None and failing closed at line 363 with exit 75."
+  },
+  "root_cause": {
+    "wrapper_omitted_drift_forwarding": "scripts/capture_dev_artifact_baseline.py only forwarded the 8 fixed identity fields from FIELDS and viewer credential exports, omitting PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE and PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA from the remote driver invocation args."
+  },
+  "fix_description": {
+    "capture_dev_artifact_baseline_py": "Added DRIFT_FIELDS = ('baseline_source', 'observed_live_bff_sha') and iterated them in remote_script() to append --baseline-source and --observed-live-bff-sha to driver command arguments when present in env.",
+    "test_capture_dev_artifact_baseline_py": "Asserted --baseline-source and --observed-live-bff-sha are absent when drift environment is not set; added test_remote_script_forwards_drift_environment_when_present verifying exact values in rendered args; added test_rendered_script_refuses_invalid_observed_drift_sha asserting the rendered script fails closed when observed sha is not an exact 40-hex commit.",
+    "test_dev_release_artifact_driver_py": "Added test_drift_reproduction_run_35174807588_omitted_forwarding_fails_closed reproducing run 35174807588 line 363 mismatch when drift forwarding is omitted."
+  },
+  "invariants_enforced": {
+    "eight_field_identity": "The 8-field identity contract (candidate_id, run_id, attempt, controller_sha, candidate_backend_sha, candidate_frontend_sha, previous_backend_sha, previous_frontend_sha) is unchanged; rollback authority remains previous_backend_sha.",
+    "no_synthetic_drift": "Drift inputs are forwarded only when present in runner environment; no synthetic drift source is generated when baseline did not classify drift recovery.",
+    "fail_closed_security": "Observed drift SHA must be an exact 40-hex commit; non-40-hex format strictly fails closed with exit code 75.",
+    "isolation": "Pure source and isolated test scope only; no hosted deployments, redeploys, or capital changes performed."
+  },
+  "validation": {
+    "pytest_command": "PYTHONPATH=/tmp/pytest-lib:. /tmp/pytest-lib/bin/pytest scripts/test_capture_dev_artifact_baseline.py scripts/test_dev_release_artifact_driver.py",
+    "passed": 392,
+    "skipped": 0,
+    "failed": 0,
+    "duration_seconds": 58.98,
+    "exit_code": 0
+  },
+  "scope_definition": {
+    "total_artifacts": 4,
+    "artifacts": {
+      "scripts/capture_dev_artifact_baseline.py": {
+        "sha256": "a1f7d0a941b8f54547b7f00fbbde173155520187d5b31b3f1ab2aff2698bf39c",
+        "lines": 389,
+        "bytes": 21126,
+        "disposition": "MODIFIED"
+      },
+      "scripts/test_capture_dev_artifact_baseline.py": {
+        "sha256": "d87091af01c32b955a33993ae088bc452750ce830056d8372ecf204e2f71e162",
+        "lines": 483,
+        "bytes": 25313,
+        "disposition": "MODIFIED"
+      },
+      "scripts/test_dev_release_artifact_driver.py": {
+        "sha256": "4135eb7b999dca52f0f778a19edf712cb9e2d9d24fff263b6f0689813e901bb4",
+        "lines": 999,
+        "bytes": 52785,
+        "disposition": "MODIFIED"
+      },
+      "docs/deployment/evidence/OPS-DEV-RELEASE-CAPTURE-DRIFT-FORWARDING-CORRECTIVE-001/evidence.json": {
+        "disposition": "CREATED"
+      }
+    }
+  }
+}

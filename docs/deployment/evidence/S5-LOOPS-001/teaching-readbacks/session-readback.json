@@ -1,0 +1,65 @@
+{
+  "session_id": "trn-20260917-7accca38530e",
+  "tenant_id": "tenant-dev",
+  "persona_id": "persona-strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+  "status": "active",
+  "mode": "evaluation",
+  "started_at": "2026-09-17T00:57:01Z",
+  "ended_at": null,
+  "eval_identity": null,
+  "evaluation_result": null,
+  "consultation_required": false,
+  "consult_request_id": null,
+  "consultation_receipt": null,
+  "preview": {
+    "eval_id": "teval-20260917-7accca38530e-001",
+    "session_id": "trn-20260917-7accca38530e",
+    "status": "preview_unavailable",
+    "baseline_snapshot_at": "2026-09-17T00:57:01Z",
+    "candidate_snapshot_at": "2026-09-17T00:57:01Z",
+    "metric_delta": {},
+    "control_diff": []
+  },
+  "events": [
+    {
+      "event_id": "tevt-20260917-b89287bc65-001",
+      "session_id": "trn-20260917-7accca38530e",
+      "tenant_id": "tenant-dev",
+      "event_type": "control_patch",
+      "actor_type": "user",
+      "payload": {
+        "summary": "Trainer controls patched.",
+        "patch_delta": [
+          {
+            "parameter_key": "short_window",
+            "previous_value": 5,
+            "new_value": 7
+          },
+          {
+            "parameter_key": "long_window",
+            "previous_value": 20,
+            "new_value": 21
+          }
+        ]
+      },
+      "timestamp": "2026-09-17T00:57:22Z",
+      "correlation_id": "trn-20260917-7accca38530e:tevt-20260917-b89287bc65-001",
+      "sequence_number": 1,
+      "emitted_at": "2026-09-17T00:57:22Z",
+      "actor": "alpha-revalidation-worker",
+      "summary": "Trainer controls patched.",
+      "patch_delta": [
+        {
+          "parameter_key": "short_window",
+          "previous_value": 5,
+          "new_value": 7
+        },
+        {
+          "parameter_key": "long_window",
+          "previous_value": 20,
+          "new_value": 21
+        }
+      ]
+    }
+  ]
+}

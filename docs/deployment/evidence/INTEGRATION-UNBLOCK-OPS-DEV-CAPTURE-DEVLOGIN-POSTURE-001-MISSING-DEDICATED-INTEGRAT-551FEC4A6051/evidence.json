@@ -1,0 +1,83 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001-MISSING-DEDICATED-INTEGRAT-551FEC4A6051",
+  "recorded_at": "2026-09-18T03:54:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "scope": "Root-cause the auto-integrator missing-dedicated-integration-path rejection for OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001 and confirm the original PR #5908 is not stranded.",
+  "repository": "ajoe734/pantheon",
+  "command_runtime_sha": "e7db147f6a31f4af5754de7943d6edc4e08d3e4b",
+  "unblock_request": {
+    "source_task_id": "OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001",
+    "source_task_generation": 1,
+    "pr": 5908,
+    "head_sha": "b9966ad380384752114f49ce9b2493fd5304b4c7",
+    "reason": "missing-dedicated-integration-path",
+    "request_sha256": "fa455332b2a0a420100e61c7b8b73dc209d3f8a87699e56b71d270183ec31d0a",
+    "detail": "Cannot integrate OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001: repository `pantheon` has no explicit integration_path; live execution may not use its worker/source local_path as the merge checkout."
+  },
+  "root_cause": {
+    "summary": "During candidate evaluation in scripts/git/auto_integrator.py, live integration execution (--execute) enforces require_dedicated_integration_path=True (line 3433). Candidate discovery sets dedicated_integration_path = bool(resolved_repo.get('integration_path')) (line 607). In the live supervisor runtime configuration at /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json, coordination.repositories.pantheon contained only {'repo': 'ajoe734/pantheon'} and lacked an explicit integration_path entry. Consequently, dedicated_integration_path evaluated to False, triggering the fail-closed rejection at auto_integrator.py:2319-2324 with reason 'missing-dedicated-integration-path' and opening this unblock task.",
+    "check_implicated": "scripts/git/auto_integrator.py:2319-2324 (if require_dedicated_integration_path and not candidate.dedicated_integration_path)",
+    "configuration_source": "The missing integration_path stems from the runtime replacement recorded in /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/.orchestrator/logs/promotion-20260918T010014Z.json, where promote_supervisor_runtime.py was invoked without providing --repository-integration-root pantheon=<path>, so coordination.repositories.pantheon was rendered without an integration_path. When check_config_drift.py is evaluated with expected integration paths, it flags repository_integration_drift (expected pantheon integration root present under pantheon-ci-deploy/integration-runtimes/pantheon, but live_integration_path=null in live-supervisor-mainroot-config.json).",
+    "integrator_behavior": "scripts/git/auto_integrator.py operated exactly as designed. Per docs/operations/auto-integrator.md § Safety Model, live execution strictly requires a dedicated, isolated checkout for merge operations (coordination.repositories.<id>.integration_path) to prevent destructive merges or race conditions against shared worker or coordination worktrees (such as coordination-root, where ai-status.json is actively mutated). By failing closed with 'missing-dedicated-integration-path', auto_integrator.py prevented unsafe merge attempts against unisolated paths.",
+    "not_an_integrator_defect": true
+  },
+  "original_pr_status": {
+    "original_pr_number": 5908,
+    "original_pr_url": "https://github.com/ajoe734/pantheon/pull/5908",
+    "base_branch": "dev",
+    "base_sha": "b435986b13d5c323c533225f5ea3f6481d79a1be",
+    "head_branch": "task/OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001",
+    "head_sha": "b9966ad380384752114f49ce9b2493fd5304b4c7",
+    "state": "OPEN",
+    "mergeable": "MERGEABLE",
+    "commits_behind_dev": 0,
+    "merge_base_is_origin_dev": true,
+    "required_checks_status": "All required branch protection checks on dev (Commit trailers, Runtime mirror guard, Smoke acceptance) passed. Non-required informational status context 'Pantheon canonical review gate' was posted as FAILURE on initial PR open prior to review approval, but is excluded from required checks in live config and dev branch protection.",
+    "canonical_task_status": "review_approved",
+    "canonical_reviewer": "Claude",
+    "canonical_review_timestamp": "2026-09-18T03:21:19Z",
+    "canonical_review_message": "Independent review: verified PR #5908 head b9966ad380384752114f49ce9b2493fd5304b4c7 against dev base b435986b13d5c323c533225f5ea3f6481d79a1be. Re-ran full suite locally (.venv-pantheon): pytest scripts/test_dev_release_artifact_driver.py scripts/test_dev_artifact_compensation_evidence.py scripts/test_dev_paper_diagnostics_failure_path.py scripts/test_capture_dev_artifact_baseline.py scripts/test_dev_release_artifacts.py -> 577 passed, 1 skipped, matching commit claim. Confirmed dev_login_enabled posture is read only from the already-verified /bff/version response (post strict-auth/source-SHA checks), so the literal-false fast path is not attacker-influenceable; only literal False skips the probe, non-boolean/missing still demands full round trip; compensation evidence validator now requires authenticated_viewer_readback_verified to equal dev_login_enabled exactly. Health, exact SHA, strict auth posture, FE manifest bytes, and both unauthenticated denial probes remain mandatory on every path. All 6 required PR checks green except the review gate (expected pre-approval).",
+    "stranded": false
+  },
+  "validation": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q scripts/git/test_auto_integrator.py",
+      "exit_code": 0,
+      "result": "151 passed, 25 subtests passed in 18.53s (including test_live_execute_requires_explicit_dedicated_integration_path)"
+    },
+    {
+      "command": "gh pr view 5908 --repo ajoe734/pantheon --json number,title,state,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus",
+      "exit_code": 0,
+      "result": "state: OPEN, mergeable: MERGEABLE, headRefOid: b9966ad380384752114f49ce9b2493fd5304b4c7, baseRefName: dev"
+    },
+    {
+      "command": "git merge-base origin/dev b9966ad380384752114f49ce9b2493fd5304b4c7",
+      "exit_code": 0,
+      "result": "b435986b13d5c323c533225f5ea3f6481d79a1be (matches current origin/dev tip; exactly 0 commits behind)"
+    },
+    {
+      "command": "gh api repos/ajoe734/pantheon/branches/dev/protection/required_status_checks",
+      "exit_code": 0,
+      "result": "contexts: ['Commit trailers', 'Runtime mirror guard', 'Smoke acceptance'] (all passed on PR #5908)"
+    },
+    {
+      "command": "AI_NAME=Antigravity2 $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPS-DEV-CAPTURE-DEVLOGIN-POSTURE-001",
+      "exit_code": 0,
+      "result": "status: review_approved, reviewer: Claude, head_sha: b9966ad380384752114f49ce9b2493fd5304b4c7"
+    }
+  ],
+  "resolution": {
+    "integrator_code_changed": false,
+    "reason_no_code_change": "scripts/git/auto_integrator.py is working as intended. The fail-closed requirement for a dedicated integration path protects shared checkouts from unsafe concurrent mutations during automated merges. The missing integration_path was an external deployment/runtime configuration omission during supervisor promotion, not a defect in auto_integrator.py.",
+    "action_taken": "Investigated and documented the root cause. Confirmed that PR #5908 is fully updated, mergeable, zero commits behind origin/dev, green on all required CI checks, approved by reviewer Claude, and not stranded. Auto-integration will proceed as soon as supervisor topology provisioning attaches the dedicated integration path.",
+    "original_pr_number": 5908,
+    "original_pr_head_sha": "b9966ad380384752114f49ce9b2493fd5304b4c7",
+    "original_pr_mergeable": true,
+    "original_pr_stranded": false
+  },
+  "acceptance": {
+    "root_cause_documented": true,
+    "original_pr_updated_or_superseded_and_no_longer_stranded": true
+  }
+}

@@ -27,7 +27,12 @@ from services.execution.lean_runtime.bootstrap_contract import (
 )
 
 
-LEAN_ALGORITHM_PATH = REPO_ROOT / "lean" / "Algorithm.Python"
+PANTHEON_EXTERNAL_LEAN_PATH = REPO_ROOT / "integrations" / "lean"
+LEAN_ALGORITHM_PATH = (
+    PANTHEON_EXTERNAL_LEAN_PATH
+    if (PANTHEON_EXTERNAL_LEAN_PATH / "pantheon_algo").is_dir()
+    else REPO_ROOT / "lean" / "Algorithm.Python"
+)
 
 SMOKE_STRATEGY_ID = "lean-smoke-alpha"
 SMOKE_VERSION = "1.0.0"

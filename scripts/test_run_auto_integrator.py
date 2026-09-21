@@ -121,6 +121,46 @@ def test_execute_mode_forwards_explicit_live_config(tmp_path: Path) -> None:
     assert payload["live_supervisor_config"] == str(live_config)
 
 
+def test_execute_mode_without_max_tasks_env_omits_the_flag(tmp_path: Path) -> None:
+    """A bare cron line (no AUTO_INTEGRATOR_MAX_TASKS) must not force
+    --max-tasks 1 onto the integrator; omitting the flag lets
+    auto_integrator.py fall through to its persistent settings-derived
+    default (config file, else Settings.max_tasks_per_run=2)."""
+
+    repo, scripts = _install_fake_integrator(tmp_path)
+    status_root = tmp_path / "coordination-root"
+    status_root.mkdir()
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir()
+    live_config.write_text("{}\n", encoding="utf-8")
+    output = tmp_path / "args.json"
+    env = os.environ.copy()
+    env.update(
+        {
+            "PANTHEON_STATUS_ROOT": str(status_root),
+            "PANTHEON_AUTO_INTEGRATOR_CONFIG": str(live_config),
+            "AUTO_INTEGRATOR_ARGS_OUT": str(output),
+        }
+    )
+    env.pop("AUTO_INTEGRATOR_DRY_RUN", None)
+    env.pop("AUTO_INTEGRATOR_MAX_TASKS", None)
+
+    result = subprocess.run(
+        ["bash", str(scripts / WRAPPER.name)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["argv"] == ["--execute"]
+    assert "--max-tasks" not in payload["argv"]
+    assert payload["live_supervisor_config"] == str(live_config)
+
+
 def test_execute_mode_without_override_leaves_live_config_unset(tmp_path: Path) -> None:
     """Negative: with no explicit PANTHEON_AUTO_INTEGRATOR_CONFIG, --execute
     must not export PANTHEON_LIVE_SUPERVISOR_CONFIG pointing at the

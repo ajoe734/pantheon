@@ -1,0 +1,22 @@
+{
+  "at": "2026-09-15T03:20:08Z",
+  "expected": {
+    "attempts": 1,
+    "checksum": "sha256:7ab1eb0c154591e2f5aa08aee27ddb61d0a38c2d0c02ed5ed1fe10678ae17ea5",
+    "event_id": "source-normalized:src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor:sha256:01c274a875884cec538eaab2a03c974b9a5ad7e8f9ec634e4463f7c22d08b81b",
+    "job_id": "distill-8f02947c217da2b3fe324803",
+    "lease_owner": null,
+    "processed_at": 1789442411.5707676,
+    "registry_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+    "seed_id": "seed-63a42b65a9d741e0",
+    "source_digest": "sha256:01c274a875884cec538eaab2a03c974b9a5ad7e8f9ec634e4463f7c22d08b81b",
+    "source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor",
+    "status": "done",
+    "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+    "version": "1.0.0"
+  },
+  "mode": "execute",
+  "note": "Research schema/lineage approval only; no paper/live deployment or capital approval",
+  "requested_research_review_risk": "low",
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7"
+}

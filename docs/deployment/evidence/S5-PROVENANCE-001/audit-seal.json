@@ -1,0 +1,10 @@
+{
+  "algorithm": "sha256",
+  "description": "Cryptographic SHA-256 seal of all files in docs/deployment/evidence/S5-PROVENANCE-001/ (excluding evidence.json to remain strictly acyclic).",
+  "files": {
+    "docs/deployment/evidence/S5-PROVENANCE-001/README.md": "d6a43bdd7c2274ba9d8b1a6d5565c3c4eb144a993a6e8ecd628fcfcc8b5298a0",
+    "docs/deployment/evidence/S5-PROVENANCE-001/loop5-provenance-crosscheck.json": "29368507b7aa0cdae1d313d066f062df73d349390697274d2ebd135d33fe1333",
+    "docs/deployment/evidence/S5-PROVENANCE-001/loop8-runtime-binding-crosscheck.json": "e67ed8fc2d81155ea3eb570da7375bd45dfbd30c030702afab2dc5dbefc4ae06",
+    "docs/deployment/evidence/S5-PROVENANCE-001/loop9-paper-lifecycle-crosscheck.json": "04be7fa53892da45f6adf7d40543b4e6a4ec0701df60c971de9b8cf2758ffa65"
+  }
+}

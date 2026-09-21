@@ -36,13 +36,6 @@ from fastapi.params import Param as FastAPIParam
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-def _resolve_param(val: Any) -> Any:
-    if isinstance(val, FastAPIParam):
-        if val.default is ... or type(val.default).__name__ == "PydanticUndefined":
-            return None
-        return val.default
-    return val
-
 from services.foundation import (  # noqa: E402
     ActorRef,
     ActorType,
@@ -151,6 +144,17 @@ from .emergency_containment_policy import validate_emergency_containment
 from .session_lifecycle_store import SessionLifecycleStore
 from .auth import policy as auth_policy
 from .auth.policy import create_auth_dependencies
+from .shared.cross_domain_utils import (
+    _management_as_float,
+    _management_first_float,
+    _management_nested_value,
+    _management_telemetry_rollup,
+    _merge_registry_records,
+    _ppl_alloc_009_paper_environment_guard,
+    _resolve_param,
+    _sort_records_latest_first,
+    _surface_degradation_reason,
+)
 from .management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
 from .agora_audit_store import AgoraAuditStore
 from .management_nl_command_idempotency import (
@@ -219,6 +223,32 @@ from .personas.reconciliation import (
     PersonaProvisioningReconciliationMutationPort,
     PersonaReconciliationMutationError,
 )
+from .personas.service import (
+    PersonaDirectorySnapshot,
+    _append_persona_reconcile_diagnostic,
+    _checkpoint_persona_provisioning_readback,
+    _evaluate_persona_provisioning_status,
+    _get_persona_directory_snapshot,
+    _list_persona_records,
+    _normalize_lifecycle_state,
+    _normalize_risk_level,
+    _openclaw_agent_reconcile_request,
+    _persona_create_required_data_sources,
+    _persona_first_evaluation_readback_poll_seconds,
+    _persona_first_evaluation_readback_timeout_seconds,
+    _persona_fleet_context_defaults_by_market,
+    _persona_fleet_context_missing,
+    _persona_fleet_context_overlay,
+    _persona_fleet_market_key,
+    _persona_id,
+    _persona_provisioning_metadata,
+    _persona_provisioning_store,
+    _persona_record_for_provisioning,
+    _persona_record_tenant_id,
+    _reconcile_persona_provisioning_compensation,
+    _register_persona_cron_required,
+    _remove_persona_cron_required,
+)
 try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
@@ -234,8 +264,6 @@ except ImportError:
         build_persona_runtime_profile = None  # type: ignore[assignment]
         PersonaRuntimeProfile = None  # type: ignore[assignment,misc]
 log = logging.getLogger(__name__)
-def _bool_from_env(name: str, *, default: bool = False) -> bool:
-    return auth_policy.bool_from_env(name, default=default)
 _BFF_AUTH_STUB_ENV = auth_policy._BFF_AUTH_STUB_ENV
 _BFF_STUB_LEGACY_BARE_TOKENS_ENV = auth_policy._BFF_STUB_LEGACY_BARE_TOKENS_ENV
 _BFF_STUB_CAPABILITY_ROLES = auth_policy._BFF_STUB_CAPABILITY_ROLES
@@ -1242,7 +1270,7 @@ def _command_targets_live_runtime(cmd: OperatorCommand) -> bool:
     target_id = _env_token(cmd.target.id)
     return bool(re.search(r"(^|-)live($|-)", target_id))
 def _ensure_live_broker_scope_allowed(cmd: OperatorCommand, payload: Dict[str, Any]) -> None:
-    if _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False):
+    if auth_policy.bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False):
         return
     if not (_command_targets_live_runtime(cmd) or _payload_has_live_broker_signal(payload)):
         return
@@ -4390,6 +4418,8 @@ def _loop_run_controller_is_formal(metadata: Mapping[str, Any]) -> bool:
         and str(controller.get("mode") or "").strip().lower() == "live"
         and str(controller.get("truth_level") or "").strip().lower() == "canonical_live"
     )
+from .research.routes.common import format_dataset_surface_status as _format_dataset_surface_status
+
 def _dataset_surface_status(
     dataset: str,
     *,
@@ -4397,49 +4427,18 @@ def _dataset_surface_status(
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
     source: Optional[str] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
-    surface = dict(_surface_status())
     source = source or read_store.dataset_source(dataset)
-    surface["source"] = source
-
-    if source == "local_snapshot":
-        if surface.get("status") == "ok":
-            surface["status"] = "degraded"
-        surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
-        surface["staleness"] = {
-            "served_from": "local_snapshot",
-            "last_known_at": snapshot_at or utc_now(),
-        }
-    elif source == _LEGACY_LOOP_RUN_SOURCE:
-        surface["status"] = "degraded"
-        surface["note"] = (
-            "Incident-derived loop reconstruction is a legacy backfill view; "
-            "it is not canonical lifecycle-projector or live controller truth."
-        )
-        surface["projection_mode"] = "backfill"
-        surface["accepted_live"] = False
-        surface["staleness"] = {
-            "served_from": _LEGACY_LOOP_RUN_SOURCE,
-            "last_known_at": snapshot_at or utc_now(),
-        }
-    elif source == "missing":
-        surface["status"] = "unavailable"
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
-        )
-
-    if has_data is False:
-        if surface.get("status") == "ok":
-            surface["status"] = "unavailable"
-        if missing_message:
-            surface["message"] = missing_message
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
-        )
-
-    return surface
+    return _format_dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+        missing_message=missing_message,
+        source=source,
+        utc_now=utc_now,
+        **kwargs,
+    )
 def _loop_run_surface_status(
     available: bool,
     *,
@@ -5971,7 +5970,7 @@ def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
         if isinstance(broker_surface.get("service_status"), dict)
         else _composed_surface_status(snapshot_at=snapshot_at)
     )
-    live_gate_enabled = _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
+    live_gate_enabled = auth_policy.bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
     live_execution_enabled = bool(broker_surface.get("live_execution_enabled"))
     live_adapter_state = str(broker_surface.get("live_adapter_state") or "unknown").lower()
     broker_live_ready = (
@@ -6064,8 +6063,8 @@ def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]
         in {"canary", "live", "production", "staging-live"}
     ]
     gate_enabled = (
-        _bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False)
-        or _bool_from_env("PANTHEON_CAPITAL_BINDING_LIVE_ENABLED", default=False)
+        auth_policy.bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False)
+        or auth_policy.bool_from_env("PANTHEON_CAPITAL_BINDING_LIVE_ENABLED", default=False)
     )
     evidence_refs = [
         _readiness_evidence_ref(_READINESS_NO_REAL_CAPITAL_EVIDENCE, "No real capital evidence"),
@@ -6088,8 +6087,8 @@ def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]
             message="Live capital binding remains fail-closed until explicit capital-binding live gates are enabled.",
             evidence_refs=[_READINESS_NO_REAL_CAPITAL_EVIDENCE],
             details={
-                "OPENCLAW_CAPITAL_BINDING_ENABLED": _bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False),
-                "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED": _bool_from_env(
+                "OPENCLAW_CAPITAL_BINDING_ENABLED": auth_policy.bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False),
+                "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED": auth_policy.bool_from_env(
                     "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED",
                     default=False,
                 ),
@@ -6241,22 +6240,6 @@ def _snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
     if staleness is not None:
         meta["staleness"] = staleness
     return meta
-def _surface_degradation_reason(
-    surface: Dict[str, Any],
-    *,
-    degraded_reason: str,
-    unavailable_reason: str,
-) -> Optional[str]:
-    status = surface.get("status")
-    if status == "ok":
-        return None
-    if status == "unavailable":
-        return unavailable_reason
-    if surface.get("message"):
-        return str(surface["message"])
-    if surface.get("note"):
-        return str(surface["note"])
-    return degraded_reason
 _COMMAND_RECEIPT_STATUS_MAP = {
     CommandStatus.SUBMITTED.value: CommandReceiptStatus.ACCEPTED,
     CommandStatus.PROCESSING.value: CommandReceiptStatus.QUEUED,
@@ -7135,30 +7118,6 @@ def _pm12_allocation_evaluation_record(evaluation_id: str) -> Dict[str, Any]:
             precondition_failed="allocation_evaluation_id",
         )
     return evaluation
-def _ppl_alloc_009_paper_environment_guard() -> None:
-    env_name = str(os.getenv("PANTHEON_ENV") or "").strip().lower()
-    if (
-        env_name != "dev"
-        or _bff_auth_mode() != "strict"
-        or _bool_from_env(_BFF_AUTH_STUB_ENV, default=False)
-        or _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
-        or _bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
-    ):
-        raise _bff_error(
-            403,
-            ErrorCode.PRECONDITION_FAILED,
-            "Governed paper allocation simulation is unavailable",
-            (
-                "The paper-only authority requires strict dev auth with both "
-                "live broker and canary execution disabled."
-            ),
-            precondition_failed="paper_simulation_environment",
-            suggestion=(
-                "Use the accepted strict dev BFF with "
-                "PANTHEON_LIVE_BROKER_ENABLED=false and "
-                "PANTHEON_CANARY_EXECUTION_ENABLED=false"
-            ),
-        )
 def _ppl_alloc_009_paper_rebalance_authority(
     cmd: OperatorCommand,
 ) -> bool:
@@ -7341,15 +7300,6 @@ def __getattr__(name: str) -> Any:
 _PERSONA_PROVISIONING_STORE = None
 _PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
 _PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
-def _persona_provisioning_store():
-    """Lazily bootstrap the durable cross-replica coordination ledger."""
-    global _PERSONA_PROVISIONING_STORE
-    if _PERSONA_PROVISIONING_STORE is not None:
-        return _PERSONA_PROVISIONING_STORE
-    with _PERSONA_PROVISIONING_STORE_LOCK:
-        if _PERSONA_PROVISIONING_STORE is None:
-            _PERSONA_PROVISIONING_STORE = make_persona_provisioning_store()
-    return _PERSONA_PROVISIONING_STORE
 class _PersonaOwnerHttpTransport:
     """Strict synchronous transport to canonical provisioning owner APIs."""
 
@@ -7598,187 +7548,11 @@ def _strategy_persona_action_command(
         "result": payload_dump,
     }
     return payload_dump
-def _normalize_lifecycle_state(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    return _STRATEGY_BFF_LIFECYCLE_MAP.get(text, "draft")
-def _normalize_risk_level(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    return _STRATEGY_BFF_RISK_MAP.get(text, "medium")
 def _deployment_url(path: str) -> str:
     base = os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip().rstrip("/")
     if not base:
         base = "http://deployment:8095"
     return f"{base}{path}"
-def _checkpoint_persona_provisioning_readback(
-    *,
-    persona_id: str,
-    metadata: Dict[str, Any],
-    state: str,
-    runtime_binding_id: str,
-    runtime_id: str,
-    authoritative_readback: Optional[Mapping[str, Any]] = None,
-    failure_reason: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Persist one terminal decision and return its durable replay outcome."""
-    tenant_id = str(metadata.get("tenant_id") or "").strip()
-    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
-    if not tenant_id or not idempotency_key:
-        return {"committed": False, "ledger_state": None}
-    lease_owner = f"persona-readback:{uuid.uuid4().hex}"
-    store = None
-    record = None
-    try:
-        store = _persona_provisioning_store()
-        record = store.acquire(
-            tenant_id,
-            idempotency_key,
-            lease_owner=lease_owner,
-            lease_seconds=max(
-                60,
-                int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
-            ),
-        )
-        if record is None:
-            return {"committed": False, "ledger_state": None}
-        desired_terminal_state = {
-            "paper_running": "succeeded",
-            "provisioning_failed": "failed",
-        }.get(state)
-        if desired_terminal_state is None:
-            store.release(record, lease_owner=lease_owner)
-            return {"committed": False, "ledger_state": None}
-        if record.state in {"succeeded", "failed", "compensated"}:
-            compatible = record.state == desired_terminal_state or (
-                desired_terminal_state == "failed" and record.state == "compensated"
-            )
-            schedule_cleanup = None
-            cleanup_error = None
-            if record.state in {"failed", "compensated"}:
-                try:
-                    schedule_cleanup = _remove_persona_cron_required(persona_id)
-                    record.references["first_evaluation_schedule_cleanup"] = deepcopy(
-                        schedule_cleanup
-                    )
-                except Exception as exc:
-                    cleanup_error = str(exc) or exc.__class__.__name__
-                    record.references["first_evaluation_schedule_cleanup"] = {
-                        "status": "pending",
-                        "registered": None,
-                        "terminal_reason": cleanup_error,
-                    }
-            # A terminal ledger release is atomic, so its references and
-            # compensation already belong to that decision.  Preserve them
-            # verbatim on replay; in particular, never turn a compensated
-            # record back into failed or reverse an earlier outcome.
-            store.release(record, lease_owner=lease_owner)
-            return {
-                "committed": compatible,
-                "ledger_state": record.state,
-                "terminal_replay": True,
-                "failure_reason": str(
-                    (record.error or {}).get("terminal_reason")
-                    or (record.error or {}).get("reason")
-                    or ""
-                ),
-                "schedule_cleanup": deepcopy(schedule_cleanup),
-                "schedule_cleanup_error": cleanup_error,
-                "references": deepcopy(record.references),
-                "result": deepcopy(record.result),
-            }
-        if runtime_binding_id:
-            record.references["runtime_binding_id"] = runtime_binding_id
-        if runtime_id:
-            record.references["runtime_id"] = runtime_id
-        if state == "paper_running":
-            if not isinstance(authoritative_readback, Mapping):
-                store.release(record, lease_owner=lease_owner)
-                return {"committed": False, "ledger_state": record.state}
-            record.references["authoritative_readback"] = deepcopy(
-                dict(authoritative_readback)
-            )
-        schedule_cleanup = None
-        cleanup_error = None
-        if state == "provisioning_failed":
-            # Destructive cleanup happens while the terminal ledger lease is
-            # held.  A concurrent success decision therefore cannot race with
-            # removal of the schedule it just proved authoritative.  Cleanup
-            # unavailability must not erase the durable terminal decision:
-            # persist a retryable cleanup receipt and let later controller
-            # passes finish the fail-closed removal.
-            try:
-                schedule_cleanup = _remove_persona_cron_required(persona_id)
-                record.references["first_evaluation_schedule_cleanup"] = deepcopy(
-                    schedule_cleanup
-                )
-            except Exception as exc:
-                cleanup_error = str(exc) or exc.__class__.__name__
-                record.references["first_evaluation_schedule_cleanup"] = {
-                    "status": "pending",
-                    "registered": None,
-                    "terminal_reason": cleanup_error,
-                }
-        if state == "paper_running":
-            record.state = "succeeded"
-            record.current_step = "authoritative_readback_complete"
-            record.error = None
-            record.result = {
-                "status": "paper_running",
-                "paper_running": True,
-                "authoritative_readback": deepcopy(dict(authoritative_readback or {})),
-                "recorded_at": utc_now(),
-            }
-        elif state == "provisioning_failed":
-            record.state = "failed"
-            record.current_step = "authoritative_readback_failed"
-            record.error = {
-                "code": "PERSONA_PROVISIONING_READBACK_FAILED",
-                "reason": failure_reason or "authoritative_readback_failed",
-                "failed_step": "authoritative_readback",
-                "terminal_reason": failure_reason or "authoritative_readback_failed",
-                "terminal": True,
-                "failed_at": utc_now(),
-                "recorded_at": utc_now(),
-            }
-            record.result = {
-                "status": "provisioning_failed",
-                "paper_running": False,
-                "failure_reason": failure_reason or "authoritative_readback_failed",
-                "recorded_at": utc_now(),
-            }
-        released = store.release(record, lease_owner=lease_owner)
-        committed = bool(
-            released.state == record.state and released.current_step == record.current_step
-        )
-        return {
-            "committed": committed,
-            "ledger_state": released.state,
-            "terminal_replay": False,
-            "schedule_cleanup": deepcopy(schedule_cleanup),
-            "schedule_cleanup_error": cleanup_error,
-            "references": deepcopy(released.references),
-            "result": deepcopy(released.result),
-        }
-    except Exception as exc:
-        # Owner lifecycle remains fail-closed; inability to persist the mirror
-        # is logged and never turns missing readback into success.
-        log.warning("Failed to checkpoint Persona provisioning readback: %s", exc)
-        if store is not None and record is not None:
-            try:
-                store.release(record, lease_owner=lease_owner)
-            except Exception:
-                pass
-        return {
-            "committed": False,
-            "ledger_state": None,
-            "terminal_replay": False,
-            "error": str(exc) or exc.__class__.__name__,
-        }
-def _append_persona_reconcile_diagnostic(
-    diagnostics: Optional[List[str]],
-    dependency: str,
-) -> None:
-    if diagnostics is not None and dependency not in diagnostics:
-        diagnostics.append(dependency)
 def _persist_persona_provisioning_terminal_transition(
     persona_id: str,
     *,
@@ -7920,615 +7694,6 @@ def _materialize_terminal_persona_provisioning_ledger(
     raw["status"] = new_state
     raw.setdefault("metadata", {}).update(metadata_updates)
     raw["metadata"]["lifecycle_state"] = new_state
-    return new_state
-def _reconcile_persona_provisioning_compensation(
-    metadata: Mapping[str, Any],
-) -> Optional[Dict[str, Any]]:
-    """Resume fail-closed Deployment/Capital compensation from durable state."""
-
-    tenant_id = str(metadata.get("tenant_id") or "").strip()
-    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
-    if not tenant_id or not idempotency_key:
-        return None
-    store = _persona_provisioning_store()
-    record = store.get(tenant_id, idempotency_key)
-    if record is None:
-        return None
-    coordinator = PersonaProvisioningCoordinator(
-        store=store,
-        transport=_PersonaOwnerHttpTransport(
-            tenant_id=str(metadata.get("tenant_id") or "")
-        ),
-        schedule_registrar=_register_persona_cron_required,
-        lease_owner=f"persona-compensation:{uuid.uuid4().hex}",
-        lease_seconds=max(
-            30,
-            int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
-        ),
-    )
-    try:
-        reconciled = coordinator.reconcile_failure_compensation(record)
-    except Exception as exc:
-        log.warning("Failed to reconcile Persona provisioning compensation: %s", exc)
-        return {
-            "status": "pending",
-            "terminal_reason": str(exc) or exc.__class__.__name__,
-        }
-    return {
-        "ledger_state": reconciled.state,
-        "current_step": reconciled.current_step,
-        **deepcopy(reconciled.compensation or {"status": "not_required"}),
-    }
-def _evaluate_persona_provisioning_status(
-    persona_id: str,
-    raw: Dict[str, Any],
-    *,
-    all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
-    all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
-    all_monitoring_sessions: Optional[List[Dict[str, Any]]] = None,
-    diagnostics: Optional[List[str]] = None,
-) -> str:
-    metadata = raw.get("metadata") or {}
-    current_state = raw.get("lifecycle_state") or raw.get("state")
-    if current_state == "provisioning_failed":
-        terminal_updates: Dict[str, Any] = {}
-        try:
-            schedule_cleanup = _remove_persona_cron_required(persona_id)
-            terminal_updates["first_evaluation_schedule_cleanup"] = schedule_cleanup
-        except Exception as exc:
-            log.warning(
-                "Failed to reconcile terminal first-evaluation cleanup for %s: %s",
-                persona_id,
-                exc,
-            )
-            terminal_updates["first_evaluation_schedule_cleanup"] = {
-                "status": "pending",
-                "registered": None,
-                "terminal_reason": str(exc) or exc.__class__.__name__,
-            }
-            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
-        compensation = _reconcile_persona_provisioning_compensation(metadata)
-        if compensation is not None:
-            terminal_updates["provisioning_compensation"] = compensation
-        changed_updates = {
-            key: value
-            for key, value in terminal_updates.items()
-            if metadata.get(key) != value
-        }
-        if changed_updates:
-            _persist_persona_provisioning_terminal_transition(
-                persona_id,
-                lifecycle_state="provisioning_failed",
-                metadata=changed_updates,
-            )
-            raw.setdefault("metadata", {}).update(changed_updates)
-        return "provisioning_failed"
-    if current_state not in ("provisioning", "draft", "paper_running"):
-        return str(current_state or "")
-    if current_state == "paper_running":
-        return "paper_running"
-    if current_state != "provisioning":
-        return str(current_state or "")
-
-    terminal_replay = _materialize_terminal_persona_provisioning_ledger(
-        persona_id,
-        raw,
-        diagnostics=diagnostics,
-    )
-    if terminal_replay is not None:
-        return terminal_replay
-
-    # Deployment owns admission and the runtime identity.  Never infer a
-    # RuntimeBinding id from the distinct PersonaCapitalBinding id.
-    persona_capital_binding_id = str(
-        metadata.get("persona_capital_binding_id") or metadata.get("binding_id") or ""
-    ).strip()
-    tenant_id = str(metadata.get("tenant_id") or "").strip()
-    capital_pool_id = str(
-        metadata.get("internal_paper_capital_pool_id")
-        or metadata.get("legacy_paper_capital_pool_id")
-        or ""
-    ).strip()
-    plan_id = str(metadata.get("deployment_plan_id") or "").strip()
-    expected_saga_id = str(metadata.get("deployment_saga_id") or "").strip()
-    binding_id = str(metadata.get("runtime_binding_id") or "").strip()
-    runtime_id = str(metadata.get("runtime_id") or "").strip()
-    projection: Dict[str, Any] = {}
-    projection_failed = False
-    if plan_id:
-        try:
-            candidate = _get_json(
-                _deployment_url(f"/api/deployment/plans/{quote(plan_id, safe='')}/projection")
-            )
-            projection = candidate if isinstance(candidate, dict) else {}
-        except Exception as exc:
-            log.warning("Failed to query Deployment projection %s for %s: %s", plan_id, persona_id, exc)
-            _append_persona_reconcile_diagnostic(diagnostics, "deployment")
-
-    projection_saga = projection.get("deployment_saga")
-    projection_saga = projection_saga if isinstance(projection_saga, dict) else {}
-    projected_saga_id = str(
-        projection.get("deployment_saga_id") or projection_saga.get("saga_id") or ""
-    ).strip()
-    projected_plan_id = str(projection.get("plan_id") or "").strip()
-    projection_observed = bool(
-        projection
-        and projected_plan_id == plan_id
-        and projected_saga_id
-        and (not expected_saga_id or projected_saga_id == expected_saga_id)
-    )
-    projection_identity_failed = bool(projection) and bool(
-        (projected_plan_id and projected_plan_id != plan_id)
-        or (
-            projected_saga_id
-            and expected_saga_id
-            and projected_saga_id != expected_saga_id
-        )
-    )
-
-    saga_status = str(
-        projection.get("deployment_saga_status")
-        or projection_saga.get("status")
-        or ""
-    ).strip().lower()
-    saga_progress = projection.get("deployment_saga_progress")
-    saga_progress = saga_progress if isinstance(saga_progress, dict) else {}
-    progress_status = str(saga_progress.get("progress_status") or "").strip().lower()
-    projection_complete = (
-        saga_status == "completed" and progress_status == "completed"
-    )
-    projection_failed = saga_status in {
-        "failed",
-        "aborted",
-        "compensating",
-        "compensated",
-    } or progress_status in {
-        "failed",
-        "blocked",
-        "compensating",
-    }
-
-    # Deployment projection proves saga admission, but Runtime Manager is the
-    # sole RuntimeBinding authority. Embedded projection/file snapshots never
-    # satisfy lifecycle readback.
-    projected_binding = projection.get("runtime_binding")
-    projected_binding = projected_binding if isinstance(projected_binding, dict) else {}
-    projected_binding_id = str(
-        projection.get("runtime_binding_id")
-        or projected_binding.get("binding_id")
-        or ""
-    ).strip()
-    projected_runtime_id = str(
-        projection.get("runtime_id") or projected_binding.get("runtime_id") or ""
-    ).strip()
-
-    binding: Optional[Dict[str, Any]] = None
-    binding_ok = False
-    binding_failed = False
-    authoritative_bindings: List[Dict[str, Any]] = []
-    if plan_id:
-        try:
-            if all_bindings is not None:
-                authoritative_bindings = [
-                    value
-                    for value in all_bindings.values()
-                    if isinstance(value, dict)
-                    and str(value.get("plan_id") or "") == plan_id
-                ]
-            else:
-                client = _runtime_manager_client()
-                authoritative_bindings = [
-                    value
-                    for value in client.list_by_plan(plan_id)
-                    if isinstance(value, dict)
-                ]
-            active_bindings = [
-                value
-                for value in authoritative_bindings
-                if str(value.get("state") or value.get("status") or "").lower()
-                in {"active", "running", "ok"}
-            ]
-            if len(active_bindings) == 1:
-                binding = active_bindings[0]
-                authoritative_binding_id = str(
-                    binding.get("binding_id") or binding.get("id") or ""
-                ).strip()
-                authoritative_runtime_id = str(binding.get("runtime_id") or "").strip()
-                binding_metadata = binding.get("metadata")
-                binding_metadata = binding_metadata if isinstance(binding_metadata, dict) else {}
-                identity_matches = all((
-                    bool(authoritative_binding_id),
-                    authoritative_binding_id.startswith("rb-"),
-                    bool(authoritative_runtime_id),
-                    str(binding.get("plan_id") or "") == plan_id,
-                    str(binding.get("persona_capital_binding_id") or "")
-                    == persona_capital_binding_id,
-                    str(binding.get("capital_pool_id") or "") == capital_pool_id,
-                    str(
-                        binding.get("deployment_mode")
-                        or binding.get("deployment_stage")
-                        or ""
-                    ) == "paper",
-                    str(binding_metadata.get("persona_id") or "") == persona_id,
-                    str(binding_metadata.get("tenant_id") or "") == tenant_id,
-                    not binding_id or binding_id == authoritative_binding_id,
-                    not runtime_id or runtime_id == authoritative_runtime_id,
-                    not projected_binding_id
-                    or projected_binding_id == authoritative_binding_id,
-                    not projected_runtime_id
-                    or projected_runtime_id == authoritative_runtime_id,
-                ))
-                if identity_matches:
-                    binding_id = authoritative_binding_id
-                    runtime_id = authoritative_runtime_id
-                    binding_ok = True
-                else:
-                    binding_failed = True
-            elif len(active_bindings) > 1:
-                binding_failed = True
-            elif binding_id and any(
-                str(value.get("binding_id") or value.get("id") or "") == binding_id
-                for value in (all_bindings or {}).values()
-                if isinstance(value, dict)
-            ):
-                # The expected binding identity exists under another plan.
-                binding_failed = True
-            elif any(
-                str(value.get("state") or value.get("status") or "").lower()
-                in {"failed", "stopped", "error"}
-                for value in authoritative_bindings
-            ):
-                binding_failed = True
-        except Exception as exc:
-            log.warning(
-                "Failed to query RuntimeBindings for plan %s / %s: %s",
-                plan_id,
-                persona_id,
-                exc,
-            )
-            _append_persona_reconcile_diagnostic(diagnostics, "runtime_manager")
-
-    # Require exactly one fresh, active worker joined on the complete identity.
-    monitoring_sessions: List[Dict[str, Any]] = []
-    worker_identity_conflict = False
-    if binding_ok and runtime_id and binding_id:
-        try:
-            owner_sessions = (
-                all_monitoring_sessions
-                if all_monitoring_sessions is not None
-                else read_store.list_authoritative_paper_runtime_monitoring_sessions()
-            )
-        except Exception as exc:
-            log.warning(
-                "Failed to query paper worker sessions for %s: %s",
-                persona_id,
-                exc,
-            )
-            _append_persona_reconcile_diagnostic(diagnostics, "paper_runtime_manager")
-            owner_sessions = []
-        for s in owner_sessions:
-            # The paper-fleet reconciler owns worker sessions and joins them to
-            # RuntimeBinding by runtime_id + binding_id.  It does not duplicate
-            # Persona identity into the session.  Persona identity is instead
-            # proven above from the authoritative RuntimeBinding metadata.  If
-            # a future session does carry persona_id, treat a conflicting value
-            # as fail-closed rather than ignoring it.
-            s_pid = str(s.get("persona_id") or "").strip()
-            s_rtid = str(s.get("runtime_id") or "").strip()
-            s_bid = str(s.get("binding_id") or s.get("runtime_binding_id") or "").strip()
-            s_pool_id = str(s.get("capital_pool_id") or "").strip()
-            if s_rtid == runtime_id and s_bid == binding_id:
-                if (s_pid and s_pid != persona_id) or s_pool_id != capital_pool_id:
-                    worker_identity_conflict = True
-                else:
-                    monitoring_sessions.append(s)
-
-    max_heartbeat_age = max(
-        1,
-        int(os.getenv("PANTHEON_PERSONA_HEARTBEAT_MAX_AGE_SECONDS", "90")),
-    )
-    now_dt = datetime.now(timezone.utc)
-    live_sessions: List[Dict[str, Any]] = []
-    startup_sessions: List[Dict[str, Any]] = []
-    current_owner_sessions: List[Dict[str, Any]] = []
-    for session in monitoring_sessions:
-        status = str(session.get("status") or "").strip().lower()
-        staleness = session.get("staleness")
-        stale_marker = bool(
-            isinstance(staleness, Mapping)
-            and (
-                str(staleness.get("status") or "").strip().lower() == "stale"
-                or staleness.get("reason")
-            )
-        )
-        heartbeat_at = _parse_rfc3339(session.get("last_heartbeat_at"))
-        fresh = bool(
-            heartbeat_at is not None
-            and 0 <= (now_dt - heartbeat_at).total_seconds() <= max_heartbeat_age
-        )
-        session_id = str(session.get("session_id") or session.get("id") or "").strip()
-        current_owner = (
-            session_id
-            and session.get("active") is not False
-            and session.get("ended_at") in (None, "")
-            and status not in {"failed", "ended", "error", "stale"}
-            and not stale_marker
-        )
-        if current_owner:
-            current_owner_sessions.append(session)
-        startup_status = status in {
-            "accepted",
-            "initializing",
-            "pending",
-            "queued",
-            "starting",
-        }
-        if (
-            current_owner
-            and (status == "running" or startup_status)
-            and session.get("last_heartbeat_at") in (None, "")
-        ):
-            startup_sessions.append(session)
-        if (
-            session_id
-            and status == "running"
-            and session.get("active") is not False
-            and session.get("ended_at") in (None, "")
-            and fresh
-            and not stale_marker
-        ):
-            live_sessions.append(session)
-    heartbeat_ok = len(live_sessions) == 1
-    # Historical ended/stale sessions are expected after worker replacement.
-    # They cannot poison one unique fresh owner session.  No fresh successor
-    # or multiple current workers is fail-closed once an owner record exists.
-    # One exact running owner may briefly precede its first heartbeat; keep
-    # that startup race pending and let the provisioning timeout decide if the
-    # worker never becomes authoritative.
-    startup_pending = (
-        len(startup_sessions) == 1 and len(current_owner_sessions) == 1
-    )
-    heartbeat_failed = worker_identity_conflict or (
-        bool(monitoring_sessions) and not heartbeat_ok and not startup_pending
-    )
-
-    # The schedule authority must contain the exact first-evaluation workflow.
-    cron_ok = False
-    authoritative_schedule_readback: Optional[Dict[str, Any]] = None
-    try:
-        schedule_discovered = all_cron_registrations is None or (
-                persona_id,
-                _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
-            ) in all_cron_registrations
-        if schedule_discovered:
-            if (
-                projection_observed
-                and projection_complete
-                and binding_ok
-                and runtime_id
-                and binding_id
-                and capital_pool_id
-                and persona_capital_binding_id
-            ):
-                schedule_receipt = _register_persona_cron_required(
-                    persona_id,
-                    capital_pool_id,
-                    persona_capital_binding_id,
-                    runtime_id=runtime_id,
-                    runtime_binding_id=binding_id,
-                )
-                authoritative = schedule_receipt.get("authoritative_readback")
-                cron_ok = bool(
-                    isinstance(authoritative, dict)
-                    and authoritative.get("registered") is True
-                    and authoritative.get("persona_id") == persona_id
-                    and authoritative.get("workflow_id")
-                    == _PERSONA_FIRST_EVALUATION_WORKFLOW_ID
-                    and authoritative.get("runtime_id") == runtime_id
-                    and authoritative.get("runtime_binding_id") == binding_id
-                    and authoritative.get("capital_pool_id") == capital_pool_id
-                    and authoritative.get("persona_capital_binding_id")
-                    == persona_capital_binding_id
-                    and isinstance(authoritative.get("job_id"), str)
-                    and bool(authoritative["job_id"].strip())
-                    and authoritative.get("request_id")
-                    == (
-                        f"persona-provisioning:{persona_id}:"
-                        f"{_PERSONA_FIRST_EVALUATION_WORKFLOW_ID}"
-                    )
-                )
-                if cron_ok:
-                    authoritative_schedule_readback = deepcopy(authoritative)
-    except Exception as exc:
-        log.warning("Failed to query first-evaluation schedule for %s: %s", persona_id, exc)
-        _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
-
-    # A timed-out attempt is terminal even if stale evidence happens to appear
-    # later; recovery must be an explicit retry that acquires the durable lease.
-    is_timeout = False
-    readback_started_at = metadata.get("provisioning_readback_started_at")
-    if readback_started_at:
-        try:
-            started_at_dt = _parse_rfc3339(readback_started_at)
-            timeout_seconds = max(
-                1,
-                int(os.getenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")),
-            )
-            is_timeout = bool(
-                started_at_dt is not None
-                and (now_dt - started_at_dt).total_seconds() > timeout_seconds
-            )
-        except (TypeError, ValueError):
-            is_timeout = False
-
-    if (
-        projection_failed
-        or projection_identity_failed
-        or binding_failed
-        or heartbeat_failed
-        or is_timeout
-    ):
-        new_state = "provisioning_failed"
-    elif (
-        projection_observed
-        and projection_complete
-        and binding_ok
-        and heartbeat_ok
-        and cron_ok
-    ):
-        new_state = "paper_running"
-    else:
-        new_state = "provisioning"
-
-    metadata_updates: Dict[str, Any] = {}
-    if binding_ok and binding_id:
-        metadata_updates["runtime_binding_id"] = binding_id
-    if binding_ok and runtime_id:
-        metadata_updates["runtime_id"] = runtime_id
-    if new_state == "provisioning_failed":
-        failure_reasons = []
-        if projection_failed:
-            failure_reasons.append("deployment_saga_failed")
-        if projection_identity_failed:
-            failure_reasons.append("deployment_projection_identity_mismatched")
-        if binding_failed:
-            failure_reasons.append("runtime_binding_failed_or_mismatched")
-        if heartbeat_failed:
-            failure_reasons.append("paper_worker_failed_stale_or_duplicated")
-        if is_timeout:
-            failure_reasons.append("provisioning_timeout")
-        metadata_updates["provisioning_failure_reason"] = ",".join(failure_reasons)
-    elif new_state == "paper_running":
-        metadata_updates["paper_runtime_state"] = "running"
-        metadata_updates.pop("provisioning_failure_reason", None)
-
-    # The durable ledger is the release barrier for terminal Persona state.
-    # If its lease is busy or storage is unavailable, leave the Persona in
-    # provisioning so a later controller pass can recover with RPO=0.
-    if new_state in {"paper_running", "provisioning_failed"}:
-        authoritative_readback: Optional[Dict[str, Any]] = None
-        if new_state == "paper_running":
-            if (
-                not isinstance(binding, Mapping)
-                or len(live_sessions) != 1
-                or authoritative_schedule_readback is None
-            ):
-                return "provisioning"
-            authoritative_readback = {
-                "observed_at": utc_now(),
-                "deployment": {
-                    "plan_id": plan_id,
-                    "saga_id": projected_saga_id,
-                    "saga_status": saga_status,
-                    "progress_status": progress_status,
-                },
-                "runtime_binding": deepcopy(dict(binding)),
-                "paper_worker": deepcopy(live_sessions[0]),
-                "first_evaluation_schedule": deepcopy(
-                    authoritative_schedule_readback
-                ),
-            }
-        terminal_checkpoint = _checkpoint_persona_provisioning_readback(
-            persona_id=persona_id,
-            metadata={**metadata, **metadata_updates},
-            state=new_state,
-            runtime_binding_id=binding_id,
-            runtime_id=runtime_id,
-            authoritative_readback=authoritative_readback,
-            failure_reason=metadata_updates.get("provisioning_failure_reason"),
-        )
-        ledger_state = terminal_checkpoint.get("ledger_state")
-        if terminal_checkpoint.get("terminal_replay"):
-            # The ledger release is the durable lifecycle decision.  A crash
-            # between that release and Persona projection must recover the
-            # earlier terminal state, never remain stuck in provisioning or
-            # reverse the decision from newer observations.
-            if ledger_state == "succeeded":
-                durable_references = terminal_checkpoint.get("references")
-                durable_references = (
-                    durable_references
-                    if isinstance(durable_references, Mapping)
-                    else {}
-                )
-                durable_readback = durable_references.get("authoritative_readback")
-                durable_result = terminal_checkpoint.get("result")
-                if (
-                    not isinstance(durable_readback, Mapping)
-                    or not isinstance(durable_result, Mapping)
-                    or durable_result.get("paper_running") is not True
-                    or durable_result.get("status") != "paper_running"
-                ):
-                    return "provisioning"
-                binding_id = str(
-                    durable_references.get("runtime_binding_id") or ""
-                ).strip()
-                runtime_id = str(
-                    durable_references.get("runtime_id") or ""
-                ).strip()
-                if not binding_id or not runtime_id:
-                    return "provisioning"
-                new_state = "paper_running"
-                metadata_updates["paper_runtime_state"] = "running"
-                metadata_updates["runtime_binding_id"] = binding_id
-                metadata_updates["runtime_id"] = runtime_id
-                metadata_updates["provisioning_authoritative_readback"] = deepcopy(
-                    dict(durable_readback)
-                )
-                metadata_updates.pop("provisioning_failure_reason", None)
-            elif ledger_state in {"failed", "compensated"}:
-                new_state = "provisioning_failed"
-                metadata_updates["provisioning_failure_reason"] = (
-                    terminal_checkpoint.get("failure_reason")
-                    or "durable_ledger_terminal_failure"
-                )
-        elif not terminal_checkpoint.get("committed"):
-            return "provisioning"
-        if new_state == "paper_running":
-            durable_references = terminal_checkpoint.get("references")
-            durable_readback = (
-                durable_references.get("authoritative_readback")
-                if isinstance(durable_references, Mapping)
-                else None
-            )
-            if not isinstance(durable_readback, Mapping):
-                return "provisioning"
-            metadata_updates["provisioning_authoritative_readback"] = deepcopy(
-                dict(durable_readback)
-            )
-        schedule_cleanup = terminal_checkpoint.get("schedule_cleanup")
-        if isinstance(schedule_cleanup, Mapping):
-            metadata_updates["first_evaluation_schedule_cleanup"] = deepcopy(
-                dict(schedule_cleanup)
-            )
-        elif terminal_checkpoint.get("schedule_cleanup_error"):
-            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
-            metadata_updates["first_evaluation_schedule_cleanup"] = {
-                "status": "pending",
-                "registered": None,
-                "terminal_reason": terminal_checkpoint["schedule_cleanup_error"],
-            }
-        if new_state == "provisioning_failed":
-            compensation = _reconcile_persona_provisioning_compensation(
-                {**metadata, **metadata_updates}
-            )
-            if compensation is not None:
-                metadata_updates["provisioning_compensation"] = compensation
-                if compensation.get("status") in {"failed", "pending"}:
-                    _append_persona_reconcile_diagnostic(
-                        diagnostics, "provisioning_compensation"
-                    )
-
-    if new_state != current_state or metadata_updates:
-        _persist_persona_provisioning_terminal_transition(
-            persona_id,
-            lifecycle_state=new_state,
-            metadata=metadata_updates,
-        )
-        raw["lifecycle_state"] = new_state
-        raw["status"] = new_state
-        raw.setdefault("metadata", {}).update(metadata_updates)
-        raw["metadata"]["lifecycle_state"] = new_state
-
     return new_state
 def _project_persona_dto(
     raw: Dict[str, Any],
@@ -8682,134 +7847,12 @@ def _list_strategy_summaries() -> List[Dict[str, Any]]:
     """Return canonical strategy specs from read_store."""
     return list(read_store.list_strategy_specs() or [])
 
-def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Combine canonical personas with durable store and overlay records created via /bff."""
-    items = list(read_store.list_personas() or [])
-    records_by_id: Dict[str, Dict[str, Any]] = {}
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        pid = str(item.get("id") or item.get("persona_id") or "").strip()
-        if pid:
-            records_by_id[pid] = dict(item)
-    clean_tenant = str(tenant_id or "").strip()
-    store = _persona_provisioning_store()
-    try:
-        if clean_tenant:
-            prov_records = store.list_by_tenant(clean_tenant)
-        else:
-            prov_records = store.list_all()
-    except Exception as exc:
-        log.warning("Persona provisioning store list failed for dependency %s", "persona_provisioning_store")
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Persona durable readback is unavailable",
-            "Authoritative provisioning store is unreachable or degraded",
-            precondition_failed="persona_provisioning_store",
-            suggestion="Inspect persona provisioning persistence health before retrying",
-        ) from exc
-
-    for record in prov_records:
-        persona_proj, meta_proj = _persona_record_for_provisioning(
-            record,
-            payload=record.request_payload,
-            owner=str(record.request_payload.get("requested_by") or "pantheon-bff"),
-        )
-        pid = record.persona_id
-        if pid not in records_by_id:
-            records_by_id[pid] = persona_proj
-        else:
-            existing = records_by_id[pid]
-            existing_meta = dict(existing.get("metadata") or {}) if isinstance(existing.get("metadata"), dict) else {}
-            for k, v in meta_proj.items():
-                if v is not None and (k not in existing_meta or not existing_meta[k]):
-                    existing_meta[k] = v
-            existing["metadata"] = existing_meta
-            if record.state == "succeeded" and existing.get("lifecycle_state") in {None, "draft", "provisioning"}:
-                existing["lifecycle_state"] = "paper_running"
-
-    result = list(records_by_id.values())
-    if clean_tenant:
-        # Registry provenance is not tenant ownership.  A tenant-scoped
-        # read admits only an explicit matching owner tenant; tenantless
-        # registry rows are catalog or malformed data and fail closed.
-        result = [
-            raw
-            for raw in result
-            if _persona_record_tenant_id(raw) == clean_tenant
-        ]
-    result.sort(
-        key=lambda raw: (
-            str(raw.get("created_at") or raw.get("updated_at") or ""),
-            str(raw.get("persona_id") or raw.get("id") or ""),
-        )
-    )
-    return result
-@dataclass(frozen=True)
-class PersonaDirectorySnapshot:
-    tenant_id: str
-    snapshot_at: str
-    records_by_id: Dict[str, Dict[str, Any]]
-    catalog_defaults_by_id: Dict[str, Dict[str, Any]]
-def _get_persona_directory_snapshot(
-    tenant_id: Optional[str] = None,
-    *,
-    snapshot_at: Optional[str] = None,
-) -> PersonaDirectorySnapshot:
-    snapshot_timestamp = snapshot_at or utc_now()
-    clean_tenant = str(tenant_id or "").strip()
-    records_by_id: Dict[str, Dict[str, Any]] = {}
-    catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
-
-    for raw in _list_persona_records(clean_tenant):
-        if not isinstance(raw, dict):
-            continue
-        rec_tenant = _persona_record_tenant_id(raw)
-        if clean_tenant and rec_tenant != clean_tenant:
-            continue
-        pid = str(raw.get("persona_id") or raw.get("id") or "").strip()
-        if pid:
-            records_by_id[pid] = raw
-
-    try:
-        defaults = read_store.list_personas(include_market_persona_defaults=True) or []
-    except Exception:
-        defaults = []
-
-    for default_record in defaults:
-        if not isinstance(default_record, dict):
-            continue
-        did = str(default_record.get("persona_id") or default_record.get("id") or "").strip()
-        if did and did not in records_by_id:
-            catalog_defaults_by_id[did] = {
-                **default_record,
-                "record_kind": "catalog_default",
-                "detail_available": False,
-                "admission_state": "not_admitted",
-            }
-
-    return PersonaDirectorySnapshot(
-        tenant_id=clean_tenant,
-        snapshot_at=snapshot_timestamp,
-        records_by_id=records_by_id,
-        catalog_defaults_by_id=catalog_defaults_by_id,
-    )
 def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
     for key in keys:
         value = record.get(key)
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
-def _management_as_float(value: Any) -> Optional[float]:
-    if isinstance(value, bool):
-        return None
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 def _management_first_non_empty(*values: Any) -> Any:
     for value in values:
         if value not in (None, ""):
@@ -8839,20 +7882,6 @@ def _management_position_records(telemetry: Dict[str, Any]) -> List[Dict[str, An
         if isinstance(raw_item, dict):
             return [raw_item]
     return []
-def _management_nested_value(record: Dict[str, Any], path: str) -> Any:
-    value: Any = record
-    for part in path.split("."):
-        if not isinstance(value, dict):
-            return None
-        value = value.get(part)
-    return value
-def _management_first_float(record: Dict[str, Any], *paths: str) -> Optional[float]:
-    for path in paths:
-        value = _management_nested_value(record, path)
-        number = _management_as_float(value)
-        if number is not None:
-            return number
-    return None
 def _management_latest_timestamp(items: List[Dict[str, Any]], *fields: str) -> Optional[str]:
     latest: Optional[str] = None
     for item in items:
@@ -8861,59 +7890,6 @@ def _management_latest_timestamp(items: List[Dict[str, Any]], *fields: str) -> O
             if value and (latest is None or value > latest):
                 latest = value
     return latest
-def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    if not records:
-        return {
-            "runtime_count": 0,
-            "total_pnl": None,
-            "max_drawdown": None,
-            "average_fill_rate": None,
-            "total_trades": 0,
-            "latest_collected_at": None,
-        }
-
-    pnl_values: List[float] = []
-    drawdown_values: List[float] = []
-    fill_rates: List[float] = []
-    total_trades = 0
-    latest_collected_at: Optional[str] = None
-
-    for record in records:
-        pnl = _management_first_float(record, "pnl", "summary.total_pnl", "summary.pnl")
-        drawdown = _management_first_float(
-            record,
-            "drawdown",
-            "max_drawdown",
-            "summary.max_drawdown",
-        )
-        fill_rate = _management_first_float(record, "fill_rate", "summary.fill_rate")
-        trades = _management_first_float(record, "total_trades", "summary.total_trades")
-        collected_at = str(
-            record.get("collected_at")
-            or record.get("collectedAt")
-            or record.get("updated_at")
-            or record.get("updatedAt")
-            or ""
-        ).strip()
-        if pnl is not None:
-            pnl_values.append(pnl)
-        if drawdown is not None:
-            drawdown_values.append(drawdown)
-        if fill_rate is not None:
-            fill_rates.append(fill_rate)
-        if trades is not None:
-            total_trades += int(trades)
-        if collected_at and (latest_collected_at is None or collected_at > latest_collected_at):
-            latest_collected_at = collected_at
-
-    return {
-        "runtime_count": len(records),
-        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
-        "max_drawdown": max(drawdown_values) if drawdown_values else None,
-        "average_fill_rate": round(sum(fill_rates) / len(fill_rates), 6) if fill_rates else None,
-        "total_trades": total_trades,
-        "latest_collected_at": latest_collected_at,
-    }
 def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
     if not record_id:
         return None
@@ -9498,18 +8474,6 @@ def _pm12_performance_attribution_rows(
         })
 
     return rows
-def _sort_records_latest_first(
-    records: List[Dict[str, Any]],
-    fields: tuple[str, ...],
-) -> List[Dict[str, Any]]:
-    return sorted(
-        records,
-        key=lambda item: next(
-            (str(item.get(field) or "") for field in fields if item.get(field)),
-            "",
-        ),
-        reverse=True,
-    )
 def _persona_fleet_runtime_matches(
     runtime_binding: Dict[str, Any],
     *,
@@ -13936,8 +12900,8 @@ def _mgmt_nl_provider_feature_enabled() -> bool:
         "PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED",
     ):
         if os.getenv(env_name) is not None:
-            return _bool_from_env(env_name)
-    return _bool_from_env("PANTHEON_ASSISTANT_ENABLED")
+            return auth_policy.bool_from_env(env_name)
+    return auth_policy.bool_from_env("PANTHEON_ASSISTANT_ENABLED")
 def _mgmt_nl_provider_name() -> str:
     return (os.getenv("PANTHEON_ASSISTANT_PROVIDER", "openclaw").strip().lower() or "openclaw")
 _MGMT_NL_PROVIDER_REASON_MESSAGES = {
@@ -16347,432 +15311,6 @@ def _ooda_packet_list_payload(
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
     }
-def _synthesis_conflict_log_routes_enabled() -> bool:
-    raw = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
-    if raw is None:
-        return True
-    return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
-def _persona_first_evaluation_readback_timeout_seconds() -> float:
-    raw = os.getenv(
-        "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_TIMEOUT_SECONDS",
-        "15",
-    ).strip()
-    try:
-        return max(0.0, float(raw))
-    except (TypeError, ValueError):
-        return 15.0
-def _persona_first_evaluation_readback_poll_seconds() -> float:
-    raw = os.getenv(
-        "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_POLL_SECONDS",
-        "1",
-    ).strip()
-    try:
-        return max(0.05, float(raw))
-    except (TypeError, ValueError):
-        return 1.0
-def _register_persona_cron_required(
-    persona_id: str,
-    capital_pool_id: str,
-    binding_id: str,
-    *,
-    runtime_id: Optional[str] = None,
-    runtime_binding_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Register and authoritatively read back the required evaluation schedule."""
-    from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
-
-    registrar = PersonaCronRegistrar()
-    result = registrar.register_for_persona(
-        persona_id,
-        capital_pool_id=capital_pool_id,
-        workflow_ids=[_PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
-        runtime_id=runtime_id,
-        runtime_binding_id=runtime_binding_id,
-        persona_capital_binding_id=binding_id,
-    )
-    body = result.to_dict()
-    if body.get("mode") != "gateway_rpc":
-        raise RuntimeError("first-evaluation schedule authority is unavailable (dry-run refused)")
-    if body.get("failed"):
-        raise RuntimeError(f"cron registration failed: {body['failed']}")
-    runtime = registrar._get_runtime()
-    authoritative_job = None
-    readback_attempts = 0
-    last_readback_error = ""
-    if runtime is not None:
-        timeout_seconds = _persona_first_evaluation_readback_timeout_seconds()
-        poll_seconds = _persona_first_evaluation_readback_poll_seconds()
-        deadline = time.monotonic() + timeout_seconds
-        while True:
-            readback_attempts += 1
-            try:
-                authoritative_job = registrar.get_first_evaluation_registration(
-                    persona_id,
-                    runtime=runtime,
-                    runtime_id=runtime_id,
-                    runtime_binding_id=runtime_binding_id,
-                    capital_pool_id=capital_pool_id,
-                    persona_capital_binding_id=binding_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                last_readback_error = str(exc) or exc.__class__.__name__
-                authoritative_job = None
-            if authoritative_job is not None:
-                break
-            remaining_seconds = deadline - time.monotonic()
-            if remaining_seconds <= 0:
-                break
-            time.sleep(min(poll_seconds, remaining_seconds))
-    else:
-        last_readback_error = "authoritative cron runtime unavailable"
-    if authoritative_job is None:
-        suffix = f" after {readback_attempts} attempts"
-        if last_readback_error:
-            suffix = f"{suffix}: {last_readback_error}"
-        raise RuntimeError(
-            f"first-evaluation schedule failed authoritative readback{suffix}"
-        )
-    authoritative_event = registrar._decode_job_event(authoritative_job) or {}
-    body["authoritative_readback"] = {
-        "persona_id": persona_id,
-        "workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
-        "runtime_id": runtime_id,
-        "runtime_binding_id": runtime_binding_id,
-        "capital_pool_id": capital_pool_id,
-        "persona_capital_binding_id": binding_id,
-        "registered": True,
-        "job_id": authoritative_job.get("id"),
-        "job_name": authoritative_job.get("name"),
-        "request_id": authoritative_event.get("request_id"),
-        "schedule": deepcopy(authoritative_job.get("schedule")),
-        "session_target": authoritative_job.get("sessionTarget"),
-        "readback_attempts": readback_attempts,
-        "observed_at": utc_now(),
-    }
-    return body
-def _remove_persona_cron_required(persona_id: str) -> Dict[str, Any]:
-    """Remove first-evaluation owner rows and require authoritative absence."""
-    from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
-
-    result = PersonaCronRegistrar().remove_first_evaluation_registration(persona_id)
-    if result.get("registered") is not False:
-        raise RuntimeError("first-evaluation schedule removal lacks zero-owner readback")
-    return result
-def _persona_record_tenant_id(raw: Mapping[str, Any]) -> str:
-    """Return the explicit owner tenant for a Persona record.
-
-    Tenantless records are catalog or malformed rows, never tenant-admitted
-    Personas.  Read paths therefore must not treat a missing value as a
-    wildcard.  The registry and provisioning projections have used both
-    top-level and metadata forms over time, so normalize the supported aliases
-    here before applying the exact-match boundary.
-    """
-    metadata = raw.get("metadata")
-    metadata = metadata if isinstance(metadata, Mapping) else {}
-    for value in (
-        raw.get("tenant_id"),
-        raw.get("tenantId"),
-        metadata.get("tenant_id"),
-        metadata.get("tenantId"),
-    ):
-        tenant_id = str(value or "").strip()
-        if tenant_id:
-            return tenant_id
-    return ""
-def _openclaw_agent_reconcile_request(
-    persona: Dict[str, Any],
-    *,
-    reason: str,
-    route_policy: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
-    request: Dict[str, Any] = {
-        "status": "pending",
-        "reason": reason,
-        "agent_id": persona_id,
-        "model_id": f"openclaw/{persona_id}" if persona_id else "",
-        "consumer": "scripts/openclaw-sync-persona-agents.py",
-    }
-    if callable(build_persona_runtime_profile):
-        try:
-            profile = build_persona_runtime_profile(persona, route_policy=route_policy).to_dict()
-        except ValueError as exc:
-            log.warning("Validation error in runtime profile generation for %s: %s", persona_id, exc)
-            request.update({
-                "status": "blocked",
-                "blocked_reason": "invalid_persona_runtime_profile_inputs",
-                "repair_action": "fix_persona_runtime_profile",
-            })
-            return request
-        except Exception as exc:
-            log.warning("Unexpected error generating runtime profile for %s: %s", persona_id, exc)
-            request.update({
-                "status": "blocked",
-                "blocked_reason": "runtime_profile_generation_failed",
-                "repair_action": "check_persona_runtime_profile_inputs",
-            })
-            return request
-    else:
-        profile = {}
-    routing = dict(profile.get("model_routing") or {})
-    if routing.get("status") != "ready":
-        request.update({
-            "status": "blocked",
-            "blocked_reason": routing.get("blocked_reason") or routing.get("reason") or "model_routing_degraded",
-            "repair_action": "fix_persona_route_policy_or_provider_pool",
-        })
-    request.update({
-        "workspace_ref": profile.get("workspace_ref"),
-        "sync_generation": profile.get("sync_generation"),
-        "model_routing": routing,
-    })
-    return request
-def _persona_provisioning_metadata(
-    record: ProvisioningRecord,
-    *,
-    ids: Any,
-    payload: Mapping[str, Any],
-    owner: str,
-    archetype: str,
-    risk: str,
-    mandate: Optional[str],
-    strategy_family: Optional[str],
-    traits: Optional[Dict[str, Any]],
-    lifecycle_state: str,
-) -> Dict[str, Any]:
-    paper_ledger_id = f"paper-ledger-{ids.token}"
-    runtime_binding_id = str(record.references.get("runtime_binding_id") or "").strip()
-    runtime_id = str(record.references.get("runtime_id") or "").strip()
-    metadata: Dict[str, Any] = {
-        "owner": owner,
-        "archetype": archetype,
-        "risk_level": risk,
-        "mandate": mandate,
-        "strategy_family": strategy_family,
-        "description": payload.get("description"),
-        "memo": payload.get("memo"),
-        "tenant_id": record.tenant_id,
-        "provisioning_idempotency_key": record.idempotency_key,
-        "provisioning_request_hash": record.request_hash,
-        "provisioning_state": record.state,
-        "provisioning_step": record.current_step,
-        "initial_mode": "paper",
-        "execution_mode": "paper",
-        "success_rate": float(payload.get("successRate") or 0.0),
-        "capital_mode": "paper",
-        "paper_ledger_id": paper_ledger_id,
-        "paper_ledger": {
-            "id": paper_ledger_id,
-            "mode": "paper",
-            "persona_id": record.persona_id,
-            "is_isolated": True,
-            "benchmark_budget": payload.get("budget"),
-        },
-        # Internal canonical paper pool.  Public DTO projection intentionally
-        # keeps capitalPoolId empty in paper mode.
-        "legacy_paper_capital_pool_id": ids.capital_pool_id,
-        "internal_paper_capital_pool_id": ids.capital_pool_id,
-        "persona_capital_binding_id": ids.persona_capital_binding_id,
-        "registry_id": ids.registry_id,
-        "approval_decision_id": ids.approval_decision_id,
-        "deployment_plan_id": ids.deployment_plan_id,
-        "deployment_saga_id": ids.deployment_saga_id,
-        "deployment_stage": "paper",
-        "paper_runtime_state": (
-            "running"
-            if lifecycle_state == "paper_running"
-            else "failed" if lifecycle_state == "provisioning_failed" else "provisioning"
-        ),
-        "live_capital_enabled": False,
-        "live_write_enabled": False,
-        "order_side_effects_allowed": False,
-        "capital_side_effects_allowed": False,
-        "governance_required": True,
-        "recommended_governance_action": "none",
-        "data_source_status": payload.get("dataSourceStatus")
-        or payload.get("data_source_status")
-        or {
-            "state": "paper_readback_pending",
-            "provider_count": len(payload.get("dataSources") or payload.get("data_sources") or []),
-            "provider_status_counts": {},
-            "live_ingestion_enabled": False,
-            "order_side_effects_allowed": False,
-        },
-        "data_sources": payload.get("dataSources") or payload.get("data_sources") or [],
-        "risk_profile": payload.get("riskProfile")
-        or payload.get("risk_profile")
-        or {
-            "risk_level": risk,
-            "max_drawdown": payload.get("maxDrawdown") or payload.get("max_drawdown"),
-            "daily_loss_limit": payload.get("dailyLossLimit") or payload.get("daily_loss_limit"),
-        },
-        "evidence_refs": [
-            f"evidence://persona-create/{record.persona_id}/request",
-            f"evidence://persona-create/{record.persona_id}/capital-binding",
-            f"evidence://persona-create/{record.persona_id}/deployment-saga",
-        ],
-    }
-    readback_started_at = record.references.get("provisioning_readback_started_at")
-    if isinstance(readback_started_at, str) and readback_started_at.strip():
-        metadata["provisioning_readback_started_at"] = readback_started_at.strip()
-    if runtime_binding_id:
-        metadata["runtime_binding_id"] = runtime_binding_id
-    if runtime_id:
-        metadata["runtime_id"] = runtime_id
-    if record.error:
-        metadata["provisioning_error"] = deepcopy(record.error)
-    if record.compensation:
-        metadata["provisioning_compensation"] = deepcopy(record.compensation)
-    if traits:
-        metadata["traits"] = deepcopy(traits)
-    metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
-        {
-            "id": record.persona_id,
-            "persona_id": record.persona_id,
-            "name": str(payload.get("name") or record.normalized_name),
-            "mandate": mandate or archetype,
-            "strategy_family": strategy_family or archetype,
-            "lifecycle_state": lifecycle_state,
-            "metadata": {
-                **metadata,
-                "owner": owner,
-                "archetype": archetype,
-                "risk_level": risk,
-            },
-        },
-        reason="persona_created",
-    )
-    return metadata
-def _persona_create_required_data_sources(payload: Mapping[str, Any]) -> List[Dict[str, Any]]:
-    required = payload.get("required_data_sources") or payload.get("requiredDataSources")
-    market = str(payload.get("market") or "").strip().upper()
-    if not required and market:
-        from .personas.service import _market_persona_required_data_sources
-
-        required = _market_persona_required_data_sources({"market": market})
-    return json.loads(json.dumps(required or []))
-def _persona_record_for_provisioning(
-    record: ProvisioningRecord,
-    *,
-    payload: Mapping[str, Any],
-    owner: str,
-    mutate_store: bool = False,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    canonical_owner = str(record.request_payload.get("requested_by") or owner).strip()
-    ids = deterministic_provisioning_ids(record)
-    archetype = str(payload.get("archetype") or "generalist")
-    risk = _normalize_risk_level(payload.get("risk") or "low")
-    mandate = str(payload.get("mandate") or "").strip() or None
-    strategy_family = str(
-        payload.get("strategy_family") or payload.get("strategyFamily") or ""
-    ).strip() or None
-    raw_traits = payload.get("traits")
-    traits = {
-        key: raw_traits[key]
-        for key in (
-            "instruments",
-            "risk_appetite",
-            "decision_style",
-            "time_horizon",
-            "hard_rules",
-            "persona_voice",
-        )
-        if isinstance(raw_traits, dict) and raw_traits.get(key) not in (None, "")
-    } or None
-    if record.state == "succeeded":
-        lifecycle_state = "paper_running"
-    elif record.state in {"failed", "compensated"}:
-        lifecycle_state = "provisioning_failed"
-    else:
-        lifecycle_state = "provisioning"
-    metadata = _persona_provisioning_metadata(
-        record,
-        ids=ids,
-        payload=payload,
-        owner=canonical_owner,
-        archetype=archetype,
-        risk=risk,
-        mandate=mandate,
-        strategy_family=strategy_family,
-        traits=traits,
-        lifecycle_state=lifecycle_state,
-    )
-    existing = read_store.get_persona(record.persona_id)
-    if existing is None:
-        if mutate_store:
-            persona = persona_write_owner.create_persona(
-                persona_id=record.persona_id,
-                name=str(payload.get("name") or record.normalized_name),
-                actor_id=canonical_owner,
-                created_at=record.created_at,
-                archetype=archetype,
-                lifecycle_state=lifecycle_state,
-                risk_level=risk,
-                mandate=mandate,
-                strategy_family=strategy_family,
-                traits=traits,
-                metadata=metadata,
-                required_data_sources=_persona_create_required_data_sources(payload),
-            )
-        else:
-            persona = {
-                "id": record.persona_id,
-                "persona_id": record.persona_id,
-                "name": str(payload.get("name") or record.normalized_name),
-                "actor_id": canonical_owner,
-                "created_by": canonical_owner,
-                "created_at": record.created_at,
-                "archetype": archetype,
-                "lifecycle_state": lifecycle_state,
-                "risk_level": risk,
-                "mandate": mandate,
-                "strategy_family": strategy_family,
-                "traits": traits,
-                "metadata": metadata,
-                "required_data_sources": _persona_create_required_data_sources(payload),
-            }
-    else:
-        existing_metadata = existing.get("metadata")
-        existing_metadata = existing_metadata if isinstance(existing_metadata, dict) else {}
-        if mutate_store and (
-            str(existing.get("name") or "").strip()
-            != str(payload.get("name") or record.normalized_name).strip()
-            or str(existing_metadata.get("tenant_id") or record.tenant_id) != record.tenant_id
-        ):
-            raise ProvisioningConflict(
-                "stable Persona identity is already occupied by different tenant/name semantics"
-            )
-        if (
-            record.state == "succeeded"
-            and str(existing.get("lifecycle_state") or "") == "paper_running"
-        ):
-            lifecycle_state = "paper_running"
-        elif existing.get("lifecycle_state") and record.state == "succeeded":
-            lifecycle_state = str(existing.get("lifecycle_state"))
-        if mutate_store:
-            persona = persona_write_owner.update_persona(
-                record.persona_id,
-                lifecycle_state=lifecycle_state,
-                metadata=metadata,
-            ) or existing
-        else:
-            persona = {
-                **existing,
-                "id": record.persona_id,
-                "persona_id": record.persona_id,
-                "name": str(existing.get("name") or payload.get("name") or record.normalized_name),
-                "actor_id": str(existing.get("actor_id") or canonical_owner),
-                "created_by": str(existing.get("created_by") or canonical_owner),
-                "archetype": existing.get("archetype") or archetype,
-                "lifecycle_state": lifecycle_state,
-                "risk_level": existing.get("risk_level") or risk,
-                "mandate": existing.get("mandate") or mandate,
-                "strategy_family": existing.get("strategy_family") or strategy_family,
-                "traits": existing.get("traits") or traits,
-                "metadata": {**existing_metadata, **metadata},
-                "required_data_sources": existing.get("required_data_sources") or _persona_create_required_data_sources(payload),
-            }
-    return persona, metadata
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
 _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (
@@ -18223,22 +16761,6 @@ def _read_store_fixture_records(dataset: str) -> List[Dict[str, Any]]:
     if isinstance(raw, list):
         return [dict(record) for record in raw if isinstance(record, dict)]
     return []
-def _merge_registry_records(
-    fixture_records: List[Dict[str, Any]],
-    registry_records: List[Dict[str, Any]],
-    id_keys: tuple[str, ...],
-) -> List[Dict[str, Any]]:
-    merged: Dict[str, Dict[str, Any]] = {}
-    for record in fixture_records + registry_records:
-        record_id = ""
-        for key in id_keys:
-            value = record.get(key)
-            if value not in (None, ""):
-                record_id = str(value)
-                break
-        if record_id:
-            merged[record_id] = dict(record)
-    return list(merged.values())
 def _mcp_server_fixture_records() -> List[Dict[str, Any]]:
     store_records = read_store.list_mcp_servers()
     if store_records:
@@ -18701,8 +17223,8 @@ async def sem_bff_version():
         "auth_stub": _bff_auth_stub_enabled(),
         "auth_mode": _bff_auth_mode(),
         "dev_login_enabled": _dev_login_enabled(),
-        "mfa_required": _bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
-        "assistant_kernel_enabled": _bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
+        "mfa_required": auth_policy.bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
+        "assistant_kernel_enabled": auth_policy.bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
         "trade_journey_reader_backend": os.getenv(
             "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres"
         ).strip().lower(),
@@ -18743,19 +17265,12 @@ async def sem_bff_health_alias():
 async def sem_bff_readiness_alias():
     payload = _sem_bff_health_payload()
     return JSONResponse(payload, status_code=readiness_status_code(payload))
-async def sem_bff_capabilities(authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
-    return {
-        "data": {
-            "feature_flags": {
-                "executePlansBff": True,
-                "sessionAuthMe": True,
-                "oodaPackets": _ooda_packet_routes_enabled(),
-                "synthesisConflictLogs": _synthesis_conflict_log_routes_enabled(),
-            }
-        },
-        "meta": {"snapshot_at": utc_now()},
-    }
+from .core.app_factory import create_capabilities_handler as _create_capabilities_handler
+sem_bff_capabilities = _create_capabilities_handler(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    utc_now=utc_now,
+)
 def _sem_final_registry_meta(surface_key: str, *, snapshot_at: Optional[str] = None, total: Optional[int] = None) -> Dict[str, Any]:
     snapshot_at = snapshot_at or utc_now()
     meta: Dict[str, Any] = {
@@ -18940,93 +17455,6 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
             "surface_key": "ooda_control_room_status",
         },
     }
-def _persona_fleet_context_missing(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str):
-        return not value.strip()
-    if isinstance(value, (list, tuple, set, dict)):
-        return len(value) == 0
-    return False
-def _persona_fleet_market_key(persona: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[str]:
-    for value in (
-        metadata.get("market"),
-        persona.get("market"),
-        persona.get("market_scope"),
-        metadata.get("market_scope"),
-    ):
-        candidates = value if isinstance(value, list) else [value]
-        for candidate in candidates:
-            normalized = str(candidate or "").strip().upper()
-            if normalized in {"US", "TW", "CRYPTO"}:
-                return normalized
-
-    asset_classes = {
-        str(value or "").strip().lower()
-        for value in (metadata.get("asset_classes") or persona.get("asset_classes") or [])
-    }
-    if "crypto" in asset_classes:
-        return "CRYPTO"
-
-    broker_adapter = str(metadata.get("broker_adapter") or persona.get("broker_adapter") or "").lower()
-    if "shioaji" in broker_adapter:
-        return "TW"
-    if "kraken" in broker_adapter or "crypto" in broker_adapter:
-        return "CRYPTO"
-    if "ibkr" in broker_adapter:
-        return "US"
-
-    name = str(persona.get("name") or persona.get("persona_name") or persona.get("id") or "").upper()
-    if name.startswith("CRYPTO") or "BTC" in name:
-        return "CRYPTO"
-    if name.startswith("TW") or "TAIWAN" in name:
-        return "TW"
-    if name.startswith("US") or "U.S." in name or "UNITED STATES" in name:
-        return "US"
-    return None
-def _persona_fleet_context_defaults_by_market(
-    candidates: Optional[Sequence[Dict[str, Any]]] = None,
-) -> Dict[str, Dict[str, Any]]:
-    defaults: Dict[str, Dict[str, Any]] = {}
-    persona_candidates = (
-        candidates
-        if candidates is not None
-        else read_store.list_personas(include_market_persona_defaults=True)
-    )
-    for candidate in persona_candidates:
-        if not isinstance(candidate, dict):
-            continue
-        metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
-        if not (
-            isinstance(metadata.get("data_source_status"), dict)
-            and metadata.get("data_source_status")
-            and isinstance(metadata.get("current_research_projects"), list)
-            and metadata.get("current_research_projects")
-        ):
-            continue
-        market = _persona_fleet_market_key(candidate, metadata)
-        if market and market not in defaults:
-            defaults[market] = {
-                "persona": json.loads(json.dumps(candidate)),
-                "metadata": json.loads(json.dumps(metadata)),
-            }
-    return defaults
-def _persona_fleet_context_overlay(
-    persona: Dict[str, Any],
-    metadata: Dict[str, Any],
-    defaults_by_market: Dict[str, Dict[str, Any]],
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    market = _persona_fleet_market_key(persona, metadata)
-    default_context = defaults_by_market.get(market or "")
-    if not default_context:
-        return metadata, {}
-
-    default_metadata = default_context.get("metadata") if isinstance(default_context.get("metadata"), dict) else {}
-    context_metadata = json.loads(json.dumps(metadata))
-    for key in _PERSONA_FLEET_CONTEXT_METADATA_KEYS:
-        if _persona_fleet_context_missing(context_metadata.get(key)) and not _persona_fleet_context_missing(default_metadata.get(key)):
-            context_metadata[key] = json.loads(json.dumps(default_metadata[key]))
-    return context_metadata, default_context.get("persona") if isinstance(default_context.get("persona"), dict) else {}
 def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
     if path == "/bff/audit":
         return _sem_final_list_response(

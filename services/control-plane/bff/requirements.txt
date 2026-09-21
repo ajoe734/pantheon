@@ -3,10 +3,8 @@ uvicorn
 httpx
 pydantic
 python-multipart
-python-jose[cryptography]
-passlib[bcrypt]
-pytest
+cryptography>=50.0.1
 jsonschema>=4.0,<5.0
 psycopg[binary]>=3.1,<4.0
-google-cloud-storage>=2.16,<3.0
+google-cloud-storage>=2.16,<4.0
 asyncpg>=0.29,<1.0

@@ -8,17 +8,25 @@ Covers:
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from test_training_session_service_client import create_training_read_surface_double
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    default_utc_now,
+    extract_identity_stub,
+    require_read_role,
+)
+from services.control_plane.bff.test_training_session_service_client import (
+    create_training_read_surface_double,
+)
+from services.control_plane.bff.training.router import create_training_router
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -29,20 +37,75 @@ _ACTIVE_SESSION = "trn-20260419-001"   # status=active
 _COMPLETED_SESSION = "trn-20260418-003"  # status=completed
 
 
+def _page_slice(
+    items: list[dict[str, Any]],
+    page_token: str | None,
+    page_size: int,
+) -> tuple[list[dict[str, Any]], str | None]:
+    start = int(page_token) if page_token else 0
+    end = start + page_size
+    next_page = str(end) if end < len(items) else None
+    return items[start:end], next_page
+
+
+def _dataset_surface_status(
+    dataset: str,
+    *,
+    snapshot_at: str | None = None,
+    has_data: bool | None = None,
+    missing_message: str | None = None,
+    source: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "degraded" if source == "local_snapshot" else "ok",
+        "source": source or "local_snapshot",
+        "staleness": {
+            "served_from": "local_snapshot",
+            "last_known_at": snapshot_at or default_utc_now(),
+        },
+    }
+
+
+def _create_test_app(read_surface: Any) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Any, exc: Any) -> JSONResponse:
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}},
+        )
+
+    app.include_router(
+        create_training_router(
+            read_surface=read_surface,
+            extract_identity=extract_identity_stub,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=default_utc_now,
+            page_slice=_page_slice,
+            dataset_surface_status=_dataset_surface_status,
+        )
+    )
+    return app
+
+
 @contextmanager
 def _client(*, service_backed: bool = False) -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         orig_env = os.environ.get("PANTHEON_BFF_RAPID_EVAL_STORE")
         if service_backed:
             os.environ["PANTHEON_BFF_RAPID_EVAL_STORE"] = os.path.join(td, "rapid_evals.json")
         else:
             os.environ.pop("PANTHEON_BFF_RAPID_EVAL_STORE", None)
-        bff_main.read_store = create_training_read_surface_double()
+        store = create_training_read_surface_double()
+        app = _create_test_app(store)
         try:
-            yield TestClient(bff_main.app)
+            yield TestClient(app)
         finally:
-            bff_main.read_store = original_store
             if orig_env is None:
                 os.environ.pop("PANTHEON_BFF_RAPID_EVAL_STORE", None)
             else:

@@ -208,10 +208,21 @@ def validate_readback(value: dict, evidence: dict, operation: str) -> dict:
         if type(row["restart_count"]) is not int or row["restart_count"] < 0:
             raise capture.CaptureError("protected owner restart count is invalid")
     expected_public = {"source_sha": identity["previous_backend_sha"], "fe_manifest_bytes_verified": True,
-                       "strict_auth_denials_verified": True, "authenticated_viewer_readback_verified": True}
+                       "strict_auth_denials_verified": True, "dev_login_enabled": True,
+                       "authenticated_viewer_readback_verified": True}
     capture.exact_keys(value["public"], expected_public)
-    if (value["public"]["source_sha"] != expected_public["source_sha"] or
-            any(value["public"][key] is not True for key in expected_public if key != "source_sha")):
+    public = value["public"]
+    # An image that declares no dedicated dev-login registry cannot be asked for
+    # a viewer round trip, so exactly that pair of literal booleans is
+    # admissible. A login claimed against an empty registry, an unexplained
+    # missing login, and any non-boolean all remain incomplete; FE bytes and
+    # strict-auth denials stay mandatory in both cases.
+    dev_login = public["dev_login_enabled"]
+    if (public["source_sha"] != expected_public["source_sha"] or
+            public["fe_manifest_bytes_verified"] is not True or
+            public["strict_auth_denials_verified"] is not True or
+            type(dev_login) is not bool or
+            public["authenticated_viewer_readback_verified"] is not dev_login):
         raise capture.CaptureError("public source or strict authenticated readback is incomplete")
     return value
 

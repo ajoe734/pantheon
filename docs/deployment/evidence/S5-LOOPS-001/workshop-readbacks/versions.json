@@ -1,0 +1,258 @@
+{
+  "at": "2026-09-13T05:22:31.798094+00:00",
+  "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/versions",
+  "status": 200,
+  "body": {
+    "data": {
+      "versions": [
+        {
+          "version": {
+            "workshop_version_id": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f",
+            "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+            "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+            "strategy_spec_registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+            "parent_workshop_version_id": null,
+            "source_event_id": null,
+            "sequence_no": 1,
+            "document_sha256": "8e1d674d912ef577d4f70dd1605742506654de31dee891802def47dbed6fdcc3",
+            "created_by": "pantheon-dev-operator-a",
+            "created_at": "2026-09-13 05:22:31+00"
+          },
+          "strategy_spec": {
+            "entry": {
+              "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+              "artifact_type": "strategy_spec",
+              "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+              "version": "1.0.0",
+              "artifact_state": "approved",
+              "lineage": {
+                "parent_registry_ids": null,
+                "source_run_ids": [
+                  "seed-4929af0f1a189542"
+                ],
+                "source_dataset_refs": [
+                  "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
+                ],
+                "source_strategy_spec_id": null
+              },
+              "storage_ref": {
+                "backend": "inline",
+                "path": "$.entry.metadata.strategy_spec"
+              },
+              "checksum": "sha256:8e1d674d912ef577d4f70dd1605742506654de31dee891802def47dbed6fdcc3",
+              "producer_run_id": "seed-4929af0f1a189542",
+              "evaluation_summary": {
+                "confidence": 0.7,
+                "candidate_gate": "schema_and_lineage_review",
+                "source_seed_id": "seed-4929af0f1a189542",
+                "evidence_bundle_id": "evbundle-distill-c4a34c2036cb"
+              },
+              "approval_decision_id": "apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+              "approval_evidence": {
+                "version": 3,
+                "actor_id": "pantheon-dev-approver",
+                "decision": "approved",
+                "event_id": "7725b8d6-b98b-498b-a8e9-79e997921fdf",
+                "metadata": null,
+                "rationale": "Reviewed the exact fresh Source/distillation lineage and research-only schema. Input is explicitly simulated, not real market evidence. This permits Alpha research evaluation only, not paper/live execution or capital allocation.",
+                "target_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+                "tenant_id": "tenant-dev",
+                "actor_role": "governance_reviewer",
+                "conditions": [],
+                "created_at": "2026-09-13T05:21:37Z",
+                "decided_at": "2026-09-13T05:21:38Z",
+                "expires_at": "2026-09-13T11:21:37Z",
+                "persona_id": null,
+                "revoked_at": null,
+                "risk_level": "low",
+                "session_id": null,
+                "decision_id": "apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+                "proposal_id": null,
+                "recorded_at": "2026-09-13T05:21:38Z",
+                "target_type": "registry_entry",
+                "proof_digest": null,
+                "evidence_refs": [
+                  {
+                    "ref_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+                    "ref_type": "source_record"
+                  },
+                  {
+                    "ref_id": "distill-c4a34c2036cb1393c7e5ca8f",
+                    "ref_type": "distillation_job"
+                  }
+                ],
+                "owner_user_id": "pantheon-dev-approver",
+                "superseded_by": null,
+                "decision_state": "decided",
+                "target_version": "1.0.0",
+                "capital_pool_id": null,
+                "authority_status": "authoritative",
+                "candidate_digest": "sha256:8e1d674d912ef577d4f70dd1605742506654de31dee891802def47dbed6fdcc3",
+                "proposal_revision": null,
+                "authorization_scope": null,
+                "controller_record_ref": "governance-controller://approval-apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+                "proposal_content_digest": null,
+                "validation_result_digest": null
+              },
+              "approver": "pantheon-dev-approver",
+              "approved_at": "2026-09-13T05:21:38Z",
+              "rollback_target": null,
+              "deployment_summary": null,
+              "metadata": {
+                "tenant_id": "tenant-dev",
+                "distillation": {
+                  "source_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+                  "source_digest": "sha256:e70a534d1d3b5173bd6066a9631ef902ef11d252bdf72366cde97e96a8404f3c",
+                  "schema_version": "source_to_draft.v1",
+                  "distillation_job_id": "distill-c4a34c2036cb1393c7e5ca8f",
+                  "source_event_version": "source_record.normalized.v1"
+                },
+                "research_only": true,
+                "strategy_spec": {
+                  "title": "SIMULATION paper-only SPY anchor dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+                  "metadata": {
+                    "task_id": "STRAT-003",
+                    "confidence": 0.7,
+                    "risk_notes": [
+                      "simulation",
+                      "is_real=false",
+                      "paper_only",
+                      "not_market_evidence"
+                    ],
+                    "label_hints": [
+                      "return_1d"
+                    ],
+                    "access_scope": [
+                      "research"
+                    ],
+                    "backend_hint": "vectorbt",
+                    "feature_hints": [
+                      "momentum"
+                    ],
+                    "required_data": [
+                      "OHLCV"
+                    ],
+                    "research_only": true,
+                    "source_seed_id": "seed-4929af0f1a189542",
+                    "execution_route": "none",
+                    "entitlement_tags": [],
+                    "conversion_service": "StrategySpecConversionService",
+                    "conversion_version": "1.0",
+                    "evidence_bundle_id": "evbundle-distill-c4a34c2036cb",
+                    "source_license_scope": "internal",
+                    "registry_write_performed": false
+                  },
+                  "objective": "Evaluate SIMULATION paper-only SPY anchor dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e using vectorbt under governed research gates before any paper, canary, or live promotion.",
+                  "governance": {
+                    "policy_id": "research-strategy-spec-conversion-v1",
+                    "risk_profile": "research_only",
+                    "approval_required": true
+                  },
+                  "hypothesis": "Explicitly simulated SPY two-point momentum for paper-only acceptance; QQQ is a simulated research comparison.",
+                  "provenance": {
+                    "created_at": "2026-09-13T04:05:23Z",
+                    "created_by": "Codex",
+                    "source_kind": "workflow",
+                    "source_refs": [
+                      "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
+                    ]
+                  },
+                  "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+                  "market_scope": {
+                    "venues": [
+                      "US"
+                    ],
+                    "symbols": [
+                      "RESEARCH_UNIVERSE"
+                    ],
+                    "frequency": "1d",
+                    "asset_classes": [
+                      "equity"
+                    ]
+                  },
+                  "spec_version": "1.0",
+                  "evidence_refs": [
+                    {
+                      "ref_id": "evbundle-distill-c4a34c2036cb",
+                      "ref_type": "evidence_bundle",
+                      "association": "source_evidence"
+                    },
+                    {
+                      "ref_id": "evi-distill-c4a34c2036cb",
+                      "summary": "SIMULATION paper-only SPY anchor dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+                      "ref_type": "evidence_item",
+                      "source_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+                      "association": "supporting_evidence",
+                      "citation_ref": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor#normalized@e70a534d1d3b",
+                      "evidence_item_id": "evi-distill-c4a34c2036cb"
+                    }
+                  ],
+                  "evaluation_plan": {
+                    "metrics": [
+                      "sharpe_ratio",
+                      "max_drawdown"
+                    ],
+                    "live_gate": "Requires paper evidence, risk owner approval, and explicit live approval.",
+                    "paper_gate": "Requires approved StrategySpec artifact and paper deployment approval.",
+                    "candidate_gate": "StrategySpec schema, source-seed lineage, and evidence/code refs review pass."
+                  },
+                  "lifecycle_state": "draft",
+                  "data_dependencies": [
+                    {
+                      "ref": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+                      "kind": "source_record"
+                    },
+                    {
+                      "ref": "dataset:ohlcv",
+                      "kind": "dataset"
+                    }
+                  ],
+                  "execution_profile": {
+                    "quantity_type": "PERCENT_PORTFOLIO",
+                    "rebalance_cadence": "1 day",
+                    "execution_mode_hint": "research",
+                    "signal_schema_version": "research-signal-v1"
+                  }
+                },
+                "source_seed_id": "seed-4929af0f1a189542",
+                "execution_route": "none",
+                "conversion_service": "StrategySpecConversionService",
+                "conversion_version": "1.0",
+                "evidence_bundle_id": "evbundle-distill-c4a34c2036cb",
+                "registry_payload_built": true,
+                "registry_write_performed": false
+              },
+              "created_at": "2026-09-13T04:05:23Z",
+              "updated_at": "2026-09-13T05:21:38Z",
+              "last_actor": {
+                "roles": [
+                  "operator"
+                ],
+                "tenant": "tenant-dev",
+                "actor_id": "pantheon-dev-operator-a",
+                "token_kind": "jwt"
+              },
+              "owner_tenant": "tenant-dev"
+            },
+            "deployment_stage": "none"
+          }
+        }
+      ],
+      "selected_version_id": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f",
+      "active_strategy_spec_registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b"
+    },
+    "meta": {
+      "snapshot_at": "2026-09-13T05:22:31Z",
+      "capability": "agora.workshop.v1",
+      "audience": "tenant:tenant-dev:user:pantheon-dev-operator-a",
+      "request_id": null,
+      "canonical_authority": "strategy_registry",
+      "etag": "W/\"workshop:2afec261-fe60-43af-bacb-136c60a8f9ba:v1\"",
+      "no_direct_action": {
+        "deployment_triggered": false,
+        "order_submitted": false,
+        "live_capital_changed": false
+      }
+    }
+  }
+}

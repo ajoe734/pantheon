@@ -100,9 +100,11 @@
   "coordination": {
     "repositories": {
       "pantheon": {
-        "repo": "ajoe734/pantheon"
+        "repo": "ajoe734/pantheon",
+        "integration_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/integration-runtimes/pantheon/b435986b13d5c323c533225f5ea3f6481d79a1be"
       },
       "execute_plans": {
+        "repo": "ajoe734/execute-plans",
         "local_path": "../code/execute-plans"
       }
     }
@@ -187,46 +189,26 @@
     },
     "reviewer_fallbacks": {
       "Claude": [
-        "Claude2",
-        "Antigravity",
-        "Antigravity2",
         "Codex",
         "Codex2"
       ],
       "Claude2": [
-        "Claude",
-        "Antigravity",
-        "Antigravity2",
         "Codex",
         "Codex2"
       ],
       "Antigravity": [
-        "Antigravity2",
-        "Claude",
-        "Claude2",
         "Codex",
         "Codex2"
       ],
       "Antigravity2": [
-        "Antigravity",
-        "Claude",
-        "Claude2",
         "Codex",
         "Codex2"
       ],
       "Codex": [
-        "Codex2",
-        "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
+        "Codex2"
       ],
       "Codex2": [
-        "Codex",
-        "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
+        "Codex"
       ]
     },
     "max_reassignments_per_cycle": 4,
@@ -259,14 +241,14 @@
     "claude": {
       "display_name": "Claude",
       "provider": "claude",
-      "max_parallel": 3,
+      "max_parallel": 0,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "claude2": {
       "display_name": "Claude2",
       "provider": "claude2",
-      "max_parallel": 1,
+      "max_parallel": 0,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
@@ -459,6 +441,11 @@
     "antigravity": {
       "delivery_mode": "antigravity",
       "account": "antigravity",
+      "runtime": {
+        "env": {
+          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
+        }
+      },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
@@ -485,11 +472,19 @@
     },
     "antigravity2": {
       "delivery_mode": "antigravity",
-      "account": "antigravity2",
+      "account": "antigravity",
+      "runtime": {
+        "env": {
+          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
+        }
+      },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "config_home": "~/.gemini-agy2",
         "home": "~/.gemini-agy2",
+        "env": {
+          "PANTHEON_HOST_HOME": "~"
+        },
         "include_directories": true,
         "model": "gemini-3.8-flash-high",
         "output_format": "stream-json",

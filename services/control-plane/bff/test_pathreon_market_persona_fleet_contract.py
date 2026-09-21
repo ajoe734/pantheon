@@ -28,6 +28,13 @@ from services.control_plane.bff.research.router import create_research_router
 from services.control_plane.bff.management_read_models.ranking_router import (
     create_performance_attribution_router,
 )
+from services.control_plane.bff.shared.cross_domain_utils import (
+    _management_as_float,
+    _management_first_float,
+    _management_nested_value,
+    _management_telemetry_rollup,
+    _resolve_param,
+)
 
 
 # `_tw_qlib_research_experiment_default` (and its small, fully self-contained
@@ -652,21 +659,16 @@ def _compile_pm12_namespace(store):
         tree = ast.parse(main_path.read_text(encoding="utf-8"))
         target_names = {
             "_management_record_id",
-            "_management_as_float",
             "_management_first_non_empty",
             "_management_dict_value",
             "_management_nested_dict",
             "_management_position_records",
-            "_management_nested_value",
-            "_management_first_float",
             "_management_latest_timestamp",
-            "_management_telemetry_rollup",
             "_management_link",
             "_filter_by_common_identifiers",
             "_extract_ids_from_item",
             "_performance_ranking_source_surface",
             "_list_strategy_summaries",
-            "_resolve_param",
         }
         _PM12_FUNCS = [
             n for n in tree.body
@@ -703,6 +705,11 @@ def _compile_pm12_namespace(store):
         "_page_slice": _page_slice,
         "_aggregate_group_surface": _aggregate_group_surface,
         "_snapshot_meta": lambda snapshot_at: {"snapshot_at": snapshot_at},
+        "_management_as_float": _management_as_float,
+        "_management_nested_value": _management_nested_value,
+        "_management_first_float": _management_first_float,
+        "_management_telemetry_rollup": _management_telemetry_rollup,
+        "_resolve_param": _resolve_param,
     })
     exec(compile(ast.Module(body=_PM12_FUNCS, type_ignores=[]), "main_pm12.py", "exec"), ns)
     return ns

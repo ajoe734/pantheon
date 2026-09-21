@@ -577,3 +577,74 @@ def test_unsupported_authoritative_snapshot_is_not_admitted_or_mutated(persona_a
     assert module.requirement_snapshot_store.latest is None
     assert module.connector_store.list_configs() == []
     assert module.schedule_config_store.list_schedules() == []
+
+
+def _us_persona() -> dict:
+    return {
+        "persona_id": "persona-dev-paper-us",
+        "name": "Dev Paper US Baseline",
+        "mandate": "Paper-only dev baseline SPY momentum",
+        "lifecycle_state": "research_only",
+        "created_at": "2026-09-18T00:00:00Z",
+        "required_data_sources": [
+            {
+                "dataset": "us_price_daily",
+                "market": "US",
+                "cadence": "daily",
+                "source_class": "live_pull",
+                "connector_candidates": ["dev-paper-us-equity-simulation"],
+                "policy_gates": ["require_connector_approved", "require_schedule_active"],
+            }
+        ],
+    }
+
+
+def test_dev_only_us_simulation_connector_provisioned_when_pantheon_env_dev(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DEV-PAPER-MARKET-INPUT-STALENESS-001: US live_pull requirements are
+    unsupported by default (no TW-market candidate), but under
+    PANTHEON_ENV=dev the reconciler must provision and schedule the
+    code-owned synthetic connector so the binding can stay admissible."""
+
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    reconciler, connector_store, schedule_store = _reconciler(tmp_path)
+
+    result = reconciler.reconcile_persona(_us_persona())
+
+    assert result.summary["unsupported"] == 0
+    action = result.actions[0]
+    assert action.connector_id == "dev-paper-us-equity-simulation"
+    assert action.connector_action == "created"
+    assert action.schedule_action == "created"
+
+    config = connector_store.get_config("dev-paper-us-equity-simulation")
+    assert config is not None
+    assert config.connector.provider == "Explicit controlled simulation"
+    assert config.connector.metadata.get("is_real") is False
+    assert config.connector.metadata.get("provenance") == "simulation"
+
+    schedule = schedule_store.get_schedule("dev-paper-us-equity-simulation")
+    assert schedule is not None
+    assert schedule.enabled is True
+    assert schedule.interval_seconds > 0
+
+
+def test_us_simulation_connector_not_offered_outside_dev_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dev-only synthetic connector must never be selectable in
+    staging/prod: with PANTHEON_ENV unset (or non-dev), the US requirement
+    stays unsupported rather than silently binding paper personas to
+    simulated data outside dev."""
+
+    monkeypatch.delenv("PANTHEON_ENV", raising=False)
+    reconciler, connector_store, schedule_store = _reconciler(tmp_path)
+
+    result = reconciler.reconcile_persona(_us_persona())
+
+    assert result.summary["unsupported"] == 1
+    action = result.actions[0]
+    assert action.connector_id is None
+    assert connector_store.get_config("dev-paper-us-equity-simulation") is None
+    assert schedule_store.get_schedule("dev-paper-us-equity-simulation") is None

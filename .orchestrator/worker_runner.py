@@ -38,6 +38,7 @@ from common import (  # noqa: E402 - worker_runner must bootstrap its sibling mo
     first_symlink_component as _first_symlink_component,
     git_toplevel as _git_toplevel,
     validate_status_command_runtime as _validate_status_command_runtime,
+    write_activity_log as _write_activity_log,
 )
 import runtime_state as promotion_state  # noqa: E402
 from rewrite.task_state_store import load_snapshot  # noqa: E402
@@ -792,7 +793,239 @@ def worker_runtime_config(coordination_root: Path) -> dict[str, Any]:
     return {"paths": {
         "status_file": str(coordination_root / "ai-status.json"),
         "state_file": str(coordination_root / ".orchestrator" / "worker-runtime" / "state.json"),
+        "activity_log": str(coordination_root / "ai-activity-log.jsonl"),
     }}
+
+
+def _set_binding_field(exc: Exception, field: str) -> Exception:
+    setattr(exc, "binding_field", field)
+    return exc
+
+
+def _resolve_binding_field(exc: Exception) -> str:
+    field = getattr(exc, "binding_field", None)
+    if field:
+        return str(field)
+    msg = str(exc)
+    if "explicit hold" in msg:
+        return "waiting_for"
+    if "purpose/assignment is not current" in msg:
+        return "assignment"
+    if "lease is expired" in msg or "lease timestamp" in msg:
+        return "lease_expires_at"
+    if "lease is not active" in msg:
+        return "status"
+    if "task generation or dispatch identity mismatch" in msg:
+        return "task_generation"
+    if "TaskStore receipt binding mismatch" in msg:
+        return "task_state_identity"
+    if "command/workspace/runtime" in msg:
+        return "command"
+    if "launch receipt is missing" in msg:
+        return "worker_receipt"
+    if "dispatch/run/process identity mismatch" in msg:
+        return "identity"
+    if "coordination root" in msg:
+        return "coordination_root"
+    if "workspace source root" in msg:
+        return "workspace_source_root"
+    if "metadata is missing" in msg:
+        return "request_snapshot.metadata"
+    if isinstance(exc, OSError):
+        return "filesystem"
+    return "unknown"
+
+
+def _record_dispatch_binding_revoked(
+    *,
+    status: dict[str, Any],
+    status_path: Path,
+    coordination_root: Path | None,
+    task_id: str,
+    run_id: str,
+    agent: str,
+    exc: Exception,
+) -> None:
+    exc_type = type(exc).__name__
+    exc_msg = str(exc)
+    binding_field = _resolve_binding_field(exc)
+
+    status["dispatch_binding_revoked"] = True
+    status["revocation_exception_type"] = exc_type
+    status["revocation_message"] = exc_msg
+    status["revocation_binding_field"] = binding_field
+    status["revocation_reason"] = f"{exc_type}: {exc_msg}"
+    status["dispatch_binding_revocation"] = {
+        "exception_type": exc_type,
+        "message": exc_msg,
+        "binding_field": binding_field,
+    }
+    status["dispatch_binding_revocation_reason"] = f"{exc_type}: {exc_msg} (field: {binding_field})"
+    status["dispatch_binding_revocation_field"] = binding_field
+
+    try:
+        write_json(status_path, status)
+    except Exception as e:
+        print(f"worker_runner: warning: failed to write revoked status to {status_path}: {e}", file=sys.stderr)
+
+    if coordination_root is not None:
+        try:
+            config = worker_runtime_config(coordination_root)
+            activity_entry = {
+                "type": "worker_dispatch_binding_revoked",
+                "task_id": task_id,
+                "run_id": run_id,
+                "agent": agent,
+                "exception_type": exc_type,
+                "exception_message": exc_msg,
+                "binding_field": binding_field,
+                "revocation_reason": f"{exc_type}: {exc_msg}",
+                "message": f"Worker dispatch binding revoked for task {task_id}: {exc_type}: {exc_msg} (field: {binding_field})",
+            }
+            _write_activity_log(config, activity_entry)
+        except Exception as e:
+            print(f"worker_runner: warning: failed to write revocation to activity log: {e}", file=sys.stderr)
+
+
+def _live_review_pr_merge_state_for_task(
+    coordination_root: Path, task_id: str
+) -> tuple[str, int, str] | None:
+    """Best-effort live GitHub ``(repository, pr, mergeStateStatus)`` for a
+    reviewer's bound PR.
+
+    OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a reviewer worker's own ``approve``
+    (and ``reopen``) attempt is rejected by the canonical review-merge gate
+    (scripts/git/github_review_bridge.py) the moment its bound PR goes DIRTY,
+    but that rejection happens inside the wrapped agent process, invisible to
+    this wrapper. Rather than parse the child's output, this polls the same
+    live fact directly so a running reviewer worker can stop itself through a
+    governed path instead of failing/exiting abruptly and being reaped as a
+    lost lease. Any resolution or transport failure fails open (returns
+    ``None``): a missing ``gh`` binary, an unconfigured repository, or a task
+    with no live PR binding must never stop or hold a worker that would
+    otherwise run normally.
+    """
+
+    try:
+        task = _get_task_record(coordination_root, task_id)
+    except Exception:
+        return None
+    if not isinstance(task, dict):
+        return None
+    binding = task.get("review_binding")
+    if not isinstance(binding, dict):
+        return None
+    try:
+        pr = int(binding.get("pr") or 0)
+    except (TypeError, ValueError):
+        return None
+    if pr <= 0:
+        return None
+    try:
+        import multi_repo_registry  # local import: only needed for this live check
+
+        resolved = multi_repo_registry.task_repository_slug_and_default_branch(
+            worker_runtime_config(coordination_root), task
+        )
+    except Exception:
+        return None
+    if not resolved:
+        return None
+    repository, _default_branch = resolved
+    if not repository:
+        return None
+    try:
+        # ``scripts/git`` is tooling that ships beside this wrapper's own
+        # checkout (THIS_DIR is always ``<checkout>/.orchestrator``), not
+        # necessarily beside PANTHEON_STATUS_ROOT -- the two can be separate
+        # checkouts (see the command/status root split enforced in ``main``).
+        scripts_git = THIS_DIR.parent / "scripts" / "git"
+        path_str = str(scripts_git)
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
+        import github_review_bridge
+
+        payload = github_review_bridge.GhJsonRunner().run_json(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr),
+                "--repo",
+                repository,
+                "--json",
+                "number,mergeStateStatus,mergeable",
+            ]
+        )
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or int(payload.get("number") or 0) != pr:
+        return None
+    merge_state = str(payload.get("mergeStateStatus") or "").strip().upper()
+    return repository, pr, merge_state
+
+
+def _review_pr_merge_state_is_conflicted(merge_state: str | None) -> bool:
+    """Only a genuine merge-conflict signal, matching supervisor.py's twin.
+
+    ``UNKNOWN``/``BEHIND``/``UNSTABLE``/``BLOCKED`` are not conflicts; only
+    ``DIRTY`` (the same signal ``github_review_bridge`` rejects admission for)
+    trips it.
+    """
+
+    return str(merge_state or "").strip().upper() == "DIRTY"
+
+
+def _record_review_pr_dirty_hold(
+    *,
+    status: dict[str, Any],
+    status_path: Path,
+    coordination_root: Path | None,
+    task_id: str,
+    run_id: str,
+    agent: str,
+    merge_state: str,
+    pr_reference: str,
+) -> None:
+    """Mark this reviewer's exit as a governed, non-terminal hold.
+
+    This is the sibling of ``_record_dispatch_binding_revoked``: an explicit,
+    named exit path -- not an uncaught exception or a bare process exit --
+    that the supervisor's poll loop (``update_worker_runtime_markers`` /
+    ``recover_lost_worker_lease`` in supervisor.py) recognizes and holds
+    rather than reaping as a lost lease and redispatching into the same
+    DIRTY PR.
+    """
+
+    wait_reason = f"review_pr_dirty:{pr_reference}:{merge_state}"
+    status["review_pr_dirty_hold"] = True
+    status["review_pr_dirty_reason"] = wait_reason
+    status["review_pr_merge_state"] = merge_state
+
+    try:
+        write_json(status_path, status)
+    except Exception as e:
+        print(f"worker_runner: warning: failed to write dirty-PR hold status to {status_path}: {e}", file=sys.stderr)
+
+    if coordination_root is not None:
+        try:
+            config = worker_runtime_config(coordination_root)
+            activity_entry = {
+                "type": "worker_review_pr_dirty_hold",
+                "task_id": task_id,
+                "run_id": run_id,
+                "agent": agent,
+                "merge_state": merge_state,
+                "wait_reason": wait_reason,
+                "message": (
+                    f"Reviewer worker for task {task_id} paused non-terminally: "
+                    f"bound PR ({pr_reference}) reports mergeStateStatus={merge_state}. "
+                    "Not a worker failure; dispatch resumes once the PR clears."
+                ),
+            }
+            _write_activity_log(config, activity_entry)
+        except Exception as e:
+            print(f"worker_runner: warning: failed to write dirty-PR hold to activity log: {e}", file=sys.stderr)
 
 
 def validate_promotion_admission(coordination_root: Path, command_runtime: dict[str, str], task_id: str | None = None) -> None:
@@ -821,9 +1054,19 @@ def _runtime_worker_receipt(coordination_root: Path, run_id: str) -> dict[str, A
     # moved into its runtime directory.
     if not runtime_state.exists():
         runtime_state = coordination_root / ".orchestrator" / "state.json"
-    state = json.loads(read_regular_file_bytes(
-        runtime_state, source="worker launch receipt"
-    ))
+    # Atomic supervisor writes are not lease revocations. Retry only that
+    # specific race; malformed files, symlinks and binding failures still fail.
+    # Do not wait on admission here: promotion may hold it while draining us.
+    from common import FileSnapshotChangedError
+    for attempt in range(3):
+        try:
+            state = json.loads(read_regular_file_bytes(
+                runtime_state, source="worker launch receipt"
+            ))
+            break
+        except FileSnapshotChangedError:
+            if attempt == 2:
+                raise
     if not isinstance(state, dict):
         raise RuntimeError("worker_runner: runtime launch state is malformed")
     workers = state.get("workers", {})
@@ -873,14 +1116,14 @@ def validate_worker_entry_binding(
     second process because both Linux PID and immutable start ticks must match.
     """
     if coordination_root is None:
-        raise RuntimeError("worker_runner: canonical coordination root is required")
+        raise _set_binding_field(RuntimeError("worker_runner: canonical coordination root is required"), "coordination_root")
     deadline = time.monotonic() + max(0, wait_seconds)
     while True:
         worker = _runtime_worker_receipt(coordination_root, run_id)
         if worker is not None:
             break
         if time.monotonic() >= deadline:
-            raise RuntimeError("worker_runner: canonical worker launch receipt is missing")
+            raise _set_binding_field(RuntimeError("worker_runner: canonical worker launch receipt is missing"), "worker_receipt")
         time.sleep(min(0.05, max(0, deadline - time.monotonic())))
     task_id = worker.get("task_id")
     queue_id = worker.get("queue_event_id")
@@ -892,25 +1135,51 @@ def validate_worker_entry_binding(
             or worker.get("process_generation") != worker_process_generation_id(
                 task_id=task_id, worker_run_id=run_id, queue_event_id=queue_id,
                 pid=pid, pid_start_ticks=ticks)):
-        raise RuntimeError("worker_runner: canonical dispatch/run/process identity mismatch")
+        err = RuntimeError("worker_runner: canonical dispatch/run/process identity mismatch")
+        if worker.get("run_id") != run_id:
+            field = "run_id"
+        elif not task_id:
+            field = "task_id"
+        elif not queue_id:
+            field = "queue_event_id"
+        elif type(pid) is not int or pid != os.getpid():
+            field = "pid"
+        elif type(ticks) is not int or ticks != _own_process_start_ticks():
+            field = "pid_start_ticks"
+        else:
+            field = "process_generation"
+        raise _set_binding_field(err, field)
     if worker.get("status") not in {"starting", "running"}:
-        raise RuntimeError("worker_runner: canonical worker lease is not active")
+        raise _set_binding_field(RuntimeError("worker_runner: canonical worker lease is not active"), "status")
     try:
         expires = datetime.fromisoformat(str(worker.get("lease_expires_at") or "").replace("Z", "+00:00"))
         if expires.tzinfo is None:
-            raise ValueError("lease timestamp must include timezone")
-    except (TypeError, ValueError):
+            raise _set_binding_field(ValueError("lease timestamp must include timezone"), "lease_expires_at")
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, ValueError) and getattr(exc, "binding_field", None):
+            raise
         expires = None
     if expires is None or datetime.now(timezone.utc) >= expires:
-        raise RuntimeError("worker_runner: canonical worker lease is expired or missing")
+        raise _set_binding_field(RuntimeError("worker_runner: canonical worker lease is expired or missing"), "lease_expires_at")
     if (worker.get("command") != command
             or worker.get("workspace_path") != (str(workspace_path) if workspace_path else None)
             or worker.get("heartbeat_path") != str(heartbeat_path)
             or worker.get("runner_status_path") != str(status_path)
             or worker.get("status_command_runtime") != command_runtime):
-        raise RuntimeError("worker_runner: command/workspace/runtime does not match canonical receipt")
+        err = RuntimeError("worker_runner: command/workspace/runtime does not match canonical receipt")
+        if worker.get("command") != command:
+            field = "command"
+        elif worker.get("workspace_path") != (str(workspace_path) if workspace_path else None):
+            field = "workspace_path"
+        elif worker.get("heartbeat_path") != str(heartbeat_path):
+            field = "heartbeat_path"
+        elif worker.get("runner_status_path") != str(status_path):
+            field = "runner_status_path"
+        else:
+            field = "status_command_runtime"
+        raise _set_binding_field(err, field)
     if worker.get("task_state_identity") != _task_store_identity(coordination_root):
-        raise RuntimeError("worker_runner: canonical TaskStore receipt binding mismatch")
+        raise _set_binding_field(RuntimeError("worker_runner: canonical TaskStore receipt binding mismatch"), "task_state_identity")
     task = _get_task_record(coordination_root, task_id)
     assert task is not None
     generation = canonical_task_generation(task)
@@ -922,10 +1191,21 @@ def validate_worker_entry_binding(
             or snapshot.get("task_id") != task_id
             or snapshot.get("task_generation") != generation
             or snapshot.get("agent_id") != worker.get("agent_id")):
-        raise RuntimeError("worker_runner: canonical task generation or dispatch identity mismatch")
+        err = RuntimeError("worker_runner: canonical task generation or dispatch identity mismatch")
+        if generation < 1 or ("generation" in task and type(task["generation"]) is not int) or worker.get("task_generation") != generation:
+            field = "task_generation"
+        elif not isinstance(snapshot, dict):
+            field = "request_snapshot"
+        elif snapshot.get("task_id") != task_id:
+            field = "request_snapshot.task_id"
+        elif snapshot.get("task_generation") != generation:
+            field = "request_snapshot.task_generation"
+        else:
+            field = "request_snapshot.agent_id"
+        raise _set_binding_field(err, field)
     metadata = snapshot.get("metadata")
     if not isinstance(metadata, dict):
-        raise RuntimeError("worker_runner: canonical dispatch metadata is missing")
+        raise _set_binding_field(RuntimeError("worker_runner: canonical dispatch metadata is missing"), "request_snapshot.metadata")
     agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "")
     owner = str(task.get("owner") or "")
     reviewer = str(task.get("reviewer") or "")
@@ -941,16 +1221,27 @@ def validate_worker_entry_binding(
         if agent.casefold() == owner.casefold() and (not entry or task.get("status") == "review_approved"):
             role = "owner_finalize"
     if not role or not agent:
-        raise RuntimeError("worker_runner: canonical purpose/assignment is not current")
+        err = RuntimeError("worker_runner: canonical purpose/assignment is not current")
+        if not agent:
+            field = "agent_id"
+        elif reason in {"owned_ready_dispatch", "owned_in_progress_dispatch"} and agent.casefold() != owner.casefold():
+            field = "owner"
+        elif reason == "review_ready_dispatch" and agent.casefold() != reviewer.casefold():
+            field = "reviewer"
+        elif reason == "owned_finalize_dispatch" and agent.casefold() != owner.casefold():
+            field = "owner"
+        else:
+            field = "status"
+        raise _set_binding_field(err, field)
     if task.get("waiting_for"):
-        raise RuntimeError("worker_runner: task is on an explicit hold")
+        raise _set_binding_field(RuntimeError("worker_runner: task is on an explicit hold"), "waiting_for")
     bridge = task.get("dev_bridge")
     source_root = worker.get("workspace_source_root")
     source_readonly_roots = []
     if source_root:
         source = Path(str(source_root))
         if not source.is_absolute() or _first_symlink_component(source) is not None:
-            raise RuntimeError("worker_runner: canonical workspace source root is invalid")
+            raise _set_binding_field(RuntimeError("worker_runner: canonical workspace source root is invalid"), "workspace_source_root")
         source_readonly_roots.append(source)
     return {"task_id": task_id, "agent": agent, "role": role,
             "owner": owner, "reviewer": reviewer,
@@ -1144,6 +1435,11 @@ def main(argv: list[str] | None = None) -> int:
         next_heartbeat = time.monotonic() + interval
         next_binding_check = time.monotonic() + binding_interval
         direct_exit_code: int | None = None
+        consecutive_transient_errors = 0
+        first_transient_error_at: float | None = None
+        transient_failure_threshold = int(os.environ.get("PANTHEON_BINDING_TRANSIENT_ERROR_THRESHOLD", 3))
+        transient_grace_window = float(os.environ.get("PANTHEON_BINDING_TRANSIENT_GRACE_SECONDS", 15.0))
+        governed_hold_reason: str | None = None
         while True:
             if direct_exit_code is None:
                 direct_exit_code = child.poll()
@@ -1157,14 +1453,41 @@ def main(argv: list[str] | None = None) -> int:
                 and terminating_signal is None
                 and time.monotonic() >= next_binding_check
             ):
-                next_binding_check = time.monotonic() + binding_interval
+                binding_current = True
+                revocation_exc: Exception | None = None
                 try:
                     validate_worker_entry_binding(coordination_root, **entry_arguments, entry=False)
-                    binding_current = True
-                except (RuntimeError, ValueError, OSError):
+                    consecutive_transient_errors = 0
+                    first_transient_error_at = None
+                    next_binding_check = time.monotonic() + binding_interval
+                except (RuntimeError, ValueError) as exc:
                     binding_current = False
-                if not binding_current:
-                    status["dispatch_binding_revoked"] = True
+                    revocation_exc = exc
+                except OSError as exc:
+                    now = time.monotonic()
+                    consecutive_transient_errors += 1
+                    if first_transient_error_at is None:
+                        first_transient_error_at = now
+                    if (
+                        consecutive_transient_errors >= transient_failure_threshold
+                        and (now - first_transient_error_at) >= transient_grace_window
+                    ):
+                        binding_current = False
+                        revocation_exc = exc
+                    else:
+                        binding_current = True
+                        next_binding_check = now + min(1.0, binding_interval)
+
+                if not binding_current and revocation_exc is not None:
+                    _record_dispatch_binding_revoked(
+                        status=status,
+                        status_path=status_path,
+                        coordination_root=coordination_root,
+                        task_id=task_id,
+                        run_id=args.run_id,
+                        agent=agent,
+                        exc=revocation_exc,
+                    )
                     terminating_signal = signal.SIGTERM
                     signal_received_at = time.monotonic()
                     status["signal"] = signal.SIGTERM
@@ -1175,6 +1498,40 @@ def main(argv: list[str] | None = None) -> int:
                             child.send_signal(signal.SIGTERM)
                         except OSError:
                             pass
+                elif binding_current and active_role == "reviewer":
+                    # OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: the reviewer's own
+                    # approve/reopen attempt is rejected by the canonical
+                    # review-merge gate the instant its bound PR goes DIRTY,
+                    # but that rejection happens inside the wrapped agent
+                    # process, invisible to this wrapper. Poll the same live
+                    # fact here so a running reviewer can stop itself through
+                    # the governed path below instead of failing/exiting
+                    # abruptly and being reaped as a lost lease.
+                    pr_state = _live_review_pr_merge_state_for_task(coordination_root, task_id)
+                    merge_state = pr_state[2] if pr_state is not None else None
+                    if _review_pr_merge_state_is_conflicted(merge_state):
+                        repository, pr_number, _ = pr_state
+                        _record_review_pr_dirty_hold(
+                            status=status,
+                            status_path=status_path,
+                            coordination_root=coordination_root,
+                            task_id=task_id,
+                            run_id=args.run_id,
+                            agent=agent,
+                            merge_state=str(merge_state),
+                            pr_reference=f"{repository}#{pr_number}",
+                        )
+                        governed_hold_reason = "review_pr_dirty_hold"
+                        terminating_signal = signal.SIGTERM
+                        signal_received_at = time.monotonic()
+                        status["signal"] = signal.SIGTERM
+                        try:
+                            os.killpg(child.pid, signal.SIGTERM)
+                        except OSError:
+                            try:
+                                child.send_signal(signal.SIGTERM)
+                            except OSError:
+                                pass
 
             # Normal path: child exited and we aren't terminating
             if direct_exit_code is not None and terminating_signal is None:
@@ -1211,7 +1568,7 @@ def main(argv: list[str] | None = None) -> int:
                     exit_code = 128 + terminating_signal
                     status["exit_code"] = exit_code
                     status["finished_at"] = utc_now()
-                    publish("failed")
+                    publish(governed_hold_reason or "failed")
                     return exit_code
 
                 # Group is still alive, check 5-second deadline
@@ -1230,7 +1587,7 @@ def main(argv: list[str] | None = None) -> int:
                     exit_code = 128 + terminating_signal
                     status["exit_code"] = exit_code
                     status["finished_at"] = utc_now()
-                    publish("failed")
+                    publish(governed_hold_reason or "failed")
                     return exit_code
 
             if time.monotonic() >= next_heartbeat:

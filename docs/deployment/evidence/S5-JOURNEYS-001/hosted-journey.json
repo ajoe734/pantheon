@@ -1,0 +1,694 @@
+{
+  "startedAt": "2026-09-17T04:37:14.821Z",
+  "scope": "authenticated desktop management and agora product journey",
+  "passed": true,
+  "checks": [
+    {
+      "name": "served identity verified",
+      "at": "2026-09-17T04:37:14.903Z",
+      "fe_commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+      "bff_commit": "dc15751a9b20f8bc0931529d68af8898e691c898",
+      "pair_id": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+      "deployment_profile": "operator-live",
+      "real_writes_enabled": "true"
+    },
+    {
+      "name": "real account/password login",
+      "at": "2026-09-17T04:37:16.942Z",
+      "authInjected": false,
+      "cookie": {
+        "name": "pantheon_session",
+        "domain": "api.dev.mvl-cap.tw",
+        "path": "/",
+        "httpOnly": true,
+        "secure": true,
+        "sameSite": "Lax"
+      }
+    },
+    {
+      "name": "management cockpit loaded",
+      "at": "2026-09-17T04:37:19.982Z",
+      "url": "https://app.dev.mvl-cap.tw/management/cockpit",
+      "headingVisible": true,
+      "userButtonVisible": true
+    },
+    {
+      "name": "authenticated /bff/me readback",
+      "at": "2026-09-17T04:37:19.984Z",
+      "user": {
+        "id": "pantheon-dev-operator-a",
+        "operator_id": "pantheon-dev-operator-a",
+        "display_name": "pantheon-dev-operator-a",
+        "roles": [
+          "operator"
+        ],
+        "capabilities": [
+          "runtime.read",
+          "risk.incident.read",
+          "risk.alert.read",
+          "artifact.read"
+        ],
+        "mfa_verified": false
+      },
+      "session_kind": "cookie"
+    },
+    {
+      "name": "agora strategy workshop list loaded",
+      "at": "2026-09-17T04:37:25.874Z",
+      "url": "https://app.dev.mvl-cap.tw/agora/strategy-workshop"
+    },
+    {
+      "name": "agora trading room loaded",
+      "at": "2026-09-17T04:37:27.331Z",
+      "url": "https://app.dev.mvl-cap.tw/agora/trading-room"
+    },
+    {
+      "name": "agora strategy performance loaded",
+      "at": "2026-09-17T04:37:28.689Z",
+      "url": "https://app.dev.mvl-cap.tw/agora/strategy-performance"
+    },
+    {
+      "name": "fresh strategy performance verified",
+      "at": "2026-09-17T04:37:28.808Z",
+      "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+      "no_order_route_proof": "agora_performance_read_only",
+      "performance_data": {
+        "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+        "period": "latest",
+        "environment": "paper",
+        "availability": "unavailable",
+        "freshness": {
+          "status": "unavailable",
+          "snapshot_at": "2026-09-17T04:37:28Z",
+          "as_of": null,
+          "source_watermarks": {
+            "source_high_watermark": "80809",
+            "last_successful_publish_at": "2026-09-17T04:37:27.721730Z"
+          },
+          "projection_revision": null,
+          "projection_generation": 79537,
+          "unavailable_sources": [
+            "adjustment_suggestions",
+            "compliance",
+            "execution_history",
+            "interventions",
+            "warnings"
+          ]
+        },
+        "compliance": {
+          "availability": {
+            "status": "unavailable",
+            "as_of": null,
+            "source_ids": [],
+            "reason": "compliance_metrics_unavailable"
+          },
+          "metrics": []
+        },
+        "interventions": {
+          "availability": {
+            "status": "unavailable",
+            "as_of": null,
+            "source_ids": [],
+            "reason": "intervention_records_unavailable"
+          },
+          "aggregate": null,
+          "items": []
+        },
+        "execution_history": {
+          "availability": {
+            "status": "unavailable",
+            "as_of": null,
+            "source_ids": [
+              "canonical_trade_journey_projector"
+            ],
+            "reason": "execution_history_unavailable"
+          },
+          "items": []
+        },
+        "warnings": {
+          "availability": {
+            "status": "unavailable",
+            "as_of": null,
+            "source_ids": [],
+            "reason": "warning_source_unavailable"
+          },
+          "items": []
+        },
+        "adjustment_suggestions": {
+          "availability": {
+            "status": "unavailable",
+            "as_of": null,
+            "source_ids": [],
+            "reason": "governed_suggestions_unavailable"
+          },
+          "items": []
+        },
+        "no_order_route_proof": "agora_performance_read_only"
+      }
+    },
+    {
+      "name": "independent context session reload verified",
+      "at": "2026-09-17T04:37:29.126Z",
+      "user_id": "pantheon-dev-operator-a",
+      "display_name": "pantheon-dev-operator-a"
+    },
+    {
+      "name": "real UI logout and reload verified",
+      "at": "2026-09-17T04:37:29.356Z",
+      "sessionCookieCleared": true,
+      "reloadShowsLoginForm": true
+    }
+  ],
+  "network": [
+    {
+      "at": "2026-09-17T04:37:16.770Z",
+      "method": "GET",
+      "path": "/bff/auth/readiness",
+      "status": 401
+    },
+    {
+      "at": "2026-09-17T04:37:16.781Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 401
+    },
+    {
+      "at": "2026-09-17T04:37:16.920Z",
+      "method": "POST",
+      "path": "/bff/auth/dev-login",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:16.929Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:16.933Z",
+      "method": "GET",
+      "path": "/bff/auth/readiness",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:17.315Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:17.338Z",
+      "method": "GET",
+      "path": "/bff/management/shell-summary",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:17.339Z",
+      "method": "GET",
+      "path": "/health",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:17.611Z",
+      "method": "GET",
+      "path": "/bff/assistant/providers/usage-summary?auth_probe=false&window_hours=168&limit=500",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:17.645Z",
+      "method": "GET",
+      "path": "/bff/management/cockpit",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:18.203Z",
+      "method": "GET",
+      "path": "/bff/management/persona-league",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:18.209Z",
+      "method": "GET",
+      "path": "/bff/management/portfolio-book",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:18.760Z",
+      "method": "GET",
+      "path": "/bff/management/quarterly-ranking",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:19.153Z",
+      "method": "GET",
+      "path": "/bff/assistant/providers",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:19.157Z",
+      "method": "GET",
+      "path": "/bff/management/quarterly-ranking/formula",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:19.953Z",
+      "method": "GET",
+      "path": "/bff/management/persona-fleet",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:19.956Z",
+      "method": "GET",
+      "path": "/bff/assistant/mode",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:19.962Z",
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:19.969Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:24.541Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:24.544Z",
+      "method": "GET",
+      "path": "/bff/auth/readiness",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:24.727Z",
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:24.752Z",
+      "method": "GET",
+      "path": "/bff/agora/workshops",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:24.791Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:24.821Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:24.891Z",
+      "method": "GET",
+      "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/stream",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:24.916Z",
+      "method": "GET",
+      "path": "/bff/agora/capabilities",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:24.961Z",
+      "method": "GET",
+      "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:24.976Z",
+      "method": "GET",
+      "path": "/bff/agora/interactions?page_size=100&workshop_id=2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:25.004Z",
+      "method": "GET",
+      "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/events",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:25.015Z",
+      "method": "GET",
+      "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/completeness",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:25.095Z",
+      "method": "GET",
+      "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/readiness",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:25.178Z",
+      "method": "GET",
+      "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/cards",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:25.350Z",
+      "method": "POST",
+      "path": "/bff/agora/interactions/participants:eligible",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:25.937Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:25.940Z",
+      "method": "GET",
+      "path": "/bff/auth/readiness",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:26.053Z",
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:26.229Z",
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:26.233Z",
+      "method": "GET",
+      "path": "/bff/agora/operational-readiness",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:26.310Z",
+      "method": "GET",
+      "path": "/bff/agora/trading-room",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:27.384Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:27.388Z",
+      "method": "GET",
+      "path": "/bff/auth/readiness",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:27.452Z",
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:27.573Z",
+      "method": "GET",
+      "path": "/bff/agora/trading-room/performance-attribution/by-strategy?period=latest&page_size=50",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:27.753Z",
+      "method": "GET",
+      "path": "/bff/agora/trading-room",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:27.997Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:27.997Z",
+      "method": "GET",
+      "path": "/bff/agora/capabilities",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:27.999Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:28.032Z",
+      "method": "GET",
+      "path": "/bff/agora/trading-room/strategies/7774c0ec-eadf-455c-bf13-609bf68a55da/performance?period=latest&environment=paper",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:28.805Z",
+      "method": "GET",
+      "path": "/bff/agora/trading-room/strategies/strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c/performance",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:29.120Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:29.130Z",
+      "method": "GET",
+      "path": "/bff/auth/readiness",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:29.133Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:29.211Z",
+      "method": "POST",
+      "path": "/bff/logout",
+      "status": 200
+    },
+    {
+      "at": "2026-09-17T04:37:29.310Z",
+      "method": "GET",
+      "path": "/bff/auth/readiness",
+      "status": 401
+    },
+    {
+      "at": "2026-09-17T04:37:29.311Z",
+      "method": "GET",
+      "path": "/bff/me",
+      "status": 401
+    }
+  ],
+  "errors": [],
+  "screenshots": [
+    {
+      "label": "page-management-cockpit",
+      "path": "/tmp/s5-journeys-evidence/page-management-cockpit.png",
+      "at": "2026-09-17T04:37:17.791Z"
+    },
+    {
+      "label": "page-agora-strategy-workshop",
+      "path": "/tmp/s5-journeys-evidence/page-agora-strategy-workshop.png",
+      "at": "2026-09-17T04:37:25.874Z"
+    },
+    {
+      "label": "page-agora-trading-room",
+      "path": "/tmp/s5-journeys-evidence/page-agora-trading-room.png",
+      "at": "2026-09-17T04:37:27.331Z"
+    },
+    {
+      "label": "page-agora-strategy-performance",
+      "path": "/tmp/s5-journeys-evidence/page-agora-strategy-performance.png",
+      "at": "2026-09-17T04:37:28.689Z"
+    }
+  ],
+  "identity": {
+    "manifest": {
+      "schemaVersion": 1,
+      "app": "execute-plans",
+      "environment": "pantheon-dev-fe",
+      "repository": "ajoe734/execute-plans",
+      "profile": "operator-live",
+      "pairId": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+      "releaseAdmission": {
+        "schemaVersion": "pantheon.dev-release-candidate-admission.v1",
+        "releaseCandidateId": "db72b8b9087fe1d2ec0f11ebd8033631070a82385bf0976bc325aab1091bef03",
+        "compatibilityStatus": "compatible",
+        "compatibilityManifestSha256": "a949ab8a9146f785b98a0a888d358fa0bc87443b33a195ef4b95f31f3ede2eca",
+        "controller": {
+          "repository": "ajoe734/pantheon",
+          "workflow": "nonprod-deploy.yml",
+          "runId": "34750913608"
+        },
+        "backend": {
+          "repository": "ajoe734/pantheon",
+          "branch": "dev",
+          "commitSha": "ae41705b4637110e665d2eed735afbd8307e28e6"
+        },
+        "frontend": {
+          "repository": "ajoe734/execute-plans",
+          "branch": "dev",
+          "commitSha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a"
+        }
+      },
+      "commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+      "sourceBranch": "dev",
+      "sourceRef": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+      "frontendSha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+      "frontend": {
+        "repository": "ajoe734/execute-plans",
+        "commitSha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a"
+      },
+      "bffHost": "https://api.dev.mvl-cap.tw",
+      "bffCommit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+      "bffSourceCommitSha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+      "bffCommitEvidence": true,
+      "bff": {
+        "baseUrl": "https://api.dev.mvl-cap.tw",
+        "sourceCommitSha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+        "sourceCommitKnown": true
+      },
+      "gate": {
+        "workflow": "pantheon-integration-gate.yml",
+        "runId": "34751164876",
+        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/34751164876"
+      },
+      "integrationGateRunId": "34751164876",
+      "artifactDigest": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
+      "artifactDigestSha256": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
+      "buildMode": {
+        "VITE_BFF_MODE": "live",
+        "VITE_BFF_FALLBACK": "strict",
+        "VITE_BFF_REAL_WRITES": "true",
+        "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+        "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+      },
+      "deploymentState": "accepted",
+      "releaseName": "20260913T104814Z-dbe737e06766-gate-34751164876-34752443280-1-1351147",
+      "deployedAt": "20260913T104814Z",
+      "previousCommit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+      "previousArtifactDigest": "eab971709869b3f443222a13f769862072a4b2ad63557363c613ca0f1c982386",
+      "previousReleaseName": "20260913T103241Z-dbe737e06766-gate-34751164876-34751773220-1-1224886",
+      "githubArtifactDigest": "sha256:9b4628a482aa963469c40a263962e5b99ecfd9599330be07aabaff230db152f4",
+      "agoraCompatibility": {
+        "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
+        "contract_family": "agora.v1.13",
+        "environment": "dev",
+        "compatibility_status": "accepted",
+        "blocking_reasons": [],
+        "manifest_sha256": "a949ab8a9146f785b98a0a888d358fa0bc87443b33a195ef4b95f31f3ede2eca",
+        "gate_controller": {
+          "repo": "ajoe734/pantheon",
+          "commit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+          "tree": "825f68cec77dec3815084505886bdf49b9cbae79"
+        },
+        "backend": {
+          "repo": "ajoe734/pantheon",
+          "runtime_commit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+          "tree": "825f68cec77dec3815084505886bdf49b9cbae79"
+        },
+        "frontend": {
+          "repo": "ajoe734/execute-plans",
+          "runtime_commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+          "tree": "ad9fb577f7d50ae489e8677f1c2e85c6130c5e9f"
+        },
+        "source_handoffs": {
+          "backend": {
+            "path": "docs/contracts/agora/backend-generation-input.v1_13.json",
+            "commit": "cd71b0ba4d92a18c955a21282755bb5be17f4c34",
+            "sha256": "31128a0a6abb2710bea6874cf634109cfe6267fc45e9226a76d402071e7595ae"
+          },
+          "frontend": {
+            "path": "docs/contracts/agora/frontend-generation-output.v1_13.json",
+            "commit": "b9fee329cb7dd2bcb5f2e45fc4624ec5167b10c1",
+            "sha256": "501ba5db172c76f0ca4922bd033ecb53ef981b37f30b4bdcd4be31b6d975aebe"
+          }
+        },
+        "hash_policy": {
+          "file_hash": "sha256-exact-git-bytes-v1",
+          "generated_types_hash": "sha256-path-tab-filehash-lf-v1"
+        },
+        "release_candidate": {
+          "schema_version": "pantheon.dev-release-candidate.v1",
+          "environment": "dev",
+          "compatibility_status": "compatible",
+          "compatibility_manifest": {
+            "contract_family": "agora.v1.13",
+            "manifest_version": "1.0",
+            "sha256": "a949ab8a9146f785b98a0a888d358fa0bc87443b33a195ef4b95f31f3ede2eca",
+            "source_status": "accepted"
+          },
+          "backend": {
+            "repository": "ajoe734/pantheon",
+            "branch": "dev",
+            "commit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+            "tree": "825f68cec77dec3815084505886bdf49b9cbae79"
+          },
+          "frontend": {
+            "repository": "ajoe734/execute-plans",
+            "branch": "dev",
+            "commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+            "tree": "ad9fb577f7d50ae489e8677f1c2e85c6130c5e9f"
+          },
+          "release_candidate_id": "db72b8b9087fe1d2ec0f11ebd8033631070a82385bf0976bc325aab1091bef03"
+        }
+      },
+      "deploymentProfile": "operator-live",
+      "pair": {
+        "pairId": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+        "readOnlyArtifactDigestSha256": "eab971709869b3f443222a13f769862072a4b2ad63557363c613ca0f1c982386",
+        "operatorLiveArtifactDigestSha256": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
+        "writeProofArtifactDigestSha256": "8f56c00caf6640679ec3c9bb64d62ea3e0e133d36b2a2cb11b961eac3c5cb983"
+      },
+      "emergencyOverride": {
+        "enabled": false,
+        "actor": null,
+        "reasonSha256": null
+      },
+      "acceptedAt": "2026-09-13T10:49:48Z",
+      "probes": {
+        "candidatePreSwitch": "passed",
+        "postSwitch": "passed",
+        "rollbackRequired": false
+      }
+    },
+    "version": {
+      "service": "operator-bff",
+      "version": "0.2.0",
+      "source_commit_sha": "dc15751a9b20f8bc0931529d68af8898e691c898",
+      "commit": "dc15751a9b20f8bc0931529d68af8898e691c898",
+      "source_commit_known": true,
+      "image_digest": "sha256:39b53beefbf742b0ba263dd68a7c6e277945baca2b52f7bee1e693506abf269d",
+      "build_time": "2026-09-15T03:49:41Z",
+      "environment": "dev",
+      "config_posture": {
+        "auth_stub": false,
+        "auth_mode": "strict",
+        "dev_login_enabled": true,
+        "mfa_required": false,
+        "assistant_kernel_enabled": true,
+        "trade_journey_reader_backend": "postgres",
+        "trade_journey_projection_schema": "trade_journey_projection"
+      }
+    }
+  },
+  "finishedAt": "2026-09-17T04:37:29.417Z"
+}

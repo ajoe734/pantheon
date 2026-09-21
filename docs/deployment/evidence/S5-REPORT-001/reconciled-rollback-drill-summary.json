@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "task_id": "S5-REPORT-001",
+  "task_title": "Reconcile exact release, loops, journeys and rollback evidence",
+  "reconciled_at": "2026-09-17T17:00:00Z",
+  "rollback_reconciliation_matrix": {
+    "immutable_prior_pair_e_preserved": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "exact_prior_pair_e": {
+        "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+        "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+        "pair_id": "230cff55a7f299cf7b4c924b9200a7694f428a1064202f405a42d8b229e4030f",
+        "dist_sha256": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+        "manifest_sha256": "54d73cbfd331c04d0f0839ae8b141bdaaa84ba95ed39b6eb429648dcf5a7dfba",
+        "target": "/var/www/pantheon-dev-fe-releases/20260913T074001Z-ba0b47f44551-gate-34744818811-34745406166-1-240646",
+        "images": {
+          "operator-bff": "sha256:bef3371f6e0df6eec4d100905021b6c709cfbe454a6fa00057a3c00ba91228b7",
+          "agora-interaction-worker": "sha256:45847dcc4ab19673b743bcc7ff596e0cd99f90a197c9ab8402bd9578518bcbab",
+          "loop-run-projector-scheduler": "sha256:9d5ec8482a1c07d13a431b71def7e744c13ea5208d2a8dc8a3b785814b5084ad"
+        }
+      },
+      "no_source_rebuild_enforced": true,
+      "details": "Preserved immutable prior Pair E FE bytes, BFF container image IDs, Compose configuration, and manifest without source rebuild across Release F, G, and H compensations and Release I baseline capture."
+    },
+    "historical_failure_compensations": {
+      "release_f": {
+        "run_id": "34746588532",
+        "mode": "automatic_exact_compensation_in_actions",
+        "candidate_id": "70e330ee62ccb720efb55ecefdb9961600609f1a949c70eafb9b1020c4fd12fc",
+        "rejected_pair": {
+          "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+          "frontend_sha": "43a1df560317cc85e1b7ecf3044e5e5cc931329a"
+        },
+        "restored_pair": {
+          "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+          "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1"
+        },
+        "outcome": "compensated"
+      },
+      "release_g": {
+        "run_id": "34748213471",
+        "mode": "manual_recovery_via_existing_entrypoint",
+        "interruption_reason": "GitHub API 500 interrupted Actions runner",
+        "candidate_id": "0ab6097e05231da126930e608608507afdba8cbcfa6a72029c9fe043168edf52",
+        "lease_id": "48e61b04-488d-445b-8656-1cdb859115aa",
+        "rejected_pair": {
+          "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+          "frontend_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a"
+        },
+        "restored_pair": {
+          "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+          "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1"
+        },
+        "outcome": "compensated"
+      },
+      "release_h": {
+        "run_id": "34749911751",
+        "mode": "manual_recovery_via_existing_entrypoint",
+        "interruption_reason": "GitHub API 500 interrupted Actions runner",
+        "candidate_id": "2677e22ccf35cb3c7322301523f70f28b64eb3c8d26f19dfb1c0cad253488252",
+        "lease_id": "historical_h_recovery",
+        "rejected_pair": {
+          "backend_sha": "d7ce1036d87640a61f30aa3382200c55ef2165cd",
+          "frontend_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a"
+        },
+        "restored_pair": {
+          "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+          "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1"
+        },
+        "outcome": "compensated"
+      }
+    },
+    "live_bidirectional_roundtrip_drill": {
+      "status": "passed",
+      "literal_criterion_satisfied": true,
+      "drill_id": "manual-I-E-I-rcst8yjo",
+      "completed_at": "2026-09-17T15:47:19Z",
+      "coordination_lease_id": "6e3c43d1-3b4e-406b-b576-1a664ab96b8b",
+      "path": "accepted_I -> exact_prior_E -> SAME_accepted_I_bytes",
+      "execution_authorization_reference": "Human/Ops reopen released retired old-runtime hold (Option A, no fabricated grant)",
+      "transition_1_I_to_E": {
+        "target_frontend": "/var/www/pantheon-dev-fe-releases/20260913T074001Z-ba0b47f44551-gate-34744818811-34745406166-1-240646",
+        "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+        "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+        "public_readback_verified": true
+      },
+      "transition_2_E_to_I": {
+        "target_frontend": "/var/www/pantheon-dev-fe-releases/20260913T104814Z-dbe737e06766-gate-34751164876-34752443280-1-1351147-operator-live",
+        "backend_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+        "frontend_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+        "public_readback_verified": true
+      },
+      "roundtrip_complete": true
+    },
+    "strict_auth_cors_and_safe_write_readiness": {
+      "status": "passed",
+      "strict_auth": {
+        "auth_mode": "strict",
+        "auth_stub": false,
+        "strict_auth_denials_verified": true
+      },
+      "cors": {
+        "canonical_origin": "https://app.dev.mvl-cap.tw",
+        "credentials": true,
+        "verified": true
+      },
+      "safe_write_defaults": {
+        "backend_paper_enabled": true,
+        "backend_live_broker_enabled": false,
+        "fail_closed_live_capital": true
+      }
+    },
+    "boundary_disclosures": {
+      "drill_vs_incident_compensation": "Historical compensations in Releases F, G, and H were incident responses, not the deliberate bidirectional roundtrip drill. S5-ROLLBACK-001 is the sole owner that executed and verified the deliberate drill.",
+      "manual_compensation_boundary": "GitHub API 500 in Releases G and H required manual operator intervention via existing entrypoints; not all deployment errors are automatically recovered."
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "idempotency_key": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7:research-review:decide",
+  "payload": {
+    "actor_id": "pantheon-dev-approver",
+    "actor_role": "governance_reviewer",
+    "candidate_digest": "sha256:7ab1eb0c154591e2f5aa08aee27ddb61d0a38c2d0c02ed5ed1fe10678ae17ea5",
+    "evidence_refs": [
+      {
+        "ref_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor",
+        "ref_type": "source_record"
+      },
+      {
+        "ref_id": "distill-8f02947c217da2b3fe324803",
+        "ref_type": "distillation_job"
+      }
+    ],
+    "expected_version": 1,
+    "expires_at": "2026-09-15T09:20:08Z",
+    "outcome": "approved",
+    "rationale": "Reviewed the exact fresh Source/distillation lineage and research-only schema. Input is explicitly simulated, not real market evidence. This permits Alpha research evaluation only, not paper/live execution or capital allocation."
+  },
+  "route": "/api/governance/approvals/apv-c83aa791b7a6/decide"
+}

@@ -1,0 +1,17 @@
+{
+  "algorithm": "sha256",
+  "description": "Cryptographic SHA-256 seal of all 11 evidence files in docs/deployment/evidence/S5-JOURNEYS-001/ (excluding evidence.json to remain strictly acyclic).",
+  "files": {
+    "docs/deployment/evidence/S5-JOURNEYS-001/README.md": "98545cf91d1cc51c776691c5917a6be93c82dd2decfd6bbfd1c78c232465c0ef",
+    "docs/deployment/evidence/S5-JOURNEYS-001/agora-workshop-trading-performance.json": "2bef6941e62480d7bfe8fe030cedf07aee7aa069d85bfc67d47e149d17524d45",
+    "docs/deployment/evidence/S5-JOURNEYS-001/desktop-journey-readback.json": "cb54b86e7712d902c54f1a69d20c855c737764453d0691238ae3a2f0bfce8dc4",
+    "docs/deployment/evidence/S5-JOURNEYS-001/hosted-journey.json": "4aebdeaa6d76ffd2aa4b181ccf8759ddf6d32ba19dcee42547cc93149a041564",
+    "docs/deployment/evidence/S5-JOURNEYS-001/management-ai-openclaw-posture.json": "3dca9fc534c810a9372c8aea003df074185eb8bb4678bf952e050457fe6e333b",
+    "docs/deployment/evidence/S5-JOURNEYS-001/page-agora-strategy-performance.png": "ed99635be6562b30f680022de1978e687f78095fbde75c3b2e4c50bb22edca69",
+    "docs/deployment/evidence/S5-JOURNEYS-001/page-agora-strategy-workshop.png": "252d1535847a56fa2f02aed2be6659e4d87ac51cf765411b5034cebf396c7ddb",
+    "docs/deployment/evidence/S5-JOURNEYS-001/page-agora-trading-room.png": "822490a742301df818342a60c112f973933792f963d60886157a143f7c5bdf39",
+    "docs/deployment/evidence/S5-JOURNEYS-001/page-management-cockpit.png": "a78825e5c1f39b653f4121eb513a7441383a60ce268705df307f208fc1174622",
+    "docs/deployment/evidence/S5-JOURNEYS-001/sse-cursor-reconnect-readback.json": "9cb017f4b3ea07a08508842f439ca9123327618743ffd28b4c46d1e51759dac8",
+    "docs/deployment/evidence/S5-JOURNEYS-001/workshop-suggestion-receipt.json": "a6853c609aa55991fdf14349ac40e039cf03068a7516895de610cc5fdb77931a"
+  }
+}

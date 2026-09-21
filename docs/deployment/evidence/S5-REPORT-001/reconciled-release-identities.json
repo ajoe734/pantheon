@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "task_id": "S5-REPORT-001",
+  "task_title": "Reconcile exact release, loops, journeys and rollback evidence",
+  "reconciled_at": "2026-09-17T17:00:00Z",
+  "release_pair_identity": {
+    "environment": "pantheon-dev",
+    "backend_dev_tip": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "frontend_dev_tip": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "pair_id": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+    "release_candidate_id": "db72b8b9087fe1d2ec0f11ebd8033631070a82385bf0976bc325aab1091bef03",
+    "compatibility_manifest_sha256": "a949ab8a9146f785b98a0a888d358fa0bc87443b33a195ef4b95f31f3ede2eca",
+    "controller_run_id": "34750913608",
+    "controller_run_attempt": 1,
+    "fe_integration_gate_run_id": "34751164876",
+    "fe_deploy_run_id_read_only": "34751773220",
+    "fe_deploy_run_id_operator_live": "34752443280",
+    "release_name_read_only": "20260913T103241Z-dbe737e06766-gate-34751164876-34751773220-1-1224886",
+    "release_name_operator_live": "20260913T104814Z-dbe737e06766-gate-34751164876-34752443280-1-1351147",
+    "accepted_at_read_only": "2026-09-13T10:34:41Z",
+    "accepted_at_operator_live": "2026-09-13T10:49:48Z"
+  },
+  "artifact_digests": {
+    "fe_operator_live_dist_sha256": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
+    "fe_read_only_dist_sha256": "eab971709869b3f443222a13f769862072a4b2ad63557363c613ca0f1c982386",
+    "fe_digest_type": "canonical asset-manifest SHA256 excluding deployment.json (execute-plans scripts/release-candidate.mjs)",
+    "github_fe_zip_digest": "sha256:9b4628a482aa963469c40a263962e5b99ecfd9599330be07aabaff230db152f4",
+    "github_fe_artifact_id": "10315906574",
+    "bff_image_digest": "sha256:a9ceabe68af47623dbfeae554b01d64a5663be7fe0d6d4089f0d952c14dc0467",
+    "bff_image_digest_type": "sha256 OCI container image ID",
+    "interaction_worker_image_digest": "sha256:b01d9e2762b3120c9626bd3bd8e19d7b342a399334082e20c6be96bfc365cd58",
+    "projector_scheduler_image_digest": "sha256:5fd644bca12fdac5355f569fad7dfbc192f50f32a2543da44464f7fabc73190d"
+  },
+  "exact_prior_pair_e": {
+    "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+    "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+    "pair_id": "230cff55a7f299cf7b4c924b9200a7694f428a1064202f405a42d8b229e4030f",
+    "frontend_dist_sha256": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+    "frontend_manifest_sha256": "54d73cbfd331c04d0f0839ae8b141bdaaa84ba95ed39b6eb429648dcf5a7dfba",
+    "target": "/var/www/pantheon-dev-fe-releases/20260913T074001Z-ba0b47f44551-gate-34744818811-34745406166-1-240646",
+    "images": {
+      "operator-bff": "sha256:bef3371f6e0df6eec4d100905021b6c709cfbe454a6fa00057a3c00ba91228b7",
+      "agora-interaction-worker": "sha256:45847dcc4ab19673b743bcc7ff596e0cd99f90a197c9ab8402bd9578518bcbab",
+      "loop-run-projector-scheduler": "sha256:9d5ec8482a1c07d13a431b71def7e744c13ea5208d2a8dc8a3b785814b5084ad"
+    }
+  },
+  "served_endpoints_verified": {
+    "bff_version_url": "https://api.dev.mvl-cap.tw/bff/version",
+    "bff_source_commit_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "bff_image_digest": "sha256:a9ceabe68af47623dbfeae554b01d64a5663be7fe0d6d4089f0d952c14dc0467",
+    "fe_deployment_url": "https://app.dev.mvl-cap.tw/deployment.json",
+    "fe_commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "fe_release_name": "20260913T104814Z-dbe737e06766-gate-34751164876-34752443280-1-1351147",
+    "fe_deployment_state": "accepted",
+    "strict_auth": {
+      "auth_stub": false,
+      "auth_mode": "strict",
+      "dev_login_enabled": false
+    },
+    "canonical_cors_origin": "https://app.dev.mvl-cap.tw"
+  },
+  "boundary_disclosures": {
+    "deployment_trigger_mode": "Manually triggered GitHub Actions (nonprod-deploy.yml run 34750913608); push to dev does not auto-deploy.",
+    "deployment_staging_sequence": "BFF deploy with exact-version smoke (10:04:48Z-10:09:55Z), followed by FE integration gate (10:10:27Z), followed by FE deploy and switch (10:24:35Z; accepted at 10:34:41Z / 10:49:48Z). Exact compensation was available; this is BFF-public then FE-gate then FE-switch, not whole-pair concurrent offline staging.",
+    "paper_live_boundary": "Dev environment operates strictly in paper mode. Live capital activation and broker authority are fail-closed. VITE_BFF_REAL_WRITES=true in the operator-live profile permits operator UI actions against dev paper endpoints only; backend broker live trade execution remains fail-closed."
+  }
+}

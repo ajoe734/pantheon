@@ -535,7 +535,9 @@ def resolve_worker_base_snapshot(
     return snapshot, None
 
 
-def _quarantine_incomplete_worker_path(path: Path) -> Path | None:
+def _quarantine_incomplete_worker_path(
+    path: Path, *, repo_root: Path | None = None,
+) -> Path | None:
     """Move an unregistered partial checkout aside so dispatch can recover.
 
     ``git worktree add`` can leave a populated directory without a ``.git``
@@ -543,15 +545,55 @@ def _quarantine_incomplete_worker_path(path: Path) -> Path | None:
     are not reusable worktrees, but refusing them forever wedges every later
     dispatch for the task.  Preserve the entire directory under the managed
     root and let the caller create a clean worktree at the canonical path.
+    A failed removal can also leave a .git file after Git has removed its
+    administrative directory. Accept that case only for this repository's
+    missing worktree registration; preserve valid or foreign repositories.
     """
     if (
         not path.exists()
         or path.is_symlink()
         or not path.is_dir()
         or not any(path.iterdir())
-        or (path / ".git").exists()
     ):
         return None
+
+    marker = path / ".git"
+    if marker.is_symlink():
+        return None
+    if marker.exists():
+        if repo_root is None or not marker.is_file():
+            return None
+        try:
+            raw = marker.read_text(encoding="utf-8").strip()
+            if not raw.startswith("gitdir: ") or "\n" in raw:
+                return None
+            admin = Path(raw[len("gitdir: "):])
+            if not admin.is_absolute():
+                admin = path / admin
+            common = subprocess.run(
+                ["git", "rev-parse", "--git-common-dir"], cwd=repo_root,
+                capture_output=True, text=True, check=False,
+            )
+            if common.returncode or not common.stdout.strip():
+                return None
+            common_dir = Path(common.stdout.strip())
+            if not common_dir.is_absolute():
+                common_dir = repo_root / common_dir
+            if (
+                admin.parent.resolve() != (common_dir / "worktrees").resolve()
+                or first_symlink_component(admin) is not None
+            ):
+                return None
+            try:
+                admin.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                return None
+        except (OSError, ValueError):
+            return None
+        if _scan_process_paths_in_root(path):
+            return None
 
     quarantine_root = path.parent / ".incomplete-worktree-quarantine"
     quarantine_root.mkdir(parents=True, exist_ok=True)
@@ -583,7 +625,7 @@ def _create_worker_worktree(
 ) -> tuple[bool, str | None, str | None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and (not path.is_dir() or any(path.iterdir())):
-        if _quarantine_incomplete_worker_path(path) is None:
+        if _quarantine_incomplete_worker_path(path, repo_root=repo_root) is None:
             return False, f"Worker worktree path already exists and is not empty: {path}", None
 
     remote_ref = f"refs/remotes/origin/{branch}"
@@ -2180,7 +2222,7 @@ def cleanup_inactive_worker_worktrees(config: dict[str, Any], state: dict[str, A
 
 
 def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
-    """Return resolved paths under base_root mentioned in any live process cmdline."""
+    """Return paths used by live process working directories or commands."""
     base_str = str(base_root)
     referenced: set[Path] = set()
     try:
@@ -2194,6 +2236,12 @@ def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
             continue
         if int(name) == self_pid:
             continue
+        try:
+            cwd = (entry / "cwd").resolve(strict=True)
+            if cwd == base_root.resolve() or base_root.resolve() in cwd.parents:
+                referenced.add(cwd)
+        except OSError:
+            pass
         try:
             raw = (entry / "cmdline").read_bytes()
         except OSError:

@@ -727,6 +727,107 @@ class V2StartupCacheTests(unittest.TestCase):
         self.assertNotIn("evt-cas-loser", final_state["queue"]["events"])
         self.assertEqual(final_state["supervisor"]["last_heartbeat_at"], "2026-08-14T12:00:00Z")
 
+    def test_health_observation_survives_a_rejected_transition_in_the_same_cycle(
+        self,
+    ) -> None:
+        """A read-only observation must not be discarded by a write it does
+        not participate in.
+
+        Regression for the fleet-wide dispatch stall: delivery-health
+        observations were committed inside the maintenance phase, so every
+        transition that phase's revalidation could not prove also discarded
+        that cycle's probe results. Evidence expires after
+        delivery_health.evidence_ttl_seconds, so a sustained discard rate
+        expired every lane and the dispatcher then refused every lane for
+        HEALTH_REFRESH_REQUIRED, with no worker left to change the state that
+        would have ended it.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            runtime_state.save_runtime_state(config, runtime_state.default_state())
+
+            observations = [{
+                "endpoint_id": "lane-9",
+                "account_id": "acct-9",
+                "probe": {
+                    "provider": "lane-9",
+                    "ready": True,
+                    "status": "ready",
+                    "source": "live",
+                    "checked_at": "2026-09-17T12:00:00Z",
+                },
+            }]
+            # Exactly what run_once calls, in the same order: the observation
+            # phase performs no transition, so it has nothing to reject.
+            self.assertTrue(
+                supervisor.commit_delivery_health_observations(config, observations)
+            )
+
+            def unrelated_rejected_transition(scratch: dict[str, object]) -> bool:
+                scratch.setdefault("queue", {}).setdefault("events", {})[
+                    "evt-unrelated"
+                ] = {"status": "completed"}
+                # A concurrent writer advances the underlying runtime state
+                # while this phase still holds its stale scratch snapshot, so
+                # its own CAS at save time is refused.
+                with runtime_state.runtime_state_update(config) as current:
+                    current["supervisor"]["last_heartbeat_at"] = "2026-09-17T12:00:01Z"
+                return True
+
+            with mock.patch.object(supervisor, "write_activity_log"):
+                self.assertFalse(
+                    supervisor._run_reserved_runtime_phase(
+                        config,
+                        "post_dispatch_maintenance",
+                        unrelated_rejected_transition,
+                    )
+                )
+
+            final_state = runtime_state.load_runtime_state(config)
+
+        landed = final_state.get("delivery_health", {}).get("endpoints", {}).get(
+            "lane-9"
+        ) or {}
+        self.assertEqual(landed.get("state"), "healthy")
+        self.assertNotIn("evt-unrelated", final_state["queue"]["events"])
+
+    def test_sustained_reserved_phase_discards_escalate_beyond_one_log_line(
+        self,
+    ) -> None:
+        """A phase that loses its CAS every cycle is a stall, not contention.
+
+        A single lost CAS is ordinary concurrent-writer contention and the
+        only trace was previously one activity-log line, while cycle metrics
+        still reported the phase as executed and the watchdog still reported
+        the supervisor healthy. Track the consecutive-discard streak per
+        phase so a genuine stall becomes visible on the supervisor's own
+        console once it crosses the configured threshold.
+        """
+
+        phase = "phase-under-test"
+        supervisor._PHASE_DISCARD_STREAKS.pop(phase, None)
+        try:
+            streaks = [
+                supervisor.record_reserved_phase_outcome(phase, committed=False)
+                for _ in range(4)
+            ]
+            self.assertEqual(streaks, [1, 2, 3, 4])
+            self.assertLessEqual(
+                supervisor.SUSTAINED_PHASE_DISCARD_THRESHOLD, streaks[-1]
+            )
+            # A commit clears the streak, so ordinary contention never escalates.
+            self.assertEqual(
+                supervisor.record_reserved_phase_outcome(phase, committed=True), 0
+            )
+            self.assertEqual(
+                supervisor.record_reserved_phase_outcome(phase, committed=False), 1
+            )
+        finally:
+            supervisor._PHASE_DISCARD_STREAKS.pop(phase, None)
+
 
 def config_fixture(root: Path | None = None) -> dict[str, object]:
     paths: dict[str, str] = {}
@@ -797,7 +898,7 @@ def config_fixture(root: Path | None = None) -> dict[str, object]:
             "enabled": True,
             "max_reassignments_per_cycle": 4,
             "owner_fallbacks": {"Codex": ["Codex2"]},
-            "reviewer_fallbacks": {"Codex": ["Codex2"]},
+            "reviewer_fallbacks": {"Codex": ["Codex2"], "Codex2": ["Codex"]},
         },
     }
 
@@ -1298,6 +1399,95 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("dirty", error)
             self.assertEqual(brief.read_text(encoding="utf-8"), content)
+
+
+class IncompleteWorkerWorktreeRecoveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.git(self.repo, "init", "-q", "-b", "dev")
+        self.git(self.repo, "config", "user.name", "Test")
+        self.git(self.repo, "config", "user.email", "test@example.com")
+        (self.repo / "source.txt").write_text("committed source\n")
+        self.git(self.repo, "add", "source.txt")
+        self.git(self.repo, "commit", "-qm", "initial")
+        self.head = self.git(self.repo, "rev-parse", "HEAD")
+        self.branch = "task/WORKTREE-RECOVERY-001"
+        self.workspace = self.root / "workers" / "recovery"
+        self.git(self.repo, "worktree", "add", "-b", self.branch, str(self.workspace))
+
+    @staticmethod
+    def git(root: Path, *args: str) -> str:
+        return subprocess.check_output(["git", *args], cwd=root, text=True, stderr=subprocess.DEVNULL).strip()
+
+    def lose_registration(self) -> None:
+        admin = Path(self.git(self.workspace, "rev-parse", "--absolute-git-dir"))
+        shutil.rmtree(admin)
+
+    def test_missing_registration_preserves_all_files_and_recreates_original_branch(self) -> None:
+        (self.workspace / "source.txt").write_text("unfinished source\n")
+        (self.workspace / "untracked.txt").write_bytes(b"untracked\x00bytes")
+        external = self.root / "external"
+        external.write_text("external target remains untouched")
+        (self.workspace / "external-link").symlink_to(external)
+        marker = (self.workspace / ".git").read_bytes()
+        self.lose_registration()
+
+        created, error, origin = supervisor._create_worker_worktree(
+            self.repo, self.workspace, self.branch, self.head,
+        )
+
+        self.assertTrue(created, error)
+        self.assertEqual(origin, "existing_local_branch")
+        self.assertEqual(self.git(self.workspace, "branch", "--show-current"), self.branch)
+        self.assertEqual(self.git(self.workspace, "rev-parse", "HEAD"), self.head)
+        self.assertEqual((self.workspace / "source.txt").read_text(), "committed source\n")
+        archives = list((self.workspace.parent / ".incomplete-worktree-quarantine").iterdir())
+        self.assertEqual(len(archives), 1)
+        preserved = archives[0]
+        self.assertEqual((preserved / "source.txt").read_text(), "unfinished source\n")
+        self.assertEqual((preserved / "untracked.txt").read_bytes(), b"untracked\x00bytes")
+        self.assertEqual((preserved / ".git").read_bytes(), marker)
+        self.assertTrue((preserved / "external-link").is_symlink())
+        self.assertEqual(external.read_text(), "external target remains untouched")
+
+    def test_valid_registered_worktree_is_never_quarantined(self) -> None:
+        (self.workspace / "source.txt").write_text("active work\n")
+        self.assertIsNone(supervisor._quarantine_incomplete_worker_path(self.workspace, repo_root=self.repo))
+        self.assertEqual((self.workspace / "source.txt").read_text(), "active work\n")
+        self.assertEqual(self.git(self.workspace, "rev-parse", "HEAD"), self.head)
+
+    def test_foreign_missing_registration_and_symlink_markers_are_preserved(self) -> None:
+        self.lose_registration()
+        marker = self.workspace / ".git"
+        marker.write_text(f"gitdir: {self.root}/foreign/.git/worktrees/recovery\n")
+        self.assertIsNone(supervisor._quarantine_incomplete_worker_path(self.workspace, repo_root=self.repo))
+        self.assertTrue(marker.is_file())
+        marker.unlink()
+        marker.symlink_to(self.root / "missing-marker")
+        self.assertIsNone(supervisor._quarantine_incomplete_worker_path(self.workspace, repo_root=self.repo))
+        self.assertTrue(marker.is_symlink())
+
+    def test_process_using_orphan_worktree_prevents_quarantine(self) -> None:
+        self.lose_registration()
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=self.workspace)
+        try:
+            self.assertIsNone(supervisor._quarantine_incomplete_worker_path(self.workspace, repo_root=self.repo))
+            self.assertTrue((self.workspace / ".git").is_file())
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    def test_original_missing_marker_recovery_still_preserves_directory(self) -> None:
+        self.lose_registration()
+        (self.workspace / ".git").unlink()
+        (self.workspace / "source.txt").write_text("partial checkout\n")
+        preserved = supervisor._quarantine_incomplete_worker_path(self.workspace, repo_root=self.repo)
+        self.assertIsNotNone(preserved)
+        self.assertEqual((preserved / "source.txt").read_text(), "partial checkout\n")
 
 
 class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
@@ -1953,17 +2143,26 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                 for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
                     self.assertNotIn("max_parallel", config["agents"][slot_id])
 
-    def test_repo_claude_shared_quota_preserves_independent_lane_capacities(self) -> None:
+    def test_repo_claude_quota_pause_survives_healthy_auth_probe(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         account = supervisor.agent_account_id(config, "claude")
         self.assertTrue(bool(account) and account == supervisor.agent_account_id(config, "claude2"))
         self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 3)
-        for agent_id, capacity in (("claude", 3), ("claude2", 1)):
+        for agent_id in ("claude", "claude2"):
             with self.subTest(agent_id=agent_id):
-                self.assertEqual(config["agents"][agent_id]["max_parallel"], capacity)
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
-                self.assertEqual(lane.max_parallel, capacity)
+                self.assertEqual(lane.max_parallel, 0)
                 self.assertTrue(all(endpoint.account_id == account for endpoint in lane.endpoints))
+                health = supervisor.rewrite_provider_health.apply_probe(
+                    {}, endpoint_id=agent_id, account_id=account,
+                    probe={"source": "live", "ready": True},
+                )
+                self.assertEqual(
+                    supervisor.assignment_terminal_unavailability(
+                        config, {"delivery_health": health}, agent_id,
+                    ),
+                    "configured_zero_capacity",
+                )
 
     def test_retired_capacity_fields_fail_closed(self) -> None:
         for retired in (
@@ -4380,6 +4579,148 @@ class DurableQueueContractTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
         launch.assert_called_once()
 
+    def _review_ready_event(self, *, event_id: str) -> tuple[dict[str, object], dict[str, object]]:
+        task = task_fixture(status="review", reviewer="Codex2")
+        # ``delivery_binding`` (frozen handoff contract) is what pure
+        # admission requires for REVIEW_READY eligibility; ``review_binding``
+        # (pr/head/base only) is the smaller, live-GitHub-facing binding this
+        # task's live PR-mergeability check resolves from -- both name the
+        # same PR #42 here.
+        task["delivery_binding"] = review_admission_binding()
+        task["review_binding"] = {
+            "pr": 42,
+            "head_sha": "a" * 40,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        event = supervisor.build_dispatch_event(
+            task, "Codex2", supervisor.REASON_REVIEW_READY, {"TASK-1": task}
+        )
+        event.update(
+            {
+                "event_id": event_id,
+                "event_key": event["key"],
+                "target_agent": "codex2",
+                "target_display_name": "Codex2",
+                "delivery_endpoint_id": "codex2",
+                "message": "wake",
+            }
+        )
+        return task, event
+
+    def test_review_ready_dispatch_withheld_when_bound_pr_is_dirty(self) -> None:
+        """OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a task in ``review`` whose
+        bound PR already reports ``mergeStateStatus=DIRTY`` must not be
+        dispatched to a reviewer -- launching one only reproduces the
+        2026-09-17 CB02/CB05/CB07 storm (a reviewer whose approve/reopen is
+        rejected by the canonical merge gate, misclassified as a lost lease).
+        The hold must be non-terminal: the queue event stays ``pending`` with
+        a named wait reason, not ``completed``/``failed``.
+        """
+
+        task, event = self._review_ready_event(event_id="evt-review-dirty")
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
+        with_queue_intents(state, event)
+        with (
+            mock.patch.object(supervisor, "queue_events", return_value=[event]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "live_review_pr_merge_state", return_value="DIRTY"
+            ),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError(
+                    "must not dispatch a reviewer onto a DIRTY PR"
+                ),
+            ),
+        ):
+            changed = supervisor.process_queue(self.config, state)
+        self.assertTrue(changed)
+        record = state["queue"]["events"]["evt-review-dirty"]
+        self.assertEqual(record["status"], "pending")
+        self.assertIn("review_pr_dirty", record["last_wait_reason"])
+        self.assertIn("DIRTY", record["last_wait_reason"])
+        self.assertIn("42", record["last_wait_reason"])
+
+    def test_review_ready_dispatch_resumes_once_pr_is_mergeable_again(self) -> None:
+        """The withheld dispatch above must resume with no leftover
+        contamination once the live check reports MEREABLE again."""
+
+        task, event = self._review_ready_event(event_id="evt-review-clear")
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
+        with_queue_intents(state, event)
+        # Simulate a previous cycle's hold still recorded on the row.
+        state["queue"]["events"]["evt-review-clear"]["status"] = "pending"
+        state["queue"]["events"]["evt-review-clear"]["last_wait_reason"] = "review_pr_dirty:ajoe734/pantheon#42:DIRTY"
+        request = supervisor.DeliveryRequest(
+            agent_id="codex2",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="TASK-1",
+            reason=supervisor.REASON_REVIEW_READY,
+            metadata={"workspace_path": "/tmp/task-1"},
+        )
+        with (
+            mock.patch.object(supervisor, "queue_events", return_value=[event]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "live_review_pr_merge_state", return_value="MERGEABLE"
+            ),
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(
+                supervisor, "prepare_worker_workspace", return_value=(True, None)
+            ),
+            mock.patch.object(
+                supervisor, "check_worker_tree_clean", return_value=(True, None)
+            ),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-1", {"auto_delivered": True}),
+            ) as launch,
+            mock.patch.object(
+                supervisor, "sync_dispatched_task_status", return_value=True
+            ),
+        ):
+            changed = supervisor.process_queue(self.config, state)
+        self.assertTrue(changed)
+        launch.assert_called_once()
+        self.assertEqual(
+            state["queue"]["events"]["evt-review-clear"]["status"], "started"
+        )
+
+    def test_live_review_pr_merge_state_fails_open_without_binding(self) -> None:
+        """No ``review_binding`` (or no configured repository slug) must
+        never attempt a live GitHub call -- it must simply return None so an
+        ordinary owner/reviewer dispatch is never held on an unrelated task.
+        """
+
+        task = task_fixture(status="review", reviewer="Codex2")
+        self.assertIsNone(supervisor.live_review_pr_merge_state(self.config, task))
+        self.assertFalse(
+            supervisor.review_pr_merge_state_is_conflicted(
+                supervisor.live_review_pr_merge_state(self.config, task)
+            )
+        )
+
+    def test_review_pr_merge_state_is_conflicted_only_for_dirty(self) -> None:
+        """UNKNOWN/BEHIND/UNSTABLE/BLOCKED are transient GitHub signals, not
+        merge conflicts, and must never trip this hold."""
+
+        for benign in ("UNKNOWN", "BEHIND", "UNSTABLE", "BLOCKED", "CLEAN", "", None):
+            with self.subTest(merge_state=benign):
+                self.assertFalse(
+                    supervisor.review_pr_merge_state_is_conflicted(benign)
+                )
+        self.assertTrue(supervisor.review_pr_merge_state_is_conflicted("DIRTY"))
+        self.assertTrue(supervisor.review_pr_merge_state_is_conflicted("dirty"))
+
     def test_launch_auth_retry_reuses_health_admission_and_pending_intent(self) -> None:
         state = with_healthy_delivery_health(self.config, {"workers": {}, "queue": {"events": {}}})
         with_queue_intents(state, self.event)
@@ -4933,6 +5274,41 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()
 
+    def test_owner_recovery_does_not_promote_implementation_only_agents_to_review(self) -> None:
+        for agent_id, name in (("antigravity", "Antigravity"), ("antigravity2", "Antigravity2")):
+            self.config["agents"][agent_id] = {
+                "display_name": name, "provider": agent_id, "max_parallel": 4,
+            }
+        self.config["worker_reassignment"]["owner_fallbacks"] = {
+            "Antigravity": ["Antigravity2"], "Antigravity2": ["Antigravity"],
+        }
+        task = task_fixture(owner="Antigravity", reviewer="Codex")
+        # Recover the owner while both implementation lanes are healthy.
+        # Neither the old owner nor its fallback is a reviewer candidate.
+        for available_reviewer in (None, "Codex2"):
+            with self.subTest(available_reviewer=available_reviewer), mock.patch.object(
+                supervisor, "agent_can_take_task",
+                side_effect=lambda _config, name, _task, **_kwargs: name in {
+                    "Antigravity", "Antigravity2", available_reviewer,
+                },
+            ):
+                pair = supervisor.plan_task_assignment_pair(
+                    self.config, task, fixed_owner="Antigravity2",
+                )
+                self.assertEqual(
+                    pair, ("Antigravity2", "Codex2") if available_reviewer else None,
+                )
+
+    def test_reviewer_health_search_excludes_owner_only_fallbacks(self) -> None:
+        self.config["worker_reassignment"]["owner_fallbacks"] = {
+            "Codex": ["Antigravity", "Antigravity2"],
+        }
+        candidates = supervisor.reviewer_fallback_search_order(
+            self.config, supervisor.worker_reassignment_settings(self.config),
+            reviewer="Codex", owner="Codex", candidate_owner="Codex2",
+        )
+        self.assertEqual(candidates, ["Codex2", "Codex"])
+
     def test_idle_health_refresh_targets_due_configured_endpoints_without_tasks(self) -> None:
         """Startup planning must refresh stale lanes even with an empty board.
 
@@ -5077,6 +5453,334 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertEqual(len(observations), 1)
         self.assertEqual(observations[0]["endpoint_id"], "codex")
         probe.assert_called_once_with(self.config, "codex", force=True)
+
+    def test_probe_demanded_delivery_health_checks_capacity_when_account_has_quota_failure(self) -> None:
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-shared",
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"]["claude-shared"] = 1
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "claude": {"state": "healthy", "valid_until": "2026-09-21T12:00:00Z"},
+                },
+                "accounts": {
+                    "claude_shared": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2026-09-21T12:00:00Z",
+                        "quota_reset_at": "2026-09-21T12:00:00Z",
+                    },
+                },
+            },
+        }
+        targets = [{"scope": "endpoint", "id": "claude"}]
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "claude_prompt"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config, targets, quiet=True, state=state,
+            )
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0]["endpoint_id"], "claude")
+        probe.assert_called_once_with(self.config, "claude", force=True, check_capacity=True)
+
+    def test_bootstrap_cold_start_refresh_to_admission_probes_capacity(self) -> None:
+        """Cold-start lane with no account health probes capacity before admission."""
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-shared",
+        }
+        state: dict[str, Any] = {"workers": {}, "queue": {"events": {}}, "delivery_health": {}}
+        now = datetime.now(timezone.utc)
+
+        gate, target = supervisor.rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id="claude",
+            account_id="claude_shared",
+            endpoint_health=supervisor._admission_health_records(state["delivery_health"], "endpoints"),
+            account_health=supervisor._admission_health_records(state["delivery_health"], "accounts"),
+            now=now,
+        )
+        self.assertEqual(gate, supervisor.rewrite_dispatch_admission.DispatchBlockReason.HEALTH_REFRESH_REQUIRED)
+        self.assertIsNotNone(target)
+
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "claude_prompt"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config, [{"scope": "endpoint", "id": "claude"}], quiet=True, state=state,
+            )
+        probe.assert_called_once_with(self.config, "claude", force=True, check_capacity=True)
+        supervisor.apply_delivery_health_observations(self.config, state, observations)
+
+        self.assertEqual(
+            supervisor.rewrite_provider_health.account_state(state["delivery_health"], "claude_shared", now=now),
+            supervisor.rewrite_provider_health.DeliveryHealthState.HEALTHY,
+        )
+        gate, target = supervisor.rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id="claude",
+            account_id="claude_shared",
+            endpoint_health=supervisor._admission_health_records(state["delivery_health"], "endpoints"),
+            account_health=supervisor._admission_health_records(state["delivery_health"], "accounts"),
+            now=now,
+        )
+        self.assertIsNone(gate)
+        self.assertIsNone(target)
+
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "claude_auth_status_refresh"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config, [{"scope": "endpoint", "id": "claude"}], quiet=True, state=state,
+            )
+        probe.assert_called_once_with(self.config, "claude", force=True)
+        supervisor.apply_delivery_health_observations(self.config, state, observations)
+        self.assertEqual(
+            supervisor.rewrite_provider_health.account_state(state["delivery_health"], "claude_shared", now=now),
+            supervisor.rewrite_provider_health.DeliveryHealthState.HEALTHY,
+        )
+
+    def test_ttl_expiry_refresh_to_admission_probes_capacity(self) -> None:
+        """Expired healthy account demands fresh capacity probe before re-admission."""
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-shared",
+        }
+        now = datetime.now(timezone.utc)
+        state: dict[str, Any] = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "claude": {"state": "healthy", "valid_until": (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")},
+                },
+                "accounts": {
+                    "claude_shared": {"state": "healthy", "valid_until": (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")},
+                },
+            },
+        }
+
+        gate, target = supervisor.rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id="claude",
+            account_id="claude_shared",
+            endpoint_health=supervisor._admission_health_records(state["delivery_health"], "endpoints"),
+            account_health=supervisor._admission_health_records(state["delivery_health"], "accounts"),
+            now=now,
+        )
+        self.assertEqual(gate, supervisor.rewrite_dispatch_admission.DispatchBlockReason.HEALTH_REFRESH_REQUIRED)
+
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "claude_prompt"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config, [{"scope": "endpoint", "id": "claude"}], quiet=True, state=state,
+            )
+        probe.assert_called_once_with(self.config, "claude", force=True, check_capacity=True)
+        supervisor.apply_delivery_health_observations(self.config, state, observations)
+
+        self.assertEqual(
+            supervisor.rewrite_provider_health.account_state(state["delivery_health"], "claude_shared", now=now),
+            supervisor.rewrite_provider_health.DeliveryHealthState.HEALTHY,
+        )
+        gate, target = supervisor.rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id="claude",
+            account_id="claude_shared",
+            endpoint_health=supervisor._admission_health_records(state["delivery_health"], "endpoints"),
+            account_health=supervisor._admission_health_records(state["delivery_health"], "accounts"),
+            now=now,
+        )
+        self.assertIsNone(gate)
+
+    def test_auth_only_success_does_not_infer_capacity_or_admit_account(self) -> None:
+        """Authentication success without capacity probe does not mark account healthy or admit lane."""
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-shared",
+        }
+        now = datetime.now(timezone.utc)
+        state: dict[str, Any] = {"workers": {}, "queue": {"events": {}}, "delivery_health": {}}
+
+        auth_obs = [{
+            "endpoint_id": "claude",
+            "account_id": "claude_shared",
+            "probe": {
+                "ready": True,
+                "status": "ready",
+                "source": "live",
+                "method": "claude_auth_status_refresh",
+                "checked_at": now.isoformat().replace("+00:00", "Z"),
+            },
+        }]
+        supervisor.apply_delivery_health_observations(self.config, state, auth_obs)
+
+        self.assertEqual(
+            supervisor.rewrite_provider_health.endpoint_state(state["delivery_health"], "claude", now=now),
+            supervisor.rewrite_provider_health.DeliveryHealthState.HEALTHY,
+        )
+        self.assertEqual(
+            supervisor.rewrite_provider_health.account_state(state["delivery_health"], "claude_shared", now=now),
+            supervisor.rewrite_provider_health.DeliveryHealthState.UNKNOWN,
+        )
+
+        gate, target = supervisor.rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id="claude",
+            account_id="claude_shared",
+            endpoint_health=supervisor._admission_health_records(state["delivery_health"], "endpoints"),
+            account_health=supervisor._admission_health_records(state["delivery_health"], "accounts"),
+            now=now,
+        )
+        self.assertEqual(gate, supervisor.rewrite_dispatch_admission.DispatchBlockReason.HEALTH_REFRESH_REQUIRED)
+
+    def test_quota_exhaustion_fallback_selects_healthy_lane_preserving_reviewer(self) -> None:
+        task = {
+            "id": "TASK-FALLBACK-001",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "todo",
+            "generation": 1,
+        }
+        self.config["agents"] = {
+            "claude": {
+                "display_name": "Claude",
+                "provider": "claude",
+                "adapter": "claude_cli",
+                "max_parallel": 1,
+            },
+            "claude2": {
+                "display_name": "Claude2",
+                "provider": "claude2",
+                "adapter": "claude_cli",
+                "max_parallel": 1,
+            },
+            "antigravity": {
+                "display_name": "Antigravity",
+                "provider": "antigravity",
+                "adapter": "antigravity",
+                "max_parallel": 1,
+            },
+            "codex": {
+                "display_name": "Codex",
+                "provider": "codex",
+                "adapter": "codex",
+                "max_parallel": 1,
+            },
+        }
+        self.config["providers"] = {
+            "claude": {"delivery_mode": "claude_cli", "account": "claude-shared"},
+            "claude2": {"delivery_mode": "claude_cli", "account": "claude-shared"},
+            "antigravity": {"delivery_mode": "antigravity", "account": "antigravity-shared"},
+            "codex": {"delivery_mode": "codex", "account": "codex-shared"},
+        }
+        self.config.setdefault("worker_reassignment", {})["owner_fallbacks"] = {
+            "Claude": ["Claude2", "Antigravity"],
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"] = {
+            "claude-shared": 1,
+            "antigravity-shared": 1,
+            "codex-shared": 1,
+        }
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "claude": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                    "claude2": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                    "antigravity": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                    "codex": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "claude-shared": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2099-01-01T00:00:00Z",
+                    },
+                    "antigravity-shared": {
+                        "state": "healthy",
+                        "valid_until": "2099-01-01T00:00:00Z",
+                    },
+                    "codex-shared": {
+                        "state": "healthy",
+                        "valid_until": "2099-01-01T00:00:00Z",
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(
+                supervisor, "agent_can_take_task",
+                side_effect=lambda _cfg, name, _tsk, **_kw: name in {"Antigravity", "Codex"},
+            ),
+        ):
+            pair = supervisor.plan_task_assignment_pair(
+                self.config, task, state=state,
+            )
+        self.assertEqual(pair, ("Antigravity", "Codex"))
+
+    def test_operator_zero_capacity_hold_survives_probe_and_expired_retry(self) -> None:
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 0,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-shared",
+        }
+        state = {
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "claude": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "claude-shared": {"state": "healthy", "valid_until": "2099-01-01T00:00:00Z"},
+                },
+            },
+        }
+        reason = supervisor.assignment_terminal_unavailability(
+            self.config, state, "claude",
+        )
+        self.assertEqual(reason, "configured_zero_capacity")
 
     def test_topology_reconciliation_migrates_shared_claude_health_once(self) -> None:
         """The former shared Claude row cannot survive a split topology.
@@ -6913,6 +7617,60 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                 materialized["replacement"]["worker_run_id"],
                 "run-replacement-1",
             )
+
+    def test_lost_reviewer_reuses_healthy_incumbent_when_alternate_is_unavailable(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="review", owner="Antigravity", reviewer="Codex")
+        self.task["delivery_binding"] = review_admission_binding()
+        supervisor.write_status(self.config, self.status, source="test-reviewer-retry")
+        state = self._state()
+        state["delivery_health"]["endpoints"]["codex2"]["state"] = "unavailable"
+        worker = self._worker()
+        worker["request_snapshot"]["reason"] = supervisor.REASON_REVIEW_READY
+        self._store_started(state, worker)
+        with mock.patch.object(
+            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+        ):
+            self.assertTrue(supervisor.recover_lost_worker_lease(
+                self.config, state, worker, reason_kind="worker_process_missing",
+                reason="reviewer process disappeared",
+            ))
+            recovered = supervisor.load_status(self.config)
+            task = recovered["tasks"][0]
+            self.assertEqual((task["owner"], task["reviewer"]), ("Antigravity", "Codex"))
+            self.assertEqual(task["generation"], 3)
+            self.assertEqual(task["worker_recovery"]["status"], "reassigned")
+            plan = supervisor.build_dispatch_plan(
+                self.config, state, recovered, supervisor.queue_events(state), live_total=0,
+            )
+            self.assertEqual(len(plan["events"]), 1)
+            self.assertEqual(plan["events"][0]["target_agent"], "Codex")
+            self.assertEqual(plan["events"][0]["reason"], supervisor.REASON_REVIEW_READY)
+            self.assertTrue(supervisor.reserve_dispatch_plan(self.config, state, plan))
+            self.assertFalse(supervisor.reserve_dispatch_plan(self.config, state, plan))
+
+    def test_lost_reviewer_retry_keeps_health_capacity_and_reason_fences(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="review", owner="Antigravity", reviewer="Codex")
+        self.task["delivery_binding"] = review_admission_binding()
+        receipt = {"recovery_role": "reviewer", "reason_kind": "worker_process_missing",
+                   "worker": {"agent": "Codex"}}
+        state = self._state()
+        state["delivery_health"]["endpoints"]["codex2"]["state"] = "unavailable"
+        for condition in ("auth", "capacity", "lease_expired"):
+            with self.subTest(condition=condition):
+                candidate_state = copy.deepcopy(state)
+                config = copy.deepcopy(self.config)
+                candidate_receipt = copy.deepcopy(receipt)
+                if condition == "auth":
+                    candidate_state["delivery_health"]["endpoints"]["codex"]["state"] = "unavailable"
+                elif condition == "capacity":
+                    config["agents"]["codex"]["max_parallel"] = 0
+                else:
+                    candidate_receipt["reason_kind"] = "lease_expired"
+                self.assertIsNone(supervisor.worker_recovery_assignment_pair(
+                    config, candidate_state, self.status, self.task, candidate_receipt,
+                ))
 
     def test_approved_closeout_recovery_preserves_exact_reviewer_binding(self) -> None:
         self.task.update(
@@ -9383,6 +10141,159 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         terminate.assert_called_once_with(worker)
         self.assertEqual(worker["status"], "superseded")
         self.assertNotIn("governance_lease_guard", worker)
+
+    def test_canonical_worker_terminal_status_recognizes_reviewer_blocker(
+        self,
+    ) -> None:
+        """OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001: a reviewer that discovers a
+        DIRTY PR and correctly calls the governed ``ai-status.sh blocker``
+        (moving the task review -> blocked) must be recognized as a clean,
+        non-terminal end of responsibility -- not a lost lease.
+        """
+        config = config_fixture()
+        task = task_fixture(status="blocked", reviewer="Codex2")
+        worker = self._owner_worker(generation=1)
+        worker.update(
+            {
+                "run_id": "run-reviewer",
+                "agent_id": "codex2",
+                "logical_agent_id": "codex2",
+                "queue_event_id": "evt-reviewer",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+        )
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id="TASK-1",
+            worker_run_id="run-reviewer",
+            queue_event_id="evt-reviewer",
+            pid=1234,
+            pid_start_ticks=5678,
+        )
+        blocker_event = self._exact_lifecycle_event(
+            worker, event_type="blocker", agent="Codex2"
+        )
+
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[blocker_event],
+            ),
+            "blocked",
+        )
+
+        # A dead/successfully-exited reviewer worker with this blocker on
+        # record must be recognized through the same responsibility-transfer
+        # gate the poll loop consults before ever calling
+        # recover_lost_worker_lease(reason_kind="worker_process_missing").
+        exited_worker = dict(worker, runner_status="completed", exit_code=0)
+        self.assertTrue(
+            supervisor.worker_completed_after_responsibility_transition(
+                config,
+                exited_worker,
+                task,
+                activity_events=[blocker_event],
+            )
+        )
+
+        # Wrong actor on the exact same event/task/process identity still
+        # fails closed -- a blocker is not a wildcard escape hatch.
+        mismatched_actor_event = dict(blocker_event, agent="SomeoneElse")
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[mismatched_actor_event],
+            )
+        )
+
+    def test_canonical_worker_terminal_status_recognizes_owner_blocker(self) -> None:
+        """The same recognition generalizes to an owner-dispatched worker: any
+        worker (owner or reviewer) that correctly files a blocker and exits
+        is a clean handoff, not just the reviewer/DIRTY-PR case.
+        """
+        config = config_fixture()
+        task = task_fixture(status="blocked", owner="Codex")
+        worker = self._owner_worker(generation=1)
+        blocker_event = self._exact_lifecycle_event(
+            worker, event_type="blocker", agent="Codex"
+        )
+
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[blocker_event],
+            ),
+            "blocked",
+        )
+
+    def test_missing_process_without_blocker_is_still_lost_lease(self) -> None:
+        """Regression guard: a worker whose task is still review/in_progress
+        with no blocker (or other transfer) event on record, and a dead
+        process, must still be classified as a lost lease -- the blocker
+        recognition above must not be over-widened into a general escape
+        from lost-lease detection.
+        """
+        config = config_fixture()
+
+        review_task = task_fixture(status="review", reviewer="Codex2")
+        reviewer_worker = self._owner_worker(generation=1)
+        reviewer_worker.update(
+            {
+                "run_id": "run-reviewer",
+                "agent_id": "codex2",
+                "logical_agent_id": "codex2",
+                "queue_event_id": "evt-reviewer",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+        )
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                reviewer_worker,
+                review_task,
+                activity_events=[],
+            )
+        )
+        self.assertFalse(
+            supervisor.worker_completed_after_responsibility_transition(
+                config,
+                dict(reviewer_worker, runner_status="completed", exit_code=0),
+                review_task,
+                activity_events=[],
+            )
+        )
+
+        in_progress_task = task_fixture(status="in_progress", owner="Codex")
+        owner_worker = self._owner_worker(generation=1)
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                owner_worker,
+                in_progress_task,
+                activity_events=[],
+            )
+        )
+        self.assertFalse(
+            supervisor.worker_completed_after_responsibility_transition(
+                config,
+                dict(owner_worker, runner_status="completed", exit_code=0),
+                in_progress_task,
+                activity_events=[],
+            )
+        )
 
     def test_canonical_worker_terminal_status_recognizes_exact_reviewer_reopen(
         self,
@@ -14490,6 +15401,27 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     """Real isolated two-process CLI/TaskStore/outbox/runner-stop/poll/restart/owner-dispatch flow and crash race tests."""
 
     @staticmethod
+    def _reap(*processes, timeout=5):
+        """Join children and prove they exited before the temp tree is removed.
+
+        ``Process.join(timeout=...)`` returns whether or not the child ended.
+        These tests then leave their ``TemporaryDirectory`` block, so a child
+        still writing into the temp worktree makes ``rmtree`` fail with
+        "Directory not empty" -- an error attributed to whichever branch was
+        unlucky enough to run under load, not to any change it made.
+        """
+
+        for process in processes:
+            process.join(timeout=timeout)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=timeout)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=timeout)
+
+
+    @staticmethod
     def _copy_tooling(source_root: Path, dest: Path) -> None:
         for p in (source_root / ".orchestrator").glob("*.py"):
             dst = dest / ".orchestrator" / p.name
@@ -15775,6 +16707,27 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     except OSError:
                         pass
 
+    def test_reap_terminates_a_child_that_outlives_its_join_timeout(self) -> None:
+        """A child that ignores the join deadline must still be dead afterwards.
+
+        Regression for a shared CI flake: the two-process tests below left such
+        a child running inside their TemporaryDirectory, so its cleanup raised
+        OSError "Directory not empty" on whichever branch happened to run under
+        load.
+        """
+        ctx = multiprocessing.get_context("fork")
+        process = ctx.Process(target=time.sleep, args=(120,))
+        process.start()
+        try:
+            self.assertTrue(process.is_alive())
+            self._reap(process, timeout=1)
+            self.assertFalse(process.is_alive())
+            self.assertIsNotNone(process.exitcode)
+        finally:
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+
     def test_two_process_ordering1_reopen_completes_before_recovery_cas(self) -> None:
         """Two-process race ordering 1: Reviewer completes reopen before Recovery CAS; task stays gen 1, reaped cleanly."""
         ctx = multiprocessing.get_context("fork")
@@ -16014,8 +16967,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_reopen = q_reopen.get(timeout=15)
             res_rec = q_rec.get(timeout=15)
-            p_reopen.join(timeout=5)
-            p_rec.join(timeout=5)
+            self._reap(p_reopen, p_rec)
 
             self.assertEqual(res_reopen["returncode"], 0, f"Reopen failed: {res_reopen}")
             self.assertTrue(res_rec["result"])
@@ -16267,8 +17219,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_rec2 = q_rec.get(timeout=15)
             res_reopen2 = q_reopen.get(timeout=15)
-            p_rec2.join(timeout=5)
-            p_reopen2.join(timeout=5)
+            self._reap(p_rec2, p_reopen2)
 
             self.assertTrue(res_rec2["result"])
 
@@ -16447,8 +17398,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_fin = q_fin.get(timeout=15)
             res_rec = q_rec.get(timeout=15)
-            p_fin.join(timeout=5)
-            p_rec.join(timeout=5)
+            self._reap(p_fin, p_rec)
 
             self.assertEqual(res_fin["returncode"], 0)
             self.assertTrue(res_rec["result"])
@@ -16651,8 +17601,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_fin = q_fin.get(timeout=15)
             res_rec = q_rec.get(timeout=15)
-            p_fin.join(timeout=5)
-            p_rec.join(timeout=5)
+            self._reap(p_fin, p_rec)
 
             self.assertEqual(res_fin["returncode"], 0, f"Finalize failed: {res_fin['stderr']}\n{res_fin['stdout']}")
             self.assertTrue(res_rec["result"])
@@ -16845,8 +17794,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_reassign = q_reassign.get(timeout=15)
             res_stage = q_stage.get(timeout=15)
-            p_reassign.join(timeout=5)
-            p_stage.join(timeout=5)
+            self._reap(p_reassign, p_stage)
 
             self.assertFalse(res_reassign["success"], res_reassign)
             self.assertIn("active worker lease", res_reassign["stderr"])
@@ -17033,8 +17981,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             res_reassign = q_reassign.get(timeout=15)
             res_stale = q_stale.get(timeout=15)
-            p_reassign.join(timeout=5)
-            p_stale.join(timeout=5)
+            self._reap(p_reassign, p_stale)
 
             self.assertTrue(res_reassign["success"], f"Reassignment failed: {res_reassign}")
             self.assertNotEqual(res_stale["returncode"], 0)
@@ -19389,8 +20336,54 @@ class SupervisorBlockerTransitionCorrectiveTests(unittest.TestCase):
                     )
                 )
 
+class QueueRecordReconciliationUnsettledWorkerTests(unittest.TestCase):
+    """``reconcile_queue_records`` must leave a queue record alone while any
+    worker bound to it is unsettled.  Completing it early cannot be proven by a
+    terminal task status, so the reserved post-dispatch maintenance phase then
+    fails canonical transition revalidation and discards its whole result every
+    cycle (observed 2026-09-17 after a promotion drain)."""
+
+    def _state(self, worker_status: str, record_status: str) -> dict[str, object]:
+        return {
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "status": worker_status,
+                    "queue_event_id": "evt-1",
+                    "task_id": "TASK-1",
+                    "last_event_at": "2026-09-17T01:59:00Z",
+                }
+            },
+            "queue": {"events": {"evt-1": {"status": record_status, "event_key": "key-evt-1"}}},
+            "seen_event_keys": {},
+        }
+
+    def test_unsettled_worker_leaves_queue_record_untouched(self) -> None:
+        config = config_fixture()
+        for worker_status, record_status in (
+            ("recovery_pending", "failed"),
+            ("promotion_drained", "started"),
+            ("retry_queued", "queued"),
+        ):
+            with self.subTest(worker_status=worker_status):
+                state = self._state(worker_status, record_status)
+                self.assertFalse(supervisor.reconcile_queue_records(config, state))
+                self.assertEqual(state["queue"]["events"]["evt-1"]["status"], record_status)
+                self.assertNotIn("key-evt-1", state["seen_event_keys"])
+
+    def test_settled_worker_still_finalizes_queue_record(self) -> None:
+        config = config_fixture()
+        for worker_status, expected in (
+            ("superseded", "completed"),
+            ("completed", "completed"),
+            ("failed", "failed"),
+        ):
+            with self.subTest(worker_status=worker_status):
+                state = self._state(worker_status, "started")
+                self.assertTrue(supervisor.reconcile_queue_records(config, state))
+                self.assertEqual(state["queue"]["events"]["evt-1"]["status"], expected)
+                self.assertIn("key-evt-1", state["seen_event_keys"])
+
 
 if __name__ == "__main__":
     unittest.main()
-
-

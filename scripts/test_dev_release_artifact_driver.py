@@ -134,6 +134,9 @@ class HTTP:
         self.version_failure = None
         self.recover_on_restore = False
         self.runtime_config = None
+        # Absent by default: images that never reported the field must keep
+        # proving the viewer round trip.
+        self.dev_login_enabled = None
         self.login_mfa_verified = False
         self.login = {"access_token": "fixture-private-access-token", "meta": {"identity": "viewer"}, "scope": "viewer"}
         self.me = {"data": {"roles": ["viewer"], "operator_id": "pantheon-dev-viewer", "tenant_id": "tenant-dev",
@@ -150,7 +153,11 @@ class HTTP:
         if path == self.fail:
             return 500, b'{"secret":"fixture-error-body"}'
         if path == "/health": return 200, b"{}"
-        if path == "/bff/version": return 200, json.dumps({"source_commit_sha": self.source, "config_posture": {"auth_stub": False, "auth_mode": "strict"}}).encode()
+        if path == "/bff/version":
+            posture = {"auth_stub": False, "auth_mode": "strict"}
+            if self.dev_login_enabled is not None:
+                posture["dev_login_enabled"] = self.dev_login_enabled
+            return 200, json.dumps({"source_commit_sha": self.source, "config_posture": posture}).encode()
         if path == "/deployment.json": return 200, self.manifest.read_bytes()
         if path == "/bff/auth/dev-login":
             # Model the legacy image's config-fed claim to make rollback auth
@@ -213,7 +220,8 @@ def case(tmp_path, monkeypatch):
                            previous_backend_sha=source_sha, previous_frontend_sha="b" * 40,
                            compose_file=compose, bff_url="http://127.0.0.1:8001", fe_url="http://127.0.0.1:8100",
                            fe_release_store=store, fe_live_link=link, manifest=None, manifest_sha256=None,
-                           candidate_image_manifest=None, candidate_image_manifest_sha256=None)
+                           candidate_image_manifest=None, candidate_image_manifest_sha256=None,
+                           baseline_source="", observed_live_bff_sha="")
     docker, http = Docker(source_sha), HTTP(source_sha, manifest)
     docker.http = http
     http.runtime_config = docker.config
@@ -881,3 +889,158 @@ def test_cancellation_before_capture_never_seals(case):
     with pytest.raises(d.a.ArtifactError): execute(case)
     assert not list(d.ROOT.rglob("manifest.json"))
     assert not case.docker.calls
+
+
+def test_drift_reproduction_run_35120908258_without_drift_recovery_fails_closed(case):
+    # Live BFF serves unadmitted drifted commit from failed deploy, while
+    # rollback authority retains ledger previous_backend_sha.
+    case.http.source = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    case.args.baseline_source = "standby_frontend_pair_manifest"
+    case.args.observed_live_bff_sha = ""
+    with pytest.raises(d.a.ArtifactError, match="public BFF source readback mismatch"):
+        execute(case)
+    no_replacement(case)
+    assert not list(d.ROOT.rglob("manifest.json"))
+
+
+def test_drift_reproduction_run_35174807588_omitted_forwarding_fails_closed(case):
+    # Run 35174807588 reproduction: the workflow environment had drift recovery
+    # classified, but capture_dev_artifact_baseline.py omitted forwarding
+    # --baseline-source and --observed-live-bff-sha to the remote driver, so
+    # the driver received empty baseline_source and failed at line 363 with
+    # "public BFF source readback mismatch".
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    case.http.source = drift_sha
+    case.args.baseline_source = ""
+    case.args.observed_live_bff_sha = ""
+    with pytest.raises(d.a.ArtifactError, match="public BFF source readback mismatch"):
+        execute(case)
+    no_replacement(case)
+    assert not list(d.ROOT.rglob("manifest.json"))
+
+
+def test_drift_recovery_honours_drift_baseline_in_capture_seal_verify_and_restore(case):
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    ledger_sha = case.args.previous_backend_sha
+    case.http.source = drift_sha
+    case.args.baseline_source = "standby_frontend_pair_manifest+live_bff_drift_recovery"
+    case.args.observed_live_bff_sha = drift_sha
+
+    drift_image_id = "sha256:" + "8" * 64
+    case.docker.images[drift_image_id] = {"id": drift_image_id, "revision": drift_sha, "repo_digests": None}
+    for service in d.a.SERVICES:
+        case.docker.containers[service]["image_id"] = drift_image_id
+
+    captured = seal(case)
+    manifest = captured["manifest"]
+    assert manifest["identity"]["previous_backend_sha"] == ledger_sha
+    assert manifest["identity"]["controller_sha"] == case.args.controller_sha
+    assert manifest["image_bundle"]["source_sha"] == drift_sha
+    assert manifest["image_bundle"]["services"]["operator-bff"]["image_id"] == drift_image_id
+    assert manifest["frontend"]["backend_sha"] == ledger_sha
+    assert manifest["frontend"]["frontend_sha"] == case.args.previous_frontend_sha
+
+    verify_result = execute(case, "verify")
+    assert verify_result["public"]["source_sha"] == drift_sha
+    assert verify_result["image_readback_verified"] is True
+    assert verify_result["baseline_nonsecret_config_verified"] is True
+
+    for service, row in case.docker.containers.items():
+        row["image_id"] = case.docker.built[service]["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+
+    restore_result = execute(case, "restore")
+    assert restore_result["operation"] == "restore"
+    assert restore_result["image_readback_verified"] is True
+    assert case.docker.containers["operator-bff"]["image_id"] == drift_image_id
+
+
+@pytest.mark.parametrize("failure,expected_match", [
+    ("bff-500", "public BFF source readback mismatch"),
+    ("bff-invalid-json", "invalid JSON"),
+    ("third-party-sha", "public BFF source readback mismatch"),
+    ("permissive-stub", "public BFF strict auth posture mismatch"),
+    ("auth-viewer-denied", "authenticated viewer readback failed"),
+    ("fe-manifest-tampered", "FE manifest is not a qualified release"),
+    ("invalid-drift-sha-format", "invalid observed live BFF drift identity"),
+    ("missing-drift-recovery-classification", "public BFF source readback mismatch"),
+])
+def test_drift_recovery_fail_closed_cases(case, failure, expected_match):
+    drift_sha = "dc15751a9b20f8bc0931529d68af8898e691c898"
+    case.http.source = drift_sha
+    case.args.baseline_source = "standby_frontend_pair_manifest+live_bff_drift_recovery"
+    case.args.observed_live_bff_sha = drift_sha
+    drift_image_id = "sha256:" + "8" * 64
+    case.docker.images[drift_image_id] = {"id": drift_image_id, "revision": drift_sha, "repo_digests": None}
+    case.docker.containers["operator-bff"]["image_id"] = drift_image_id
+
+    if failure == "bff-500":
+        case.http.version_failure = (500, b'{"error":"internal"}')
+    elif failure == "bff-invalid-json":
+        case.http.version_failure = (200, b'not-json')
+    elif failure == "third-party-sha":
+        case.http.source = "e" * 40
+    elif failure == "permissive-stub":
+        real_request = case.http.request
+        def patched_request(method, url, *, headers=None, body=None):
+            status, data = real_request(method, url, headers=headers, body=body)
+            if "/bff/version" in url:
+                parsed = json.loads(data)
+                parsed["config_posture"] = {"auth_stub": True, "auth_mode": "permissive"}
+                return 200, json.dumps(parsed).encode()
+            return status, data
+        case.http.request = patched_request
+    elif failure == "auth-viewer-denied":
+        real_request = case.http.request
+        def patched_request(method, url, *, headers=None, body=None):
+            if "/bff/me" in url:
+                return 403, b'{"error":"forbidden"}'
+            return real_request(method, url, headers=headers, body=body)
+        case.http.request = patched_request
+    elif failure == "fe-manifest-tampered":
+        (case.release / "deployment.json").write_text('{"tampered": true}')
+    elif failure == "invalid-drift-sha-format":
+        case.args.observed_live_bff_sha = "dc15751"
+    elif failure == "missing-drift-recovery-classification":
+        case.args.baseline_source = "standby_frontend_pair_manifest"
+
+    with pytest.raises(d.a.ArtifactError, match=expected_match):
+        execute(case)
+    no_replacement(case)
+
+
+def test_predecessor_without_dev_login_registry_is_recorded_not_claimed(case):
+    # Hosted dev after the 2026-09-17 rollback drill: the served predecessor
+    # declares an empty dedicated identity registry, so no credential can
+    # resolve a viewer and every later release would otherwise be stranded.
+    case.http.dev_login_enabled = False
+    seal(case)
+    result = execute(case, "verify")
+    assert result["public"]["dev_login_enabled"] is False
+    assert result["public"]["authenticated_viewer_readback_verified"] is False
+    assert result["public"]["strict_auth_denials_verified"] is True
+    assert result["public"]["fe_manifest_bytes_verified"] is True
+    assert not any(url.endswith("/bff/auth/dev-login") for _, url, _, _ in case.http.calls)
+
+
+def test_declared_dev_login_absence_never_relaxes_strict_denials(case):
+    case.http.dev_login_enabled = False
+    real_request = case.http.request
+    def patched_request(method, url, *, headers=None, body=None):
+        if "/bff/me" in url:
+            return 200, json.dumps(case.http.me).encode()
+        return real_request(method, url, headers=headers, body=body)
+    case.http.request = patched_request
+    with pytest.raises(d.a.ArtifactError, match="strict auth negative probe"):
+        execute(case)
+    no_replacement(case)
+
+
+@pytest.mark.parametrize("declared", [None, "false", 0, "no"])
+def test_only_a_literal_false_skips_the_viewer_probe(case, declared):
+    case.http.dev_login_enabled = declared
+    case.http.login["meta"]["identity"] = "operator_a"
+    with pytest.raises(d.a.ArtifactError, match="dedicated viewer identity"):
+        execute(case)
+    no_replacement(case)
+

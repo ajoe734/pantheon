@@ -207,9 +207,9 @@ def consume_telemetry_outcome(
     workshop_id = event.get("workshop_id")
     if workshop_id:
         try:
-            from ..strategy_workshop.events import _ws_publish
+            from ..strategy_workshop.events import ws_publish
 
-            _ws_publish(
+            ws_publish(
                 workshop_id,
                 "agora.performance.suggestion.created",
                 {

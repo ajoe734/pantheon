@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-import os
-import sys
-import tempfile
 from contextlib import contextmanager
+from typing import Any, Dict, List, Optional
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+)
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.research.service import (
+    ResearchRouterService,
+    ResearchValidationError,
+)
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -136,7 +142,14 @@ class _ArtifactPortDouble(DefaultResearchKnowledgeSourcePort):
         if status:
             records = [record for record in records if record.get("status") == status]
         records.sort(key=lambda record: str(record.get("created_at") or ""), reverse=True)
-        return [self._project_research_artifact_summary(record) for record in records]
+        summaries = []
+        for record in records:
+            summary = dict(self._project_research_artifact_summary(record))
+            if "linked_ticket_id" in record:
+                summary["linked_ticket_id"] = record["linked_ticket_id"]
+                summary["ticket_id"] = record["linked_ticket_id"]
+            summaries.append(summary)
+        return summaries
 
     def get_research_artifact(self, artifact_id: str | None) -> dict | None:
         detail = super().get_research_artifact(artifact_id)
@@ -174,16 +187,34 @@ class _ArtifactPortDouble(DefaultResearchKnowledgeSourcePort):
         }
 
 
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+
+
+def _create_test_app(port: _ArtifactPortDouble) -> FastAPI:
+    return create_research_test_app(
+        port,
+        utc_now=lambda: "2026-04-20T00:00:00Z",
+        dataset_surface_status=port.dataset_surface_status,
+        include_prepared_subrouters=False,
+    )
+
+
+_CURRENT_PORT: Optional[_ArtifactPortDouble] = None
+
+
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _ArtifactPortDouble()
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    global _CURRENT_PORT
+    port = _ArtifactPortDouble()
+    _CURRENT_PORT = port
+    app = _create_test_app(port)
+    client = TestClient(app, raise_server_exceptions=False)
+    try:
+        yield client
+    finally:
+        _CURRENT_PORT = None
 
 
 def test_rw05_list_contract_returns_artifact_registry_projection() -> None:
@@ -205,7 +236,7 @@ def test_rw05_list_contract_returns_artifact_registry_projection() -> None:
         assert payload["artifacts"][1]["is_current_version"] is False
         assert payload["artifacts"][0]["allowedActions"] == {"canCompare": True}
         assert payload["artifacts"][1]["allowedActions"] == {"canCompare": True}
-        assert payload["meta"]["surfaces"]["artifact_list"] in {"ok", "degraded"}
+        assert payload["meta"]["surfaces"]["artifact_list"]["status"] in {"ok", "degraded"}
 
 
 def test_rw05_list_contract_returns_non_comparable_authority_for_pending_artifacts() -> None:
@@ -239,12 +270,13 @@ def test_rw05_detail_contract_returns_version_chain_and_allowed_actions() -> Non
             "canCompare": True,
             "canViewDetail": True,
         }
-        assert payload["meta"]["surfaces"]["artifact_detail"] in {"ok", "degraded"}
+        assert payload["meta"]["surfaces"]["artifact_detail"]["status"] in {"ok", "degraded"}
 
 
 def test_rw05_detail_exposes_wandb_experiment_refs_from_registry_metadata() -> None:
     with _seeded_client() as client:
-        bff_main.read_store.set_experiment_refs(
+        assert _CURRENT_PORT is not None
+        _CURRENT_PORT.set_experiment_refs(
             "art_2024_abc123",
             [
                 {
@@ -294,7 +326,7 @@ def test_rw05_compare_contract_returns_backend_composed_diff() -> None:
         assert sharpe_pair["delta_direction"] == "up"
         assert payload["change_summary"]["total_fields_compared"] >= 10
         assert payload["provenance_pairs"][1]["linked_experiment"]["experiment_id"] == "exp_9876"
-        assert payload["meta"]["surfaces"]["artifact_compare"] in {"ok", "degraded"}
+        assert payload["meta"]["surfaces"]["artifact_compare"]["status"] in {"ok", "degraded"}
 
 
 def test_rw05_compare_rejects_non_comparable_artifacts() -> None:

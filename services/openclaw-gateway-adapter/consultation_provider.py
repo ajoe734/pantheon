@@ -208,7 +208,9 @@ def _default_replay_path() -> Path:
 def _model_dict(model: BaseModel) -> dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump(mode="json")
-    return model.dict()
+    if isinstance(model, dict):
+        return model
+    raise TypeError(f"Unsupported model type for serialization: {type(model)}")
 
 
 def _fingerprint(payload: ConsultationContributionRequest) -> str:

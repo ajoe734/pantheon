@@ -1,0 +1,121 @@
+{
+  "captured_at": "2026-09-17T04:39:12.267Z",
+  "task_id": "S5-JOURNEYS-001",
+  "workshop_journey": {
+    "workshops_list": {
+      "error": {
+        "code": "AUTH_REQUIRED",
+        "i18nKey": "errors.AUTH_REQUIRED",
+        "message": "Unauthorized: missing Bearer token",
+        "retryable": false,
+        "userActionable": true,
+        "details": {
+          "reason": "401",
+          "precondition_failed": null,
+          "suggestion": "Re-authenticate with a valid JWT bearer token"
+        }
+      },
+      "meta": {
+        "correlationId": "0ffc1faa-8b62-4eef-b572-8c884d1d1b1a"
+      }
+    },
+    "fresh_workshop": {
+      "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "detail": {
+        "error": {
+          "code": "AUTH_REQUIRED",
+          "i18nKey": "errors.AUTH_REQUIRED",
+          "message": "Unauthorized: missing Bearer token",
+          "retryable": false,
+          "userActionable": true,
+          "details": {
+            "reason": "401",
+            "precondition_failed": null,
+            "suggestion": "Re-authenticate with a valid JWT bearer token"
+          }
+        },
+        "meta": {
+          "correlationId": "b6b95ccd-1d4a-40be-9f50-ffadaba5329a"
+        }
+      },
+      "completeness_snapshot": {
+        "error": {
+          "code": "AUTH_REQUIRED",
+          "i18nKey": "errors.AUTH_REQUIRED",
+          "message": "Unauthorized: missing Bearer token",
+          "retryable": false,
+          "userActionable": true,
+          "details": {
+            "reason": "401",
+            "precondition_failed": null,
+            "suggestion": "Re-authenticate with a valid JWT bearer token"
+          }
+        },
+        "meta": {
+          "correlationId": "56e664f1-6d2f-42cb-a6b1-5e2d6cf9f511"
+        }
+      },
+      "completeness_gap_documented": "natural completeness producer missing upstream per FRESH-AGORA-MAP.md, highest_ready_gate=None"
+    }
+  },
+  "trading_room_journey": {
+    "status": 401,
+    "room_data": {
+      "error": {
+        "code": "AUTH_REQUIRED",
+        "i18nKey": "errors.AUTH_REQUIRED",
+        "message": "Unauthorized: missing Bearer token",
+        "retryable": false,
+        "userActionable": true,
+        "details": {
+          "reason": "401",
+          "precondition_failed": null,
+          "suggestion": "Re-authenticate with a valid JWT bearer token"
+        }
+      },
+      "meta": {
+        "correlationId": "121510ff-a6b3-489c-97e2-a55cdafc4bd1"
+      }
+    }
+  },
+  "strategy_performance_journey": {
+    "attribution_summary": {
+      "error": {
+        "code": "AUTH_REQUIRED",
+        "i18nKey": "errors.AUTH_REQUIRED",
+        "message": "Unauthorized: missing Bearer token",
+        "retryable": false,
+        "userActionable": true,
+        "details": {
+          "reason": "401",
+          "precondition_failed": null,
+          "suggestion": "Re-authenticate with a valid JWT bearer token"
+        }
+      },
+      "meta": {
+        "correlationId": "21266dd0-dfdb-4b10-aca9-a8e732a24d73"
+      }
+    },
+    "fresh_strategy": {
+      "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+      "status": 401,
+      "performance_payload": {
+        "error": {
+          "code": "AUTH_REQUIRED",
+          "i18nKey": "errors.AUTH_REQUIRED",
+          "message": "Unauthorized: missing Bearer token",
+          "retryable": false,
+          "userActionable": true,
+          "details": {
+            "reason": "401",
+            "precondition_failed": null,
+            "suggestion": "Re-authenticate with a valid JWT bearer token"
+          }
+        },
+        "meta": {
+          "correlationId": "642a98ab-5a90-4c97-a2ef-59435318ede4"
+        }
+      }
+    }
+  }
+}

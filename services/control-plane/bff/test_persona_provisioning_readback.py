@@ -901,6 +901,46 @@ def test_multiple_active_bindings_for_plan_fail_closed(harness: _Harness) -> Non
     ]
 
 
+def test_paused_binding_terminal_reason_includes_market_input_stale(
+    harness: _Harness,
+) -> None:
+    """DEV-PAPER-MARKET-INPUT-STALENESS-001: when paper_fleet_reconciler has
+    paused the sole RuntimeBinding for market_input_stale
+    (services/paper_fleet_reconciler/paper_fleet_reconciler.py's
+    ``_check_market_admission``/session_admission patch), the persona
+    provisioning failure's terminal_reason must name that underlying cause
+    instead of only the generic runtime_binding_failed_or_mismatched
+    marker, so an operator does not have to query the binding row directly."""
+
+    paused_binding = _runtime_binding(
+        status="paused",
+        metadata={
+            "persona_id": PERSONA_ID,
+            "tenant_id": "tenant-alpha",
+            "session_admission": {
+                "reason_code": "market_input_stale",
+                "source_snapshot_id": "mss-dev-paper-001",
+                "source_event_time": "2026-09-10T00:00:00Z",
+                "observed_at": "2026-09-18T00:10:00Z",
+                "max_age_seconds": 86400,
+                "pause_command_ref": "cmd-stale-pause-rb-authoritative-alpha-abcd1234",
+                "resume_snapshot_id": None,
+                "resumed_at": None,
+            },
+        },
+    )
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: paused_binding},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    terminal_reason = raw["metadata"]["provisioning_failure_reason"]
+    assert "runtime_binding_failed_or_mismatched" in terminal_reason
+    assert "market_input_stale" in terminal_reason
+    assert "mss-dev-paper-001" in terminal_reason
+
+
 @pytest.mark.parametrize(
     "binding_update",
     [

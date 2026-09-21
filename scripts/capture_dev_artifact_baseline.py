@@ -39,6 +39,7 @@ VM_HOME = Path("/home/chloe_ong_dev_cctech_support_com")
 ARTIFACT_ROOT = VM_HOME / "pantheon-ci-deploy/release-artifacts"
 FIELDS = ("candidate_id", "run_id", "attempt", "controller_sha", "candidate_backend_sha",
           "candidate_frontend_sha", "previous_backend_sha", "previous_frontend_sha")
+DRIFT_FIELDS = ("baseline_source", "observed_live_bff_sha")
 IMPLEMENTATIONS = ("dev_release_artifact_driver.py", "dev_release_artifacts.py")
 
 
@@ -210,6 +211,10 @@ def remote_script(identity: dict[str, str], implementations: dict[str, bytes],
             "--fe-live-link", "/var/www/pantheon-dev-fe"]
     for name, value in identity.items():
         args.extend(("--" + name.replace("_", "-"), value))
+    for name in DRIFT_FIELDS:
+        value = env.get("PANTHEON_DEV_ARTIFACT_" + name.upper(), "")
+        if value:
+            args.extend(("--" + name.replace("_", "-"), value))
     lines = ["set -euo pipefail", "umask 077",
              ': "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD:?remote watchdog channel required}"']
     lines.extend("export " + key + "=" + shlex.quote(value) for key, value in exports.items())
@@ -225,7 +230,16 @@ def remote_script(identity: dict[str, str], implementations: dict[str, bytes],
     return "\n".join(lines) + "\n"
 
 
-def seal_result(raw: bytes, identity: dict[str, str], *, expected_lease_id=None) -> tuple[bytes, dict[str, str]]:
+def _drift_recovery_source(baseline_source: str, observed_live_bff_sha: str) -> str | None:
+    if not baseline_source or not str(baseline_source).endswith("+live_bff_drift_recovery"):
+        return None
+    if not observed_live_bff_sha or not isinstance(observed_live_bff_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", observed_live_bff_sha):
+        raise CaptureError("invalid observed live BFF drift identity")
+    return observed_live_bff_sha
+
+
+def seal_result(raw: bytes, identity: dict[str, str], *, expected_lease_id=None,
+                baseline_source: str = "", observed_live_bff_sha: str = "") -> tuple[bytes, dict[str, str]]:
     if len(raw) > 1024 * 1024:
         raise CaptureError("capture result exceeds size bound")
     result = json.loads(raw, object_pairs_hook=unique_object)
@@ -263,18 +277,21 @@ def seal_result(raw: bytes, identity: dict[str, str], *, expected_lease_id=None)
     target = Path(matches(frontend["target"], r"/var/www/pantheon-dev-fe-releases/[A-Za-z0-9._-]+"))
     if target.name in (".", ".."):
         raise CaptureError("capture FE target is unsafe")
+    drift_sha = _drift_recovery_source(baseline_source, observed_live_bff_sha)
+    expected_bundle_source = drift_sha if drift_sha is not None else identity["previous_backend_sha"]
     bundle = manifest["image_bundle"]
     exact_keys(bundle, ("schema_version", "source_sha", "services", "archives"))
     if (bundle["schema_version"] != "pantheon.dev-bff-image-bundle.v1" or
-        bundle["source_sha"] != identity["previous_backend_sha"] or
+        bundle["source_sha"] != expected_bundle_source or
         digest(encoded(bundle)) != manifest["image_bundle_sha256"]):
         raise CaptureError("capture image bundle differs from admitted prior")
     exact_keys(bundle["services"], ("operator-bff", "agora-interaction-worker", "loop-run-projector-scheduler"))
     image_ids = set()
+    allowed_revisions = (None, "", "unknown", expected_bundle_source)
     for row in bundle["services"].values():
         exact_keys(row, ("image_id", "oci_revision", "repo_digests"))
         image_ids.add(matches(row["image_id"], r"sha256:[0-9a-f]{64}"))
-        if row["oci_revision"] not in (None, "", "unknown", identity["previous_backend_sha"]):
+        if row["oci_revision"] not in allowed_revisions:
             raise CaptureError("capture image revision differs from prior")
         digests = row["repo_digests"]
         if digests is not None:
@@ -296,12 +313,21 @@ def seal_result(raw: bytes, identity: dict[str, str], *, expected_lease_id=None)
     if result["manifest_path"] != str(expected_path):
         raise CaptureError("capture manifest is not the exact run/candidate path")
     path = expected_path
-    return manifest_raw, {"manifest_path": str(path), "manifest_sha256": digest(manifest_raw)}
+    outputs = {"manifest_path": str(path), "manifest_sha256": digest(manifest_raw)}
+    if drift_sha is not None:
+        outputs["previous_backend_sha"] = identity["previous_backend_sha"]
+        outputs["previous_frontend_sha"] = identity["previous_frontend_sha"]
+        outputs["observed_live_bff_sha"] = drift_sha
+    return manifest_raw, outputs
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, required=True)
+    parser.add_argument("--baseline-source",
+                        default=os.environ.get("PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE", ""))
+    parser.add_argument("--observed-live-bff-sha",
+                        default=os.environ.get("PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA", ""))
     args = parser.parse_args()
     stage = "initialize"
     try:
@@ -347,7 +373,13 @@ def main() -> int:
                 print(json.dumps(record, sort_keys=True), file=sys.stderr)
                 return code
         stage = "seal-result"
-        manifest_raw, outputs = seal_result(result.stdout, identity, expected_lease_id=guard)
+        manifest_raw, outputs = seal_result(
+            result.stdout,
+            identity,
+            expected_lease_id=guard,
+            baseline_source=args.baseline_source,
+            observed_live_bff_sha=args.observed_live_bff_sha,
+        )
         stage = "publish-evidence"
         for name, data in (("artifact-baseline.json", manifest_raw),
                            ("SHA256SUMS", (outputs["manifest_sha256"] + "  artifact-baseline.json\n").encode())):

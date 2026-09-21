@@ -1,0 +1,12 @@
+{
+  "idempotency_key": null,
+  "payload": {
+    "approval_decision_id": "apv-c83aa791b7a6",
+    "command_key": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7:research-review:approved",
+    "expected_artifact_state": "candidate",
+    "expected_version": "1.0.0",
+    "target_state": "approved",
+    "approver": "pantheon-dev-approver"
+  },
+  "route": "/api/registry/strategy-specs/reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588/advance"
+}

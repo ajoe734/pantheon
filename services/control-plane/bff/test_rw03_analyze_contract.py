@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Optional
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+)
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.research.service import ResearchRouterService
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -39,16 +44,31 @@ class _AnalysisPortDouble(DefaultResearchKnowledgeSourcePort):
         return super().get_research_analysis(analysis_id)
 
 
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+
+
+def _create_test_app(port: _AnalysisPortDouble) -> FastAPI:
+    service = ResearchRouterService(
+        port_getter=lambda: port,
+        utc_now=lambda: "2026-04-20T03:10:00Z",
+        snapshot_meta=lambda stamp, **kw: {"snapshot_at": stamp, **kw},
+        page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
+    )
+    return create_research_test_app(
+        port,
+        utc_now=lambda: "2026-04-20T03:10:00Z",
+        service=service,
+    )
+
+
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _AnalysisPortDouble({}, source="local_snapshot")
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = _AnalysisPortDouble({}, source="local_snapshot")
+    app = _create_test_app(port)
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client
 
 
 @contextmanager
@@ -121,16 +141,15 @@ def _service_backed_client():
 
         os.environ["PANTHEON_BFF_RESEARCH_ANALYSIS_STORE"] = str(analysis_store)
 
-        original_store = bff_main.read_store
-        bff_main.read_store = _AnalysisPortDouble(
+        port = _AnalysisPortDouble(
             json.loads(analysis_store.read_text(encoding="utf-8")),
             source="service_client",
         )
-        client = TestClient(bff_main.app)
+        app = _create_test_app(port)
+        client = TestClient(app, raise_server_exceptions=False)
         try:
             yield client
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -140,14 +159,10 @@ def _service_backed_client():
 
 @contextmanager
 def _unavailable_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _AnalysisPortDouble({}, source="missing")
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = _AnalysisPortDouble({}, source="missing")
+    app = _create_test_app(port)
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client
 
 
 def test_rw03_list_contract_returns_backend_grouped_analysis_projection() -> None:
@@ -163,7 +178,10 @@ def test_rw03_list_contract_returns_backend_grouped_analysis_projection() -> Non
         assert [item["analysis_id"] for item in payload["data"]] == ["analysis-service-001"]
         assert payload["data"][0]["metric_group_refs"] == ["performance"]
         assert payload["data"][0]["summary"]["verdict"] == "hold"
-        assert payload["meta"]["surfaces"]["analysis_results"] == "fresh"
+        assert payload["meta"]["surfaces"]["analysis_results"] == {
+            "status": "ok",
+            "source": "service_client",
+        }
 
 
 def test_rw03_detail_contract_returns_metric_groups_and_comparative_summary() -> None:
@@ -187,7 +205,10 @@ def test_rw03_detail_contract_returns_metric_groups_and_comparative_summary() ->
             "linked_ticket_detail": "/research/tickets/rt-service-001",
             "linked_experiment_detail": "/research/experiments/exp-service-001",
         }
-        assert payload["meta"]["surfaces"]["analysis_results"] == "fresh"
+        assert payload["meta"]["surfaces"]["analysis_results"] == {
+            "status": "ok",
+            "source": "service_client",
+        }
 
 
 def test_rw03_list_rejects_invalid_status_filter() -> None:
@@ -212,7 +233,10 @@ def test_rw03_service_backed_reads_override_seeded_snapshot() -> None:
 
         payload = list_response.json()
         assert [item["analysis_id"] for item in payload["data"]] == ["analysis-service-001"]
-        assert payload["meta"]["surfaces"]["analysis_results"] == "fresh"
+        assert payload["meta"]["surfaces"]["analysis_results"] == {
+            "status": "ok",
+            "source": "service_client",
+        }
         assert payload["data"][0]["metric_group_refs"] == ["performance"]
 
         detail_response = client.get(
@@ -224,7 +248,10 @@ def test_rw03_service_backed_reads_override_seeded_snapshot() -> None:
         detail = detail_response.json()
         assert detail["summary"]["headline"] == "Service-backed analysis wins over local fallback"
         assert detail["comparative_summary"]["baseline_analysis_id"] == "analysis-service-000"
-        assert detail["meta"]["surfaces"]["analysis_results"] == "fresh"
+        assert detail["meta"]["surfaces"]["analysis_results"] == {
+            "status": "ok",
+            "source": "service_client",
+        }
 
 
 def test_rw03_detail_does_not_fall_back_to_local_snapshot() -> None:
@@ -250,4 +277,5 @@ def test_rw03_list_reports_unavailable_without_service_or_snapshot_fallback() ->
             "next_page_token": None,
             "total": 0,
         }
-        assert payload["meta"]["surfaces"]["analysis_results"] == "unavailable"
+        assert payload["meta"]["surfaces"]["analysis_results"]["status"] == "unavailable"
+        assert payload["meta"]["surfaces"]["analysis_results"]["source"] == "missing"

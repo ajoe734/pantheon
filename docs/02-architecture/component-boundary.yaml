@@ -59,8 +59,11 @@ components:
       - docs/operations/execution-grant-issuer.md
       - docs/operations/development-tooling-mfa-retirement.md
       - docs/operations/development-tooling-cleanup-20260911.md
+      - docs/operations/task-delivery-audit-20260919/
       - docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md
       - scripts/provision_live_supervisor_config.py
+      - scripts/test_provision_live_supervisor_config.py
+      - docs/operations/worker-validation-completion.md
       - scripts/supervisor_runtime_health.py
       - scripts/supervisor_watchdog.py
       - scripts/supervisor_watchdog_*
@@ -73,12 +76,15 @@ components:
       - scripts/test_supervisor_watchdog_install.py
       - scripts/test_supervisor_launch_ownership.py
       - docs-site/js/dashboard-*.js
+      - docs-site/script.js
+      - docs-site/index.html
       - docs/02-architecture/component-boundary.yaml
       - docs/02-architecture/development-tooling-product-boundary.md
       - docs/orchestrator-portability.md
       - docs/operations/provider-auth-health-contract.md
       - docs/deployment/main-py-test-coupling-measurement.md
       - docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md
+      - docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/data/
       # Superseded path retained so the rename classifies on both sides.
       - docs/deployment/main-py-seam-inventory.md
       - ai-task-archive/
@@ -88,6 +94,7 @@ components:
   - id: git-integration-authority
     domain: development_tooling
     paths:
+      - .gitignore
       - scripts/git/
       - scripts/run-auto-integrator.sh
       - scripts/auto_integrator_install.py

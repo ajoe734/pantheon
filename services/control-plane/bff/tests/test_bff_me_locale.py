@@ -1,24 +1,27 @@
 from __future__ import annotations
 
-import os
-import sys
-
+import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.tests.conftest import build_auth_session_app
 
-import main as bff_main
+
+@pytest.fixture(autouse=True)
+def app(tmp_path):
+    store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
+    return build_auth_session_app(store)
 
 
-def _client(monkeypatch) -> TestClient:
+def _client(app, monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_BFF_DEFAULT_LOCALE", "en-US")
-    return TestClient(bff_main.app)
+    return TestClient(app)
 
 
-def test_patch_bff_me_locale_updates_locale(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_patch_bff_me_locale_updates_locale(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     response = client.patch(
         "/bff/me/locale",
         json={"locale": "zh-TW"},
@@ -33,8 +36,8 @@ def test_patch_bff_me_locale_updates_locale(monkeypatch) -> None:
     assert data["operation"]["type"] == "update_locale"
 
 
-def test_patch_bff_me_locale_normalises_case(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_patch_bff_me_locale_normalises_case(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     response = client.patch(
         "/bff/me/locale",
         json={"locale": "ZH-tw"},
@@ -46,8 +49,8 @@ def test_patch_bff_me_locale_normalises_case(monkeypatch) -> None:
     assert resolved == "zh-TW"
 
 
-def test_patch_bff_me_locale_persists_to_session(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_patch_bff_me_locale_persists_to_session(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     auth = "Bearer op-persist:operator"
 
     patch_resp = client.patch(
@@ -63,15 +66,15 @@ def test_patch_bff_me_locale_persists_to_session(monkeypatch) -> None:
     assert get_resp.json()["data"]["locale"]["source"] == "session"
 
 
-def test_patch_bff_me_locale_anonymous_returns_401(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_patch_bff_me_locale_anonymous_returns_401(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     response = client.patch("/bff/me/locale", json={"locale": "en-US"})
 
     assert response.status_code == 401
 
 
-def test_patch_bff_me_locale_missing_locale_returns_400(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_patch_bff_me_locale_missing_locale_returns_400(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     response = client.patch(
         "/bff/me/locale",
         json={},
@@ -84,8 +87,8 @@ def test_patch_bff_me_locale_missing_locale_returns_400(monkeypatch) -> None:
     assert detail["error"]["details"]["precondition_failed"] == "locale"
 
 
-def test_patch_bff_me_locale_invalid_locale_tag_returns_400(monkeypatch) -> None:
-    client = _client(monkeypatch)
+def test_patch_bff_me_locale_invalid_locale_tag_returns_400(app, monkeypatch) -> None:
+    client = _client(app, monkeypatch)
     response = client.patch(
         "/bff/me/locale",
         json={"locale": "not-a"},

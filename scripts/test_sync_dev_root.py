@@ -659,3 +659,120 @@ def test_sync_prunes_old_command_runtimes_after_promotion(tmp_path: Path) -> Non
         "--keep",
         "5",
     ]
+
+
+def test_sync_repoints_watchdog_and_auto_integrator_on_no_op_current_runtime(
+    tmp_path: Path,
+) -> None:
+    remote, seed = _seed_remote(tmp_path)
+    _add_fake_watchdog_installer(seed)
+    _add_fake_auto_integrator_installer(seed)
+    dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    head = _git(seed, "rev-parse", "HEAD")
+    runtime_parent = tmp_path / "command-runtimes"
+    runtime_parent.mkdir()
+    candidate = runtime_parent / head
+    _git(runtime_parent, "clone", str(remote), str(candidate))
+    _git(candidate, "checkout", "--detach", head)
+    script = _patched_sync_script(tmp_path, runtime_parent)
+    coordination = _coordination_root(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir(parents=True)
+    live_config.write_text(
+        json.dumps(
+            {
+                "watchdog": {
+                    "supervisor_command": [
+                        "python3",
+                        str(candidate / ".orchestrator" / "supervisor.py"),
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    promotion_args = tmp_path / "promotion-args.txt"
+    watchdog_args = tmp_path / "watchdog-args.txt"
+    integrator_args = tmp_path / "auto-integrator-args.txt"
+    authority_env_file = tmp_path / "authority.env"
+    authority_env_file.write_text("# test authority env\n", encoding="utf-8")
+    authority_env_file.chmod(0o600)
+
+    result = _run_sync(
+        script,
+        dev_root,
+        live_config,
+        coordination,
+        promotion_args,
+        target_sha=head,
+        authority_env_file=authority_env_file,
+        watchdog_args_file=watchdog_args,
+        auto_integrator_args_file=integrator_args,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "promotion=no-op-current-runtime" in result.stdout
+    assert not promotion_args.exists()
+    assert watchdog_args.read_text(encoding="utf-8").splitlines() == [
+        "--repo",
+        str(candidate),
+        "--config",
+        str(live_config),
+        "--authority-env-file",
+        str(authority_env_file),
+        "--method",
+        "auto",
+        "--start-now",
+    ]
+    assert integrator_args.read_text(encoding="utf-8").splitlines() == [
+        "--repo",
+        str(candidate),
+        "--status-root",
+        str(coordination),
+        "--config-file",
+        str(live_config),
+    ]
+
+
+def test_sync_aligns_watchdog_and_auto_integrator_after_promotion(
+    tmp_path: Path,
+) -> None:
+    remote, seed = _seed_remote(tmp_path)
+    _add_fake_watchdog_installer(seed)
+    _add_fake_auto_integrator_installer(seed)
+    dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    target = _advance(seed)
+    runtime_parent = tmp_path / "command-runtimes"
+    script = _patched_sync_script(tmp_path, runtime_parent)
+    coordination = _coordination_root(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    promotion_args = tmp_path / "promotion-args.txt"
+    watchdog_args = tmp_path / "watchdog-args.txt"
+    integrator_args = tmp_path / "auto-integrator-args.txt"
+    authority_env_file = tmp_path / "authority.env"
+    authority_env_file.write_text("# test authority env\n", encoding="utf-8")
+    authority_env_file.chmod(0o600)
+
+    result = _run_sync(
+        script,
+        dev_root,
+        live_config,
+        coordination,
+        promotion_args,
+        target_sha=target,
+        authority_env_file=authority_env_file,
+        watchdog_args_file=watchdog_args,
+        auto_integrator_args_file=integrator_args,
+    )
+
+    candidate = runtime_parent / target
+    assert result.returncode == 0, result.stderr
+    assert "watchdog repointed" in result.stdout
+    assert "auto-integrator repointed" in result.stdout
+    watchdog_lines = watchdog_args.read_text(encoding="utf-8").splitlines()
+    integrator_lines = integrator_args.read_text(encoding="utf-8").splitlines()
+    assert watchdog_lines[0:2] == ["--repo", str(candidate)]
+    assert integrator_lines[0:2] == ["--repo", str(candidate)]
+

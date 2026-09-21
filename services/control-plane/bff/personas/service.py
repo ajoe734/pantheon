@@ -136,8 +136,33 @@ except ImportError:
     foundation_id = lambda: str(uuid.uuid4())
     sha256_checksum = lambda data: hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
 
+from ..auth.policy import bool_from_env
+from ..shared.cross_domain_utils import (
+    _management_as_float,
+    _management_first_float,
+    _management_nested_value,
+    _management_telemetry_rollup,
+    _merge_registry_records,
+    _ppl_alloc_009_paper_environment_guard,
+    _resolve_param,
+    _sort_records_latest_first,
+    _surface_degradation_reason,
+)
 from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.command_adapters.service import (
+    CommandAdapterService,
+    _stable_json_hash,
+    _resolve_final_idempotency_key,
+    _reject_body_idempotency_key,
+    _audit_datetime,
+    _check_read_surface_state,
+)
+from services.control_plane.bff.management_read_models.service import (
+    _aggregate_group_surface,
+    _management_record_id,
+    _management_first_non_empty,
+    _snapshot_meta,
+)
 from services.control_plane.bff.governance.command_audit import (
     project_command_record_audit_event as _project_command_record_audit_event,
     audit_event_matches as _audit_event_matches,
@@ -580,7 +605,7 @@ def _ppl_alloc_009_telemetry_url(path: str) -> str:
 
 # --- _ppl_alloc_009_dev_proof_enabled ---
 def _ppl_alloc_009_dev_proof_enabled() -> bool:
-    return _bool_from_env(
+    return bool_from_env(
         "PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED",
         default=False,
     )
@@ -685,8 +710,6 @@ def _is_persona_lifecycle_operational(value: Any) -> bool:
 
 # --- _STRATEGY_PERSONA_BFF_IDEMPOTENCY ---
 _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-
-
 
 
 # --- _PERSONA_PROVISIONING_STORE ---
@@ -1556,6 +1579,11 @@ def _evaluate_persona_provisioning_status(
     binding: Optional[Dict[str, Any]] = None
     binding_ok = False
     binding_failed = False
+    # Populated when the (sole) RuntimeBinding for this plan is paused with a
+    # recorded market-admission pause reason, so the terminal_reason built
+    # below can name the underlying cause instead of only the generic
+    # "runtime_binding_failed_or_mismatched" marker.
+    binding_pause_admission: Optional[Dict[str, Any]] = None
     authoritative_bindings: List[Dict[str, Any]] = []
     if plan_id:
         try:
@@ -1617,19 +1645,40 @@ def _evaluate_persona_provisioning_status(
                     binding_failed = True
             elif len(active_bindings) > 1:
                 binding_failed = True
-            elif binding_id and any(
-                str(value.get("binding_id") or value.get("id") or "") == binding_id
-                for value in (all_bindings or {}).values()
-                if isinstance(value, dict)
-            ):
-                # The expected binding identity exists under another plan.
-                binding_failed = True
-            elif any(
-                str(value.get("state") or value.get("status") or "").lower()
-                in {"failed", "stopped", "error"}
-                for value in authoritative_bindings
-            ):
-                binding_failed = True
+            else:
+                paused_bindings = [
+                    value
+                    for value in authoritative_bindings
+                    if str(value.get("state") or value.get("status") or "").lower() == "paused"
+                ]
+                if paused_bindings:
+                    # A paused binding for this plan is a failed/mismatched
+                    # binding from provisioning's point of view; when exactly
+                    # one is paused, surface why (e.g. market_input_stale)
+                    # instead of only the generic marker below.
+                    binding_failed = True
+                    if len(paused_bindings) == 1:
+                        paused_metadata = paused_bindings[0].get("metadata")
+                        session_admission = (
+                            paused_metadata.get("session_admission")
+                            if isinstance(paused_metadata, dict)
+                            else None
+                        )
+                        if isinstance(session_admission, dict) and session_admission.get("reason_code"):
+                            binding_pause_admission = session_admission
+                elif binding_id and any(
+                    str(value.get("binding_id") or value.get("id") or "") == binding_id
+                    for value in (all_bindings or {}).values()
+                    if isinstance(value, dict)
+                ):
+                    # The expected binding identity exists under another plan.
+                    binding_failed = True
+                elif any(
+                    str(value.get("state") or value.get("status") or "").lower()
+                    in {"failed", "stopped", "error"}
+                    for value in authoritative_bindings
+                ):
+                    binding_failed = True
         except Exception as exc:
             log.warning(
                 "Failed to query RuntimeBindings for plan %s / %s: %s",
@@ -1844,6 +1893,18 @@ def _evaluate_persona_provisioning_status(
             failure_reasons.append("deployment_projection_identity_mismatched")
         if binding_failed:
             failure_reasons.append("runtime_binding_failed_or_mismatched")
+            if isinstance(binding_pause_admission, dict):
+                pause_reason_code = str(binding_pause_admission.get("reason_code") or "").strip()
+                if pause_reason_code:
+                    pause_detail_parts = [
+                        f"{key}={binding_pause_admission[key]}"
+                        for key in ("source_snapshot_id", "source_event_time", "max_age_seconds")
+                        if binding_pause_admission.get(key) not in (None, "")
+                    ]
+                    pause_detail = ",".join(pause_detail_parts)
+                    failure_reasons.append(
+                        f"{pause_reason_code}:{pause_detail}" if pause_detail else pause_reason_code
+                    )
         if heartbeat_failed:
             failure_reasons.append("paper_worker_failed_stale_or_duplicated")
         if is_timeout:
@@ -3769,6 +3830,29 @@ def _market_persona_required_data_sources(item: dict[str, Any]) -> list[dict[str
                     "require_connector_approved",
                     "require_schedule_active",
                     "require_payload_push_health",
+                ],
+            },
+        ]
+    if market == "US" and os.getenv("PANTHEON_ENV", "").strip().lower() == "dev":
+        # Dev-only: the paper baseline's US persona (bootstrap_dev_paper_baseline.py)
+        # otherwise has no live_pull requirement at all, which left it with no
+        # code-owned market-data connector (DEV-PAPER-MARKET-INPUT-STALENESS-001).
+        # Bound to the dev-only synthetic connector registered in
+        # services/source_ingestion/connector_definitions.py /
+        # persona_source_reconciler.py; never applied outside PANTHEON_ENV=dev.
+        return [
+            {
+                "dataset": "us_price_daily",
+                "market": "US",
+                "cadence": "daily",
+                "source_class": "live_pull",
+                "connector_candidates": [
+                    "dev-paper-us-equity-simulation",
+                ],
+                "policy_gates": [
+                    "require_connector_approved",
+                    "require_schedule_active",
+                    "require_source_health_ok",
                 ],
             },
         ]
@@ -8451,14 +8535,6 @@ _BFF_STUB_CAPABILITY_ROLES = frozenset({"admin", "operator"})
 _BFF_VALID_AUTH_MODES = frozenset({"strict", "permissive"})
 
 
-# --- _bool_from_env ---
-def _bool_from_env(name: str, *, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 # --- _bff_auth_mode ---
 def _bff_auth_mode() -> str:
     raw = os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
@@ -8469,7 +8545,7 @@ def _bff_auth_mode() -> str:
 
 # --- _bff_auth_stub_enabled ---
 def _bff_auth_stub_enabled() -> bool:
-    return _bool_from_env(_BFF_AUTH_STUB_ENV) and _bff_auth_mode() != "strict"
+    return bool_from_env(_BFF_AUTH_STUB_ENV) and _bff_auth_mode() != "strict"
 
 
 # --- _ERROR_CODE_BY_STATUS ---
@@ -8594,15 +8670,6 @@ _DEV_LOGIN_IDENTITY_DEFS: Dict[str, Dict[str, Any]] = {
     "operator_a": {"roles": ("operator",), "subject_suffix": "operator-a"},
     "operator_b": {"roles": ("operator",), "subject_suffix": "operator-b"},
 }
-
-
-# --- _resolve_param ---
-def _resolve_param(val: Any) -> Any:
-    if isinstance(val, FastAPIParam):
-        if val.default is ... or type(val.default).__name__ == "PydanticUndefined":
-            return None
-        return val.default
-    return val
 
 
 # --- _REQUEST_DRY_RUN_CONTEXT ---
@@ -8947,7 +9014,6 @@ _PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
 _PATH_DEDUPE_SUNSET_HTTP_DATE = "Mon, 25 May 2026 00:00:00 GMT"
 
 
-
 # --- _foundation_audit_for_command_record ---
 def _foundation_audit_for_command_record(
     *,
@@ -8995,23 +9061,6 @@ def _foundation_audit_for_command_record(
     )
 
 
-# --- _audit_datetime ---
-def _audit_datetime(value: Any) -> Optional[datetime]:
-    if isinstance(value, datetime):
-        parsed = value
-    else:
-        raw = str(value or "").strip()
-        if not raw:
-            return None
-        try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
 # --- _list_governance_audit_events ---
 def _list_governance_audit_events(
     *,
@@ -9051,60 +9100,6 @@ def _list_governance_audit_events(
     merged = list(events_by_id.values())
     merged.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
     return json.loads(json.dumps(merged))
-
-
-# --- _resolve_final_idempotency_key ---
-def _resolve_final_idempotency_key(
-    idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str],
-) -> str:
-    """Prefer Idempotency-Key (RFC); accept X-Idempotency-Key as a compatibility alias."""
-    canonical = str(idempotency_key or "").strip()
-    if canonical:
-        return canonical
-    alias = str(x_idempotency_key or "").strip()
-    if alias:
-        return alias
-    raise _bff_error(
-        400,
-        ErrorCode.VALIDATION_FAILED,
-        "Idempotency-Key is required for operator commands",
-        (
-            "Final contract routes require a non-empty Idempotency-Key header; "
-            "X-Idempotency-Key is accepted as a temporary compatibility alias"
-        ),
-        precondition_failed="idempotency_key",
-        suggestion="Retry with Idempotency-Key set to a stable client retry key",
-    )
-
-
-# --- _reject_body_idempotency_key ---
-def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
-    """Reject final-contract payloads that carry idempotencyKey in the body."""
-    body_key = "idempotencyKey" if "idempotencyKey" in payload else "idempotency_key" if "idempotency_key" in payload else None
-    if body_key is not None:
-        raise _bff_error(
-            400,
-            ErrorCode.VALIDATION_FAILED,
-            f"{body_key} must not appear in the request body",
-            (
-                "Final contract routes require idempotency via the Idempotency-Key header, "
-                "not the request body"
-            ),
-            precondition_failed="body_idempotency_key",
-            suggestion=f"Remove {body_key} from the body and set the Idempotency-Key header",
-        )
-
-
-# --- _stable_json_hash ---
-def _stable_json_hash(payload: Dict[str, Any]) -> str:
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 # --- _pm12_resolve_quarterly_recommendation_submit_params ---
@@ -10483,29 +10478,6 @@ def _page_slice(items: List[Dict[str, Any]], page_token: Optional[str], page_siz
 _RUNTIME_STATE_SORT_FIELDS = {"last_updated_at", "runtime_id", "deployment_stage", "status"}
 
 
-# --- _aggregate_group_surface ---
-def _aggregate_group_surface(
-    surface_key: str,
-    source_surfaces: List[Dict[str, Any]],
-    *,
-    snapshot_at: str,
-    unavailable_message: str,
-    degraded_message: str,
-) -> Dict[str, Any]:
-    surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
-    surface["source"] = "bff_composed"
-    statuses = [entry.get("status", "ok") for entry in source_surfaces]
-    if statuses and all(status == "ok" for status in statuses):
-        return surface
-    if statuses and all(status == "unavailable" for status in statuses):
-        surface["status"] = "unavailable"
-        surface["message"] = unavailable_message
-        return surface
-    surface["status"] = "degraded"
-    surface["message"] = degraded_message
-    return surface
-
-
 # --- _management_number_helpers ---
 def _management_number(value: Any) -> Optional[float]:
     if isinstance(value, (int, float)):
@@ -10562,7 +10534,6 @@ def _management_prune_camel_aliases(value: Any) -> Any:
                 continue
         pruned[key] = _management_prune_camel_aliases(nested)
     return pruned
-
 
 
 # --- _management_evidence_public_item ---
@@ -10627,36 +10598,6 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     if "overall" in item:
         public_item["overall"] = item.get("overall")
     return public_item
-
-
-# --- _snapshot_meta ---
-def _snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-    }
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-    return meta
-
-
-# --- _surface_degradation_reason ---
-def _surface_degradation_reason(
-    surface: Dict[str, Any],
-    *,
-    degraded_reason: str,
-    unavailable_reason: str,
-) -> Optional[str]:
-    status = surface.get("status")
-    if status == "ok":
-        return None
-    if status == "unavailable":
-        return unavailable_reason
-    if surface.get("message"):
-        return str(surface["message"])
-    if surface.get("note"):
-        return str(surface["note"])
-    return degraded_reason
 
 
 # --- _project_final_command_response ---
@@ -10756,25 +10697,6 @@ def _deprecated_bff_path_response(*, route: str, replacement: str) -> JSONRespon
     )
 
 
-# --- _check_read_surface_state ---
-def _check_read_surface_state() -> Optional[StalenessWarning]:
-    """
-    In production, query the BFF read surface health endpoint.
-    Returns a StalenessWarning when the surface is degraded or unavailable,
-    or None when fresh.
-    """
-    state = os.getenv("BFF_READ_SURFACE_STATE", "fresh")
-    if state == "fresh":
-        return None
-    return StalenessWarning(
-        read_surface_state=state,
-        message=(
-            "Command submitted against stale read surface data. "
-            "Verify target state via secondary control path before confirming action."
-        ),
-    )
-
-
 # --- _request_dry_run_requested ---
 def _truthy_header(value: Optional[str]) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -10816,33 +10738,6 @@ def _dry_run_success_response(
         content=jsonable_encoder({"data": data, "meta": meta}),
         headers=headers,
     )
-
-
-# --- _ppl_alloc_009_paper_environment_guard ---
-def _ppl_alloc_009_paper_environment_guard() -> None:
-    env_name = str(os.getenv("PANTHEON_ENV") or "").strip().lower()
-    if (
-        env_name != "dev"
-        or _bff_auth_mode() != "strict"
-        or _bool_from_env(_BFF_AUTH_STUB_ENV, default=False)
-        or _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
-        or _bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
-    ):
-        raise _bff_error(
-            403,
-            ErrorCode.PRECONDITION_FAILED,
-            "Governed paper allocation simulation is unavailable",
-            (
-                "The paper-only authority requires strict dev auth with both "
-                "live broker and canary execution disabled."
-            ),
-            precondition_failed="paper_simulation_environment",
-            suggestion=(
-                "Use the accepted strict dev BFF with "
-                "PANTHEON_LIVE_BROKER_ENABLED=false and "
-                "PANTHEON_CANARY_EXECUTION_ENABLED=false"
-            ),
-        )
 
 
 # --- _ppl_alloc_009_paper_capital_context ---
@@ -11018,7 +10913,6 @@ _PERSONA_PROVISIONING_RECONCILER_TASK: Optional[asyncio.Task[Any]] = None
 _PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
 
 
-
 # --- _normalize_lifecycle_state ---
 def _normalize_lifecycle_state(value: Any) -> str:
     text = str(value or "").strip().lower()
@@ -11029,134 +10923,6 @@ def _normalize_lifecycle_state(value: Any) -> str:
 def _normalize_risk_level(value: Any) -> str:
     text = str(value or "").strip().lower()
     return _STRATEGY_BFF_RISK_MAP.get(text, "medium")
-
-
-# --- _deployment_url ---
-def _deployment_url(path: str) -> str:
-    base = os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip().rstrip("/")
-    if not base:
-        base = "http://deployment:8095"
-    return f"{base}{path}"
-
-
-# --- _management_record_id ---
-def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
-    for key in keys:
-        value = record.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
-
-
-# --- _management_as_float ---
-def _management_as_float(value: Any) -> Optional[float]:
-    if isinstance(value, bool):
-        return None
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-# --- _management_first_non_empty ---
-def _management_first_non_empty(*values: Any) -> Any:
-    for value in values:
-        if value not in (None, ""):
-            return value
-    return None
-
-
-# --- _management_nested_value ---
-def _management_nested_value(record: Dict[str, Any], path: str) -> Any:
-    value: Any = record
-    for part in path.split("."):
-        if not isinstance(value, dict):
-            return None
-        value = value.get(part)
-    return value
-
-
-# --- _management_first_float ---
-def _management_first_float(record: Dict[str, Any], *paths: str) -> Optional[float]:
-    for path in paths:
-        value = _management_nested_value(record, path)
-        number = _management_as_float(value)
-        if number is not None:
-            return number
-    return None
-
-
-# --- _management_telemetry_rollup ---
-def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    if not records:
-        return {
-            "runtime_count": 0,
-            "total_pnl": None,
-            "max_drawdown": None,
-            "average_fill_rate": None,
-            "total_trades": 0,
-            "latest_collected_at": None,
-        }
-
-    pnl_values: List[float] = []
-    drawdown_values: List[float] = []
-    fill_rates: List[float] = []
-    total_trades = 0
-    latest_collected_at: Optional[str] = None
-
-    for record in records:
-        pnl = _management_first_float(record, "pnl", "summary.total_pnl", "summary.pnl")
-        drawdown = _management_first_float(
-            record,
-            "drawdown",
-            "max_drawdown",
-            "summary.max_drawdown",
-        )
-        fill_rate = _management_first_float(record, "fill_rate", "summary.fill_rate")
-        trades = _management_first_float(record, "total_trades", "summary.total_trades")
-        collected_at = str(
-            record.get("collected_at")
-            or record.get("collectedAt")
-            or record.get("updated_at")
-            or record.get("updatedAt")
-            or ""
-        ).strip()
-        if pnl is not None:
-            pnl_values.append(pnl)
-        if drawdown is not None:
-            drawdown_values.append(drawdown)
-        if fill_rate is not None:
-            fill_rates.append(fill_rate)
-        if trades is not None:
-            total_trades += int(trades)
-        if collected_at and (latest_collected_at is None or collected_at > latest_collected_at):
-            latest_collected_at = collected_at
-
-    return {
-        "runtime_count": len(records),
-        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
-        "max_drawdown": max(drawdown_values) if drawdown_values else None,
-        "average_fill_rate": round(sum(fill_rates) / len(fill_rates), 6) if fill_rates else None,
-        "total_trades": total_trades,
-        "latest_collected_at": latest_collected_at,
-    }
-
-
-# --- _sort_records_latest_first ---
-def _sort_records_latest_first(
-    records: List[Dict[str, Any]],
-    fields: tuple[str, ...],
-) -> List[Dict[str, Any]]:
-    return sorted(
-        records,
-        key=lambda item: next(
-            (str(item.get(field) or "") for field in fields if item.get(field)),
-            "",
-        ),
-        reverse=True,
-    )
 
 
 # --- _persona_fleet_runtime_matches ---
@@ -11231,8 +10997,6 @@ def _human_inbox_priority(value: Any, *, fallback: str = "medium") -> str:
     if normalized in {"sev3", "p2"}:
         return "medium"
     return fallback
-
-
 
 
 # --- _human_inbox_sanitize_promotion_snapshot ---
@@ -11822,7 +11586,6 @@ _PM12_LEAGUE_TIER_DEFINITIONS = [
         "governance_posture": "research_only",
     },
 ]
-
 
 
 # --- _pm12_status_counts ---
@@ -13020,8 +12783,6 @@ def _pm12_ranking_snapshot_payload_items(
     return payload_items
 
 
-
-
 # --- _pm12_ranking_snapshot_content ---
 def _pm12_ranking_snapshot_content(
     items: List[Dict[str, Any]],
@@ -13240,8 +13001,6 @@ _PROMOTION_REVIEW_REVISION_RE = re.compile(
     r"^(?P<recommendation_id>.+)--snapshot-(?P<digest>[0-9a-f]{32})$"
 )
 _PROMOTION_REVIEW_ID_QUARTER_RE = re.compile(r"pm12-(?P<quarter>\d{4}-q[1-4])-", re.IGNORECASE)
-
-
 
 
 # --- _promotion_review_clean_id ---
@@ -13485,25 +13244,6 @@ def _read_store_fixture_records(dataset: str) -> List[Dict[str, Any]]:
     if isinstance(raw, list):
         return [dict(record) for record in raw if isinstance(record, dict)]
     return []
-
-
-# --- _merge_registry_records ---
-def _merge_registry_records(
-    fixture_records: List[Dict[str, Any]],
-    registry_records: List[Dict[str, Any]],
-    id_keys: tuple[str, ...],
-) -> List[Dict[str, Any]]:
-    merged: Dict[str, Dict[str, Any]] = {}
-    for record in fixture_records + registry_records:
-        record_id = ""
-        for key in id_keys:
-            value = record.get(key)
-            if value not in (None, ""):
-                record_id = str(value)
-                break
-        if record_id:
-            merged[record_id] = dict(record)
-    return list(merged.values())
 
 
 # --- _tool_fixture_records ---

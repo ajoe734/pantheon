@@ -6,7 +6,8 @@ import os
 import sys
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -82,27 +83,49 @@ def test_internal_publish_delivers_to_inferred_outbox_channel() -> None:
     assert event["data"] == {"approval_id": "approval-1"}
 
 
+def _make_finite_service(service: EventStreamService, limit: int = 10):
+    original_stream = service.stream
+
+    async def finite_stream(*args, **kwargs):
+        stream = original_stream(*args, **kwargs)
+        try:
+            for _ in range(limit):
+                yield await asyncio.wait_for(anext(stream), 0.1)
+        except (TimeoutError, asyncio.TimeoutError):
+            pass
+        finally:
+            await stream.aclose()
+
+    service.stream = finite_stream
+    return service
+
+
 def test_generic_and_compatibility_streams_share_replay_headers() -> None:
     service = EventStreamService(channels=("approval", "inbox", "system"))
+    _make_finite_service(service)
     router = create_events_router(event_stream_service=service)
-    generic = _endpoint(router, "/api/v1/stream/{channel}")
-    inbox = _endpoint(router, "/bff/sse/notifications")
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
 
-    generic_response = asyncio.run(generic("inbox", None, "Bearer op-1:operator"))
-    inbox_response = asyncio.run(inbox(None, "Bearer op-1:operator"))
+    resp = client.get("/api/v1/stream/inbox", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    assert resp.headers["X-SSE-Channel"] == "inbox"
+    assert resp.headers["X-SSE-Replay-Supported"] == "true"
 
-    assert generic_response.headers["X-SSE-Channel"] == "inbox"
-    assert inbox_response.headers["X-SSE-Channel"] == "inbox"
-    assert generic_response.headers["X-SSE-Replay-Supported"] == "true"
-    assert inbox_response.headers["X-SSE-Replay-Window-Events"] == "500"
+    resp = client.get("/bff/sse/notifications", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    assert resp.headers["X-SSE-Channel"] == "inbox"
+    assert resp.headers["X-SSE-Replay-Window-Events"] == "500"
 
 
 def test_generic_stream_rejects_channels_outside_the_injected_catalog() -> None:
     router = create_events_router(event_stream_service=EventStreamService(channels=("system",)))
-    generic = _endpoint(router, "/api/v1/stream/{channel}")
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
 
-    with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(generic("approval", None, "Bearer op-1:operator"))
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.detail["error"]["code"] == "VALIDATION_FAILED"
+    resp = client.get("/api/v1/stream/approval", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 400
+    payload = resp.json()
+    assert (payload.get("detail") or payload)["error"]["code"] == "VALIDATION_FAILED"

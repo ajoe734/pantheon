@@ -1044,6 +1044,94 @@ class IntegrationPlanTests(unittest.TestCase):
                     live_config, runner, command_root=command_root
                 )
 
+    def test_execute_authority_rejects_command_root_differing_from_promoted_watchdog_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            head1 = "a" * 40
+            head2 = "b" * 40
+            command_root = root / "command-runtimes" / head1
+            command_root.mkdir(parents=True)
+            watchdog_root = root / "command-runtimes" / head2
+            watchdog_root.mkdir(parents=True)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            status_file = status_root / "ai-status.json"
+            status_file.write_text('{"tasks": []}\n', encoding="utf-8")
+            live_config = root / "runtime" / "live.json"
+            live_config.parent.mkdir()
+            payload = {
+                "paths": {"status_file": str(status_file)},
+                "review_gate": {"github_review_bridge_required": False},
+                "watchdog": {
+                    "supervisor_command": [
+                        sys.executable,
+                        str(watchdog_root / ".orchestrator" / "supervisor.py"),
+                        "--config",
+                        str(live_config),
+                    ]
+                },
+                "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": ["Commit trailers"]
+                    },
+                    "auto_integrator": {
+                        "lock_file": ".orchestrator/auto-integrator.lock"
+                    },
+                },
+            }
+            live_config.write_text(json.dumps(payload), encoding="utf-8")
+            runner = FakeRunner(git_head=head1)
+
+            with self.assertRaisesRegex(
+                auto_integrator.ExecuteAuthorityError,
+                "auto-integrator command root is not the promoted watchdog root",
+            ):
+                auto_integrator.resolve_execute_authority(
+                    live_config, runner, command_root=command_root
+                )
+
+    def test_main_execute_authority_binding_failure_emits_alert_to_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            missing_config = root / "nonexistent-live.json"
+            stderr_buf = io.StringIO()
+            with mock.patch.dict(os.environ, {auto_integrator.LIVE_CONFIG_ENV: str(missing_config)}):
+                with mock.patch("sys.stderr", stderr_buf):
+                    with self.assertRaises(SystemExit) as cm:
+                        auto_integrator.main(["--execute"])
+                    self.assertEqual(cm.exception.code, 2)
+            self.assertIn("ALERT: auto-integrator live execute authority binding failed", stderr_buf.getvalue())
+
+    def test_integration_candidates_recognizes_configured_integration_path_for_pantheon(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "OPS-001",
+                    "title": "Ready",
+                    "status": "review_approved",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex2",
+                }
+            ]
+        }
+        config = {
+            "coordination": {
+                "repositories": {
+                    "pantheon": {
+                        "repo": "ajoe734/pantheon",
+                        "integration_path": "/home/pantheon-ci-deploy/integration-runtimes/pantheon/" + "f" * 40,
+                    }
+                }
+            }
+        }
+        candidates = auto_integrator.integration_candidates(state, config=config)
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0].dedicated_integration_path)
+        self.assertEqual(
+            candidates[0].repository_root,
+            Path("/home/pantheon-ci-deploy/integration-runtimes/pantheon/" + "f" * 40),
+        )
+
     def test_live_execute_requires_explicit_dedicated_integration_path(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
@@ -3947,6 +4035,195 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         self.assertEqual(result.action, "blocked")
         self.assertIn("Failed to inspect PR", result.detail)
         self.assertIsNone(result.unblock_task_id)
+
+
+class TwoTaskFakeRunner(FakeRunner):
+    """FakeRunner keyed by task branch instead of a single PR.
+
+    Used to prove OPS-AUTO-INTEGRATOR-THROUGHPUT-001 acceptance 3: within one
+    run, a second candidate's PR must be evaluated against the live dev head
+    the first candidate's merge just produced, not a snapshot taken before
+    that merge. A real merge PUT for one branch marks every other still-open
+    branch's cached PR as `mergeStateStatus=BEHIND`, mirroring what GitHub
+    reports once dev has moved past a PR's merge base.
+    """
+
+    def __init__(self, prs_by_branch: Mapping[str, Mapping[str, Any]]) -> None:
+        super().__init__()
+        self.prs_by_branch: dict[str, dict[str, Any]] = {
+            branch: dict(pr) for branch, pr in prs_by_branch.items()
+        }
+
+    def _pr_by_number(self, number: str) -> dict[str, Any] | None:
+        for pr in self.prs_by_branch.values():
+            if str(pr.get("number")) == number:
+                return pr
+        return None
+
+    def run(
+        self,
+        args: Sequence[str],
+        *,
+        cwd: Path = auto_integrator.ROOT,
+        check: bool = True,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ):
+        command = [str(arg) for arg in args]
+        joined = " ".join(command)
+        if command[:3] == ["gh", "pr", "list"]:
+            self.commands.append(command)
+            branch = command[command.index("--head") + 1]
+            state = command[command.index("--state") + 1]
+            pr = self.prs_by_branch.get(branch)
+            if pr is None:
+                return completed(command, stdout="[]")
+            is_merged = str(pr.get("state") or "").upper() == "MERGED"
+            if (state == "open") == is_merged:
+                return completed(command, stdout="[]")
+            return completed(command, stdout=json.dumps([{"number": pr["number"]}]))
+        if command[:3] == ["gh", "pr", "view"]:
+            self.commands.append(command)
+            pr = self._pr_by_number(command[3])
+            return completed(command, stdout=json.dumps(pr) if pr is not None else "{}")
+        if (
+            command[:4] == ["gh", "api", "--method", "PUT"]
+            and "/pulls/" in joined
+            and "/merge" in joined
+        ):
+            self.commands.append(command)
+            number = joined.split("/pulls/", 1)[1].split("/merge", 1)[0]
+            pr = self._pr_by_number(number)
+            if pr is None:
+                return completed(command, stdout=json.dumps({"merged": False, "message": "not found"}))
+            pr["state"] = "MERGED"
+            pr["mergedAt"] = "2026-06-12T01:01:07Z"
+            pr["mergeCommit"] = {"oid": f"merge{number}"}
+            for other_branch, other in self.prs_by_branch.items():
+                if other is pr:
+                    continue
+                if str(other.get("state") or "").upper() != "MERGED":
+                    other["mergeStateStatus"] = "BEHIND"
+            return completed(
+                command,
+                stdout=json.dumps({"merged": True, "sha": f"merge{number}", "message": "merged"}),
+            )
+        return super().run(args, cwd=cwd, check=check, env=env, timeout=timeout)
+
+
+class MultiTaskPerRunOrderingTests(unittest.TestCase):
+    """OPS-AUTO-INTEGRATOR-THROUGHPUT-001 acceptance 3.
+
+    A run that processes more than one task per pass must revalidate each
+    later candidate against the live dev head the earlier candidate's merge
+    produced, and must skip and report -- never force-merge -- a candidate
+    that has gone BEHIND as a result.
+    """
+
+    def _two_task_gate(self) -> auto_integrator.ReviewGate:
+        return auto_integrator.ReviewGate(
+            state={
+                "tasks": [
+                    {
+                        "id": "THRU-101",
+                        "title": "Ready first",
+                        "status": "review_approved",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                    },
+                    {
+                        "id": "THRU-102",
+                        "title": "Ready second",
+                        "status": "review_approved",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                    },
+                ]
+            },
+            events=[
+                {
+                    "ts": "2026-06-12T00:45:00Z",
+                    "agent": "Claude",
+                    "type": "review_approved",
+                    "task_id": "THRU-101",
+                    "message": "Independent review approved.",
+                    "review_binding": {
+                        "pr": 301,
+                        "head_sha": APPROVED_HEAD,
+                        "head_branch": "task/THRU-101",
+                        "base": "dev",
+                    },
+                },
+                {
+                    "ts": "2026-06-12T00:46:00Z",
+                    "agent": "Claude",
+                    "type": "review_approved",
+                    "task_id": "THRU-102",
+                    "message": "Independent review approved.",
+                    "review_binding": {
+                        "pr": 302,
+                        "head_sha": APPROVED_HEAD,
+                        "head_branch": "task/THRU-102",
+                        "base": "dev",
+                    },
+                },
+            ],
+        )
+
+    def test_second_candidate_is_revalidated_against_dev_head_first_merge_produced(
+        self,
+    ) -> None:
+        pr_one = green_pr(number=301, task_id="THRU-101")
+        pr_two = green_pr(number=302, task_id="THRU-102")
+        runner = TwoTaskFakeRunner({"task/THRU-101": pr_one, "task/THRU-102": pr_two})
+        gate = self._two_task_gate()
+        settings = auto_integrator.Settings(smoke_commands=("true",))
+        candidate_one = auto_integrator.TaskCandidate(
+            task_id="THRU-101",
+            title="Ready first",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/THRU-101",
+        )
+        candidate_two = auto_integrator.TaskCandidate(
+            task_id="THRU-102",
+            title="Ready second",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/THRU-102",
+        )
+
+        first_result = auto_integrator.integrate_candidate(
+            candidate_one,
+            settings,
+            runner,
+            execute=True,
+            open_unblock=False,
+            gate=gate,
+        )
+        self.assertEqual(first_result.action, "merged")
+        self.assertEqual(
+            runner.prs_by_branch["task/THRU-102"]["mergeStateStatus"], "BEHIND"
+        )
+
+        second_result = auto_integrator.integrate_candidate(
+            candidate_two,
+            settings,
+            runner,
+            execute=True,
+            open_unblock=False,
+            gate=gate,
+        )
+
+        self.assertEqual(second_result.action, "waiting")
+        self.assertIn("mergeStateStatus=BEHIND", second_result.detail)
+        self.assertFalse(
+            any(
+                command[:4] == ["gh", "api", "--method", "PUT"]
+                and command[4].endswith("/pulls/302/merge")
+                for command in runner.commands
+            )
+        )
 
 
 class AutoIntegratorProcessE2ETests(unittest.TestCase):
