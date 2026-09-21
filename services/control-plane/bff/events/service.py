@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterable, Optional, Sequence
 
+from fastapi.encoders import jsonable_encoder
+from fastapi.sse import EventSourceResponse, ServerSentEvent, format_sse_event
 from starlette.responses import StreamingResponse
 
 
@@ -83,9 +85,23 @@ class EventStreamService:
             self.subscribers.setdefault(channel, [])
         self.incident_buffer = incident_buffer if incident_buffer is not None else deque(maxlen=max_events)
         self.incident_subscribers = incident_subscribers if incident_subscribers is not None else []
-        self.data_dir = data_dir or os.getenv("PANTHEON_BFF_DATA_DIR", "data")
+        self._data_dir = data_dir
         routes = resync_routes or DEFAULT_SSE_RESYNC_ROUTES
         self.resync_routes = {channel: tuple(values) for channel, values in routes.items()}
+
+    @property
+    def data_dir(self) -> str:
+        if self._data_dir is not None:
+            return str(self._data_dir)
+        return (
+            os.getenv("PANTHEON_BFF_DATA_DIR")
+            or os.getenv("BFF_DATA_DIR")
+            or "/tmp/pantheon/bff"
+        )
+
+    @data_dir.setter
+    def data_dir(self, value: Optional[Union[str, Path]]) -> None:
+        self._data_dir = value
 
     @staticmethod
     def _shared_replay_enabled() -> bool:
@@ -127,8 +143,9 @@ class EventStreamService:
         if not channel or not self._shared_replay_enabled():
             return
         path = self._shared_replay_file(channel)
+        encoded = jsonable_encoder(event)
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+            handle.write(json.dumps(encoded, ensure_ascii=False, separators=(",", ":")) + "\n")
         try:
             lines = [line for line in path.read_text(encoding="utf-8").splitlines(True) if line.strip()]
             if len(lines) > self.max_events:
@@ -141,12 +158,38 @@ class EventStreamService:
         return f"{prefix}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
 
     @staticmethod
-    def format_event(event: dict[str, Any]) -> str:
-        return (
-            f"id: {event['id']}\n"
-            f"event: {event['type']}\n"
-            f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        )
+    def format_event(event: Any) -> str:
+        if isinstance(event, str):
+            return event
+        if isinstance(event, ServerSentEvent):
+            if event.raw_data is not None:
+                data_str = event.raw_data
+            elif event.data is not None:
+                if hasattr(event.data, "model_dump_json"):
+                    data_str = event.data.model_dump_json()
+                else:
+                    data_str = json.dumps(jsonable_encoder(event.data), ensure_ascii=False)
+            else:
+                data_str = None
+            return format_sse_event(
+                data_str=data_str,
+                event=event.event,
+                id=str(event.id) if event.id is not None else None,
+                retry=event.retry,
+                comment=event.comment,
+            ).decode("utf-8")
+
+        if isinstance(event, dict):
+            event_id = event.get("id")
+            event_type = event.get("type")
+            encoded = jsonable_encoder(event)
+            return format_sse_event(
+                data_str=json.dumps(encoded, ensure_ascii=False),
+                event=str(event_type) if event_type is not None else None,
+                id=str(event_id) if event_id is not None else None,
+            ).decode("utf-8")
+
+        return format_sse_event(data_str=str(event)).decode("utf-8")
 
     def replay_headers(self, channel: str) -> Dict[str, str]:
         headers = {
@@ -164,11 +207,12 @@ class EventStreamService:
         event_id = self._make_event_id()
         # Match ``SseEventEnvelope[Dict[str, Any]].model_dump(mode="json")``
         # without coupling this prepared domain module to the BFF import root.
+        encoded_data = jsonable_encoder(dict(data or {}))
         event = {
             "id": event_id,
             "type": event_type,
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "data": dict(data or {}),
+            "data": encoded_data,
         }
         buffer.append((event_id, event))
         self._append_shared_event(self._channel_for_buffer(buffer), event)
@@ -198,6 +242,25 @@ class EventStreamService:
             )
         return result
 
+    @staticmethod
+    def to_server_sent_event(event: Any) -> ServerSentEvent:
+        if isinstance(event, ServerSentEvent):
+            return event
+        if isinstance(event, dict):
+            event_id = event.get("id")
+            event_type = event.get("type")
+            return ServerSentEvent(
+                id=str(event_id) if event_id is not None else None,
+                event=str(event_type) if event_type is not None else None,
+                data=event,
+            )
+        if isinstance(event, str):
+            clean = event.strip()
+            if clean in ("data: [DONE]", "[DONE]"):
+                return ServerSentEvent(raw_data="[DONE]")
+            return ServerSentEvent(raw_data=clean)
+        return ServerSentEvent(data=event)
+
     def replay(self, channel: str, buffer: deque, last_event_id: Optional[str]) -> list[dict[str, Any]]:
         if self._shared_replay_enabled() and channel in self.channel_set:
             return self._replay_from_events(
@@ -207,38 +270,20 @@ class EventStreamService:
             [event for _, event in buffer], last_event_id, source_label="buffer",
         )
 
-    async def stream(
-        self,
-        channel: str,
-        buffer: deque,
-        subscribers: list[asyncio.Queue],
-        last_event_id: Optional[str],
-    ) -> AsyncGenerator[str, None]:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
-        subscribers.append(queue)
-        try:
-            for event in self.replay(channel, buffer, last_event_id):
-                yield self.format_event(event)
-            while True:
-                try:
-                    yield self.format_event(await asyncio.wait_for(queue.get(), timeout=30.0))
-                except asyncio.TimeoutError:
-                    yield ": heartbeat\n\n"
-        finally:
-            if queue in subscribers:
-                subscribers.remove(queue)
-
-    def stream_response(
+    def check_replay(
         self,
         channel: str,
         last_event_id: Optional[str],
         *,
         bff_error: Callable[..., Exception],
         conflict_code: Any,
-        extra_headers: Optional[Dict[str, str]] = None,
-    ) -> StreamingResponse:
-        buffer = self.buffers[channel]
-        subscribers = self.subscribers[channel]
+    ) -> None:
+        """Validate that a requested Last-Event-ID cursor is available in the replay window."""
+        if not last_event_id:
+            return
+        buffer = self.buffers.get(channel)
+        if buffer is None:
+            return
         try:
             self.replay(channel, buffer, last_event_id)
         except SseReplayUnavailableError as exc:
@@ -259,17 +304,62 @@ class EventStreamService:
             )
             error.headers = self.replay_headers(channel)
             raise error from exc
+
+    async def stream(
+        self,
+        channel: str,
+        buffer: deque,
+        subscribers: list[asyncio.Queue],
+        last_event_id: Optional[str],
+        event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
+    ) -> AsyncGenerator[ServerSentEvent, None]:
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        subscribers.append(queue)
+        try:
+            for event in self.replay(channel, buffer, last_event_id):
+                if event_filter is not None and isinstance(event, dict) and not event_filter(event):
+                    continue
+                yield self.to_server_sent_event(event)
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                if isinstance(event, ServerSentEvent) and event.raw_data == "[DONE]":
+                    yield event
+                    break
+                if isinstance(event, str) and event.strip() in ("data: [DONE]", "[DONE]"):
+                    yield ServerSentEvent(raw_data="[DONE]")
+                    break
+                if event_filter is not None and isinstance(event, dict) and not event_filter(event):
+                    continue
+                yield self.to_server_sent_event(event)
+        finally:
+            if queue in subscribers:
+                subscribers.remove(queue)
+
+    def stream_response(
+        self,
+        channel: str,
+        last_event_id: Optional[str],
+        *,
+        bff_error: Callable[..., Exception],
+        conflict_code: Any,
+        extra_headers: Optional[Dict[str, str]] = None,
+        event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
+    ) -> EventSourceResponse:
+        self.check_replay(channel, last_event_id, bff_error=bff_error, conflict_code=conflict_code)
+        buffer = self.buffers[channel]
+        subscribers = self.subscribers[channel]
         headers = {
             "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
             **self.replay_headers(channel),
         }
         if extra_headers:
             headers.update(extra_headers)
-        return StreamingResponse(
-            self.stream(channel, buffer, subscribers, last_event_id),
-            media_type="text/event-stream",
+
+        return EventSourceResponse(
+            self.stream(channel, buffer, subscribers, last_event_id, event_filter=event_filter),
             headers=headers,
         )
 

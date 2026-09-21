@@ -7,6 +7,7 @@ legacy decorators with these named routers.
 from __future__ import annotations
 
 import inspect
+import os
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional, get_args, get_origin, get_type_hints
 
@@ -58,6 +59,52 @@ ROUTE_ASSIGNMENTS: tuple[tuple[str, str, str], ...] = (
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def bff_feature_flags() -> dict[str, bool]:
+    ooda = os.getenv("PANTHEON_OODA_PACKET_ENABLED")
+    ooda_enabled = True if ooda is None else ooda.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+    synthesis = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
+    synthesis_enabled = True if synthesis is None else synthesis.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+    return {
+        "executePlansBff": True,
+        "sessionAuthMe": True,
+        "oodaPackets": ooda_enabled,
+        "synthesisConflictLogs": synthesis_enabled,
+    }
+
+
+def create_capabilities_handler(
+    *,
+    extract_identity: Optional[IdentityExtractor] = None,
+    require_read_role: Optional[RoleGuard] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> Callable[..., Any]:
+    effective_extract = extract_identity
+    effective_require = require_read_role
+    now_fn = utc_now or _utc_now
+
+    async def sem_bff_capabilities(authorization: Optional[str] = Header(default=None)):
+        nonlocal effective_extract, effective_require
+        if effective_extract is None or effective_require is None:
+            from ..auth import policy as auth_policy
+            if effective_extract is None:
+                effective_extract = auth_policy.extract_identity
+            if effective_require is None:
+                effective_require = auth_policy.require_read_role
+        effective_require(effective_extract(authorization))
+        return {
+            "data": {
+                "feature_flags": bff_feature_flags(),
+            },
+            "meta": {"snapshot_at": now_fn()},
+        }
+
+    return sem_bff_capabilities
+
+
+sem_bff_capabilities_default = create_capabilities_handler()
+sem_bff_capabilities = sem_bff_capabilities_default
 
 
 def _missing_handler(name: str) -> HTTPException:
@@ -322,7 +369,9 @@ def create_core_router(handlers: Mapping[str, RouteHandler]) -> APIRouter:
     @router.get("/bff/capabilities")
     @router.get("/bff/feature-flags")
     async def sem_bff_capabilities(request: Request):
-        return await _dispatch(handlers, "sem_bff_capabilities", request)
+        if "sem_bff_capabilities" in handlers:
+            return await _dispatch(handlers, "sem_bff_capabilities", request)
+        return await _dispatch({"sem_bff_capabilities": sem_bff_capabilities_default}, "sem_bff_capabilities", request)
 
     return router
 

@@ -7,23 +7,26 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Dict, Iterator, Optional
+from types import SimpleNamespace
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+)
+from services.control_plane.bff.ports import create_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.strategies.router import create_strategies_router
 
 BFF_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BFF_DIR.parents[2]
 LINKAGE_PACKET_PATH = (
     REPO_ROOT / "support" / "evidence" / "MGMT-QLIB-006" / "management_linkage_packet.json"
 )
-
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-from ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort  # noqa: E402
-from ports import create_read_surface_ports  # noqa: E402
-
 
 HEADERS = {"Authorization": "Bearer op-mgmt-qlib:operator,reviewer"}
 
@@ -164,15 +167,34 @@ def _seed_qlib_management_linkage() -> tuple[Any, dict]:
     return store, packet
 
 
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+from services.control_plane.bff.auth import policy as auth_policy
+
+
+def _create_app(store: Any) -> FastAPI:
+    strategies_router = create_strategies_router(
+        get_read_store=lambda: store,
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        require_operator_role=auth_policy.require_operator_role,
+        bff_error=auth_policy.bff_error,
+        utc_now=lambda: "2026-05-15T17:30:00Z",
+    )
+    return create_research_test_app(
+        store,
+        utc_now=lambda: "2026-05-15T17:30:00Z",
+        include_prepared_subrouters=True,
+        extra_routers=[strategies_router],
+    )
+
+
 @contextmanager
 def _seeded_client() -> Iterator[tuple[TestClient, dict]]:
-    original_store = bff_main.read_store
     store, packet = _seed_qlib_management_linkage()
-    bff_main.read_store = store
-    try:
-        yield TestClient(bff_main.app), packet
-    finally:
-        bff_main.read_store = original_store
+    app = _create_app(store)
+    yield TestClient(app, raise_server_exceptions=False), packet
 
 
 def _data(payload: dict) -> dict:

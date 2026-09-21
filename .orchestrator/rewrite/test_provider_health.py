@@ -139,6 +139,188 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
             DeliveryHealthState.UNKNOWN,
         )
 
+    def test_auth_only_probe_preserves_existing_quota_terminal_account_state(self) -> None:
+        reset_time = self.now + timedelta(days=1)
+        reset_iso = reset_time.isoformat().replace("+00:00", "Z")
+        failure_detail = (
+            'Claude runs at 04:15 and 06:37 UTC returned a rejected seven_day rate_limit_event '
+            'and "You\'ve hit your weekly limit" with reset 2026-09-21 12:00 UTC.'
+        )
+        snapshot = provider_health.apply_failure(
+            provider_health.empty_delivery_health(),
+            endpoint_id="claude",
+            account_id="claude-shared",
+            failure_kind="quota_terminal",
+            observed_at=self.now - timedelta(hours=2),
+            retry_at=reset_time,
+            detail=failure_detail,
+        )
+        self.assertEqual(
+            provider_health.account_state(snapshot, "claude-shared", now=self.now),
+            DeliveryHealthState.RETRY_AFTER,
+        )
+        self.assertEqual(snapshot["accounts"]["claude-shared"]["quota_reset_at"], reset_iso)
+
+        # Successful auth probe arrives at 06:35:
+        auth_probe = {
+            "source": "live",
+            "ready": True,
+            "status": "ready",
+            "method": "claude_auth_status_refresh",
+            "checked_at": self.now.isoformat().replace("+00:00", "Z"),
+        }
+        post_probe = provider_health.apply_probe(
+            snapshot,
+            endpoint_id="claude",
+            account_id="claude-shared",
+            probe=auth_probe,
+            observed_at=self.now,
+        )
+        # Endpoint credential is refreshed healthy:
+        self.assertEqual(
+            provider_health.endpoint_state(post_probe, "claude", now=self.now),
+            DeliveryHealthState.HEALTHY,
+        )
+        # Account capacity remains quota_terminal in RETRY_AFTER:
+        self.assertEqual(
+            provider_health.account_state(post_probe, "claude-shared", now=self.now),
+            DeliveryHealthState.RETRY_AFTER,
+        )
+        account_entry = post_probe["accounts"]["claude-shared"]
+        self.assertEqual(account_entry["reason_kind"], "quota_terminal")
+        self.assertEqual(account_entry["retry_at"], reset_iso)
+        self.assertEqual(account_entry["quota_reset_at"], reset_iso)
+        self.assertEqual(account_entry["detail"], failure_detail)
+
+    def test_auth_only_probe_does_not_mark_empty_account_healthy(self) -> None:
+        auth_probe = {
+            "source": "live",
+            "ready": True,
+            "status": "ready",
+            "method": "claude_auth_status_refresh",
+            "checked_at": self.now.isoformat().replace("+00:00", "Z"),
+        }
+        snapshot = provider_health.apply_probe(
+            provider_health.empty_delivery_health(),
+            endpoint_id="claude",
+            account_id="claude-shared",
+            probe=auth_probe,
+            observed_at=self.now,
+        )
+        self.assertEqual(
+            provider_health.endpoint_state(snapshot, "claude", now=self.now),
+            DeliveryHealthState.HEALTHY,
+        )
+        self.assertEqual(
+            provider_health.account_state(snapshot, "claude-shared", now=self.now),
+            DeliveryHealthState.UNKNOWN,
+        )
+
+    def test_capacity_probe_restores_quota_terminal_account(self) -> None:
+        reset_time = self.now + timedelta(days=1)
+        snapshot = provider_health.apply_failure(
+            provider_health.empty_delivery_health(),
+            endpoint_id="claude",
+            account_id="claude-shared",
+            failure_kind="quota_terminal",
+            observed_at=self.now - timedelta(hours=2),
+            retry_at=reset_time,
+        )
+        capacity_probe = {
+            "source": "live",
+            "ready": True,
+            "status": "ready",
+            "method": "claude_prompt",
+            "checked_at": self.now.isoformat().replace("+00:00", "Z"),
+        }
+        post_probe = provider_health.apply_probe(
+            snapshot,
+            endpoint_id="claude",
+            account_id="claude-shared",
+            probe=capacity_probe,
+            observed_at=self.now,
+        )
+        self.assertEqual(
+            provider_health.endpoint_state(post_probe, "claude", now=self.now),
+            DeliveryHealthState.HEALTHY,
+        )
+        self.assertEqual(
+            provider_health.account_state(post_probe, "claude-shared", now=self.now),
+            DeliveryHealthState.HEALTHY,
+        )
+
+    def test_apply_failure_extracts_and_preserves_quota_reset_evidence(self) -> None:
+        detail = (
+            'Claude runs at 04:15 and 06:37 UTC returned a rejected seven_day rate_limit_event '
+            'and "You\'ve hit your weekly limit" with reset 2026-09-21 12:00 UTC.'
+        )
+        snapshot = provider_health.apply_failure(
+            provider_health.empty_delivery_health(),
+            endpoint_id="claude",
+            account_id="claude-shared",
+            failure_kind="quota_terminal",
+            observed_at=self.now,
+            detail=detail,
+        )
+        entry = snapshot["accounts"]["claude-shared"]
+        self.assertEqual(entry["quota_reset_at"], "2026-09-21T12:00:00Z")
+        self.assertEqual(entry["retry_at"], "2026-09-21T12:00:00Z")
+
+    def test_apply_probe_quota_failure_extracts_reset_timestamp(self) -> None:
+        detail = 'Usage limit reached with try again at 2026-09-22 08:30:00 UTC.'
+        snapshot = provider_health.apply_probe(
+            provider_health.empty_delivery_health(),
+            endpoint_id="claude",
+            account_id="claude-shared",
+            probe={
+                "source": "live",
+                "ready": False,
+                "status": "quota_reached",
+                "error": detail,
+            },
+            observed_at=self.now,
+        )
+        self.assertEqual(
+            provider_health.endpoint_state(snapshot, "claude", now=self.now),
+            DeliveryHealthState.HEALTHY,
+        )
+        self.assertEqual(
+            provider_health.account_state(snapshot, "claude-shared", now=self.now),
+            DeliveryHealthState.RETRY_AFTER,
+        )
+        entry = snapshot["accounts"]["claude-shared"]
+        self.assertEqual(entry["quota_reset_at"], "2026-09-22T08:30:00Z")
+        self.assertEqual(entry["retry_at"], "2026-09-22T08:30:00Z")
+
+    def test_extract_reset_timestamp_preserves_timezone_offsets(self) -> None:
+        self.assertEqual(
+            provider_health._extract_reset_timestamp("reset 2026-09-21 12:00 +08:00"),
+            "2026-09-21T04:00:00Z",
+        )
+        self.assertEqual(
+            provider_health._extract_reset_timestamp("reset 2026-09-21T12:00+08:00"),
+            "2026-09-21T04:00:00Z",
+        )
+        self.assertEqual(
+            provider_health._extract_reset_timestamp("reset 2026-09-21 12:00 -05:00"),
+            "2026-09-21T17:00:00Z",
+        )
+        self.assertEqual(
+            provider_health._extract_reset_timestamp("reset 2026-09-21T12:00-05:00"),
+            "2026-09-21T17:00:00Z",
+        )
+        snapshot = provider_health.apply_failure(
+            provider_health.empty_delivery_health(),
+            endpoint_id="claude",
+            account_id="claude-shared",
+            failure_kind="quota_terminal",
+            observed_at=self.now,
+            detail='Hit weekly limit with reset 2026-09-21 12:00 +08:00',
+        )
+        entry = snapshot["accounts"]["claude-shared"]
+        self.assertEqual(entry["quota_reset_at"], "2026-09-21T04:00:00Z")
+        self.assertEqual(entry["retry_at"], "2026-09-21T04:00:00Z")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -103,6 +103,32 @@ def uninstall_cron(*, dry_run: bool) -> None:
     print(f"uninstalled cron auto-integrator entry: {CRON_TAG}")
 
 
+def rebind_installed_cron(repo_root: Path, status_root: Path, config_file: Path) -> bool:
+    """Move the existing runner to a promoted root without enabling a new job."""
+    existing = current_crontab()
+    updated = []
+    for raw in existing:
+        if not raw.rstrip().endswith(CRON_TAG) or raw.lstrip().startswith("#"):
+            updated.append(raw)
+            continue
+        parts = shlex.split(raw)
+        if len(parts) < 7 or parts[5] != "cd":
+            raise ValueError("unrecognized installed auto-integrator cron entry")
+        limit = next(
+            (int(part.split("=", 1)[1]) for part in parts
+             if part.startswith("AUTO_INTEGRATOR_MAX_TASKS=")),
+            DEFAULT_MAX_TASKS,
+        )
+        updated.append(render_cron_line(
+            repo_root, status_root, config_file,
+            interval=" ".join(parts[:5]), max_tasks=limit,
+        ))
+    if updated == existing:
+        return False
+    write_crontab(updated, dry_run=False)
+    return True
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Install or remove the Pantheon auto-integrator cron runner.")
     parser.add_argument("--repo", default=".", help="Pantheon git checkout used for integration. Defaults to cwd.")

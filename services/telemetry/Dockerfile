@@ -1,12 +1,12 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /workspace
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-COPY services/telemetry/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY dependencies/locks/services-telemetry.txt /tmp/requirements.lock
+RUN pip install --no-cache-dir -r /tmp/requirements.lock
 
 COPY . /workspace
 

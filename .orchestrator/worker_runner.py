@@ -1054,9 +1054,19 @@ def _runtime_worker_receipt(coordination_root: Path, run_id: str) -> dict[str, A
     # moved into its runtime directory.
     if not runtime_state.exists():
         runtime_state = coordination_root / ".orchestrator" / "state.json"
-    state = json.loads(read_regular_file_bytes(
-        runtime_state, source="worker launch receipt"
-    ))
+    # Atomic supervisor writes are not lease revocations. Retry only that
+    # specific race; malformed files, symlinks and binding failures still fail.
+    # Do not wait on admission here: promotion may hold it while draining us.
+    from common import FileSnapshotChangedError
+    for attempt in range(3):
+        try:
+            state = json.loads(read_regular_file_bytes(
+                runtime_state, source="worker launch receipt"
+            ))
+            break
+        except FileSnapshotChangedError:
+            if attempt == 2:
+                raise
     if not isinstance(state, dict):
         raise RuntimeError("worker_runner: runtime launch state is malformed")
     workers = state.get("workers", {})

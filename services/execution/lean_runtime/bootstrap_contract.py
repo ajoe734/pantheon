@@ -19,6 +19,27 @@ PANTHEON_LEAN_SOURCE_PATH = "pantheon/lean"
 PANTHEON_LEAN_RUNTIME_PATH = "/workspace/lean"
 DEFAULT_RUNTIME_CONFIG_REF = "/workspace/lean/Launcher/config.json"
 
+UPSTREAM_LEAN_REMOTE = "https://github.com/QuantConnect/Lean.git"
+UPSTREAM_LEAN_PINNED_COMMIT = "23b735d99a357807dc0df9f4c51d30f05fe0d277"
+UPSTREAM_LEAN_PINNED_IMAGE = "quantconnect/lean:18070"
+UPSTREAM_LEAN_IMAGE_DIGEST = "sha256:373b03b8ef5e39a923b1ed2e7e469abdef21b2fef31dd78fb4f7b05464ac69b4"
+PANTHEON_EXTERNAL_LIBRARY_PATH = "integrations/lean/pantheon_algo"
+
+ALLOWED_ENGINE_BRIDGE_REMOTES = frozenset({
+    PANTHEON_LEAN_REMOTE,
+    f"https://github.com/{PANTHEON_LEAN_REMOTE}",
+    UPSTREAM_LEAN_REMOTE,
+    "QuantConnect/Lean.git",
+    "QuantConnect/Lean",
+})
+ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS = frozenset({
+    PANTHEON_LEAN_SOURCE_PATH,
+    "integrations/lean",
+    "integrations/lean/pantheon_algo",
+    "Algorithm.Python",
+    "lean",
+})
+
 _VALID_STAGES = {"paper", "canary", "live", "frozen"}
 _APPROVED_ARTIFACT_STATES = {"approved"}
 _APPROVED_CONFIG_STATES = {"approved"}
@@ -62,7 +83,7 @@ class RuntimeBridgeIdentity:
     path: str
     remote: str
     commit: str
-    source_path: str = PANTHEON_LEAN_SOURCE_PATH
+    source_path: str = PANTHEON_EXTERNAL_LIBRARY_PATH
 
     def to_dict(self) -> dict[str, str]:
         return asdict(self)
@@ -358,13 +379,13 @@ def _materialize_bridge(
         _first_non_empty(binding, "engine_bridge_path", "bridge.source_path", "bridge.repo_path")
         or _metadata_value(binding, "engine_bridge_path", "bridge_source_path", "bridge_repo_path")
         or _metadata_value(plan, "engine_bridge_path", "bridge_source_path", "bridge_repo_path")
-        or PANTHEON_LEAN_SOURCE_PATH
+        or PANTHEON_EXTERNAL_LIBRARY_PATH
     )
     remote = (
         _first_non_empty(binding, "engine_bridge_repo", "bridge.remote")
         or _metadata_value(binding, "engine_bridge_repo", "bridge_remote")
         or _metadata_value(plan, "engine_bridge_repo", "bridge_remote")
-        or PANTHEON_LEAN_REMOTE
+        or UPSTREAM_LEAN_REMOTE
     )
     commit = (
         _first_non_empty(binding, "engine_bridge_commit", "bridge.commit")
@@ -381,13 +402,13 @@ def _materialize_bridge(
         "source_path": source_path,
     }
     _reject_lean_platform_target(bridge_payload, "bridge")
-    if remote != PANTHEON_LEAN_REMOTE:
+    if remote not in ALLOWED_ENGINE_BRIDGE_REMOTES:
         raise BootstrapContractError(
-            f"engine_bridge_repo must be {PANTHEON_LEAN_REMOTE!r}, got {remote!r}"
+            f"engine_bridge_repo must be one of {sorted(ALLOWED_ENGINE_BRIDGE_REMOTES)!r}, got {remote!r}"
         )
-    if source_path != PANTHEON_LEAN_SOURCE_PATH:
+    if source_path not in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS:
         raise BootstrapContractError(
-            f"engine_bridge_path must be {PANTHEON_LEAN_SOURCE_PATH!r}, got {source_path!r}"
+            f"engine_bridge_path must be one of {sorted(ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)!r}, got {source_path!r}"
         )
     return RuntimeBridgeIdentity(
         path=runtime_path,

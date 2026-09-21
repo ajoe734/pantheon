@@ -2018,6 +2018,10 @@ def durable_write_bytes(
         temp_path.unlink(missing_ok=True)
 
 
+class FileSnapshotChangedError(RuntimeError):
+    """A regular file was atomically replaced while its snapshot was read."""
+
+
 def read_regular_file_snapshot(
     path: Path,
     *,
@@ -2045,10 +2049,10 @@ def read_regular_file_snapshot(
         if (
             not stat.S_ISREG(descriptor_stat.st_mode)
             or stat.S_ISLNK(path_stat.st_mode)
-            or (path_stat.st_dev, path_stat.st_ino)
-            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
         ):
             raise RuntimeError(f"{source} must be a stable regular file: {path}")
+        if (path_stat.st_dev, path_stat.st_ino) != (descriptor_stat.st_dev, descriptor_stat.st_ino):
+            raise FileSnapshotChangedError(f"{source} changed during read: {path}")
         chunks: list[bytes] = []
         while True:
             chunk = os.read(descriptor, 1024 * 1024)
@@ -2056,12 +2060,10 @@ def read_regular_file_snapshot(
                 break
             chunks.append(chunk)
         after_stat = path.lstat()
-        if (
-            stat.S_ISLNK(after_stat.st_mode)
-            or (after_stat.st_dev, after_stat.st_ino)
-            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
-        ):
-            raise RuntimeError(f"{source} changed during read: {path}")
+        if not stat.S_ISREG(after_stat.st_mode):
+            raise RuntimeError(f"{source} must be a stable regular file: {path}")
+        if (after_stat.st_dev, after_stat.st_ino) != (descriptor_stat.st_dev, descriptor_stat.st_ino):
+            raise FileSnapshotChangedError(f"{source} changed during read: {path}")
         return b"".join(chunks), descriptor_stat
     finally:
         os.close(descriptor)
