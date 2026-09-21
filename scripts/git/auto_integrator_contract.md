@@ -229,3 +229,14 @@ minutes by default, and writes logs to
   to canonical `task/* -> dev` integration. `publish_promote.py` remains the
   separate release authority for `promote/* -> master` and may request its
   protected release auto-merge; it cannot be used as a task-PR merge path.
+
+## Runtime Promotion
+
+Successful `promote-supervisor-runtime.sh --promote` also rebinds an installed
+`# pantheon-auto-integrator` cron entry to the accepted command root and live
+config. It preserves its schedule and per-run limit, leaves unrelated jobs
+alone, and does not enable an absent or commented-out runner. A failed
+promotion leaves the existing entry unchanged. For an already stale entry,
+use `scripts/auto_integrator_install.py` with the current immutable `--repo`,
+canonical `--status-root`, and `--config-file` from the live supervisor.
+

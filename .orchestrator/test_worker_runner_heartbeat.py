@@ -191,6 +191,40 @@ def _write_status(path: Path) -> None:
     (path / ".orchestrator" / "runtime-admission.lock").touch()
 
 
+class TestWorkerReceiptSnapshot(unittest.TestCase):
+    def test_atomic_replace_retries_and_returns_current_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            central = Path(tmp)
+            path = central / ".orchestrator/worker-runtime/state.json"
+            path.parent.mkdir(parents=True)
+            path.write_text('{"workers":{"run-1":{"generation":1}}}')
+            import common
+            original_read = common.os.read
+            replaced = False
+            def replace_during_read(fd, size):
+                nonlocal replaced
+                data = original_read(fd, size)
+                if not replaced:
+                    candidate = path.with_suffix(".tmp")
+                    candidate.write_text('{"workers":{"run-1":{"generation":2}}}')
+                    os.replace(candidate, path)
+                    replaced = True
+                return data
+            with mock.patch.object(common.os, "read", side_effect=replace_during_read):
+                self.assertEqual(wr._runtime_worker_receipt(central, "run-1"), {"generation": 2})
+
+    def test_repeated_replacement_is_bounded_and_other_errors_are_not_retried(self):
+        from common import FileSnapshotChangedError
+        for error, attempts in ((FileSnapshotChangedError("replaced"), 3),
+                                (RuntimeError("symlink"), 1),
+                                (ValueError("malformed"), 1)):
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as tmp:
+                with mock.patch.object(wr, "read_regular_file_bytes", side_effect=error) as read:
+                    with self.assertRaises(type(error)):
+                        wr._runtime_worker_receipt(Path(tmp), "run-1")
+                    self.assertEqual(read.call_count, attempts)
+
+
 class TestDeriveAgent(unittest.TestCase):
     def test_claude_slot(self):
         self.assertEqual(wr.derive_agent("claude-1-20260615T143930Z-43181d1a"), "claude-1")
@@ -2859,4 +2893,3 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

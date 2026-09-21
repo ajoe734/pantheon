@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -10,6 +11,34 @@ import auto_integrator_install
 
 
 class AutoIntegratorInstallTests(unittest.TestCase):
+    def test_rebind_preserves_schedule_limit_and_unrelated_jobs(self) -> None:
+        old = auto_integrator_install.render_cron_line(
+            Path("/old root"), Path("/status"), Path("/runtime/live.json"),
+            interval="*/7 * * * *", max_tasks=5,
+        )
+        unrelated = "0 1 * * * /bin/true"
+        with mock.patch.object(auto_integrator_install, "current_crontab", return_value=[unrelated, old]), mock.patch.object(
+            auto_integrator_install, "write_crontab"
+        ) as write:
+            self.assertTrue(auto_integrator_install.rebind_installed_cron(
+                Path("/new root"), Path("/status"), Path("/runtime/live.json"),
+            ))
+        expected = auto_integrator_install.render_cron_line(
+            Path("/new root"), Path("/status"), Path("/runtime/live.json"),
+            interval="*/7 * * * *", max_tasks=5,
+        )
+        write.assert_called_once_with([unrelated, expected], dry_run=False)
+
+    def test_rebind_does_not_enable_absent_or_disabled_job(self) -> None:
+        for lines in ([], ["# disabled # pantheon-auto-integrator"]):
+            with self.subTest(lines=lines), mock.patch.object(
+                auto_integrator_install, "current_crontab", return_value=lines,
+            ), mock.patch.object(auto_integrator_install, "write_crontab") as write:
+                self.assertFalse(auto_integrator_install.rebind_installed_cron(
+                    Path("/new"), Path("/status"), Path("/runtime/live.json"),
+                ))
+                write.assert_not_called()
+
     def test_render_cron_line_uses_repo_status_root_and_tag(self) -> None:
         line = auto_integrator_install.render_cron_line(
             Path("/repo/dev-root"),

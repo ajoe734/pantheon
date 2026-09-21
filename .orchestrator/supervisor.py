@@ -12933,6 +12933,24 @@ def worker_recovery_assignment_pair(
                 target_agent=pair[1],
             ):
                 return pair
+        # Losing a process does not make its configured reviewer unavailable.
+        # When every alternate lane is down, retry the healthy incumbent via
+        # the same fenced receipt/generation transaction, not ordinary dispatch.
+        if receipt.get("reason_kind") == "worker_process_missing":
+            pair = plan_task_assignment_pair(
+                config,
+                task,
+                state=state,
+                fixed_owner=owner,
+                preferred_reviewers=[reviewer],
+                allowed_reviewers=[reviewer],
+                require_owner_ready=False,
+            )
+            if pair and _worker_recovery_candidate_has_capacity(
+                config, state, status, task,
+                owner=pair[0], reviewer=pair[1], target_agent=pair[1],
+            ):
+                return pair
         return None
 
     owner_candidates = reassignment_candidate_order(
