@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -87,8 +88,85 @@ def _default_snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
     return {"snapshot_at": snapshot_at}
 
 
-def _default_surface_status(dataset: str, *, snapshot_at: str, **_: Any) -> Dict[str, Any]:
-    return {"status": "available", "dataset": dataset, "snapshot_at": snapshot_at}
+def format_dataset_surface_status(
+    dataset: str,
+    *,
+    snapshot_at: Optional[str] = None,
+    source: Optional[str] = None,
+    has_data: Optional[bool] = None,
+    missing_message: Optional[str] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+    **_: Any,
+) -> Dict[str, Any]:
+    state = os.getenv("BFF_READ_SURFACE_STATE", "fresh")
+    now_fn = utc_now or (lambda: snapshot_at or "")
+    now_str = now_fn() if callable(now_fn) else str(now_fn)
+
+    if state == "fresh":
+        surface: Dict[str, Any] = {"status": "ok"}
+    elif state in {"degraded", "stale"}:
+        surface = {
+            "status": "degraded",
+            "staleness": {
+                "served_from": "cache",
+                "last_known_at": now_str,
+            },
+        }
+    elif state == "unavailable":
+        surface = {
+            "status": "unavailable",
+            "staleness": {
+                "served_from": "cache",
+                "last_known_at": now_str,
+            },
+        }
+    else:
+        surface = {"status": "ok"}
+
+    effective_source = source or "missing"
+    surface["source"] = effective_source
+
+    if effective_source == "local_snapshot":
+        if surface.get("status") == "ok":
+            surface["status"] = "degraded"
+        surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
+        surface["staleness"] = {
+            "served_from": "local_snapshot",
+            "last_known_at": snapshot_at or now_str,
+        }
+    elif effective_source == "legacy_incident_backfill":
+        surface["status"] = "degraded"
+        surface["note"] = (
+            "Incident-derived loop reconstruction is a legacy backfill view; "
+            "it is not canonical lifecycle-projector or live controller truth."
+        )
+        surface["projection_mode"] = "backfill"
+        surface["accepted_live"] = False
+        surface["staleness"] = {
+            "served_from": "legacy_incident_backfill",
+            "last_known_at": snapshot_at or now_str,
+        }
+    elif effective_source == "missing":
+        surface["status"] = "unavailable"
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or now_str},
+        )
+
+    if has_data is False:
+        if surface.get("status") == "ok":
+            surface["status"] = "unavailable"
+        if missing_message:
+            surface["message"] = missing_message
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or now_str},
+        )
+
+    return surface
+
+
+_default_surface_status = format_dataset_surface_status
 
 
 def _filter_by_status_csv(records: List[Dict[str, Any]], status_csv: Optional[str]) -> List[Dict[str, Any]]:
@@ -191,12 +269,27 @@ class ResearchRouteContext:
             ) from exc
         if isinstance(exc, ResearchValidationError):
             error_code = getattr(ErrorCode, exc.error_code, ErrorCode.VALIDATION_FAILED)
+            details = getattr(exc, "details", None) or {}
+            try:
+                sig = inspect.signature(self.bff_error)
+                has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                has_details_extra = "details_extra" in sig.parameters
+            except (ValueError, TypeError):
+                has_kwargs = True
+                has_details_extra = False
+
+            call_kwargs: Dict[str, Any] = {"precondition_failed": exc.field}
+            if has_details_extra:
+                call_kwargs["details_extra"] = details
+            if has_kwargs or not has_details_extra:
+                call_kwargs.update(details)
+
             raise self.bff_error(
                 exc.status_code,
                 error_code,
                 str(exc),
                 str(exc),
-                precondition_failed=exc.field,
+                **call_kwargs,
             ) from exc
         raise exc
 
@@ -225,23 +318,49 @@ class ResearchRouteContext:
         except Exception:
             return {}
 
-    def page(self, records: List[Dict[str, Any]], request: Request, default_size: int = 20) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    def page(
+        self,
+        records: List[Dict[str, Any]],
+        request: Request,
+        default_size: int = 20,
+        *,
+        allow_limit: Optional[bool] = None,
+        min_size: int = 1,
+        max_size: int = 200,
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        if allow_limit is None:
+            path = getattr(request, "url", None)
+            path_str = str(getattr(path, "path", "") or "").rstrip("/")
+            allow_limit = path_str.endswith("/bff/search")
+        limit_val = self.query(request, "limit") if allow_limit else None
+        page_size_val = self.query(request, "page_size")
+        raw_size = limit_val if limit_val is not None else page_size_val
         try:
-            page_size = int(self.query(request, "page_size", str(default_size)) or default_size)
-        except ValueError:
+            page_size = int(raw_size if raw_size is not None else default_size)
+        except (TypeError, ValueError):
             page_size = default_size
+        page_size = max(min_size, min(page_size, max_size))
         return self.page_slice(records, self.query(request, "page_token"), page_size)
 
     def meta(self, snapshot_at: str, surface_name: str, dataset: str, has_data: bool) -> Dict[str, Any]:
         port = self.get_read_store()
         source_fn = getattr(port, "dataset_source", None)
         source = str(source_fn(dataset) or "missing") if callable(source_fn) else "missing"
-        surface = self.dataset_surface_status(
-            dataset,
-            snapshot_at=snapshot_at,
-            source=source,
-            has_data=has_data,
-        )
+        try:
+            surface = self.dataset_surface_status(
+                dataset,
+                snapshot_at=snapshot_at,
+                source=source,
+                has_data=has_data,
+                utc_now=self.utc_now,
+            )
+        except TypeError:
+            surface = self.dataset_surface_status(
+                dataset,
+                snapshot_at=snapshot_at,
+                source=source,
+                has_data=has_data,
+            )
         result = dict(self.snapshot_meta(snapshot_at))
         result["surfaces"] = {surface_name: surface}
         return result
@@ -281,6 +400,24 @@ class ResearchRouteContext:
 
     def call_port(self, port: Any, name: str, *args: Any, **kwargs: Any) -> Any:
         method = self.port_method(port, name)
+        if kwargs:
+            try:
+                sig = inspect.signature(method)
+                has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                if has_var_keyword:
+                    for delegate_attr in ("_active_delegate", "research_knowledge_source"):
+                        delegate = getattr(port, delegate_attr, None)
+                        if delegate is not None and hasattr(delegate, name):
+                            delegate_method = getattr(delegate, name)
+                            delegate_sig = inspect.signature(delegate_method)
+                            if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in delegate_sig.parameters.values()):
+                                sig = delegate_sig
+                                has_var_keyword = False
+                                break
+                if not has_var_keyword:
+                    kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+            except (ValueError, TypeError):
+                pass
         try:
             return method(*args, **kwargs)
         except HTTPException:

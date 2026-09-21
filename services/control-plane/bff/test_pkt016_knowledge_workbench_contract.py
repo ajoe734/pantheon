@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import os
-import sys
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Optional
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff.research.router import create_research_router
 from services.control_plane.bff.research.routes.knowledge import _build_knowledge_workbench_overview
 from services.control_plane.bff.research.routes.common import ResearchRouteContext
 
@@ -18,8 +17,18 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 EXAMPLE_PATH = Path(__file__).resolve().parents[3] / "docs" / "examples" / "PKT-knowledge-workbench.json"
 
 
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    create_research_test_app,
+)
+
+
 def test_pkt016_knowledge_workbench_returns_truthful_overview_payload() -> None:
-    client = TestClient(bff_main.app)
+    app = create_research_test_app(
+        lambda: None,
+        utc_now=lambda: "2026-04-22T00:00:00Z",
+    )
+    client = TestClient(app)
 
     response = client.get(
         "/api/v1/workbench/knowledge",
@@ -57,9 +66,39 @@ def test_pkt016_knowledge_workbench_example_matches_builder() -> None:
         get_read_store=lambda: None,
         extract_identity=lambda _: None,
         require_read_role=lambda _: None,
-        bff_error=bff_main._bff_error,
+        bff_error=auth_policy.bff_error,
         utc_now=lambda: "2026-04-22T00:00:00Z",
     )
     expected = _build_knowledge_workbench_overview(ctx, "2026-04-22T00:00:00Z")
     example = json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
     assert example == expected
+
+
+def test_pkt016_strict_mode_rejects_stub_auth() -> None:
+    import os
+    orig_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE")
+    orig_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB")
+    try:
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "strict"
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "0"
+        app = create_research_test_app(
+            lambda: None,
+            utc_now=lambda: "2026-04-22T00:00:00Z",
+        )
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/workbench/knowledge",
+            headers={"Authorization": "Bearer reviewer:operator"},
+        )
+        assert response.status_code == 401, response.text
+        assert response.json()["error"]["code"] == "AUTH_REQUIRED"
+    finally:
+        if orig_mode is None:
+            os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
+        else:
+            os.environ["PANTHEON_BFF_AUTH_MODE"] = orig_mode
+        if orig_stub is None:
+            os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
+        else:
+            os.environ["PANTHEON_BFF_AUTH_STUB"] = orig_stub
+

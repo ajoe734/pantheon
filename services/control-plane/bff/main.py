@@ -4418,6 +4418,8 @@ def _loop_run_controller_is_formal(metadata: Mapping[str, Any]) -> bool:
         and str(controller.get("mode") or "").strip().lower() == "live"
         and str(controller.get("truth_level") or "").strip().lower() == "canonical_live"
     )
+from .research.routes.common import format_dataset_surface_status as _format_dataset_surface_status
+
 def _dataset_surface_status(
     dataset: str,
     *,
@@ -4425,49 +4427,18 @@ def _dataset_surface_status(
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
     source: Optional[str] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
-    surface = dict(_surface_status())
     source = source or read_store.dataset_source(dataset)
-    surface["source"] = source
-
-    if source == "local_snapshot":
-        if surface.get("status") == "ok":
-            surface["status"] = "degraded"
-        surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
-        surface["staleness"] = {
-            "served_from": "local_snapshot",
-            "last_known_at": snapshot_at or utc_now(),
-        }
-    elif source == _LEGACY_LOOP_RUN_SOURCE:
-        surface["status"] = "degraded"
-        surface["note"] = (
-            "Incident-derived loop reconstruction is a legacy backfill view; "
-            "it is not canonical lifecycle-projector or live controller truth."
-        )
-        surface["projection_mode"] = "backfill"
-        surface["accepted_live"] = False
-        surface["staleness"] = {
-            "served_from": _LEGACY_LOOP_RUN_SOURCE,
-            "last_known_at": snapshot_at or utc_now(),
-        }
-    elif source == "missing":
-        surface["status"] = "unavailable"
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
-        )
-
-    if has_data is False:
-        if surface.get("status") == "ok":
-            surface["status"] = "unavailable"
-        if missing_message:
-            surface["message"] = missing_message
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
-        )
-
-    return surface
+    return _format_dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+        missing_message=missing_message,
+        source=source,
+        utc_now=utc_now,
+        **kwargs,
+    )
 def _loop_run_surface_status(
     available: bool,
     *,
@@ -15340,11 +15311,6 @@ def _ooda_packet_list_payload(
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
     }
-def _synthesis_conflict_log_routes_enabled() -> bool:
-    raw = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
-    if raw is None:
-        return True
-    return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
 _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (
@@ -17299,19 +17265,12 @@ async def sem_bff_health_alias():
 async def sem_bff_readiness_alias():
     payload = _sem_bff_health_payload()
     return JSONResponse(payload, status_code=readiness_status_code(payload))
-async def sem_bff_capabilities(authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
-    return {
-        "data": {
-            "feature_flags": {
-                "executePlansBff": True,
-                "sessionAuthMe": True,
-                "oodaPackets": _ooda_packet_routes_enabled(),
-                "synthesisConflictLogs": _synthesis_conflict_log_routes_enabled(),
-            }
-        },
-        "meta": {"snapshot_at": utc_now()},
-    }
+from .core.app_factory import create_capabilities_handler as _create_capabilities_handler
+sem_bff_capabilities = _create_capabilities_handler(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    utc_now=utc_now,
+)
 def _sem_final_registry_meta(surface_key: str, *, snapshot_at: Optional[str] = None, total: Optional[int] = None) -> Dict[str, Any]:
     snapshot_at = snapshot_at or utc_now()
     meta: Dict[str, Any] = {

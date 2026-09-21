@@ -2,3 +2,4 @@ fastapi
 uvicorn
 pydantic
 shioaji>=1.2.0,<2.0.0
+# Pinned dependency lock: dependencies/locks/services-broker.txt

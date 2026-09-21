@@ -6,9 +6,12 @@ import unittest
 from pathlib import Path
 
 from services.execution.lean_runtime.bootstrap_contract import (
+    PANTHEON_EXTERNAL_LIBRARY_PATH,
     PANTHEON_LEAN_REMOTE,
-    PANTHEON_LEAN_SOURCE_PATH,
     PANTHEON_LEAN_RUNTIME_PATH,
+    PANTHEON_LEAN_SOURCE_PATH,
+    UPSTREAM_LEAN_PINNED_COMMIT,
+    UPSTREAM_LEAN_REMOTE,
     materialize_runtime_bootstrap_request,
 )
 from services.execution.lean_runtime.runtime_context import (
@@ -257,6 +260,22 @@ class PantheonRuntimeContextTests(unittest.TestCase):
                 ),
                 source=RuntimeContextSource.LAUNCH_MANIFEST,
             )
+
+    def test_runtime_context_accepts_upstream_lean_and_external_library(self):
+        context = PantheonRuntimeContext.from_mapping(
+            _manifest(
+                bridge={
+                    "repo": UPSTREAM_LEAN_REMOTE,
+                    "path": PANTHEON_EXTERNAL_LIBRARY_PATH,
+                    "commit": UPSTREAM_LEAN_PINNED_COMMIT,
+                }
+            ),
+            source=RuntimeContextSource.LAUNCH_MANIFEST,
+            expected_stage="paper",
+        )
+        self.assertEqual(context.bridge.repo, UPSTREAM_LEAN_REMOTE)
+        self.assertEqual(context.bridge.path, PANTHEON_EXTERNAL_LIBRARY_PATH)
+        self.assertEqual(context.bridge.commit, UPSTREAM_LEAN_PINNED_COMMIT)
 
 
 if __name__ == "__main__":

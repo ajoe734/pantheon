@@ -896,23 +896,29 @@ def test_events_list_degraded_when_unavailable() -> None:
 # Events stream alias (should still be 200)
 # ---------------------------------------------------------------------------
 
-_events_stream_router = create_events_router(
-    event_stream_service=EventStreamService(channels=("inbox", "system"))
-)
-bff_events_stream_alias = next(
-    r.endpoint for r in _events_stream_router.routes if getattr(r, "path", None) == "/api/v1/stream/{channel}"
-)
+_service = EventStreamService(channels=("inbox", "system"))
+_orig_stream = _service.stream
+
+
+async def _finite_stream(*args, **kwargs):
+    s = _orig_stream(*args, **kwargs)
+    try:
+        yield await asyncio.wait_for(anext(s), 0.1)
+    except (TimeoutError, asyncio.TimeoutError, StopAsyncIteration):
+        pass
+    finally:
+        await s.aclose()
+
+
+_service.stream = _finite_stream
+_events_stream_router = create_events_router(event_stream_service=_service)
 
 
 def test_events_stream_non_404() -> None:
-    with _isolated_bff() as (_client, _store):
-        response = asyncio.run(
-            bff_events_stream_alias(
-                channel="inbox",
-                last_event_id=None,
-                authorization=OPERATOR_TOKEN,
-            )
-        )
-        assert response.status_code == 200
-        assert response.media_type == "text/event-stream"
-        assert response.headers["X-SSE-Channel"] == "inbox"
+    app = FastAPI()
+    app.include_router(_events_stream_router)
+    client = TestClient(app)
+    response = client.get("/api/v1/stream/inbox", headers={"Authorization": OPERATOR_TOKEN})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["X-SSE-Channel"] == "inbox"

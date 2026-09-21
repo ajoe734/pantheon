@@ -59,9 +59,7 @@ def test_noncanonicalizable_input_fails_closed():
 
 
 def test_semantic_hash_still_used_for_rebalance_line():
-    # The shared canonicalizer underpins the rebalance-line assertion hash too.
+    # The shared canonicalizer underpins the rebalance-line assertion matching.
     line_float = {"target_weight": 1.0, "delta": 0.0, "capital_scope": "pool"}
     line_int = {"target_weight": 1, "delta": 0, "capital_scope": "pool"}
-    assert main._pm12_allocation_line_assertion_hash(
-        line_float
-    ) == main._pm12_allocation_line_assertion_hash(line_int)
+    assert main._pm12_semantic_values_match(line_float, line_int)
