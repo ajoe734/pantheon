@@ -1369,11 +1369,24 @@ except (OSError, UnicodeError, json.JSONDecodeError) as exc:
 if not isinstance(bindings, list) or any(not isinstance(binding, dict) for binding in bindings):
     raise SystemExit("active RuntimeBinding store must contain a JSON list of objects")
 
+_MARKET_INPUT_PAUSE_PREFIX = "market_input_"
+
 symbols = []
 for binding in bindings:
     mode = str(binding.get("deployment_mode") or binding.get("execution_mode") or "").strip().lower()
     status = str(binding.get("status") or "").strip().lower()
-    if mode != "paper" or status != "active":
+    if mode != "paper":
+        continue
+    if status == "active":
+        is_priority = True
+    elif status == "paused":
+        metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+        session_adm = metadata.get("session_admission")
+        reason_code = str((session_adm or {}).get("reason_code") or "") if isinstance(session_adm, dict) else ""
+        is_priority = reason_code.startswith(_MARKET_INPUT_PAUSE_PREFIX)
+    else:
+        continue
+    if not is_priority:
         continue
     metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
     symbol = str(binding.get("symbol") or metadata.get("symbol") or "").strip().upper()
@@ -1381,7 +1394,7 @@ for binding in bindings:
     if not symbol:
         if policy:
             binding_id = str(binding.get("binding_id") or "<unknown>")
-            raise SystemExit(f"active paper RuntimeBinding {binding_id} requires market data but has no symbol")
+            raise SystemExit(f"active or market-input-paused paper RuntimeBinding {binding_id} requires market data but has no symbol")
         continue
     if re.fullmatch(r"[A-Z0-9_-]+\.(?:TW|TWSE|TWO|TPEX)", symbol) is None:
         continue
