@@ -20439,5 +20439,79 @@ class QueueRecordReconciliationUnsettledWorkerTests(unittest.TestCase):
                 self.assertIn("key-evt-1", state["seen_event_keys"])
 
 
+class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
+    """Guard the shipped reviewer-fallback policy the whole fleet plans from.
+
+    ``plan_task_assignment_pair`` will not assign a task without a reviewer, so
+    ``reviewer_fallbacks`` is the list that decides whether any work can be
+    dispatched at all.  When every lane listed only ``Codex``/``Codex2`` and
+    both Codex accounts went ``quota_terminal``, no open task could be paired
+    and the fleet sat at zero dispatch for hours with a healthy supervisor --
+    the outage looked like a scheduler fault because nothing reported that the
+    reviewer side of every candidate pair was simply unreachable.
+    """
+
+    CODEX_ACCOUNTS = frozenset({"codex1", "codex2"})
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        config_path = Path(__file__).resolve().parent / "config.json"
+        cls.config = json.loads(config_path.read_text(encoding="utf-8"))
+        cls.fallbacks = cls.config["worker_reassignment"]["reviewer_fallbacks"]
+        providers = cls.config.get("providers") or {}
+        cls.account_of = {}
+        for agent in (cls.config.get("agents") or {}).values():
+            lane = str(agent.get("display_name") or "")
+            provider = providers.get(str(agent.get("provider") or "")) or {}
+            account = str(provider.get("account") or "")
+            if lane and account:
+                cls.account_of.setdefault(lane, account)
+
+    def test_every_lane_offers_a_reviewer_outside_the_codex_accounts(self) -> None:
+        # The regression itself: a Codex-only chain makes the two Codex
+        # accounts a single point of failure for the entire fleet.
+        for lane, chain in self.fallbacks.items():
+            with self.subTest(lane=lane):
+                outside = [
+                    name
+                    for name in chain
+                    if self.account_of.get(name) not in self.CODEX_ACCOUNTS
+                ]
+                self.assertTrue(
+                    outside,
+                    f"lane {lane} can only be reviewed by the Codex accounts; "
+                    "a Codex quota exhaustion would stop all dispatch",
+                )
+
+    def test_codex_lanes_keep_first_refusal_for_non_codex_owners(self) -> None:
+        # Widening the chain must not quietly re-route review away from Codex
+        # while Codex is healthy: the added lanes are a degradation path.
+        for lane, chain in self.fallbacks.items():
+            if self.account_of.get(lane) in self.CODEX_ACCOUNTS:
+                continue
+            with self.subTest(lane=lane):
+                self.assertEqual(
+                    chain[:2],
+                    ["Codex", "Codex2"],
+                    f"lane {lane} no longer prefers the Codex reviewers first",
+                )
+
+    def test_no_lane_falls_back_to_a_reviewer_on_its_own_account(self) -> None:
+        # Independence here is about upstream account, not display name:
+        # Claude/Claude2 and Antigravity/Antigravity2 are one account each, so
+        # pairing siblings would buy availability with a self-review.
+        for lane, chain in self.fallbacks.items():
+            lane_account = self.account_of.get(lane)
+            self.assertIsNotNone(lane_account, f"lane {lane} has no account")
+            for name in chain:
+                with self.subTest(lane=lane, reviewer=name):
+                    self.assertNotEqual(
+                        self.account_of.get(name),
+                        lane_account,
+                        f"lane {lane} may fall back to {name} on the same "
+                        f"account {lane_account}",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

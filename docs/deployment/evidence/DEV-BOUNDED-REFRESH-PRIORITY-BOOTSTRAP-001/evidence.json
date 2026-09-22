@@ -1,0 +1,104 @@
+{
+  "task_id": "DEV-BOUNDED-REFRESH-PRIORITY-BOOTSTRAP-001",
+  "title": "Bounded refresh priority list excludes the bindings that need data most",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "status": "in_progress",
+  "generated_at": "2026-09-22T03:52:00Z",
+
+  "problem_statement": "resolve_bounded_source_refresh_active_symbols (scripts/deploy_nonprod_vm.sh) previously only placed paper bindings with status==active into SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS. A binding paused by a market_input_ reason code is exactly the one that needs the per-symbol monthly history path to accumulate closes, but it was excluded, causing a chicken-and-egg: the bounded deploy always failed with market_input_insufficient on first run.",
+
+  "change_summary": {
+    "files_changed": [
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "docs/deployment/evidence/DEV-BOUNDED-REFRESH-PRIORITY-BOOTSTRAP-001/evidence.json"
+    ],
+    "deploy_nonprod_vm_sh": {
+      "function": "resolve_bounded_source_refresh_active_symbols",
+      "lines_affected": "1341-1402 (approx)",
+      "change": "The embedded Python snippet now includes paper bindings whose status is 'paused' AND whose metadata.session_admission.reason_code starts with 'market_input_'. Bindings paused for any other reason remain excluded. Active bindings continue to be included. Symbol shape filter (.TW/.TWSE/.TWO/.TPEX) and paper deployment_mode filter are unchanged."
+    },
+    "test_source_ingest_deploy_diagnostics_contract_py": {
+      "new_tests": [
+        "test_bounded_refresh_includes_market_input_paused_bindings",
+        "test_bounded_refresh_excludes_other_reason_paused_bindings",
+        "test_bounded_refresh_priority_python_snippet_runs_correctly"
+      ]
+    }
+  },
+
+  "acceptance_criteria_verification": {
+    "ac1_market_input_paused_included": {
+      "criterion": "the bounded refresh priority list includes a paper binding that is paused by a market input admission reason and not only bindings whose status is active",
+      "test": "test_bounded_refresh_includes_market_input_paused_bindings",
+      "result": "PASS",
+      "evidence": "test extracts resolver body from deploy script and asserts _MARKET_INPUT_PAUSE_PREFIX sentinel and paused-status logic branch are present"
+    },
+    "ac2_other_reason_excluded": {
+      "criterion": "a binding paused for any other reason is still excluded from the priority list",
+      "test": "test_bounded_refresh_excludes_other_reason_paused_bindings",
+      "result": "PASS",
+      "evidence": "test verifies reason_code.startswith(_MARKET_INPUT_PAUSE_PREFIX) guard is present so e.g. operator_requested_pause bindings are excluded"
+    },
+    "ac3_filters_unchanged": {
+      "criterion": "the Taiwan symbol shape filter and the paper deployment mode filter are unchanged",
+      "test": "test_bounded_refresh_resolves_symbols_from_read_only_runtime_binding_store",
+      "result": "PASS",
+      "evidence": "test asserts mode != 'paper' guard and re.fullmatch TWSE/TPEX pattern are still present in resolver"
+    },
+    "ac7_regression_tests": {
+      "criterion": "regression tests cover both the paused-for-market-input inclusion and the other-reason exclusion",
+      "result": "PASS",
+      "evidence": "test_bounded_refresh_includes_market_input_paused_bindings and test_bounded_refresh_excludes_other_reason_paused_bindings both pass; end-to-end snippet execution test test_bounded_refresh_priority_python_snippet_runs_correctly also passes with synthetic bindings covering active, market_input_paused, other_reason_paused, and non-paper bindings"
+    },
+    "ac4_per_symbol_monthly_history": {
+      "criterion": "one bounded refresh run yields at least two official closes for the prioritized symbol by reaching the per-symbol monthly history endpoint",
+      "result": "DEFERRED_TO_HOSTED_DEV",
+      "note": "Requires live Docker Compose + TWSE endpoint access on dev VM. Cannot be verified in local unit test. Reviewer should confirm via hosted dev deploy."
+    },
+    "ac5_symbol_in_env_var": {
+      "criterion": "hosted dev shows the prioritized symbol inside SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS during a bounded deploy",
+      "result": "DEFERRED_TO_HOSTED_DEV",
+      "note": "Requires live deploy on dev VM. Reviewer should confirm."
+    },
+    "ac6_market_snapshot_two_closes": {
+      "criterion": "hosted dev serves a latest market snapshot for that symbol carrying at least two closes and official TWSE or TPEx lineage",
+      "result": "DEFERRED_TO_HOSTED_DEV",
+      "note": "Requires live deploy on dev VM. Reviewer should confirm."
+    }
+  },
+
+  "test_run_results": {
+    "suite": "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+    "interpreter": ".venv-pantheon/bin/python3 (Python 3.12.3, pytest-9.1.1)",
+    "run_at": "2026-09-22T03:51:37Z",
+    "collected": 14,
+    "passed": 13,
+    "failed": 1,
+    "failed_tests": [
+      {
+        "name": "test_bounded_source_refresh_deploy_waits_and_gates_readback",
+        "pre_existing": true,
+        "confirmed_pre_existing": "test fails on dev baseline (git stash / stash pop confirm) — the test checks for 'docker compose -p pantheon -f docker-compose.yml up -d' in the root case block but the deploy script uses the run_dev_candidate_compose wrapper instead; no code introduced in this task changed that path",
+        "scope": "out_of_scope_for_this_task"
+      }
+    ],
+    "exit_code": 1,
+    "note": "Overall exit code is 1 due to the pre-existing failure. All 13 tests in scope pass, including the 3 new regression tests for AC1, AC2, and AC7."
+  },
+
+  "anchor_commit": {
+    "sha": "59d229581df966e70686b8c3915b87e5088c7fc4",
+    "subject": "DEV-BOUNDED-REFRESH-PRIORITY-BOOTSTRAP-001: anchor resolver+tests",
+    "date": "2026-09-22T03:44:31Z"
+  },
+
+  "review_notes_for_claude": [
+    "AC1, AC2, AC3, AC7 verified by passing unit tests in this PR.",
+    "AC4, AC5, AC6 require live hosted-dev deploy — please confirm via a bounded refresh run on the dev VM after merging.",
+    "The pre-existing test failure (test_bounded_source_refresh_deploy_waits_and_gates_readback) is scope-out for this task and predates this branch.",
+    "No symbol shape filter, paper mode filter, or SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS export path was changed.",
+    "Governance is not relaxed: market_input_ paused bindings are existing paper bindings, not new ones."
+  ]
+}
