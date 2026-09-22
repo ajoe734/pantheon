@@ -3807,9 +3807,20 @@ def _market_persona_required_data_sources(item: dict[str, Any]) -> list[dict[str
                 "market": "TW",
                 "cadence": "daily",
                 "source_class": "live_pull",
+                # Official exchange data first, vendor second.  PersonaSourceReconciler
+                # walks this list in order and takes the first candidate its
+                # _provider_supports accepts, and that check is purely a
+                # market/dataset match with no credential test -- so leading with
+                # tw-finmind-datasets selects a connector whose secret_ref_id is
+                # unset wherever no FinMind key is configured, and the requirement
+                # can never reconcile.  tw-twse-tpex-official-market is key-free
+                # (auth_modes=("none",), secret_fields=()) and serves the same
+                # tw_price_daily dataset, which is why the reconciler's own
+                # _default_candidates already orders it first.  Keep the two
+                # orderings agreeing.
                 "connector_candidates": [
-                    "tw-finmind-datasets",
                     "tw-twse-tpex-official-market",
+                    "tw-finmind-datasets",
                 ],
                 "policy_gates": [
                     "require_connector_approved",
