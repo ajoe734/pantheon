@@ -235,21 +235,157 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     )
 
 
-def test_bounded_refresh_resolves_symbols_from_read_only_runtime_binding_store() -> None:
+def _resolver_body() -> str:
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = deploy.index("resolve_bounded_source_refresh_active_symbols() {")
     end = deploy.index("\n}\n\nverify_bounded_source_refresh_readback()", start)
-    resolver = deploy[start:end]
+    return deploy[start:end]
+
+
+def test_bounded_refresh_resolves_symbols_from_read_only_runtime_binding_store() -> None:
+    resolver = _resolver_body()
 
     assert "runtime-manager - <<'PY'" in resolver
     assert "PANTHEON_RUNTIME_BINDING_STORE_PATH" in resolver
-    assert 'mode != "paper" or status != "active"' in resolver
+    # paper mode filter is still present; active-only check is intentionally
+    # removed so market-input-paused bindings can also be included
+    assert 'mode != "paper"' in resolver
     assert 'binding.get("symbol") or metadata.get("symbol")' in resolver
     assert "strategy_artifact" not in resolver
     assert 'export SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="$priority_symbols"' in resolver
     assert "SOURCE_INGEST_MAX_RECORDS" not in resolver
 
 
+def test_bounded_refresh_includes_market_input_paused_bindings() -> None:
+    """Acceptance criterion 1: a binding paused for a market_input_ reason must
+    be included in the priority list, not only active bindings."""
+    resolver = _resolver_body()
+
+    # The resolver must distinguish paused from active and check reason_code
+    assert 'status == "paused"' in resolver
+    assert "session_admission" in resolver
+    assert "reason_code" in resolver
+    assert "_MARKET_INPUT_PAUSE_PREFIX" in resolver
+    assert 'reason_code.startswith(_MARKET_INPUT_PAUSE_PREFIX)' in resolver
+
+
+def test_bounded_refresh_excludes_other_reason_paused_bindings() -> None:
+    """Acceptance criterion 2: a binding paused for any non-market_input_ reason
+    must still be excluded from the priority list (e.g. operator_requested_pause)."""
+    resolver = _resolver_body()
+
+    # The resolver must have an is_priority guard that defaults to False for
+    # paused bindings without a market_input_ reason_code
+    assert "is_priority" in resolver
+    assert "if not is_priority:" in resolver
+
+
+def test_bounded_refresh_priority_python_snippet_runs_correctly(tmp_path: Path) -> None:
+    """End-to-end: run the embedded Python snippet with synthetic bindings and
+    verify inclusion/exclusion rules for active, market-input-paused, and
+    operator-paused paper bindings."""
+    import json
+    import subprocess
+    import sys
+
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    # Extract the Python heredoc between the heredoc open marker and the PY terminator
+    heredoc_open = "runtime-manager - <<" + "'PY'"
+    py_start = deploy.index(heredoc_open) + len(heredoc_open) + 1  # skip the newline after the marker
+    py_end = deploy.index("\nPY\n", py_start)
+    snippet = deploy[py_start:py_end]
+
+    bindings = [
+        # Active paper TW symbol -- must be included
+        {
+            "binding_id": "b-active-001",
+            "deployment_mode": "paper",
+            "status": "active",
+            "symbol": "2330.TW",
+        },
+        # Paused due to market_input_insufficient -- must be included (AC1)
+        {
+            "binding_id": "b-paused-insufficient",
+            "deployment_mode": "paper",
+            "status": "paused",
+            "symbol": "0050.TW",
+            "metadata": {
+                "session_admission": {
+                    "reason_code": "market_input_insufficient",
+                }
+            },
+        },
+        # Paused due to market_input_stale -- must be included (AC1)
+        {
+            "binding_id": "b-paused-stale",
+            "deployment_mode": "paper",
+            "status": "paused",
+            "symbol": "2317.TW",
+            "metadata": {
+                "session_admission": {
+                    "reason_code": "market_input_stale",
+                }
+            },
+        },
+        # Paused due to operator_requested_pause -- must be excluded (AC2)
+        {
+            "binding_id": "b-paused-operator",
+            "deployment_mode": "paper",
+            "status": "paused",
+            "symbol": "6505.TW",
+            "metadata": {
+                "session_admission": {
+                    "reason_code": "operator_requested_pause",
+                }
+            },
+        },
+        # Paused with no session_admission -- must be excluded (AC2)
+        {
+            "binding_id": "b-paused-no-admission",
+            "deployment_mode": "paper",
+            "status": "paused",
+            "symbol": "1301.TW",
+        },
+        # Live (non-paper) active -- must be excluded
+        {
+            "binding_id": "b-live-active",
+            "deployment_mode": "live",
+            "status": "active",
+            "symbol": "2412.TW",
+        },
+        # Paper but non-TW symbol -- must be excluded by shape filter
+        {
+            "binding_id": "b-paper-non-tw",
+            "deployment_mode": "paper",
+            "status": "active",
+            "symbol": "AAPL",
+        },
+    ]
+
+    store = tmp_path / "runtime_bindings.json"
+    store.write_text(json.dumps(bindings), encoding="utf-8")
+
+    import os
+    full_env = {**os.environ, "PANTHEON_RUNTIME_BINDING_STORE_PATH": str(store)}
+
+    result = subprocess.run(
+        [sys.executable, "-c", snippet],
+        capture_output=True,
+        text=True,
+        env=full_env,
+    )
+    assert result.returncode == 0, f"snippet failed: {result.stderr}"
+
+    output = result.stdout.strip()
+    symbols = [s for s in output.split(",") if s] if output else []
+
+    assert "2330.TW" in symbols, "active paper binding must be included"
+    assert "0050.TW" in symbols, "market_input_insufficient paused binding must be included"
+    assert "2317.TW" in symbols, "market_input_stale paused binding must be included"
+    assert "6505.TW" not in symbols, "operator_requested_pause binding must be excluded"
+    assert "1301.TW" not in symbols, "paused-no-admission binding must be excluded"
+    assert "2412.TW" not in symbols, "live binding must be excluded"
+    assert "AAPL" not in symbols, "non-TW symbol must be excluded by shape filter"
 def test_bounded_source_refresh_wait_accepts_zero_exit(tmp_path: Path) -> None:
     result = _run_bounded_wait(tmp_path, exit_code=0)
 
