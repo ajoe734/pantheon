@@ -7624,83 +7624,16 @@ def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
-def _management_first_non_empty(*values: Any) -> Any:
-    for value in values:
-        if value not in (None, ""):
-            return value
-    return None
-def _management_dict_value(record: Dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        value = record.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-def _management_nested_dict(record: Dict[str, Any], *keys: str) -> Dict[str, Any]:
-    for key in keys:
-        value = record.get(key)
-        if isinstance(value, dict):
-            return value
-    return {}
-def _management_position_records(telemetry: Dict[str, Any]) -> List[Dict[str, Any]]:
-    for key in ("positions", "holdings", "position_snapshots"):
-        raw_items = telemetry.get(key)
-        if isinstance(raw_items, list):
-            items = [item for item in raw_items if isinstance(item, dict)]
-            if items:
-                return items
-    for key in ("position", "holding"):
-        raw_item = telemetry.get(key)
-        if isinstance(raw_item, dict):
-            return [raw_item]
-    return []
-def _management_latest_timestamp(items: List[Dict[str, Any]], *fields: str) -> Optional[str]:
-    latest: Optional[str] = None
-    for item in items:
-        for field in fields:
-            value = str(item.get(field) or "").strip()
-            if value and (latest is None or value > latest):
-                latest = value
-    return latest
-def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
-    if not record_id:
-        return None
-    return f"{path}/{record_id}"
+
+
 from .agora.performance.service import (
     PM12_ATTRIBUTION_DIMENSIONS as _PM12_ATTRIBUTION_DIMENSIONS,
-    pm12_attribution_data_confidence,
-    pm12_attribution_dimension_label,
     pm12_attribution_metrics,
-    pm12_dimension_key,
-    pm12_metric_avg,
-    pm12_metric_or_split,
-    pm12_metric_sum,
     pm12_performance_attribution_facts,
-    pm12_performance_attribution_group_entries,
-    pm12_performance_attribution_page_entries,
     pm12_performance_attribution_response,
     pm12_performance_attribution_rows,
     pm12_performance_attribution_sources,
 )
-
-
-def _pm12_attribution_dimension_label(dimension: str, raw_key: Any) -> str:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_attribution_dimension_label(dimension, raw_key)
-
-
-def _pm12_dimension_key(dimension: str, fact: Dict[str, Any]) -> str:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_dimension_key(dimension, fact)
-
-
-def _pm12_metric_sum(entries: List[Dict[str, Any]], field: str) -> float:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_metric_sum(entries, field)
-
-
-def _pm12_metric_avg(entries: List[Dict[str, Any]], field: str) -> float:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_metric_avg(entries, field)
 
 
 def _pm12_attribution_metrics(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -7708,44 +7641,9 @@ def _pm12_attribution_metrics(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
     return _agora_perf.pm12_attribution_metrics(entries)
 
 
-def _pm12_metric_or_split(values: Any) -> List[str]:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_metric_or_split(values)
-
-
-def _pm12_attribution_data_confidence(has_data: bool, snapshot_at: str) -> Dict[str, Any]:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_attribution_data_confidence(has_data, snapshot_at)
-
-
 def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str) -> List[Dict[str, Any]]:
     from services.control_plane.bff.agora.performance import service as _agora_perf
     return _agora_perf.pm12_performance_attribution_facts(sources, period_key)
-
-
-def _pm12_performance_attribution_group_entries(
-    facts: List[Dict[str, Any]],
-    *,
-    dimensions: List[str],
-) -> List[Dict[str, Any]]:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_performance_attribution_group_entries(facts, dimensions=dimensions)
-
-
-def _pm12_performance_attribution_page_entries(
-    facts: List[Dict[str, Any]],
-    *,
-    dimensions: List[str],
-    page_token: Optional[str],
-    page_size: int,
-) -> Tuple[List[Dict[str, Any]], int, Optional[str], Dict[str, Any]]:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_performance_attribution_page_entries(
-        facts,
-        dimensions=dimensions,
-        page_token=page_token,
-        page_size=page_size,
-    )
 
 
 def _pm12_performance_attribution_rows(
@@ -9449,7 +9347,6 @@ def _human_inbox_payload(
         page_token=page_token,
         page_size=page_size,
     )
-_MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
 _MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
     Optional[ManagementNlCommandReservation]
 ] = ContextVar("management_nl_command_reservation", default=None)
@@ -10164,285 +10061,49 @@ def _management_ai_audit_href(
         message_id=message_id,
         event_type=event_type,
     )
-def _management_ai_conversation_href(session_id: str, *, trace_id: Optional[str] = None) -> str:
-    route = f"/bff/management/ai/conversations/{quote(str(session_id or ''), safe='')}"
-    return route
+from .assistant.management_service import (
+    get_management_ai_conversation_store,
+    set_management_ai_conversation_store,
+    reset_management_ai_conversation_store,
+    management_ai_conversation_href as _management_ai_conversation_href,
+    management_ai_attachment_url as _management_ai_attachment_url,
+    management_ai_attachment_api_payload as _management_ai_attachment_api_payload,
+    management_ai_turn_api_payload as _management_ai_turn_api_payload,
+    management_ai_require_session_access as _management_ai_require_session_access,
+    management_ai_session_not_found as _management_ai_session_not_found,
+    management_ai_get_visible_session_or_404 as _management_ai_get_visible_session_or_404,
+    management_ai_get_session_or_404 as _management_ai_get_session_or_404,
+    management_ai_ensure_session as _management_ai_ensure_session,
+    management_ai_store_attachments as _management_ai_store_attachments,
+    management_ai_append_turn as _management_ai_append_turn,
+    management_ai_server_conversation_context as _management_ai_server_conversation_context_impl,
+    management_ai_list_conversations as _management_ai_list_conversations,
+    management_ai_get_conversation as _management_ai_get_conversation,
+    management_ai_get_attachment as _management_ai_get_attachment,
+)
+
+
 _MGMT_AI_CONVERSATION_STORE: Optional[ManagementAiConversationStore] = None
 
 
 def _management_ai_conversation_store() -> ManagementAiConversationStore:
     global _MGMT_AI_CONVERSATION_STORE
-    if _MGMT_AI_CONVERSATION_STORE is None:
-        _MGMT_AI_CONVERSATION_STORE = ManagementAiConversationStore()
+    if _MGMT_AI_CONVERSATION_STORE is not None:
+        return _MGMT_AI_CONVERSATION_STORE
+    _MGMT_AI_CONVERSATION_STORE = get_management_ai_conversation_store()
     return _MGMT_AI_CONVERSATION_STORE
-def _management_ai_attachment_url(attachment_id: str) -> str:
-    return f"/bff/management/ai/attachments/{quote(str(attachment_id or ''), safe='')}"
-def _management_ai_attachment_api_payload(attachment: Dict[str, Any]) -> Dict[str, Any]:
-    attachment_id = str(
-        attachment.get("id")
-        or attachment.get("attachmentId")
-        or attachment.get("attachment_id")
-        or ""
-    ).strip()
-    mime_type = str(attachment.get("mimeType") or attachment.get("mime_type") or "application/octet-stream")
-    size_bytes = int(attachment.get("sizeBytes") or attachment.get("size_bytes") or 0)
-    return {
-        "id": attachment_id,
-        "attachment_id": attachment_id,
-        "kind": str(attachment.get("kind") or "file"),
-        "mime_type": mime_type,
-        "filename": str(attachment.get("filename") or attachment_id or "attachment"),
-        "size_bytes": size_bytes,
-        "url": _management_ai_attachment_url(attachment_id) if attachment_id else "",
-    }
-def _management_ai_turn_api_payload(turn: Dict[str, Any]) -> Dict[str, Any]:
-    attachments = [
-        _management_ai_attachment_api_payload(item)
-        for item in (turn.get("attachments") or [])
-        if isinstance(item, dict)
-    ]
-    provider_status = (
-        turn.get("provider_status")
-        if isinstance(turn.get("provider_status"), dict)
-        else turn.get("providerStatus")
-        if isinstance(turn.get("providerStatus"), dict)
-        else None
-    )
-    ui_actions = (
-        turn.get("ui_actions")
-        if isinstance(turn.get("ui_actions"), list)
-        else turn.get("uiActions")
-        if isinstance(turn.get("uiActions"), list)
-        else []
-    )
-    payload = {
-        "id": turn.get("id"),
-        "turn_id": turn.get("turn_id") or turn.get("turnId") or turn.get("id"),
-        "message_id": turn.get("message_id") or turn.get("id"),
-        "session_id": turn.get("session_id") or turn.get("sessionId"),
-        "trace_id": turn.get("trace_id") or turn.get("traceId"),
-        "role": turn.get("role"),
-        "text": turn.get("text") or "",
-        "content": turn.get("text") or "",
-        "created_at": turn.get("created_at") or turn.get("createdAt"),
-        "provider_status": provider_status,
-        "attachments": attachments,
-        "ui_actions": ui_actions,
-        "actions": ui_actions,
-    }
-    ui_snapshot = (
-        turn.get("ui_snapshot")
-        if isinstance(turn.get("ui_snapshot"), dict)
-        else turn.get("uiSnapshot")
-        if isinstance(turn.get("uiSnapshot"), dict)
-        else None
-    )
-    if ui_snapshot is not None:
-        payload["ui_snapshot"] = ui_snapshot
-    return payload
-def _management_ai_require_session_access(
-    session: Dict[str, Any],
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str],
-) -> None:
-    owner_id = str(session.get("ownerId") or session.get("owner_id") or "").strip()
-    session_tenant_id = str(session.get("tenantId") or session.get("tenant_id") or "").strip()
-    clean_tenant_id = str(tenant_id or "").strip()
-    if owner_id and owner_id == identity.operator_id:
-        return
-    if clean_tenant_id and session_tenant_id and clean_tenant_id == session_tenant_id:
-        return
-    raise _bff_error(
-        403,
-        ErrorCode.FORBIDDEN,
-        "Management AI session is not visible to this operator",
-        "management_ai_session_not_visible",
-        precondition_failed="management_ai_session_visibility",
-    )
-def _management_ai_session_not_found(session_id: str) -> HTTPException:
-    clean_session_id = str(session_id or "").strip()
-    return _bff_error(
-        404,
-        ErrorCode.RESOURCE_NOT_FOUND,
-        f"Management AI session not found: {clean_session_id!r}",
-        "management_ai_session_not_found",
-        precondition_failed="management_ai_session",
-    )
-def _management_ai_get_visible_session_or_404(
-    session_id: str,
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str],
-) -> Dict[str, Any]:
-    clean_session_id = str(session_id or "").strip()
-    session = _management_ai_conversation_store().get_session(clean_session_id)
-    if session is None:
-        raise _management_ai_session_not_found(clean_session_id)
-    try:
-        _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
-    except HTTPException as exc:
-        if exc.status_code == 403:
-            raise _management_ai_session_not_found(clean_session_id) from exc
-        raise
-    return session
-def _management_ai_get_session_or_404(
-    session_id: str,
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str],
-) -> Dict[str, Any]:
-    clean_session_id = str(session_id or "").strip()
-    session = _management_ai_conversation_store().get_session(clean_session_id)
-    if session is None:
-        raise _management_ai_session_not_found(clean_session_id)
-    _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
-    return session
-def _management_ai_ensure_session(
-    *,
-    session_id: str,
-    identity: OperatorIdentity,
-    tenant_id: Optional[str],
-    now: str,
-    title: str,
-) -> Dict[str, Any]:
-    store = _management_ai_conversation_store()
-    existing = store.get_session(session_id)
-    if existing is not None:
-        _management_ai_require_session_access(existing, identity, tenant_id=tenant_id)
-    try:
-        return store.upsert_session(
-            session_id=session_id,
-            owner_id=identity.operator_id,
-            tenant_id=tenant_id,
-            now=now,
-            title=title,
-        )
-    except Exception as exc:
-        log.warning("Failed to persist Management AI session", exc_info=True)
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Management AI session store write failed",
-            str(exc),
-            precondition_failed="management_ai_session_store",
-        )
-def _management_ai_store_attachments(
-    *,
-    attachments: Any,
-    session_id: str,
-    turn_id: str,
-) -> List[Dict[str, Any]]:
-    try:
-        return _management_ai_conversation_store().store_attachments(
-            attachments,
-            session_id=session_id,
-            turn_id=turn_id,
-        )
-    except ManagementAiAttachmentError as exc:
-        status_code = int(getattr(exc, "status_code", 422) or 422)
-        code = ErrorCode.REQUEST_TOO_LARGE if status_code == 413 else ErrorCode.VALIDATION_FAILED
-        raise _bff_error(
-            status_code,
-            code,
-            (
-                "Management AI attachment payload is too large"
-                if status_code == 413
-                else "Management AI attachment payload is invalid"
-            ),
-            str(exc),
-            precondition_failed=getattr(exc, "precondition_failed", "management_ai_attachment"),
-            details_extra=getattr(exc, "details", {}),
-        )
-    except ValueError as exc:
-        raise _bff_error(
-            400,
-            ErrorCode.VALIDATION_FAILED,
-            "Management AI attachment payload is invalid",
-            str(exc),
-            precondition_failed="management_ai_attachment",
-        )
-    except Exception as exc:
-        log.warning("Failed to persist Management AI attachment", exc_info=True)
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Management AI attachment store write failed",
-            str(exc),
-            precondition_failed="management_ai_attachment_store",
-        )
-def _management_ai_append_turn(
-    *,
-    turn_id: str,
-    session_id: str,
-    role: str,
-    text: str,
-    created_at: str,
-    trace_id: Optional[str] = None,
-    attachments: Optional[List[Dict[str, Any]]] = None,
-    provider_status: Optional[Dict[str, Any]] = None,
-    ui_snapshot: Optional[Dict[str, Any]] = None,
-    ui_actions: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    try:
-        return _management_ai_conversation_store().append_turn(
-            turn_id=turn_id,
-            session_id=session_id,
-            role=role,
-            text=text,
-            created_at=created_at,
-            trace_id=trace_id,
-            attachments=attachments,
-            provider_status=provider_status,
-            ui_snapshot=ui_snapshot,
-            ui_actions=ui_actions,
-        )
-    except Exception as exc:
-        log.warning("Failed to persist Management AI turn", exc_info=True)
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Management AI turn store write failed",
-            str(exc),
-            precondition_failed="management_ai_turn_store",
-        )
+
+
 def _management_ai_server_conversation_context(
     *,
     session_id: str,
     client_hint: Dict[str, Any],
 ) -> Dict[str, Any]:
-    stored_turns = _management_ai_conversation_store().list_turns(session_id)
-    turns = []
-    for turn in stored_turns:
-        api_turn = _management_ai_turn_api_payload(turn)
-        turns.append(
-            {
-                "id": api_turn.get("id"),
-                "role": api_turn.get("role"),
-                "content": api_turn.get("text") or "",
-                "text": api_turn.get("text") or "",
-                "created_at": api_turn.get("created_at"),
-                "attachments": api_turn.get("attachments") or [],
-                "provider_status": api_turn.get("provider_status"),
-                "trace_id": api_turn.get("trace_id"),
-            }
-        )
-    provider_turns, history_budget = _management_ai_provider_history_window(turns)
-    return {
-        "recent_turns": provider_turns,
-        "all_turns": provider_turns,
-        "turn_count": len(provider_turns),
-        "stored_turn_count": len(turns),
-        "source": "server",
-        "history_source": "management_ai_store",
-        "history_char_budget": history_budget["history_char_budget"],
-        "history_estimated_chars": history_budget["history_estimated_chars"],
-        "history_truncated": history_budget["history_truncated"],
-        "history_omitted_turn_count": history_budget["history_omitted_turn_count"],
-        "summary": client_hint.get("summary") or "",
-        "client_hint": client_hint,
-        "max_recent_turns": None,
-    }
+    return _management_ai_server_conversation_context_impl(
+        session_id=session_id,
+        client_hint=client_hint,
+        history_window_fn=_management_ai_provider_history_window,
+    )
 def _management_ai_provider_history_size(turns: List[Dict[str, Any]]) -> int:
     return len(json.dumps(turns, sort_keys=True, ensure_ascii=True))
 def _management_ai_provider_history_window(
@@ -11395,12 +11056,7 @@ from .assistant.management_service import (
 
 
 def _mgmt_nl_command_idempotency_store() -> ManagementNlCommandIdempotencyStore:
-    global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
-    if _MGMT_NL_COMMAND_IDEMPOTENCY_STORE is None:
-        reset_mgmt_nl_command_idempotency_store()
-    store = get_mgmt_nl_command_idempotency_store()
-    _MGMT_NL_COMMAND_IDEMPOTENCY_STORE = store
-    return store
+    return get_mgmt_nl_command_idempotency_store()
 # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: ask and ask/stream are one durable
 # use case with two transports. They share this single canonical scope
 # route name (not the literal per-transport HTTP path) so a client can
@@ -14298,60 +13954,13 @@ async def bff_management_ai_conversations(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    sessions = _management_ai_conversation_store().list_sessions(
-        owner_id=identity.operator_id,
-        tenant_id=caller_tenant_id,
+    return _management_ai_list_conversations(
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
         limit=limit,
+        conversation_href_fn=_management_ai_conversation_href,
+        session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
     )
-    items: List[Dict[str, Any]] = []
-    for session in sessions:
-        session_id = str(session.get("sessionId") or session.get("session_id") or session.get("id") or "").strip()
-        if not session_id:
-            continue
-        try:
-            _management_ai_require_session_access(session, identity, tenant_id=caller_tenant_id)
-        except HTTPException:
-            continue
-        turn_count = len(_management_ai_conversation_store().list_turns(session_id))
-        items.append(
-            {
-                "id": session_id,
-                "session_id": session_id,
-                "title": session.get("title") or "",
-                "owner_id": session.get("owner_id") or session.get("ownerId"),
-                "tenant_id": session.get("tenant_id") or session.get("tenantId"),
-                "created_at": session.get("created_at") or session.get("createdAt"),
-                "updated_at": session.get("updated_at") or session.get("updatedAt"),
-                "turn_count": turn_count,
-                "href": _management_ai_conversation_href(session_id),
-            }
-        )
-    return {
-        "data": {
-            "id": "management_ai_conversations",
-            "items": items,
-            "summary": {
-                "total_sessions": len(items),
-                "returned_items": len(items),
-            },
-        },
-        "page_info": {
-            "next_page_token": None,
-            "total": len(items),
-            "page_size": limit,
-        },
-        "meta": {
-            "count": len(items),
-            "limit": limit,
-            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "surfaces": {
-                "management_ai_conversation_list": {
-                    "status": "ok",
-                    "source": "management_ai_store",
-                }
-            },
-        },
-    }
 async def bff_management_ai_conversation(
     session_id: str,
     trace_id: Optional[str] = None,
@@ -14368,54 +13977,15 @@ async def bff_management_ai_conversation(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    session = _management_ai_get_visible_session_or_404(
-        clean_session_id,
-        identity,
-        tenant_id=caller_tenant_id,
+    return _management_ai_get_conversation(
+        session_id=clean_session_id,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        trace_id=trace_id,
+        limit=limit,
+        audit_href_fn=lambda s_id, t_id: _management_ai_audit_href(session_id=s_id, trace_id=t_id),
+        session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
     )
-    turns = [
-        _management_ai_turn_api_payload(turn)
-        for turn in _management_ai_conversation_store().list_turns(clean_session_id)
-    ][:limit]
-    audit_log = {
-        "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
-        "trace_id": trace_id,
-    }
-    return {
-        "data": {
-            "session_id": clean_session_id,
-            "trace_id": trace_id,
-            "turns": turns,
-            "local_only": False,
-            "missing_in_store": False,
-            "owner_id": session.get("owner_id") or session.get("ownerId"),
-            "tenant_id": session.get("tenant_id") or session.get("tenantId"),
-            "created_at": session.get("created_at") or session.get("createdAt"),
-            "updated_at": session.get("updated_at") or session.get("updatedAt"),
-            "audit_log": audit_log,
-            "session": {
-                "session_id": clean_session_id,
-                "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            },
-        },
-        "meta": {
-            "count": len(turns),
-            "turn_cap": limit,
-            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "filters": {
-                "session_id": clean_session_id,
-                "trace_id": trace_id,
-                "trace_id_ignored": trace_id is not None,
-            },
-            "surfaces": {
-                "management_ai_conversation": {
-                    "status": "ok",
-                    "source": "management_ai_store",
-                    "reason": None,
-                }
-            },
-        },
-    }
 async def bff_management_ai_attachment(
     attachment_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -14425,35 +13995,15 @@ async def bff_management_ai_attachment(
     """Return a BFF-proxied Management AI attachment object for visible sessions."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    found = _management_ai_conversation_store().find_attachment(attachment_id)
-    if found is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            f"Management AI attachment not found: {attachment_id!r}",
-            "management_ai_attachment_not_found",
-            precondition_failed="management_ai_attachment",
-        )
-    metadata, turn = found
     caller_tenant_id = _mgmt_nl_caller_tenant(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    _management_ai_get_session_or_404(
-        str(turn.get("sessionId") or turn.get("session_id") or ""),
-        identity,
-        tenant_id=caller_tenant_id,
+    content, mime_type, filename = _management_ai_get_attachment(
+        attachment_id=attachment_id,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
     )
-    try:
-        content, mime_type, filename = _management_ai_conversation_store().read_attachment(attachment_id, metadata)
-    except FileNotFoundError:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            f"Management AI attachment object not found: {attachment_id!r}",
-            "management_ai_attachment_object_not_found",
-            precondition_failed="management_ai_attachment_object",
-        )
     return Response(
         content=content,
         media_type=mime_type,
@@ -14937,13 +14487,8 @@ def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, An
         "live_requires_separate_human_gate": target_stage != "risk_containment_review",
     }
 from .personas.service import (
-    _latest_promotion_review_submission as _personas_latest_promotion_review_submission,
     _promotion_review_submission_projection as _personas_promotion_review_submission_projection,
 )
-
-
-def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, Any]]:
-    return _personas_latest_promotion_review_submission(review_id, command_store=command_store)
 
 
 def _promotion_review_submission_projection(

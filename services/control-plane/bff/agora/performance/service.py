@@ -470,11 +470,17 @@ def _pm12_page_slice(
     return slice_items, next_page_token
 
 
+try:
+    from services.control_plane.bff.research.routes.common import format_dataset_surface_status
+except (ImportError, ValueError):
+    from ...research.routes.common import format_dataset_surface_status
+
+
 def _default_snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
     return {
         "snapshot_at": snapshot_at,
         "as_of": snapshot_at,
-        "source": "bff_in_memory",
+        "source": "bff_read_store",
         "stale": False,
     }
 
@@ -486,18 +492,28 @@ def _default_dataset_surface_status(
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
     source: Optional[str] = None,
+    read_store: Optional[Any] = None,
+    utc_now: Optional[Callable[[], str]] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    status = "ok" if (has_data is True or has_data is None) else "unavailable"
-    return {
-        "name": dataset,
-        "dataset": dataset,
-        "status": status,
-        "source": source or "bff_in_memory",
-        "snapshot_at": snapshot_at,
-        "as_of": snapshot_at,
-        "message": missing_message if status == "unavailable" else None,
-    }
+    effective_source = source
+    if effective_source is None:
+        if read_store is not None and hasattr(read_store, "dataset_source"):
+            try:
+                effective_source = str(read_store.dataset_source(dataset) or "missing")
+            except Exception:
+                effective_source = "missing"
+        else:
+            effective_source = "missing"
+    return format_dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+        missing_message=missing_message,
+        source=effective_source,
+        utc_now=utc_now,
+        **kwargs,
+    )
 
 
 def _default_aggregate_group_surface(
@@ -509,10 +525,10 @@ def _default_aggregate_group_surface(
     degraded_message: Optional[str] = None,
 ) -> Dict[str, Any]:
     statuses = [s.get("status") for s in surfaces]
-    if any(st == "unavailable" for st in statuses):
+    if statuses and all(st == "unavailable" for st in statuses):
         status = "unavailable"
         msg = unavailable_message or "Aggregate surface unavailable."
-    elif any(st == "degraded" for st in statuses):
+    elif any(st in ("unavailable", "degraded") for st in statuses):
         status = "degraded"
         msg = degraded_message or "Aggregate surface degraded."
     else:
@@ -522,7 +538,7 @@ def _default_aggregate_group_surface(
         "name": surface_key,
         "surface": surface_key,
         "status": status,
-        "source": "bff_in_memory",
+        "source": "bff_composed",
         "snapshot_at": snapshot_at,
         "as_of": snapshot_at,
         "message": msg,
@@ -534,19 +550,24 @@ def _default_performance_ranking_source_surface(
     *,
     snapshot_at: Optional[str] = None,
 ) -> Dict[str, Any]:
-    return {
-        "status": surface.get("status") or "ok",
-        "source": surface.get("source") or "bff_in_memory",
-        "snapshot_at": snapshot_at or surface.get("snapshot_at"),
-        "as_of": snapshot_at or surface.get("as_of"),
-        "message": surface.get("message"),
-    }
+    normalized = dict(surface)
+    source = str(normalized.get("source") or "unknown")
+    status = str(normalized.get("status") or "unavailable")
+    normalized["observed_time"] = snapshot_at
+    normalized["freshness"] = (
+        normalized.get("staleness", {}).get("served_from")
+        if isinstance(normalized.get("staleness"), dict)
+        else None
+    ) or source
+    normalized["coverage"] = 0.0 if status == "unavailable" or source == "missing" else 1.0
+    normalized["missing_bindings"] = status == "unavailable" or source == "missing"
+    return normalized
 
 
 def pm12_metric_or_split(
     value: Any,
-    fallback: Optional[float],
-    split_count: int,
+    fallback: Optional[float] = None,
+    split_count: int = 1,
 ) -> Optional[float]:
     metric = _pm12_management_as_float(value)
     if metric is not None:
@@ -565,20 +586,23 @@ def pm12_attribution_dimension_label(
     dimension: str,
     key: str,
     *,
-    personas_by_id: Dict[str, Dict[str, Any]],
-    strategies_by_id: Dict[str, Dict[str, Any]],
-    pools_by_id: Dict[str, Dict[str, Any]],
+    personas_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    strategies_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    pools_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> str:
+    personas_map = personas_by_id or {}
+    strategies_map = strategies_by_id or {}
+    pools_map = pools_by_id or {}
     if key == "unassigned":
         return "Unassigned"
     if dimension == "persona":
-        persona = personas_by_id.get(key, {})
+        persona = personas_map.get(key, {})
         return str(persona.get("name") or persona.get("display_name") or key)
     if dimension == "strategy":
-        strategy = strategies_by_id.get(key, {})
+        strategy = strategies_map.get(key, {})
         return str(strategy.get("title") or strategy.get("name") or key)
     if dimension == "pool":
-        pool = pools_by_id.get(key, {})
+        pool = pools_map.get(key, {})
         return str(pool.get("name") or key)
     return key
 
@@ -591,13 +615,6 @@ def pm12_performance_attribution_sources(
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     resolved_read_store = read_store
-    if resolved_read_store is None:
-        try:
-            from services.control_plane.bff.bootstrap.dependencies import AppDependencies
-            deps = AppDependencies.create_default()
-            resolved_read_store = deps.read_surface
-        except Exception:
-            resolved_read_store = None
 
     if resolved_read_store is not None and hasattr(resolved_read_store, "list_runtime_bindings"):
         runtime_bindings = resolved_read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
@@ -1226,21 +1243,18 @@ def pm12_performance_attribution_response(
         sources = pm12_performance_attribution_sources(tenant_id, read_store=read_store)
     facts = pm12_performance_attribution_facts(sources, period_key)
 
-    try:
-        from services.control_plane.bff.personas.service import _filter_by_common_identifiers
-        facts = _filter_by_common_identifiers(
-            facts,
-            persona_id=persona_id, persona=persona,
-            runtime_id=runtime_id, runtime=runtime,
-            strategy_id=strategy_id, strategy=strategy,
-            capital_pool_id=capital_pool_id, pool=pool,
-            sleeve_id=sleeve_id, sleeve=sleeve,
-            artifact_id=artifact_id, artifact=artifact,
-            broker_id=broker_id, broker=broker,
-            stage=stage, period=period_key, as_of=as_of
-        )
-    except Exception:
-        pass
+    from services.control_plane.bff.personas.service import _filter_by_common_identifiers
+    facts = _filter_by_common_identifiers(
+        facts,
+        persona_id=persona_id, persona=persona,
+        runtime_id=runtime_id, runtime=runtime,
+        strategy_id=strategy_id, strategy=strategy,
+        capital_pool_id=capital_pool_id, pool=pool,
+        sleeve_id=sleeve_id, sleeve=sleeve,
+        artifact_id=artifact_id, artifact=artifact,
+        broker_id=broker_id, broker=broker,
+        stage=stage, period=period_key, as_of=as_of
+    )
 
     page_entries, total, next_page_token, aggregate_metrics = pm12_performance_attribution_page_entries(
         facts,
@@ -1255,24 +1269,33 @@ def pm12_performance_attribution_response(
         sources=sources,
     )
 
-    dataset_fn = dataset_surface_status_fn or _default_dataset_surface_status
     aggregate_fn = aggregate_group_surface_fn or _default_aggregate_group_surface
     ranking_fn = performance_ranking_source_surface_fn or _default_performance_ranking_source_surface
     meta_fn = snapshot_meta_fn or _default_snapshot_meta
 
-    source_surfaces = {
-        "runtime_bindings": dataset_fn("runtime_bindings", snapshot_at=snapshot_at),
-        "telemetry_summaries": dataset_fn(
-            "telemetry_summaries",
+    def _dataset_status(dataset: str, **kwargs: Any) -> Dict[str, Any]:
+        if dataset_surface_status_fn is not None:
+            return dataset_surface_status_fn(dataset, snapshot_at=snapshot_at, **kwargs)
+        return _default_dataset_surface_status(
+            dataset,
             snapshot_at=snapshot_at,
+            read_store=read_store,
+            utc_now=resolved_utc_now,
+            **kwargs,
+        )
+
+    source_surfaces = {
+        "runtime_bindings": _dataset_status("runtime_bindings"),
+        "telemetry_summaries": _dataset_status(
+            "telemetry_summaries",
             has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
             missing_message="Telemetry summaries unavailable for performance attribution runtimes.",
         ),
-        "deployment_plans": dataset_fn("deployment_plans", snapshot_at=snapshot_at),
-        "persona_bindings": dataset_fn("persona_bindings", snapshot_at=snapshot_at),
-        "capital_pools": dataset_fn("capital_pools", snapshot_at=snapshot_at),
-        "personas": dataset_fn("personas", snapshot_at=snapshot_at),
-        "strategies": dataset_fn("strategy_specs", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_status("deployment_plans"),
+        "persona_bindings": _dataset_status("persona_bindings"),
+        "capital_pools": _dataset_status("capital_pools"),
+        "personas": _dataset_status("personas"),
+        "strategies": _dataset_status("strategy_specs"),
     }
     attribution_surface = aggregate_fn(
         surface_key,

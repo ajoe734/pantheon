@@ -16,6 +16,9 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff.agora.performance.service import (
+    pm12_performance_attribution_response,
+)
 from services.control_plane.bff.capital.router import create_capital_router
 from services.control_plane.bff.capital.service import (
     CapitalAuthorityUnavailable,
@@ -67,8 +70,10 @@ from services.control_plane.bff.personas.service import (
 class _FakeCapitalStore:
     """In-memory fake implementing Capital read and write surfaces."""
 
-    def __init__(self, *, fail_writes: bool = False) -> None:
+    def __init__(self, *, fail_writes: bool = False, tenant_id: Optional[str] = None) -> None:
         self.fail_writes = fail_writes
+        self.tenant_id = tenant_id
+        self.apply_rebalance_calls = 0
         self.pools: Dict[str, Dict[str, Any]] = {
             "pool-alpha": {
                 "id": "pool-alpha",
@@ -98,10 +103,16 @@ class _FakeCapitalStore:
         ]
 
     def list_capital_pools(self, **_: Any) -> List[Dict[str, Any]]:
-        return list(self.pools.values())
+        pools = list(self.pools.values())
+        if self.tenant_id:
+            pools = [p for p in pools if p.get("tenant_id") == self.tenant_id]
+        return pools
 
     def get_capital_pool(self, pool_id: str) -> Optional[Dict[str, Any]]:
-        return self.pools.get(pool_id)
+        pool = self.pools.get(pool_id)
+        if pool and self.tenant_id and pool.get("tenant_id") != self.tenant_id:
+            return None
+        return pool
 
     def list_capital_allocations(self, capital_pool_id: Optional[str] = None, **_: Any) -> List[Dict[str, Any]]:
         return [
@@ -131,8 +142,122 @@ class _FakeCapitalStore:
     def apply_rebalance(self, payload: Dict[str, Any], rebalance_id: str, **_: Any) -> Dict[str, Any]:
         if self.fail_writes:
             raise RuntimeError("Underlying rebalance apply failure")
+        self.apply_rebalance_calls += 1
         self.rebalances[rebalance_id]["status"] = "applied"
         return {"rebalance_id": rebalance_id, "state": "applied", **deepcopy(payload)}
+
+
+class _FakePerformanceStore:
+    """In-memory store providing performance attribution sources across tenants."""
+
+    def __init__(self, *, status: str = "fresh") -> None:
+        self.status = status
+        self.runtime_bindings = [
+            {
+                "binding_id": "rb-1",
+                "runtime_id": "rt-1",
+                "tenant_id": "tenant-alpha",
+                "capital_pool_id": "pool-1",
+                "persona_id": "p-1",
+                "strategy_id": "s-1",
+                "deployment_stage": "paper",
+                "status": "running",
+            },
+            {
+                "binding_id": "rb-2",
+                "runtime_id": "rt-2",
+                "tenant_id": "tenant-beta",
+                "capital_pool_id": "pool-2",
+                "persona_id": "p-2",
+                "strategy_id": "s-2",
+                "deployment_stage": "paper",
+                "status": "running",
+            },
+        ]
+        self.telemetry = [
+            {
+                "runtime_id": "rt-1",
+                "pnl": 500.0,
+                "fill_rate": 0.95,
+                "total_trades": 10,
+                "notional": 10000.0,
+                "worst_drawdown": 0.05,
+                "slippage_bps": 1.2,
+                "metrics": {
+                    "total_pnl": 500.0,
+                    "runtime_count": 1,
+                    "holding_count": 2,
+                    "total_notional": 10000.0,
+                    "total_exposure": 10000.0,
+                    "worst_drawdown": 0.05,
+                    "average_fill_rate": 0.95,
+                    "average_slippage_bps": 1.2,
+                    "total_trades": 10,
+                },
+                "collected_at": "2026-09-23T00:00:00Z",
+            },
+            {
+                "runtime_id": "rt-2",
+                "pnl": 250.0,
+                "fill_rate": 0.90,
+                "total_trades": 5,
+                "notional": 5000.0,
+                "worst_drawdown": 0.02,
+                "slippage_bps": 0.8,
+                "metrics": {
+                    "total_pnl": 250.0,
+                    "runtime_count": 1,
+                    "holding_count": 1,
+                    "total_notional": 5000.0,
+                    "total_exposure": 5000.0,
+                    "worst_drawdown": 0.02,
+                    "average_fill_rate": 0.90,
+                    "average_slippage_bps": 0.8,
+                    "total_trades": 5,
+                },
+                "collected_at": "2026-09-23T00:00:00Z",
+            },
+        ]
+        self.personas = [
+            {"id": "p-1", "persona_id": "p-1", "name": "Persona 1", "tenant_id": "tenant-alpha"},
+            {"id": "p-2", "persona_id": "p-2", "name": "Persona 2", "tenant_id": "tenant-beta"},
+        ]
+        self.pools = [
+            {"id": "pool-1", "pool_id": "pool-1", "name": "Pool 1", "tenant_id": "tenant-alpha"},
+            {"id": "pool-2", "pool_id": "pool-2", "name": "Pool 2", "tenant_id": "tenant-beta"},
+        ]
+        self.strategies = [
+            {"id": "s-1", "strategy_id": "s-1", "name": "Strategy 1", "tenant_id": "tenant-alpha"},
+            {"id": "s-2", "strategy_id": "s-2", "name": "Strategy 2", "tenant_id": "tenant-beta"},
+        ]
+
+    def list_runtime_bindings(self, **_: Any) -> List[Dict[str, Any]]:
+        return self.runtime_bindings
+
+    def list_deployment_plans(self, **_: Any) -> List[Dict[str, Any]]:
+        return []
+
+    def list_bindings(self, **_: Any) -> List[Dict[str, Any]]:
+        return []
+
+    def list_capital_pools(self, **_: Any) -> List[Dict[str, Any]]:
+        return self.pools
+
+    def list_personas(self, **_: Any) -> List[Dict[str, Any]]:
+        return self.personas
+
+    def list_strategies(self, **_: Any) -> List[Dict[str, Any]]:
+        return self.strategies
+
+    def list_telemetry_summaries(self, **_: Any) -> List[Dict[str, Any]]:
+        if self.status == "degraded":
+            return []
+        return self.telemetry
+
+    def dataset_source(self, dataset: str) -> str:
+        if self.status == "degraded" and dataset == "telemetry_summaries":
+            return "degraded"
+        return "bff_read_store"
 
 
 class _UnavailableCapitalAuthority:
@@ -283,24 +408,53 @@ class TestCapitalMountedComposition:
         assert "mutation method" in str(error).lower()
 
     def test_capital_router_tenant_isolation(self) -> None:
-        store = _FakeCapitalStore()
-        app = FastAPI()
-        app.include_router(
+        # Tenant Prime operator should only see Tenant Prime pools
+        store_prime = _FakeCapitalStore(tenant_id="tenant-prime")
+        app_prime = FastAPI()
+        app_prime.include_router(
             create_capital_router(
-                get_read_store=lambda: store,
-                get_capital_authority=lambda: store,
+                get_read_store=lambda: store_prime,
+                get_capital_authority=lambda: store_prime,
                 utc_now=lambda: "2026-09-23T00:00:00Z",
             )
         )
-        client = TestClient(app)
-        # Fetching pool-alpha succeeds
-        res_alpha = client.get("/bff/capital-pools/pool-alpha")
-        assert res_alpha.status_code == 200
-        assert res_alpha.json().get("id") == "pool-alpha" or res_alpha.json().get("data", {}).get("id") == "pool-alpha"
+        client_prime = TestClient(app_prime)
 
-        # Fetching non-existent pool in another tenant fails 404
-        res_none = client.get("/bff/capital-pools/pool-nonexistent")
-        assert res_none.status_code == 404
+        # 1. Tenant-prime listing sees pool-alpha, but NOT pool-beta
+        res_list = client_prime.get("/bff/capital-pools")
+        assert res_list.status_code == 200
+        items = res_list.json().get("items") or res_list.json().get("data", {}).get("items") or []
+        pool_ids = {p["id"] for p in items}
+        assert "pool-alpha" in pool_ids
+        assert "pool-beta" not in pool_ids
+
+        # 2. Fetching pool-alpha succeeds for tenant-prime
+        res_alpha = client_prime.get("/bff/capital-pools/pool-alpha")
+        assert res_alpha.status_code == 200
+        assert (res_alpha.json().get("id") == "pool-alpha" or res_alpha.json().get("data", {}).get("id") == "pool-alpha")
+
+        # 3. Direct access to tenant-sec resource (pool-beta) by tenant-prime fails with 404
+        res_beta_denied = client_prime.get("/bff/capital-pools/pool-beta")
+        assert res_beta_denied.status_code == 404
+
+        # 4. Inversely, Tenant Sec operator should only see pool-beta
+        store_sec = _FakeCapitalStore(tenant_id="tenant-sec")
+        app_sec = FastAPI()
+        app_sec.include_router(
+            create_capital_router(
+                get_read_store=lambda: store_sec,
+                get_capital_authority=lambda: store_sec,
+                utc_now=lambda: "2026-09-23T00:00:00Z",
+            )
+        )
+        client_sec = TestClient(app_sec)
+        res_sec_list = client_sec.get("/bff/capital-pools")
+        assert res_sec_list.status_code == 200
+        sec_items = res_sec_list.json().get("items") or res_sec_list.json().get("data", {}).get("items") or []
+        sec_pool_ids = {p["id"] for p in sec_items}
+        assert "pool-beta" in sec_pool_ids
+        assert "pool-alpha" not in sec_pool_ids
+        assert client_sec.get("/bff/capital-pools/pool-alpha").status_code == 404
 
     def test_capital_router_idempotent_rebalance_apply(self) -> None:
         store = _FakeCapitalStore()
@@ -318,9 +472,25 @@ class TestCapitalMountedComposition:
             "X-Operator-ID": "op-admin",
             "X-Operator-Role": "admin",
         }
-        res = client.post("/bff/rebalances/reb-1/apply", json={}, headers=headers)
-        assert res.status_code == 202
+        # Initial request
+        res1 = client.post("/bff/rebalances/reb-1/apply", json={"reason": "rebalance 1"}, headers=headers)
+        assert res1.status_code == 202
+        body1 = res1.json()
+        assert body1.get("meta", {}).get("replayed") is False
         assert store.rebalances["reb-1"]["status"] == "applied"
+        assert store.apply_rebalance_calls == 1
+
+        # Replay with same key and identical payload: must replay cached result without second mutation
+        res2 = client.post("/bff/rebalances/reb-1/apply", json={"reason": "rebalance 1"}, headers=headers)
+        assert res2.status_code == 202
+        body2 = res2.json()
+        assert body2.get("meta", {}).get("replayed") is True
+        assert store.apply_rebalance_calls == 1
+
+        # Conflict request with same key but differing payload: must return 409 conflict
+        res3 = client.post("/bff/rebalances/reb-1/apply", json={"reason": "conflicting modification"}, headers=headers)
+        assert res3.status_code == 409
+        assert store.apply_rebalance_calls == 1
 
 
 # ---------------------------------------------------------------------------
@@ -541,43 +711,152 @@ class TestIncidentsSeam:
 class TestPerformanceAttributionMountedComposition:
     """Verifies mounted performance attribution router decoupled from main."""
 
-    def test_performance_attribution_router_mounted(self) -> None:
+    def test_performance_attribution_router_mounted_agreement(self) -> None:
+        store = _FakePerformanceStore()
+        direct_res = pm12_performance_attribution_response(
+            dimensions=["persona"],
+            period="latest",
+            page_token=None,
+            page_size=50,
+            tenant_id="tenant-alpha",
+            read_store=store,
+        )
+
         app = FastAPI()
-
-        def _mock_response(**kwargs: Any) -> Dict[str, Any]:
-            return {
-                "data": {
-                    "id": "pm12-attribution",
-                    "period": kwargs.get("period", "latest"),
-                    "dimensions": kwargs.get("dimensions", ["persona"]),
-                    "items": [
-                        {
-                            "id": "row-1",
-                            "dimension": "persona",
-                            "dimension_key": "p-1",
-                            "label": "Persona 1",
-                            "data_confidence": "formal",
-                            "metrics": {"total_pnl": 500.0, "runtime_count": 1},
-                        }
-                    ],
-                    "summary": {"total_pnl": 500.0, "runtime_count": 1},
-                },
-                "page_info": {"next_page_token": None, "total": 1, "page_size": 50},
-                "meta": {"snapshot_at": "2026-09-23T00:00:00Z", "surfaces": {}},
-            }
-
         app.include_router(
             create_performance_attribution_router(
                 extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
                 require_read_role=lambda *a, **kw: None,
                 bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
-                pm12_performance_attribution_response=_mock_response,
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
                 attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
             )
         )
         client = TestClient(app)
-        res = client.get("/bff/management/performance-attribution")
+        res = client.get("/bff/management/performance-attribution?dimension=persona")
         assert res.status_code == 200
         body = res.json()
-        assert "data" in body
+
+        assert body["data"]["items"] == direct_res["data"]["items"]
+        assert body["data"]["summary"] == direct_res["data"]["summary"]
+        assert body["meta"]["surfaces"]["performance_attribution"]["status"] == direct_res["meta"]["surfaces"]["performance_attribution"]["status"] == "ok"
+        assert body["meta"]["surfaces"]["performance_attribution"]["source"] == direct_res["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
+        assert len(body["data"]["items"]) == 1
+        assert body["data"]["items"][0]["dimension_key"] == "p-1"
         assert body["data"]["summary"]["total_pnl"] == 500.0
+
+    def test_performance_attribution_fresh_path(self) -> None:
+        store = _FakePerformanceStore(status="fresh")
+        app = FastAPI()
+        app.include_router(
+            create_performance_attribution_router(
+                extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
+                require_read_role=lambda *a, **kw: None,
+                bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
+                attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+            )
+        )
+        client = TestClient(app)
+        res = client.get("/bff/management/performance-attribution?dimension=persona")
+        assert res.status_code == 200
+        body = res.json()
+        perf = body["meta"]["surfaces"]["performance_attribution"]
+        assert perf["status"] == "ok"
+        assert perf["source"] == "bff_composed"
+        assert perf["coverage"] == 1.0
+        assert perf["missing_bindings"] is False
+        assert len(body["data"]["items"]) == 1
+        assert body["data"]["summary"]["total_pnl"] == 500.0
+
+    def test_performance_attribution_degraded_path(self) -> None:
+        store = _FakePerformanceStore(status="degraded")
+        app = FastAPI()
+        app.include_router(
+            create_performance_attribution_router(
+                extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
+                require_read_role=lambda *a, **kw: None,
+                bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
+                attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+            )
+        )
+        client = TestClient(app)
+        res = client.get("/bff/management/performance-attribution?dimension=persona")
+        assert res.status_code == 200
+        body = res.json()
+        perf = body["meta"]["surfaces"]["performance_attribution"]
+        assert perf["status"] == "degraded"
+
+    def test_performance_attribution_unavailable_path(self) -> None:
+        direct_res = pm12_performance_attribution_response(
+            dimensions=["persona"],
+            period="latest",
+            page_token=None,
+            page_size=50,
+            tenant_id="tenant-alpha",
+            read_store=object(),
+        )
+        app = FastAPI()
+        app.include_router(
+            create_performance_attribution_router(
+                extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
+                require_read_role=lambda *a, **kw: None,
+                bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=object(), **kw),
+                attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+            )
+        )
+        client = TestClient(app)
+        res = client.get("/bff/management/performance-attribution?dimension=persona")
+        assert res.status_code == 200
+        body = res.json()
+
+        perf = body["meta"]["surfaces"]["performance_attribution"]
+        assert perf["status"] == "unavailable"
+        assert perf["source"] == "bff_composed"
+        assert perf["coverage"] == 0.0
+        assert perf["missing_bindings"] is True
+        assert body["meta"]["surfaces"]["runtime_bindings"]["source"] == "missing"
+        assert body["meta"]["surfaces"]["runtime_bindings"]["status"] == "unavailable"
+        assert len(body["data"]["items"]) == 0
+
+        assert direct_res["meta"]["surfaces"]["performance_attribution"]["status"] == "unavailable"
+        assert direct_res["meta"]["surfaces"]["performance_attribution"]["coverage"] == 0.0
+        assert direct_res["meta"]["surfaces"]["performance_attribution"]["missing_bindings"] is True
+
+    def test_performance_attribution_cross_tenant_isolation(self) -> None:
+        store = _FakePerformanceStore()
+        app = FastAPI()
+        app.include_router(
+            create_performance_attribution_router(
+                extract_identity=lambda auth=None, **_: OperatorIdentity(
+                    operator_id="op-alpha" if "alpha" in str(auth) else "op-beta",
+                    claims={"tenant_id": "tenant-alpha" if "alpha" in str(auth) else "tenant-beta"},
+                    roles=["operator", "viewer"],
+                ),
+                require_read_role=lambda *a, **kw: None,
+                bff_me_tenant_payload=lambda identity, **kw: {"id": identity.claims["tenant_id"], "tenant_id": identity.claims["tenant_id"]},
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
+                attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+            )
+        )
+        client = TestClient(app)
+
+        res_alpha = client.get(
+            "/bff/management/performance-attribution?dimension=persona",
+            headers={"Authorization": "Bearer alpha"},
+        )
+        assert res_alpha.status_code == 200
+        body_alpha = res_alpha.json()
+        assert [it["dimension_key"] for it in body_alpha["data"]["items"]] == ["p-1"]
+        assert body_alpha["data"]["summary"]["total_pnl"] == 500.0
+
+        res_beta = client.get(
+            "/bff/management/performance-attribution?dimension=persona",
+            headers={"Authorization": "Bearer beta"},
+        )
+        assert res_beta.status_code == 200
+        body_beta = res_beta.json()
+        assert [it["dimension_key"] for it in body_beta["data"]["items"]] == ["p-2"]
+        assert body_beta["data"]["summary"]["total_pnl"] == 250.0
