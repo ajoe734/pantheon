@@ -13928,6 +13928,98 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         target_ids = {t["id"] for t in targets}
         self.assertEqual(target_ids, {"codex", "codex2"})
 
+    def test_zero_fleet_assignment_refresh_targets_covers_candidate_owner_reviewer_chain(
+        self,
+    ) -> None:
+        """OPS-ZERO-WORKER-HEALTH-REFRESH-SELFLOCK-001 (review-rejected PR
+        #5959, head ea39fdbfa9fb9c79251e6a62c7fccccdf8a1239f): the widened
+        scan must also walk the reviewer fallback chain rooted at each
+        *candidate* owner it discovers -- exactly what
+        ``plan_task_assignment_pair``/``reviewer_fallback_search_order`` do
+        -- and at the pending receipt's previous owner/reviewer, not only the
+        incumbent reviewer.
+
+        Deterministic isolated repro from the independent review:
+        owner_fallbacks Codex->[Codex2], reviewer_fallbacks Codex2->[Claude2]
+        (no chain rooted at Claude itself). Scanning reviewer fallbacks only
+        from the incumbent reviewer (Claude) never reaches Claude2, even
+        though ``plan_task_assignment_pair`` reaches it as soon as Codex2
+        becomes the candidate owner: three ``build_dispatch_plan`` passes
+        would return ``refresh_targets=[]`` for Claude2 and a viable recovery
+        (Codex2, Claude2) stayed self-locked behind stale evidence.
+        """
+
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["agents"]["claude2"] = {
+            "display_name": "Claude2",
+            "provider": "claude2",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-account",
+        }
+        self.config["providers"]["claude2"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude2-account",
+        }
+        self.config["worker_reassignment"]["owner_fallbacks"] = {"Codex": ["Codex2"]}
+        self.config["worker_reassignment"]["reviewer_fallbacks"] = {"Codex2": ["Claude2"]}
+
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        self.state["delivery_health"]["endpoints"]["claude2"] = {
+            "state": "expired",
+            "valid_until": expired_at,
+        }
+
+        task = task_fixture(
+            "TASK-RECOVERY", status="in_progress", owner="Codex", reviewer="Claude"
+        )
+        task[supervisor.WORKER_RECOVERY_TASK_KEY] = self._worker_recovery_pointer()
+        status_snapshot = {
+            "tasks": [task],
+            "worker_recovery_receipts": {
+                "receipt-1": {
+                    "receipt_id": "receipt-1",
+                    "task_id": "TASK-RECOVERY",
+                    "status": "pending",
+                    "task_generation": 1,
+                    "recovery_role": "owner",
+                    "worker": {"agent": "Codex"},
+                    "previous": {"owner": "Codex", "reviewer": "Claude"},
+                }
+            },
+        }
+
+        targets = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=0
+        )
+        target_ids = {t["id"] for t in targets}
+        self.assertIn("claude2", target_ids)
+
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            self.state,
+            status_snapshot,
+            queue_snapshot=[],
+            live_total=0,
+        )
+        plan_target_ids = {t["id"] for t in plan.get("health_refresh_targets", [])}
+        self.assertIn("claude2", plan_target_ids)
+
+        # A running fleet must gain no extra probes from this path.
+        no_extra = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=1
+        )
+        self.assertEqual(no_extra, [])
+
     def test_large_queue_records_reconciliation_is_bounded(self) -> None:
         """Reconciliation and queue scanning remain bounded with 1600+ historic records."""
         events: dict[str, dict[str, Any]] = {}

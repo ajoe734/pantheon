@@ -10858,25 +10858,89 @@ def zero_fleet_assignment_refresh_targets(
         if not owner_side and not reviewer_side:
             continue
 
+        # ``plan_task_assignment_pair`` and ``worker_recovery_assignment_pair``
+        # do not only walk the fallback graph from the current canonical
+        # owner/reviewer -- a pending recovery receipt also seeds its search
+        # from the pre-loss "previous" owner/reviewer and excludes the lost
+        # agent itself. Mirror that here so this demand scan discovers every
+        # root the real planners can actually use, not just the ones the
+        # unavailable-fallback scan already widens to once an incumbent is
+        # terminally unavailable.
+        receipt = _canonical_worker_recovery_receipt(status, task) if pending_recovery else None
+        previous = receipt.get("previous") if isinstance(receipt, Mapping) else None
+        previous = previous if isinstance(previous, Mapping) else {}
+        previous_owner = canonical_agent_name(config, str(previous.get("owner") or ""))
+        previous_reviewer = canonical_agent_name(config, str(previous.get("reviewer") or ""))
+        lost_agent = (
+            canonical_agent_name(
+                config, str((receipt.get("worker") or {}).get("agent") or "")
+            )
+            if isinstance(receipt, Mapping)
+            else ""
+        )
+
+        owner_candidates: list[str] = []
         if owner_side:
             demand_refresh(owner)
+            owner_exclude = {owner, reviewer} | ({lost_agent} if lost_agent else set())
+            owner_roots = [name for name in (owner, previous_owner) if name]
             for candidate in reassignment_candidate_order(
                 config,
                 settings.get("owner_fallbacks", {}) or {},
-                roots=[owner],
-                exclude={owner, reviewer},
+                roots=owner_roots,
+                exclude=owner_exclude,
             ):
                 demand_refresh(candidate)
+                owner_candidates.append(candidate)
 
         if reviewer_side:
             demand_refresh(reviewer)
-            for candidate in reassignment_candidate_order(
-                config,
-                settings.get("reviewer_fallbacks", {}) or {},
-                roots=[reviewer],
-                exclude={owner, reviewer},
-            ):
-                demand_refresh(candidate)
+            # ``plan_task_assignment_pair`` derives its reviewer fallback
+            # order per candidate owner via ``reviewer_fallback_search_order``
+            # (roots: reviewer, owner, candidate_owner) -- a reviewer-fallback
+            # mapping keyed on the *candidate* owner (for example
+            # Codex2 -> [Claude2]) would otherwise never surface here even
+            # though the real planner walks it for every candidate owner it
+            # considers, including ones only ``owner_side`` discovered above.
+            seen_reviewer_candidates: set[str] = set()
+
+            def demand_reviewer_chain(candidate_owner: str) -> None:
+                for reviewer_candidate in reviewer_fallback_search_order(
+                    config,
+                    settings,
+                    reviewer=reviewer,
+                    owner=owner,
+                    candidate_owner=candidate_owner,
+                ):
+                    key = reviewer_candidate.casefold()
+                    if key in seen_reviewer_candidates:
+                        continue
+                    seen_reviewer_candidates.add(key)
+                    demand_refresh(reviewer_candidate)
+
+            demand_reviewer_chain(owner)
+            for candidate in owner_candidates:
+                demand_reviewer_chain(candidate)
+
+            # ``worker_recovery_assignment_pair``'s reviewer-role search also
+            # seeds reviewer fallbacks from the receipt's previous
+            # owner/reviewer roots, excluding the lost agent.
+            reviewer_recovery_roots = [
+                name for name in (reviewer, owner, previous_reviewer, previous_owner) if name
+            ]
+            if previous_reviewer or previous_owner:
+                reviewer_exclude = {reviewer, owner} | ({lost_agent} if lost_agent else set())
+                for candidate in reassignment_candidate_order(
+                    config,
+                    settings.get("reviewer_fallbacks", {}) or {},
+                    roots=reviewer_recovery_roots,
+                    exclude=reviewer_exclude,
+                ):
+                    key = candidate.casefold()
+                    if key in seen_reviewer_candidates:
+                        continue
+                    seen_reviewer_candidates.add(key)
+                    demand_refresh(candidate)
     return targets
 
 

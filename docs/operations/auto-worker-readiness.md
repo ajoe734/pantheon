@@ -264,6 +264,25 @@ evidence), a pending worker-recovery receipt's retry sees the freshly
 probed evidence in the same cycle that demanded it -- it does not have to
 wait for the next cycle to notice the refreshed candidate.
 
+The first cut of `zero_fleet_assignment_refresh_targets` still self-locked
+one case (independent review of PR #5959, head
+`ea39fdbfa9fb9c79251e6a62c7fccccdf8a1239f`): it walked
+`reviewer_fallbacks` rooted only at the incumbent reviewer, but
+`plan_task_assignment_pair` derives its reviewer order per *candidate owner*
+via `reviewer_fallback_search_order` (`supervisor.py:5939`, roots
+`reviewer`/`owner`/`candidate_owner`), and `worker_recovery_assignment_pair`
+also seeds owner and reviewer searches from a pending receipt's `previous`
+owner/reviewer, excluding the lost agent. A `reviewer_fallbacks` entry keyed
+only on a candidate owner -- for example `Codex2 -> [Claude2]` with no entry
+for the incumbent reviewer -- was therefore never discovered, leaving a
+viable `(Codex2, Claude2)` recovery pair self-locked behind stale `Claude2`
+evidence. `zero_fleet_assignment_refresh_targets` now calls
+`reviewer_fallback_search_order` once for the incumbent owner and once for
+every owner-fallback candidate it discovers, and resolves the pending
+receipt via `_canonical_worker_recovery_receipt` to seed both walks from its
+`previous` owner/reviewer -- reusing the same candidate traversal the real
+planners use instead of a second, narrower copy of it.
+
 ### Authority boundary
 
 These automated recovery lanes reuse existing TaskStore mutations (canonical CAS
