@@ -251,17 +251,28 @@ def _nudge_diagnostic_summary(
     if not nudge_result:
         return None
 
+    connector_suffix = (
+        f" (connector_candidates={sorted(connector_candidates)})"
+        if connector_candidates
+        else ""
+    )
+
     transport_error = nudge_result.get("transport_error")
     if transport_error:
-        return f"run-scheduled nudge transport error: {transport_error}"
+        return (
+            f"run-scheduled nudge transport error{connector_suffix}: {transport_error}"
+        )
 
     status = nudge_result.get("http_status")
     if status in (401, 403):
         body = nudge_result.get("body") or {}
         detail = body.get("detail") if isinstance(body, Mapping) else None
-        return f"run-scheduled nudge HTTP {status}: {detail or body}"
+        return f"run-scheduled nudge HTTP {status}{connector_suffix}: {detail or body}"
     if status is not None and status != 200:
-        return f"run-scheduled nudge HTTP {status}: {nudge_result.get('body')}"
+        return (
+            f"run-scheduled nudge HTTP {status}{connector_suffix}: "
+            f"{nudge_result.get('body')}"
+        )
 
     failed = nudge_result.get("failed") or []
     if not failed:
@@ -314,6 +325,7 @@ def ensure_dev_market_snapshot_ready(
     )
     last_reason = "market_snapshot_not_found"
     last_detail = f"snapshot for {symbol} was not found"
+    last_nudge_diagnostic: str | None = None
 
     while True:
         status, body = _get_json(snapshot_url, timeout_seconds=request_timeout_seconds)
@@ -366,8 +378,19 @@ def ensure_dev_market_snapshot_ready(
                 nudge_result, connector_candidates=connector_candidates
             )
             if nudge_diagnostic:
+                # A fresh actionable diagnostic replaces whatever was
+                # captured on a prior poll.
+                last_nudge_diagnostic = nudge_diagnostic
+            if last_nudge_diagnostic:
+                # Keep surfacing the latest actionable nudge failure even
+                # when this poll's own nudge was a clean no-op/skip (for
+                # example run_scheduled_connectors skipping a connector
+                # that is already mid-run from the prior poll's nudge) --
+                # see DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 AC2, where
+                # dropping it here made a real provider failure disappear
+                # behind a later "no failures reported" poll.
                 last_reason = "ingest_nudge_failed"
-                last_detail = f"{last_detail}; {nudge_diagnostic}"
+                last_detail = f"{last_detail}; {last_nudge_diagnostic}"
 
         if monotonic() >= deadline:
             raise BootstrapError(
