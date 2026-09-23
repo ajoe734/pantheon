@@ -13,18 +13,18 @@ from typing import Any, Dict, List, Optional
 import uuid
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
-import importlib
-
-def _get_bff_main() -> Any:
-    return importlib.import_module("services.control_plane.bff.main")
 from services.control_plane.bff.agora.performance.service import (
     pm12_performance_attribution_response,
+    pm12_performance_attribution_sources,
     canonical_performance_snapshot_meta,
     canonical_performance_aggregate_group_surface,
     canonical_performance_ranking_source_surface,
+)
+from services.control_plane.bff.core.app_factory import (
+    create_assistant_management_router,
 )
 from services.control_plane.bff.assistant.management_service import (
     ManagementAiConversationStore,
@@ -78,6 +78,7 @@ from services.control_plane.bff.models import (
 )
 from services.control_plane.bff.personas.service import (
     _filter_by_common_identifiers,
+    _list_persona_records,
 )
 
 
@@ -649,6 +650,85 @@ class TestPersonasCommonIdentifiersSeam:
 
 
 # ---------------------------------------------------------------------------
+# Personas Owner Failure & Composition Degradation Seam Tests
+# ---------------------------------------------------------------------------
+
+
+class _FailingPersonaReadStore:
+    """Store whose list_personas raises HTTPException(503)."""
+
+    def __init__(self, status_code: int = 503, detail: str = "Persona read store unavailable") -> None:
+        self.status_code = status_code
+        self.detail = detail
+
+    def list_personas(self, **_: Any) -> List[Dict[str, Any]]:
+        raise HTTPException(status_code=self.status_code, detail=self.detail)
+
+
+class _FailingProvisioningStore:
+    """Provisioning store whose list methods raise RuntimeError."""
+
+    def list_all(self) -> List[Any]:
+        raise RuntimeError("Provisioning store connection timed out")
+
+    def list_by_tenant(self, tenant: str) -> List[Any]:
+        raise RuntimeError("Provisioning store connection timed out")
+
+
+class TestPersonasOwnerFailureCompositionSeam:
+    """Verifies that persona owner and provisioning failures propagate truthfully
+
+    without being caught and silently converted into empty lists.
+    """
+
+    def test_list_persona_records_propagates_read_store_http_exception_503(self) -> None:
+        failing_store = _FailingPersonaReadStore(status_code=503, detail="Persona read store unavailable")
+        with pytest.raises(HTTPException) as exc_info:
+            _list_persona_records(read_store=failing_store)
+        assert exc_info.value.status_code == 503
+        assert "Persona read store unavailable" in str(exc_info.value.detail)
+
+    def test_list_persona_records_propagates_provisioning_store_failure_503(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "services.control_plane.bff.personas.service._persona_provisioning_store",
+            lambda: _FailingProvisioningStore(),
+        )
+        store = _FakePerformanceStore()
+        with pytest.raises(HTTPException) as exc_info:
+            _list_persona_records(read_store=store)
+        assert exc_info.value.status_code == 503
+        detail = exc_info.value.detail
+        assert "Persona durable readback is unavailable" in str(detail)
+        assert "persona_provisioning_store" in str(detail)
+
+    def test_management_ai_context_observes_failing_persona_owner_error(self) -> None:
+        from services.control_plane.bff.management_read_models.service import ManagementService
+
+        failing_store = _FailingPersonaReadStore(status_code=503, detail="Downstream persona failure")
+        mgmt_service = ManagementService()
+        records, obs = mgmt_service.get_context_personas(
+            lambda: _list_persona_records(read_store=failing_store)
+        )
+        assert records == []
+        assert obs["status"] == "unavailable"
+        assert obs["source_kind"] == "unavailable"
+        assert "personas read failed" in obs["degradation_reason"]
+        assert "503" in obs["degradation_reason"]
+
+    def test_performance_attribution_sources_propagates_failing_persona_owner(self) -> None:
+        store = _FakePerformanceStore()
+        failing_store = _FailingPersonaReadStore(status_code=503, detail="Attribution persona read error")
+        with pytest.raises(HTTPException) as exc_info:
+            pm12_performance_attribution_sources(
+                tenant_id="tenant-alpha",
+                read_store=store,
+                list_persona_records=lambda tid: _list_persona_records(tid, read_store=failing_store),
+            )
+        assert exc_info.value.status_code == 503
+        assert "Attribution persona read error" in str(exc_info.value.detail)
+
+
+# ---------------------------------------------------------------------------
 # Governance Timeout Seam Tests
 # ---------------------------------------------------------------------------
 
@@ -748,7 +828,7 @@ class TestPerformanceAttributionMountedComposition:
                 extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
                 require_read_role=lambda *a, **kw: None,
                 bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
-                pm12_performance_attribution_response=lambda **kw: _get_bff_main()._pm12_performance_attribution_response(read_store=store, **kw),
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
                 attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
             )
         )
@@ -793,7 +873,7 @@ class TestPerformanceAttributionMountedComposition:
                 extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
                 require_read_role=lambda *a, **kw: None,
                 bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
-                pm12_performance_attribution_response=lambda **kw: _get_bff_main()._pm12_performance_attribution_response(read_store=store, **kw),
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
                 attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
             )
         )
@@ -831,7 +911,7 @@ class TestPerformanceAttributionMountedComposition:
                 extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
                 require_read_role=lambda *a, **kw: None,
                 bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
-                pm12_performance_attribution_response=lambda **kw: _get_bff_main()._pm12_performance_attribution_response(read_store=store, **kw),
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
                 attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
             )
         )
@@ -865,7 +945,7 @@ class TestPerformanceAttributionMountedComposition:
                 extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
                 require_read_role=lambda *a, **kw: None,
                 bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
-                pm12_performance_attribution_response=lambda **kw: _get_bff_main()._pm12_performance_attribution_response(read_store=object(), **kw),
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=object(), **kw),
                 attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
             )
         )
@@ -899,7 +979,7 @@ class TestPerformanceAttributionMountedComposition:
                 ),
                 require_read_role=lambda *a, **kw: None,
                 bff_me_tenant_payload=lambda identity, **kw: {"id": identity.claims["tenant_id"], "tenant_id": identity.claims["tenant_id"]},
-                pm12_performance_attribution_response=lambda **kw: _get_bff_main()._pm12_performance_attribution_response(read_store=store, **kw),
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
                 attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
             )
         )
@@ -1005,7 +1085,30 @@ class TestAssistantManagementSeamComposition:
                 created_at=now,
             )
 
-            client = TestClient(_get_bff_main().app, raise_server_exceptions=False)
+            app = FastAPI()
+
+            def _handle_list(request: Request):
+                return management_ai_list_conversations(
+                    identity=identity,
+                    caller_tenant_id=request.headers.get("X-Tenant-Id") or "tenant-alpha",
+                )
+
+            def _handle_get(session_id: str, request: Request):
+                return management_ai_get_conversation(
+                    session_id=session_id,
+                    identity=identity,
+                    caller_tenant_id=request.headers.get("X-Tenant-Id") or "tenant-alpha",
+                )
+
+            app.include_router(
+                create_assistant_management_router(
+                    {
+                        "bff_management_ai_conversations": _handle_list,
+                        "bff_management_ai_conversation": _handle_get,
+                    }
+                )
+            )
+            client = TestClient(app, raise_server_exceptions=False)
             headers = {"Authorization": "Bearer op-user:operator", "X-Tenant-Id": "tenant-alpha"}
 
             # Read conversations list via mounted route

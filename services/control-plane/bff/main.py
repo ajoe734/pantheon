@@ -261,10 +261,7 @@ def _list_persona_records(
     consumer seams instead of relying on personas/service.py's own module
     fallback."""
     resolved_store = read_store if read_store is not None else globals().get("read_store")
-    try:
-        return _personas_list_persona_records(tenant_id, read_store=resolved_store)
-    except Exception:
-        return []
+    return _personas_list_persona_records(tenant_id, read_store=resolved_store)
 try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
