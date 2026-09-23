@@ -379,7 +379,7 @@
       "adapter": "copilot_local",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
-    "pi_astra": {
+    "piastra": {
       "display_name": "PiAstra",
       "provider": "pi_astra",
       "max_parallel": 1,

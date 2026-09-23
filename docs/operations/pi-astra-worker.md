@@ -1,6 +1,7 @@
 # Pi Astra auto-worker
 
-`PiAstra` is the `pi_astra` logical agent. The supervisor launches Pi in the
+`PiAstra` is the `piastra` logical agent, using provider `pi_astra`.
+The supervisor launches Pi in the
 leased task worktree through the existing `worker_runner`, with its existing
 heartbeat, task binding, process termination, and bubblewrap boundary.
 The adapter calls `openai-codex/gpt-6-astra` with `high` thinking. It does not
@@ -34,7 +35,7 @@ authority.
 
 ## Capacity and account
 
-`agents.pi_astra.max_parallel` is one. On the configured host, the independently
+`agents.piastra.max_parallel` is one. On the configured host, the independently
 logged-in Pi account was compared with the existing Codex account on
 2026-09-23 and matched. Consequently `providers.pi_astra.account` is `codex1`:
 Pi and that Codex lane share its existing account cap of two. Fleet capacity

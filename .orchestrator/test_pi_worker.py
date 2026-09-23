@@ -46,7 +46,7 @@ class PiWorkerTests(unittest.TestCase):
         self.profile = {"cli": "/configured/pi", "agent_dir": str(self.home),
                         "provider": "openai-codex", "model": "gpt-6-astra", "thinking": "high"}
         self.config = {
-            "agents": {"pi_astra": {"display_name": "PiAstra", "provider": "pi_astra", "adapter": "pi", "max_parallel": 1}},
+            "agents": {"piastra": {"display_name": "PiAstra", "provider": "pi_astra", "adapter": "pi", "max_parallel": 1}},
             "providers": {"pi_astra": {"account": "codex1", "delivery_mode": "pi", "pi": self.profile}},
             "paths": {"status_file": str(self.root / "ai-status.json")},
             "provider_auth": {"probe_timeout_seconds": 3},
@@ -87,7 +87,7 @@ class PiWorkerTests(unittest.TestCase):
 
     def test_delivery_preserves_worktree_runtime_identity_and_prompt(self):
         prompt = "--a task with `literal shell text` and $(no expansion)"
-        request = DeliveryRequest(agent_id="pi_astra", provider="pi_astra", delivery_mode="pi",
+        request = DeliveryRequest(agent_id="piastra", provider="pi_astra", delivery_mode="pi",
                                   message=prompt, task_id="PI-TEST", reason="owned_ready_dispatch")
         with (patch("pi_runtime.binary", return_value="/configured/pi"),
               patch.dict(os.environ, {"OPENAI_API_KEY": "parent-key", "CODEX_THREAD_ID": "parent",
@@ -177,7 +177,11 @@ class PiWorkerTests(unittest.TestCase):
 
     def test_configured_capacity_shares_existing_account_cap(self):
         config = json.loads((Path(__file__).parent / "config.json").read_text())
-        self.assertEqual(config["agents"]["pi_astra"]["max_parallel"], 1)
+        self.assertEqual(config["agents"]["piastra"]["max_parallel"], 1)
+        self.assertEqual(supervisor.normalize_agent_id("PiAstra"), "piastra")
+        self.assertEqual(supervisor.agent_provider_key(config, "PiAstra"), "pi_astra")
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "piastra"), 1)
+        self.assertEqual(supervisor.agent_account_id(config, "PiAstra"), "codex1")
         self.assertEqual(config["providers"]["pi_astra"]["account"], config["providers"]["codex"]["account"])
         self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"]["codex1"], 2)
 
