@@ -24,10 +24,13 @@ exact same code path -- no per-transport duplicate.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .management_contracts import ManagementNlUseCaseDeps
 from ..management_nl_command_idempotency import (
+    DEFAULT_STORAGE_PATH as DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
+    ManagementNlCommandIdempotencyStore,
     ManagementNlCommandPayloadConflict,
     ManagementNlCommandRecoveryRequired,
     ManagementNlCommandReservation,
@@ -40,6 +43,56 @@ _ADMISSION_ERRORS = (
     ManagementNlCommandRecoveryRequired,
     ManagementNlCommandStorageError,
 )
+
+_MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
+_MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG: Optional[Tuple[str, float]] = None
+
+
+def get_mgmt_nl_command_recovery_seconds() -> float:
+    raw = os.getenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS",
+        "300",
+    ).strip()
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 300.0
+    return max(value, 0.001)
+
+
+def get_mgmt_nl_command_idempotency_store(
+    *,
+    storage_path: Optional[str] = None,
+    recovery_seconds: Optional[float] = None,
+) -> ManagementNlCommandIdempotencyStore:
+    global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE, _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG
+    resolved_path = (
+        storage_path
+        if storage_path is not None
+        else os.getenv(
+            "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+            DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
+        ).strip()
+    )
+    resolved_recovery = (
+        recovery_seconds
+        if recovery_seconds is not None
+        else get_mgmt_nl_command_recovery_seconds()
+    )
+    config = (resolved_path, resolved_recovery)
+    if _MGMT_NL_COMMAND_IDEMPOTENCY_STORE is None or _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG != config:
+        _MGMT_NL_COMMAND_IDEMPOTENCY_STORE = ManagementNlCommandIdempotencyStore(
+            resolved_path,
+            recovery_seconds=config[1],
+        )
+        _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = config
+    return _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
+
+
+def reset_mgmt_nl_command_idempotency_store() -> None:
+    global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE, _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG
+    _MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
+    _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
 
 
 class ManagementNlUseCase:

@@ -3,32 +3,38 @@
   "title": "Extract the remaining BFF production seams from the composition root",
   "owner": "Antigravity",
   "reviewer": "Codex",
-  "status": "completed",
-  "generated_at": "2026-09-23T03:50:00Z",
+  "status": "ready_for_review",
+  "generated_at": "2026-09-23T04:42:00Z",
   "base_commit": "0348826dbb77c32b44f00d30c864de26f2ff36bf",
-  "anchor_commit": "55af1358206bce304119c216d724a249ffb1b764",
-  "scoped_artifacts": [
-    "services/control-plane/bff/main.py",
+  "anchor_commit": "eeaf50c92aa76937215fee7bacd4cbeff69f80af",
+  "head_commit": "336de22e02540250c27bae793c33cd4266eee1b0",
+  "changed_files": [
+    "docs/deployment/evidence/BFF-MAIN-REMAINING-SEAMS-CORRECTIVE-001/evidence.json",
+    "services/control-plane/bff/agora/performance/service.py",
+    "services/control-plane/bff/assistant/management_service.py",
     "services/control-plane/bff/capital/service.py",
     "services/control-plane/bff/command_adapters/service.py",
     "services/control-plane/bff/governance/service.py",
+    "services/control-plane/bff/main.py",
     "services/control-plane/bff/personas/service.py",
-    "services/control-plane/bff/incidents/service.py",
-    "services/control-plane/bff/tests/test_remaining_main_seam_composition.py",
-    "docs/deployment/evidence/BFF-MAIN-REMAINING-SEAMS-CORRECTIVE-001/evidence.json"
+    "services/control-plane/bff/tests/test_remaining_main_seam_composition.py"
   ],
   "seams_extracted": {
-    "personas": {
-      "target_file": "services/control-plane/bff/personas/service.py",
-      "summary": "Moved _filter_by_common_identifiers and _extract_ids_from_item helpers into personas.service; updated _list_persona_records to accept explicit read_store parameter so main.py cleanly injects dependencies."
-    },
-    "incidents": {
-      "target_file": "services/control-plane/bff/incidents/service.py",
-      "summary": "Consolidated duplicate incident case projection (_project_bff_incident_case) and filter matching (_bff_incident_matches_filters) into incidents.service, delegating _list_bff_incidents and _get_bff_incident to IncidentService."
-    },
     "capital": {
       "target_file": "services/control-plane/bff/capital/service.py",
-      "summary": "Extracted PM12 semantic JSON value canonicalization (_pm12_semantic_json_value), semantic equality comparison (_pm12_semantic_values_match), and stable line assertion hashing (_pm12_allocation_line_assertion_hash) into capital.service; main.py now imports and re-exports these."
+      "summary": "Extracted PM12 semantic JSON value canonicalization (_pm12_semantic_json_value), semantic equality comparison (_pm12_semantic_values_match), and stable line assertion hashing (_pm12_allocation_line_assertion_hash) into capital.service. Eliminated implicit command_executor fallback and effective_payload overrides in write(), restoring fail-closed 503 CapitalAuthorityUnavailable on missing owner mutation method."
+    },
+    "assistant": {
+      "target_file": "services/control-plane/bff/assistant/management_service.py",
+      "summary": "Extracted management command idempotency store, lock, and accessor get_mgmt_nl_command_idempotency_store into assistant.management_service; main.py now delegates directly."
+    },
+    "agora_performance": {
+      "target_file": "services/control-plane/bff/agora/performance/service.py",
+      "summary": "Extracted PM12 performance attribution sources, facts, group/page entries, metrics, data confidence, rows, and response into agora.performance.service; main.py now imports and re-exports these without tenant-dropping TypeError retry fallbacks."
+    },
+    "personas": {
+      "target_file": "services/control-plane/bff/personas/service.py",
+      "summary": "Extracted _filter_by_common_identifiers, _extract_ids_from_item, and promotion review submission projection (_latest_promotion_review_submission, _promotion_review_submission_projection) into personas.service with explicit command_store dependency injection."
     },
     "command_adapters": {
       "target_file": "services/control-plane/bff/command_adapters/service.py",
@@ -65,7 +71,31 @@
     },
     "new_composition_seam_suite": {
       "command": "pytest -v services/control-plane/bff/tests/test_remaining_main_seam_composition.py",
-      "passed": 16,
+      "passed": 18,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "capital_router": {
+      "command": "pytest -q services/control-plane/bff/tests/test_capital_router.py",
+      "passed": 5,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "command_adapters_router": {
+      "command": "pytest -q services/control-plane/bff/tests/test_command_adapters_router.py",
+      "passed": 14,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "pm12_persona_league": {
+      "command": "pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+      "passed": 14,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "persona_router_isolation": {
+      "command": "pytest -q services/control-plane/bff/personas/test_router_isolation.py",
+      "passed": 7,
       "failed": 0,
       "status": "PASS"
     },
@@ -88,17 +118,17 @@
       "failed": 0,
       "status": "PASS"
     },
-    "mgmt_ops_006_operator_actions": {
-      "command": "pytest services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py",
-      "passed": 13,
-      "failed": 0,
-      "status": "PASS"
+    "bounded_terminal_validation_1": {
+      "command": "pytest -q services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/test_architecture_boundaries.py",
+      "passed": 54,
+      "failed": 5,
+      "status": "BASELINE_CONFIRMED"
     },
-    "pm12_portfolio_book_contract": {
-      "command": "pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
-      "passed": 22,
-      "failed": 24,
-      "status": "MATCHES_BASELINE"
+    "bounded_terminal_validation_2": {
+      "command": "pytest -q services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/personas/test_router_isolation.py",
+      "passed": 26,
+      "failed": 3,
+      "status": "BASELINE_CONFIRMED"
     }
   }
 }

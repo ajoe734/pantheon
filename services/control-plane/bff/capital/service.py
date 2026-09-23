@@ -307,20 +307,13 @@ class CapitalService:
     def write(self, operation: str, payload: Dict[str, Any], *, actor_id: str, target_id: Optional[str] = None) -> Dict[str, Any]:
         """Delegate mutation to the Capital owner and preserve its readback shape."""
         authority = self._authority()
-        authorities = [authority]
-        try:
-            from services.control_plane.bff import command_executor
-            if command_executor not in authorities:
-                authorities.append(command_executor)
-        except ImportError:
-            pass
         method_names = {
             "create_pool": ("create_capital_pool", "create_pool"),
             "patch_pool": ("patch_capital_pool", "update_capital_pool", "patch_pool"),
             "pool_action": ("capital_pool_action", "apply_capital_pool_action", "pool_action"),
-            "create_rebalance": ("create_rebalance", "create_capital_rebalance_proposal"),
+            "create_rebalance": ("create_rebalance",),
             "patch_rebalance": ("patch_rebalance", "update_rebalance"),
-            "apply_rebalance": ("apply_rebalance", "apply_rebalance_proposal", "_execute_approved_rebalance_apply"),
+            "apply_rebalance": ("apply_rebalance", "apply_rebalance_proposal"),
             "approve_rebalance": ("approve_rebalance", "approve_rebalance_apply"),
             "sign_rebalance": ("sign_rebalance", "sign_rebalance_apply"),
             "rebalance_action": ("rebalance_action", "apply_rebalance_action"),
@@ -332,17 +325,11 @@ class CapitalService:
                 context["pool_id"] = target_id
             else:
                 context["rebalance_id"] = target_id
-        effective_payload = {
-            "actor_id": actor_id or "operator-bff",
-            "actor_role": "operator",
-            **payload,
-        }
-        for auth in authorities:
-            for method_name in method_names:
-                method = getattr(auth, method_name, None)
-                if callable(method):
-                    result = _call_write(method, effective_payload, context)
-                    return deepcopy(dict(result)) if isinstance(result, Mapping) else {"result": result}
+        for method_name in method_names:
+            method = getattr(authority, method_name, None)
+            if callable(method):
+                result = _call_write(method, payload, context)
+                return deepcopy(dict(result)) if isinstance(result, Mapping) else {"result": result}
         raise CapitalAuthorityUnavailable(
             f"Capital authority does not expose a supported {operation} mutation method"
         )

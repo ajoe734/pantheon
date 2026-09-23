@@ -13142,10 +13142,106 @@ def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, An
     }
 
 
+
+_HUMAN_INBOX_PROMOTION_PRODUCER = "management_quarterly_ranking_recommendation_submit"
+_HUMAN_INBOX_INACTIVE_COMMAND_STATUSES = {
+    "canceled",
+    "cancelled",
+    "expired",
+    "failed",
+    "timed_out",
+    "timeout",
+}
+
+
+def _human_inbox_promotion_recommendation_id(command: Dict[str, Any]) -> str:
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    target = command.get("target") if isinstance(command.get("target"), dict) else {}
+    return str(
+        params.get("recommendation_id")
+        or params.get("recommendationId")
+        or params.get("review_id")
+        or params.get("promotion_review_id")
+        or target.get("id")
+        or ""
+    ).strip()
+
+
+def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
+    if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        return False
+    if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
+        return False
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    target = command.get("target") if isinstance(command.get("target"), dict) else {}
+    recommendation_id = _human_inbox_promotion_recommendation_id(command)
+    review_revision_id = _promotion_review_record_revision_id(command)
+    target_id = str(target.get("id") or "").strip()
+    if (
+        not recommendation_id
+        or target.get("type") != ObjectType.RANKING.value
+        or not review_revision_id
+        or target_id not in {recommendation_id, review_revision_id}
+    ):
+        return False
+    expected_quarter = _promotion_review_quarter_from_id(recommendation_id)
+    quarter = str(params.get("quarter") or "").strip().upper()
+    persona_id = str(params.get("persona_id") or "").strip()
+    action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or ""
+    ).strip()
+    if not expected_quarter or quarter != expected_quarter or not persona_id:
+        return False
+    if action_id not in _PROMOTION_REVIEW_ACTION_IDS:
+        return False
+    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    if ranking_snapshot_id and review_revision_id != _promotion_review_revision_id(
+        recommendation_id,
+        ranking_snapshot_id,
+    ):
+        return False
+    for flag in (
+        "direct_live_capital_mutation",
+        "liveCapitalMutation",
+        "live_capital_mutation",
+        "runtime_mutation",
+    ):
+        if params.get(flag) not in (None, False):
+            return False
+
+    foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
+    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    audit_foundation = audit.get("foundation") if isinstance(audit.get("foundation"), dict) else {}
+    trusted_producer = (
+        foundation.get("trusted_evidence_producer")
+        or audit.get("trusted_evidence_producer")
+        or audit_foundation.get("trusted_evidence_producer")
+    )
+    if trusted_producer == _HUMAN_INBOX_PROMOTION_PRODUCER:
+        return True
+    if foundation.get("admission_route"):
+        return False
+    if not foundation:
+        return True
+    return (
+        params.get("source_type") == "quarterly_ranking_recommendation"
+        and params.get("source_record_id") == recommendation_id
+        and params.get("audit_event") == "quarterly_ranking.recommendation_submitted"
+        and params.get("policy") == "promotion_governance_human_gate_no_direct_live_capital"
+    )
+
+
 # --- _latest_promotion_review_submission ---
-def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, Any]]:
+def _latest_promotion_review_submission(
+    review_id: Any,
+    *,
+    command_store: Optional[Any] = None,
+) -> Optional[Dict[str, Any]]:
     clean_id = _promotion_review_clean_id(review_id)
-    for record in reversed(_get_active_command_store()._get_all_commands()):
+    store = _get_active_command_store(command_store)
+    for record in reversed(store._get_all_commands()):
         if not _human_inbox_trusted_promotion_submission(record):
             continue
         if _promotion_review_record_revision_id(record) == clean_id:
@@ -13158,8 +13254,9 @@ def _promotion_review_submission_projection(
     review_id: Any,
     *,
     include_source_recommendation: bool = False,
+    command_store: Optional[Any] = None,
 ) -> Optional[Dict[str, Any]]:
-    record = _latest_promotion_review_submission(review_id)
+    record = _latest_promotion_review_submission(review_id, command_store=command_store)
     if record is None:
         return None
     params = record.get("params") if isinstance(record.get("params"), dict) else {}

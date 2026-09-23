@@ -521,10 +521,6 @@ from .bootstrap.dependencies import AppDependencies
 
 app_deps = AppDependencies.create_default()
 command_store = app_deps.command_store
-if not hasattr(command_store, "_cache"):
-    command_store._cache = []
-if not hasattr(app_deps.command_store, "_cache"):
-    app_deps.command_store._cache = []
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 agora_audit_store = AgoraAuditStore()
 persona_write_owner = app_deps.persona_write_owner
@@ -7669,586 +7665,118 @@ def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
     if not record_id:
         return None
     return f"{path}/{record_id}"
-_PM12_ATTRIBUTION_DIMENSIONS = ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime")
-def _pm12_metric_or_split(
-    value: Any,
-    fallback: Optional[float],
-    split_count: int,
-) -> Optional[float]:
-    metric = _management_as_float(value)
-    if metric is not None:
-        return metric
-    if fallback is None:
-        return None
-    return round(fallback / max(split_count, 1), 6)
-def _pm12_dimension_key(value: Any) -> str:
-    key = str(value or "").strip()
-    return key if key else "unassigned"
-def _pm12_attribution_dimension_label(
-    dimension: str,
-    key: str,
-    *,
-    personas_by_id: Dict[str, Dict[str, Any]],
-    strategies_by_id: Dict[str, Dict[str, Any]],
-    pools_by_id: Dict[str, Dict[str, Any]],
-) -> str:
-    if key == "unassigned":
-        return "Unassigned"
-    if dimension == "persona":
-        persona = personas_by_id.get(key, {})
-        return str(persona.get("name") or persona.get("display_name") or key)
-    if dimension == "strategy":
-        strategy = strategies_by_id.get(key, {})
-        return str(strategy.get("title") or strategy.get("name") or key)
-    if dimension == "pool":
-        pool = pools_by_id.get(key, {})
-        return str(pool.get("name") or key)
-    return key
-def _pm12_performance_attribution_sources(
-    tenant_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    runtime_bindings = read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
-    deployment_plans = read_store.list_deployment_plans() or []
-    bindings = read_store.list_bindings(include_market_persona_defaults=True) or []
-    capital_pools = read_store.list_capital_pools(include_market_persona_defaults=True) or []
-    clean_tenant = str(tenant_id or "").strip()
-    personas = _list_persona_records(clean_tenant or None)
-    strategies = _list_strategy_summaries()
+from .agora.performance.service import (
+    PM12_ATTRIBUTION_DIMENSIONS as _PM12_ATTRIBUTION_DIMENSIONS,
+    pm12_attribution_data_confidence,
+    pm12_attribution_dimension_label,
+    pm12_attribution_metrics,
+    pm12_dimension_key,
+    pm12_metric_avg,
+    pm12_metric_or_split,
+    pm12_metric_sum,
+    pm12_performance_attribution_facts,
+    pm12_performance_attribution_group_entries,
+    pm12_performance_attribution_page_entries,
+    pm12_performance_attribution_response,
+    pm12_performance_attribution_rows,
+    pm12_performance_attribution_sources,
+)
 
-    plans_by_id = {
-        _management_record_id(plan, "plan_id", "id"): plan
-        for plan in deployment_plans
-        if _management_record_id(plan, "plan_id", "id")
-    }
-    bindings_by_id = {
-        _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id"): binding
-        for binding in bindings
-        if _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id")
-    }
-    pools_by_id = {
-        _management_record_id(pool, "pool_id", "id"): pool
-        for pool in capital_pools
-        if _management_record_id(pool, "pool_id", "id")
-    }
-    personas_by_id = {
-        _management_record_id(persona, "persona_id", "id"): persona
-        for persona in personas
-        if _management_record_id(persona, "persona_id", "id")
-    }
-    strategies_by_id = {
-        _management_record_id(strategy, "strategy_id", "id"): strategy
-        for strategy in strategies
-        if _management_record_id(strategy, "strategy_id", "id")
-    }
 
-    # A single telemetry-list projection is the canonical bounded source for
-    # this aggregate.  Do not issue one record read per runtime when that
-    # projection supplied rows.  The record lookup fallback is retained for
-    # older stores that expose no telemetry-list rows at all (including
-    # isolated legacy fixtures that only expose the historical record lookup).
-    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
-    try:
-        telemetry_summaries = list(read_store.list_telemetry_summaries() or [])
-    except Exception:
-        telemetry_summaries = []
-    has_bulk_telemetry_projection = bool(telemetry_summaries)
-    for telemetry in telemetry_summaries:
-        if not isinstance(telemetry, dict):
-            continue
-        runtime_id = _management_record_id(
-            telemetry,
-            "runtime_id",
-            "runtimeId",
-            "execution_runtime_id",
-            "id",
-        )
-        if runtime_id:
-            telemetry_by_runtime_id[runtime_id] = telemetry
+def _pm12_attribution_dimension_label(dimension: str, raw_key: Any) -> str:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_attribution_dimension_label(dimension, raw_key)
 
-    for runtime in runtime_bindings:
-        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
-        if not runtime_id:
-            continue
-        telemetry = telemetry_by_runtime_id.get(runtime_id)
-        if telemetry is None and not has_bulk_telemetry_projection:
-            telemetry = read_store.get_telemetry_summary(runtime_id)
-        if telemetry is not None:
-            telemetry_by_runtime_id[runtime_id] = telemetry
 
-    return {
-        "tenant_id": clean_tenant or None,
-        "runtime_bindings": runtime_bindings,
-        "deployment_plans": deployment_plans,
-        "bindings": bindings,
-        "capital_pools": capital_pools,
-        "personas": personas,
-        "strategies": strategies,
-        "plans_by_id": plans_by_id,
-        "bindings_by_id": bindings_by_id,
-        "pools_by_id": pools_by_id,
-        "personas_by_id": personas_by_id,
-        "strategies_by_id": strategies_by_id,
-        "telemetry_by_runtime_id": telemetry_by_runtime_id,
-    }
+def _pm12_dimension_key(dimension: str, fact: Dict[str, Any]) -> str:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_dimension_key(dimension, fact)
+
+
+def _pm12_metric_sum(entries: List[Dict[str, Any]], field: str) -> float:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_metric_sum(entries, field)
+
+
+def _pm12_metric_avg(entries: List[Dict[str, Any]], field: str) -> float:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_metric_avg(entries, field)
+
+
+def _pm12_attribution_metrics(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_attribution_metrics(entries)
+
+
+def _pm12_metric_or_split(values: Any) -> List[str]:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_metric_or_split(values)
+
+
+def _pm12_attribution_data_confidence(has_data: bool, snapshot_at: str) -> Dict[str, Any]:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_attribution_data_confidence(has_data, snapshot_at)
+
+
 def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str) -> List[Dict[str, Any]]:
-    facts: List[Dict[str, Any]] = []
-    plans_by_id = sources["plans_by_id"]
-    bindings_by_id = sources["bindings_by_id"]
-    pools_by_id = sources["pools_by_id"]
-    telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
-    scoped_tenant = str(sources.get("tenant_id") or "").strip()
-    personas_by_id = sources["personas_by_id"]
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_performance_attribution_facts(sources, period_key)
 
-    for runtime in sources["runtime_bindings"]:
-        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
-        runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
-        plan_id = _management_record_id(runtime, "plan_id", "deployment_plan_id")
-        plan = plans_by_id.get(plan_id, {})
-        plan_binding_ids = [
-            str(value).strip()
-            for value in (plan.get("binding_ids") or [])
-            if str(value).strip()
-        ]
-        persona_binding_id = (
-            _management_record_id(runtime, "persona_capital_binding_id")
-            or (plan_binding_ids[0] if plan_binding_ids else "")
-        )
-        persona_binding = bindings_by_id.get(persona_binding_id, {})
-        telemetry = telemetry_by_runtime_id.get(runtime_id, {})
-        summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
-        positions = _management_position_records(telemetry) or [{}]
-        split_count = len(positions)
 
-        runtime_pnl = _management_as_float(
-            _management_first_non_empty(telemetry.get("pnl"), summary.get("total_pnl"))
-        )
-        runtime_unrealized_pnl = _management_as_float(
-            _management_first_non_empty(telemetry.get("unrealized_pnl"), summary.get("unrealized_pnl"))
-        )
-        runtime_realized_pnl = _management_as_float(
-            _management_first_non_empty(telemetry.get("realized_pnl"), summary.get("realized_pnl"))
-        )
-        runtime_trades = _management_as_float(
-            _management_first_non_empty(telemetry.get("total_trades"), summary.get("total_trades"))
-        )
-
-        for index, position in enumerate(positions):
-            instrument = _management_nested_dict(position, "instrument", "asset", "contract")
-            mark = _management_nested_dict(position, "mark", "mark_price", "market_price")
-            capital_pool_id = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "capital_pool_id", "pool_id"),
-                    _management_dict_value(runtime, "capital_pool_id", "pool_id"),
-                    _management_dict_value(plan, "capital_pool_id", "target_pool_id", "pool_id"),
-                    _management_dict_value(persona_binding, "capital_pool_id", "pool_id"),
-                )
-                or ""
-            )
-            capital_pool = pools_by_id.get(capital_pool_id, {})
-            canonical_persona_id = str(persona_binding.get("persona_id") or "").strip()
-            if canonical_persona_id:
-                persona_id = canonical_persona_id
-            else:
-                persona_id = str(runtime.get("persona_id") or "").strip()
-            if scoped_tenant and persona_id and persona_id not in personas_by_id:
-                # A request-scoped attribution response may only disclose
-                # runtime facts whose Persona has an explicit matching tenant
-                # admission in the durable directory.
-                continue
-            strategy_id = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "strategy_id", "strategy_ref"),
-                    _management_dict_value(runtime, "strategy_id", "strategy_ref"),
-                    _management_dict_value(plan, "strategy_id", "strategy_ref"),
-                    _management_dict_value(persona_binding, "strategy_id"),
-                )
-                or ""
-            )
-            symbol = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "symbol", "instrument_id", "asset_id", "contract_id"),
-                    _management_dict_value(instrument, "symbol", "instrument_id", "asset_id", "contract_id"),
-                    _management_dict_value(telemetry, "symbol", "instrument_id", "asset_id", "contract_id"),
-                )
-                or ""
-            )
-            broker_id = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "broker_id", "broker", "broker_ref"),
-                    _management_dict_value(telemetry, "broker_id", "broker", "broker_ref"),
-                    _management_dict_value(runtime, "broker_id", "broker", "broker_ref"),
-                    _management_dict_value(plan, "broker_id", "broker", "broker_ref"),
-                )
-                or ""
-            )
-            regime = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "regime", "market_regime", "risk_regime"),
-                    _management_dict_value(telemetry, "regime", "market_regime", "risk_regime"),
-                    _management_dict_value(runtime, "regime", "market_regime", "risk_regime"),
-                    _management_dict_value(plan, "regime", "market_regime", "risk_regime"),
-                )
-                or ""
-            )
-            quantity = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "quantity", "qty", "net_quantity", "position_quantity"),
-                    _management_dict_value(telemetry, "quantity", "position_quantity"),
-                    _management_dict_value(summary, "quantity", "position_quantity"),
-                )
-            )
-            mark_price = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "mark_price", "market_price", "last_price"),
-                    _management_dict_value(mark, "price", "mark_price", "market_price", "last_price"),
-                    _management_dict_value(telemetry, "mark_price", "market_price", "last_price"),
-                    _management_dict_value(summary, "mark_price", "market_price", "last_price"),
-                )
-            )
-            market_value = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "market_value", "value"),
-                    _management_dict_value(telemetry, "market_value"),
-                    _management_dict_value(summary, "market_value"),
-                )
-            )
-            if market_value is None and quantity is not None and mark_price is not None:
-                market_value = round(quantity * mark_price, 6)
-            notional = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "notional", "gross_notional"),
-                    _management_dict_value(telemetry, "notional", "gross_notional"),
-                    _management_dict_value(summary, "notional", "gross_notional"),
-                    market_value,
-                )
-            )
-            if notional is not None:
-                notional = abs(notional)
-            exposure = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "exposure", "gross_exposure"),
-                    _management_dict_value(telemetry, "exposure", "gross_exposure"),
-                    _management_dict_value(summary, "exposure", "gross_exposure"),
-                    notional,
-                )
-            )
-            total_pnl = _pm12_metric_or_split(
-                _management_first_non_empty(
-                    _management_dict_value(position, "total_pnl", "pnl"),
-                    _management_dict_value(position, "realized_plus_unrealized_pnl"),
-                ),
-                runtime_pnl,
-                split_count,
-            )
-            unrealized_pnl = _pm12_metric_or_split(
-                _management_dict_value(position, "unrealized_pnl", "unrealized"),
-                runtime_unrealized_pnl,
-                split_count,
-            )
-            realized_pnl = _pm12_metric_or_split(
-                _management_dict_value(position, "realized_pnl", "realized"),
-                runtime_realized_pnl,
-                split_count,
-            )
-            drawdown = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "drawdown", "max_drawdown"),
-                    _management_dict_value(telemetry, "drawdown"),
-                    _management_dict_value(summary, "max_drawdown"),
-                )
-            )
-            value_at_risk = _management_as_float(
-                _management_first_non_empty(
-                    _management_first_float(
-                        position,
-                        "value_at_risk",
-                        "valueAtRisk",
-                        "var",
-                        "VaR",
-                        "risk.value_at_risk",
-                        "risk.valueAtRisk",
-                        "risk.var",
-                    ),
-                    _management_first_float(
-                        telemetry,
-                        "value_at_risk",
-                        "valueAtRisk",
-                        "var",
-                        "VaR",
-                        "risk.value_at_risk",
-                        "risk.valueAtRisk",
-                        "risk.var",
-                        "summary.value_at_risk",
-                        "summary.valueAtRisk",
-                        "summary.var",
-                    ),
-                )
-            )
-            fill_rate = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "fill_rate"),
-                    _management_dict_value(telemetry, "fill_rate"),
-                    _management_dict_value(summary, "fill_rate"),
-                )
-            )
-            avg_slippage_bps = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "avg_slippage_bps", "slippage_bps"),
-                    _management_dict_value(telemetry, "avg_slippage_bps", "slippage_bps"),
-                    _management_dict_value(summary, "avg_slippage_bps", "slippage_bps"),
-                )
-            )
-            total_trades = _pm12_metric_or_split(
-                _management_dict_value(position, "total_trades", "trade_count", "trades"),
-                runtime_trades,
-                split_count,
-            )
-            collected_at = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "collected_at", "marked_at", "updated_at"),
-                    _management_dict_value(telemetry, "collected_at", "updated_at"),
-                    _management_dict_value(summary, "collected_at", "updated_at"),
-                )
-                or ""
-            )
-
-            facts.append({
-                "id": f"{runtime_id or runtime_binding_id or 'runtime'}:{index}",
-                "period": period_key,
-                "runtime_id": runtime_id,
-                "runtime_binding_id": runtime_binding_id,
-                "deployment_plan_id": plan_id or _management_record_id(plan, "plan_id", "id"),
-                "persona_capital_binding_id": persona_binding_id,
-                "capital_pool_id": capital_pool_id,
-                "capital_pool_name": capital_pool.get("name") or capital_pool_id,
-                "persona_id": persona_id,
-                "strategy_id": strategy_id,
-                "symbol": symbol,
-                "broker_id": broker_id,
-                "regime": regime,
-                "deployment_stage": str(
-                    runtime.get("deployment_stage") or runtime.get("deployment_mode") or plan.get("target_stage") or ""
-                ),
-                "status": str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown")),
-                "total_pnl": total_pnl,
-                "unrealized_pnl": unrealized_pnl,
-                "realized_pnl": realized_pnl,
-                "notional": notional,
-                "market_value": market_value,
-                "exposure": exposure,
-                "drawdown": drawdown,
-                "value_at_risk": value_at_risk,
-                "fill_rate": fill_rate,
-                "avg_slippage_bps": avg_slippage_bps,
-                "total_trades": total_trades,
-                "collected_at": collected_at or None,
-                "telemetry_available": runtime_id in telemetry_by_runtime_id if runtime_id else False,
-                "dimensions": {
-                    "persona": _pm12_dimension_key(persona_id),
-                    "strategy": _pm12_dimension_key(strategy_id),
-                    "pool": _pm12_dimension_key(capital_pool_id),
-                    "asset": _pm12_dimension_key(symbol),
-                    "broker": _pm12_dimension_key(broker_id),
-                    "runtime": _pm12_dimension_key(runtime_id or runtime_binding_id),
-                    "regime": _pm12_dimension_key(regime),
-                },
-            })
-
-    return facts
-def _pm12_metric_sum(facts: List[Dict[str, Any]], field: str) -> Optional[float]:
-    values = [
-        value
-        for value in (_management_as_float(fact.get(field)) for fact in facts)
-        if value is not None
-    ]
-    return round(sum(values), 6) if values else None
-def _pm12_metric_avg(facts: List[Dict[str, Any]], field: str) -> Optional[float]:
-    values = [
-        value
-        for value in (_management_as_float(fact.get(field)) for fact in facts)
-        if value is not None
-    ]
-    return _management_avg(values)
-def _pm12_attribution_metrics(facts: List[Dict[str, Any]]) -> Dict[str, Any]:
-    drawdown_values = [
-        value
-        for value in (_management_as_float(fact.get("drawdown")) for fact in facts)
-        if value is not None
-    ]
-    trade_total = _pm12_metric_sum(facts, "total_trades")
-    runtime_ids = sorted({
-        str(fact.get("runtime_id") or "")
-        for fact in facts
-        if str(fact.get("runtime_id") or "")
-    })
-    telemetry_runtime_ids = sorted({
-        str(fact.get("runtime_id") or "")
-        for fact in facts
-        if str(fact.get("runtime_id") or "") and fact.get("telemetry_available")
-    })
-    return {
-        "runtime_count": len(runtime_ids),
-        "telemetry_runtime_count": len(telemetry_runtime_ids),
-        "holding_count": len(facts),
-        "total_pnl": _pm12_metric_sum(facts, "total_pnl"),
-        "unrealized_pnl": _pm12_metric_sum(facts, "unrealized_pnl"),
-        "realized_pnl": _pm12_metric_sum(facts, "realized_pnl"),
-        "total_notional": _pm12_metric_sum(facts, "notional"),
-        "total_market_value": _pm12_metric_sum(facts, "market_value"),
-        "total_exposure": _pm12_metric_sum(facts, "exposure"),
-        "worst_drawdown": max(drawdown_values) if drawdown_values else None,
-        "average_fill_rate": _pm12_metric_avg(facts, "fill_rate"),
-        "average_slippage_bps": _pm12_metric_avg(facts, "avg_slippage_bps"),
-        "total_trades": int(trade_total) if trade_total is not None else 0,
-        "latest_telemetry_at": _management_latest_timestamp(facts, "collected_at"),
-    }
 def _pm12_performance_attribution_group_entries(
     facts: List[Dict[str, Any]],
     *,
     dimensions: List[str],
 ) -> List[Dict[str, Any]]:
-    total_metrics = _pm12_attribution_metrics(facts)
-    portfolio_pnl = _management_as_float(total_metrics.get("total_pnl"))
-    portfolio_notional = _management_as_float(total_metrics.get("total_notional"))
-    entries: List[Dict[str, Any]] = []
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_performance_attribution_group_entries(facts, dimensions=dimensions)
 
-    for dimension in dimensions:
-        grouped: Dict[str, List[Dict[str, Any]]] = {}
-        for fact in facts:
-            dims = fact.get("dimensions") if isinstance(fact.get("dimensions"), dict) else {}
-            key = _pm12_dimension_key(dims.get(dimension))
-            grouped.setdefault(key, []).append(fact)
 
-        ranked_groups: List[tuple[str, List[Dict[str, Any]], Dict[str, Any]]] = []
-        for key, group_facts in grouped.items():
-            ranked_groups.append((key, group_facts, _pm12_attribution_metrics(group_facts)))
-        ranked_groups.sort(
-            key=lambda item: (
-                _management_as_float(item[2].get("total_pnl")) is None,
-                -(_management_as_float(item[2].get("total_pnl")) or 0.0),
-                item[0],
-            )
-        )
-
-        for rank, (key, group_facts, metrics) in enumerate(ranked_groups, start=1):
-            pnl = _management_as_float(metrics.get("total_pnl"))
-            notional = _management_as_float(metrics.get("total_notional"))
-            pnl_contribution = None
-            if pnl is not None and portfolio_pnl not in (None, 0):
-                pnl_contribution = round(pnl / portfolio_pnl, 6)
-            notional_weight = None
-            if notional is not None and portfolio_notional not in (None, 0):
-                notional_weight = round(notional / portfolio_notional, 6)
-            entries.append({
-                "dimension": dimension,
-                "dimension_key": key,
-                "group_facts": group_facts,
-                "metrics": metrics,
-                "notional_weight": notional_weight,
-                "pnl_contribution_pct": pnl_contribution,
-                "rank": rank,
-            })
-
-    return entries
 def _pm12_performance_attribution_page_entries(
     facts: List[Dict[str, Any]],
     *,
     dimensions: List[str],
     page_token: Optional[str],
     page_size: int,
-) -> tuple[List[Dict[str, Any]], int, Optional[str], Dict[str, Any]]:
-    entries = _pm12_performance_attribution_group_entries(facts, dimensions=dimensions)
-    page_entries, next_page_token = _page_slice(entries, page_token, page_size)
-    return page_entries, len(entries), next_page_token, _pm12_attribution_metrics(facts)
-def _pm12_attribution_data_confidence(metrics: Dict[str, Any]) -> str:
-    holding_count = int(metrics.get("holding_count") or 0)
-    runtime_count = int(metrics.get("runtime_count") or 0)
-    telemetry_runtime_count = int(metrics.get("telemetry_runtime_count") or 0)
-    if holding_count <= 0:
-        return "unavailable"
-    if telemetry_runtime_count <= 0:
-        return "partial"
-    if runtime_count and telemetry_runtime_count < runtime_count:
-        return "degraded"
-    if _management_as_float(metrics.get("total_pnl")) is None:
-        return "partial"
-    return "formal"
+) -> Tuple[List[Dict[str, Any]], int, Optional[str], Dict[str, Any]]:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_performance_attribution_page_entries(
+        facts,
+        dimensions=dimensions,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
 def _pm12_performance_attribution_rows(
     entries: List[Dict[str, Any]],
     *,
     period_key: str,
     sources: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_performance_attribution_rows(
+        entries,
+        period_key=period_key,
+        sources=sources,
+    )
 
-    for entry in entries:
-        dimension = str(entry.get("dimension") or "")
-        key = str(entry.get("dimension_key") or "")
-        group_facts = entry.get("group_facts") if isinstance(entry.get("group_facts"), list) else []
-        metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
-        runtime_ids = sorted({
-            str(fact.get("runtime_id") or "")
-            for fact in group_facts
-            if str(fact.get("runtime_id") or "")
-        })
-        pool_ids = sorted({
-            str(fact.get("capital_pool_id") or "")
-            for fact in group_facts
-            if str(fact.get("capital_pool_id") or "")
-        })
-        persona_ids = sorted({
-            str(fact.get("persona_id") or "")
-            for fact in group_facts
-            if str(fact.get("persona_id") or "")
-        })
-        strategy_ids = sorted({
-            str(fact.get("strategy_id") or "")
-            for fact in group_facts
-            if str(fact.get("strategy_id") or "")
-        })
-        label = _pm12_attribution_dimension_label(
-            dimension,
-            key,
-            personas_by_id=sources["personas_by_id"],
-            strategies_by_id=sources["strategies_by_id"],
-            pools_by_id=sources["pools_by_id"],
-        )
-        data_confidence = _pm12_attribution_data_confidence(metrics)
-        rows.append({
-            "id": f"pm12-performance-attribution-{dimension}-{key}",
-            "dimension": dimension,
-            "dimension_key": key,
-            "label": label,
-            "period": period_key,
-            "data_confidence": data_confidence,
-            "source_status": "ok" if data_confidence == "formal" else data_confidence,
-            "rank": entry.get("rank"),
-            "metrics": {
-                **metrics,
-                "data_confidence": data_confidence,
-                "pnl_contribution_pct": entry.get("pnl_contribution_pct"),
-                "notional_weight": entry.get("notional_weight"),
-            },
-            "total_pnl": metrics["total_pnl"],
-            "pnl_contribution_pct": entry.get("pnl_contribution_pct"),
-            "notional_weight": entry.get("notional_weight"),
-            "runtime_count": metrics["runtime_count"],
-            "holding_count": metrics["holding_count"],
-            "source_refs": {
-                "runtime_ids": runtime_ids,
-                "capital_pool_ids": pool_ids,
-                "persona_ids": persona_ids,
-                "strategy_ids": strategy_ids,
-            },
-            "links": {
-                "runtime": _management_link("/bff/runtimes", key) if dimension == "runtime" else None,
-                "capital_pool": _management_link("/bff/capital-pools", key) if dimension == "pool" else None,
-                "persona": _management_link("/bff/personas", key) if dimension == "persona" else None,
-                "strategy": _management_link("/bff/strategies", key) if dimension == "strategy" else None,
-            },
-        })
 
-    return rows
+def _pm12_performance_attribution_response_impl(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_performance_attribution_response(*args, **kwargs)
+
+
+def _pm12_performance_attribution_sources(
+    tenant_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_performance_attribution_sources(
+        tenant_id=tenant_id,
+        read_store=read_store,
+        list_persona_records=_list_persona_records,
+        list_strategy_summaries=_list_strategy_summaries,
+    )
 def _persona_fleet_runtime_matches(
     runtime_binding: Dict[str, Any],
     *,
@@ -8987,77 +8515,9 @@ def _human_inbox_promotion_recommendation_id(command: Dict[str, Any]) -> str:
         or target.get("id")
         or ""
     ).strip()
-def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
-    if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
-        return False
-    if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
-        return False
-    params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    target = command.get("target") if isinstance(command.get("target"), dict) else {}
-    recommendation_id = _human_inbox_promotion_recommendation_id(command)
-    review_revision_id = _promotion_review_record_revision_id(command)
-    target_id = str(target.get("id") or "").strip()
-    if (
-        not recommendation_id
-        or target.get("type") != ObjectType.RANKING.value
-        or not review_revision_id
-        or target_id not in {recommendation_id, review_revision_id}
-    ):
-        return False
-    expected_quarter = _promotion_review_quarter_from_id(recommendation_id)
-    quarter = str(params.get("quarter") or "").strip().upper()
-    persona_id = str(params.get("persona_id") or "").strip()
-    action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    if not expected_quarter or quarter != expected_quarter or not persona_id:
-        return False
-    if action_id not in _PROMOTION_REVIEW_ACTION_IDS:
-        return False
-    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
-    if ranking_snapshot_id and review_revision_id != _promotion_review_revision_id(
-        recommendation_id,
-        ranking_snapshot_id,
-    ):
-        return False
-    for flag in (
-        "direct_live_capital_mutation",
-        "liveCapitalMutation",
-        "live_capital_mutation",
-        "runtime_mutation",
-    ):
-        if params.get(flag) not in (None, False):
-            return False
-
-    foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
-    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
-    audit_foundation = audit.get("foundation") if isinstance(audit.get("foundation"), dict) else {}
-    trusted_producer = (
-        foundation.get("trusted_evidence_producer")
-        or audit.get("trusted_evidence_producer")
-        or audit_foundation.get("trusted_evidence_producer")
-    )
-    if trusted_producer == _HUMAN_INBOX_PROMOTION_PRODUCER:
-        return True
-    # Legacy submissions from the dedicated semantic route predate the
-    # producer marker. Generic /bff/v1 command admission always persists an
-    # admission_route and must not manufacture viewer-visible inbox rows.
-    if foundation.get("admission_route"):
-        return False
-    if not foundation:
-        # Pre-foundation command-store rows were written by the dedicated
-        # semantic submit route. API-admitted generic commands always carry an
-        # admission_route, so this compatibility path cannot be reached by a
-        # current generic command request.
-        return True
-    return (
-        params.get("source_type") == "quarterly_ranking_recommendation"
-        and params.get("source_record_id") == recommendation_id
-        and params.get("audit_event") == "quarterly_ranking.recommendation_submitted"
-        and params.get("policy") == "promotion_governance_human_gate_no_direct_live_capital"
-    )
+from .personas.service import (
+    _human_inbox_trusted_promotion_submission,
+)
 def _human_inbox_sanitize_promotion_snapshot(
     command: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
@@ -9990,7 +9450,6 @@ def _human_inbox_payload(
         page_size=page_size,
     )
 _MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
-_MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG: Optional[Tuple[str, float]] = None
 _MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
     Optional[ManagementNlCommandReservation]
 ] = ContextVar("management_nl_command_reservation", default=None)
@@ -11928,30 +11387,20 @@ def _mgmt_nl_idempotency_storage_key(
         ]
     )
     return f"management-nl-v2:{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
-def _mgmt_nl_command_recovery_seconds() -> float:
-    raw = os.getenv(
-        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS",
-        "300",
-    ).strip()
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        value = 300.0
-    return max(value, 0.001)
+from .assistant.management_service import (
+    get_mgmt_nl_command_recovery_seconds as _mgmt_nl_command_recovery_seconds,
+    get_mgmt_nl_command_idempotency_store,
+    reset_mgmt_nl_command_idempotency_store,
+)
+
+
 def _mgmt_nl_command_idempotency_store() -> ManagementNlCommandIdempotencyStore:
-    global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE, _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG
-    storage_path = os.getenv(
-        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
-        DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
-    ).strip()
-    config = (storage_path, _mgmt_nl_command_recovery_seconds())
-    if _MGMT_NL_COMMAND_IDEMPOTENCY_STORE is None or _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG != config:
-        _MGMT_NL_COMMAND_IDEMPOTENCY_STORE = ManagementNlCommandIdempotencyStore(
-            storage_path,
-            recovery_seconds=config[1],
-        )
-        _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = config
-    return _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
+    global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
+    if _MGMT_NL_COMMAND_IDEMPOTENCY_STORE is None:
+        reset_mgmt_nl_command_idempotency_store()
+    store = get_mgmt_nl_command_idempotency_store()
+    _MGMT_NL_COMMAND_IDEMPOTENCY_STORE = store
+    return store
 # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: ask and ask/stream are one durable
 # use case with two transports. They share this single canonical scope
 # route name (not the literal per-transport HTTP path) so a client can
@@ -15487,52 +14936,26 @@ def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, An
         "eventual_live_stage": "live",
         "live_requires_separate_human_gate": target_stage != "risk_containment_review",
     }
+from .personas.service import (
+    _latest_promotion_review_submission as _personas_latest_promotion_review_submission,
+    _promotion_review_submission_projection as _personas_promotion_review_submission_projection,
+)
+
+
 def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, Any]]:
-    clean_id = _promotion_review_clean_id(review_id)
-    for record in reversed(command_store._get_all_commands()):
-        if not _human_inbox_trusted_promotion_submission(record):
-            continue
-        if _promotion_review_record_revision_id(record) == clean_id:
-            return record
-    return None
+    return _personas_latest_promotion_review_submission(review_id, command_store=command_store)
+
+
 def _promotion_review_submission_projection(
     review_id: Any,
     *,
     include_source_recommendation: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    record = _latest_promotion_review_submission(review_id)
-    if record is None:
-        return None
-    params = record.get("params") if isinstance(record.get("params"), dict) else {}
-    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    review_revision_id = _promotion_review_record_revision_id(record)
-    projection = {
-        "submitted": True,
-        "submit_status": record.get("status"),
-        "command_id": record.get("command_id"),
-        "commandId": record.get("command_id"),
-        "receipt_id": record.get("command_id"),
-        "submitted_at": record.get("submitted_at"),
-        "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
-        "recommendation_id": params.get("recommendation_id") or params.get("recommendationId"),
-        "review_id": review_revision_id,
-        "promotion_review_id": review_revision_id,
-        "recommendation_action_id": params.get("recommendation_action_id") or params.get("recommendationActionId"),
-        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
-        "quarter": params.get("quarter"),
-        "persona_id": params.get("persona_id"),
-        "stage_from": params.get("stage_from"),
-        "stage_to": params.get("stage_to"),
-        "review_kind": params.get("review_kind"),
-        "human_inbox_id": _promotion_review_target_id(review_revision_id),
-        "live_capital_mutation": False,
-        "requires_human_gate_decision": True,
-    }
-    if include_source_recommendation and isinstance(params.get("source_recommendation"), dict):
-        projection["source_recommendation"] = json.loads(
-            json.dumps(params.get("source_recommendation"))
-        )
-    return projection
+    return _personas_promotion_review_submission_projection(
+        review_id,
+        include_source_recommendation=include_source_recommendation,
+        command_store=command_store,
+    )
 def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
     clean_id = _promotion_review_clean_id(review_id)
     for record in reversed(command_store._get_all_commands()):
@@ -15600,120 +15023,41 @@ def _pm12_performance_attribution_response(
     stage: Optional[str] = None,
     as_of: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    rows_fn: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
-    snapshot_at = utc_now()
-    period_key = str(period or "").strip() or "latest"
-    try:
-        sources = _pm12_performance_attribution_sources(tenant_id)
-    except TypeError:
-        sources = _pm12_performance_attribution_sources()
-    facts = _pm12_performance_attribution_facts(sources, period_key)
-
-    # Apply common filters to facts list
-    facts = _filter_by_common_identifiers(
-        facts,
-        persona_id=persona_id, persona=persona,
-        runtime_id=runtime_id, runtime=runtime,
-        strategy_id=strategy_id, strategy=strategy,
-        capital_pool_id=capital_pool_id, pool=pool,
-        sleeve_id=sleeve_id, sleeve=sleeve,
-        artifact_id=artifact_id, artifact=artifact,
-        broker_id=broker_id, broker=broker,
-        stage=stage, period=period_key, as_of=as_of
-    )
-
-    page_entries, total, next_page_token, aggregate_metrics = _pm12_performance_attribution_page_entries(
-        facts,
+    return _pm12_performance_attribution_response_impl(
         dimensions=dimensions,
+        period=period,
         page_token=page_token,
         page_size=page_size,
+        data_id=data_id,
+        surface_key=surface_key,
+        persona_id=persona_id,
+        persona=persona,
+        runtime_id=runtime_id,
+        runtime=runtime,
+        strategy_id=strategy_id,
+        strategy=strategy,
+        capital_pool_id=capital_pool_id,
+        pool=pool,
+        sleeve_id=sleeve_id,
+        sleeve=sleeve,
+        artifact_id=artifact_id,
+        artifact=artifact,
+        broker_id=broker_id,
+        broker=broker,
+        stage=stage,
+        as_of=as_of,
+        tenant_id=tenant_id,
+        utc_now=utc_now,
+        read_store=read_store,
+        sources_fn=_pm12_performance_attribution_sources,
+        dataset_surface_status_fn=_dataset_surface_status,
+        aggregate_group_surface_fn=_aggregate_group_surface,
+        performance_ranking_source_surface_fn=_performance_ranking_source_surface,
+        snapshot_meta_fn=_snapshot_meta,
+        rows_fn=rows_fn or _pm12_performance_attribution_rows,
     )
-    page_items = _pm12_performance_attribution_rows(
-        page_entries,
-        period_key=period_key,
-        sources=sources,
-    )
-
-    source_surfaces = {
-        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
-        "telemetry_summaries": _dataset_surface_status(
-            "telemetry_summaries",
-            snapshot_at=snapshot_at,
-            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
-            missing_message="Telemetry summaries unavailable for performance attribution runtimes.",
-        ),
-        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
-        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
-        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
-        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
-        "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
-    }
-    attribution_surface = _aggregate_group_surface(
-        surface_key,
-        list(source_surfaces.values()),
-        snapshot_at=snapshot_at,
-        unavailable_message="Performance attribution aggregate unavailable.",
-        degraded_message="Performance attribution is degraded because one or more source surfaces are degraded.",
-    )
-    surfaces = {
-        name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
-        for name, surface in {
-            surface_key: attribution_surface,
-            **source_surfaces,
-        }.items()
-    }
-    if surface_key != "performance_attribution":
-        surfaces["performance_attribution"] = _performance_ranking_source_surface(attribution_surface, snapshot_at=snapshot_at)
-    summary = {
-        "period": period_key,
-        "dimensions": dimensions,
-        "supported_dimensions": list(_PM12_ATTRIBUTION_DIMENSIONS),
-        "row_count": total,
-        "returned_row_count": len(page_items),
-        "runtime_count": aggregate_metrics["runtime_count"],
-        "telemetry_runtime_count": aggregate_metrics["telemetry_runtime_count"],
-        "holding_count": aggregate_metrics["holding_count"],
-        "total_pnl": aggregate_metrics["total_pnl"],
-        "total_notional": aggregate_metrics["total_notional"],
-        "total_exposure": aggregate_metrics["total_exposure"],
-        "worst_drawdown": aggregate_metrics["worst_drawdown"],
-        "average_fill_rate": aggregate_metrics["average_fill_rate"],
-        "average_slippage_bps": aggregate_metrics["average_slippage_bps"],
-        "total_trades": aggregate_metrics["total_trades"],
-        "latest_telemetry_at": aggregate_metrics["latest_telemetry_at"],
-        "basis": "latest_runtime_telemetry_snapshot",
-    }
-    data = {
-        "id": data_id,
-        "period": period_key,
-        "dimensions": dimensions,
-        "items": page_items,
-        "summary": summary,
-    }
-    return {
-        "data": data,
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-            "page_size": page_size,
-        },
-        "meta": {
-            **_snapshot_meta(snapshot_at),
-            "surfaces": surfaces,
-            "composition_sources": [
-                "GET /api/v1/runtime-bindings",
-                "GET /api/v1/telemetry/{runtime_id}/summary",
-                "GET /api/v1/deployment-plans",
-                "GET /api/v1/persona-capital-bindings",
-                "GET /bff/capital-pools",
-                "GET /bff/personas",
-                "GET /bff/strategies",
-            ],
-            "period": period_key,
-            "dimensions": dimensions,
-            "policy": "read_only_performance_attribution",
-        },
-    }
 def _ops_read_model_entry_for_persona(
     persona_id: str,
     *,
@@ -15772,10 +15116,7 @@ def _ops_read_model_entry_for_persona(
         "perf_delta": league_entry.get("perf_delta"),
     }
 
-    try:
-        attribution_sources = _pm12_performance_attribution_sources(clean_tenant or None)
-    except TypeError:
-        attribution_sources = _pm12_performance_attribution_sources()
+    attribution_sources = _pm12_performance_attribution_sources(clean_tenant or None)
     persona_facts = [
         fact
         for fact in _pm12_performance_attribution_facts(attribution_sources, period_key)
