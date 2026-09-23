@@ -16,6 +16,15 @@ from threading import RLock
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 
+def run_management_read(*args: Any, **kwargs: Any) -> Any:
+    try:
+        from ..personas.routes.common import run_management_read as _rmr
+    except (ImportError, ValueError):
+        from personas.routes.common import run_management_read as _rmr
+    return _rmr(*args, **kwargs)
+
+
+
 def _pm12_semantic_json_value(value: Any) -> Any:
     """Canonicalize JSON values without treating booleans as numbers."""
     if value is None:

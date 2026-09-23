@@ -220,8 +220,10 @@ class GovernanceService:
         redact_evidence_refs: Optional[Callable[..., Tuple[List[Dict[str, Any]], int]]] = None,
         capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
         read_surface_state: Optional[Callable[[], str]] = None,
+        command_store: Optional[Any] = None,
     ) -> None:
         self.read_store = read_store
+        self.command_store = command_store
         self.utc_now = utc_now
         self.page_slice = page_slice_fn
         self.submit_action = submit_action
@@ -233,6 +235,40 @@ class GovernanceService:
         self.read_surface_state = read_surface_state or (lambda: "fresh")
         self._created_approvals: Dict[str, Dict[str, Any]] = {}
         self._idempotency: Dict[str, Dict[str, Any]] = {}
+
+    def submitted_promotion_reviews(
+        self,
+        identity: Any = None,
+        *,
+        snapshot_at: str = "",
+    ) -> List[Dict[str, Any]]:
+        from .human_inbox import _submitted_promotion_review_records
+        return _submitted_promotion_review_records(
+            identity=identity,
+            snapshot_at=snapshot_at,
+            command_store=self.command_store,
+        )
+
+    def promotion_review_decision(self, review_id: Any) -> Optional[Dict[str, Any]]:
+        from .promotion_review import _promotion_review_decision_projection
+        return _promotion_review_decision_projection(
+            review_id,
+            command_store=self.command_store,
+        )
+
+    def promotion_review_submission(
+        self,
+        review_id: Any,
+        *,
+        include_source_recommendation: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        from .promotion_review import _promotion_review_submission_projection
+        return _promotion_review_submission_projection(
+            review_id,
+            include_source_recommendation=include_source_recommendation,
+            command_store=self.command_store,
+        )
+
 
     @staticmethod
     def _default_dataset_surface_status(
@@ -909,11 +945,14 @@ class GovernanceService:
         store = self.read_store
         if store is not None and hasattr(store, "list_approval_queue_items"):
             reader: ApprovalQueueReaderPort = store  # type: ignore[assignment]
-            records = reader.list_approval_queue_items(
-                decision_types=decision_types,
-                risk_levels=risk_levels,
-                decision_states=decision_states,
-            )
+            try:
+                records = reader.list_approval_queue_items(
+                    decision_types=decision_types,
+                    risk_levels=risk_levels,
+                    decision_states=decision_states,
+                )
+            except TypeError:
+                records = reader.list_approval_queue_items()
             return list(records or [])
         records = self._call(
             "list_approval_queue_items",
