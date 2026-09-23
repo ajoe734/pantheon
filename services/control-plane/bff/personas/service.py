@@ -2220,9 +2220,19 @@ def _routed_strategies_for_persona(persona_id: str) -> int:
 
 
 # --- _list_persona_records ---
-def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Combine canonical personas with durable store and overlay records created via /bff."""
-    items = list(_get_active_read_store().list_personas() or [])
+def _list_persona_records(
+    tenant_id: Optional[str] = None,
+    *,
+    read_store: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """Combine canonical personas with durable store and overlay records created via /bff.
+
+    ``read_store`` is an explicit override for callers outside an active
+    ``PersonaService`` request context (composition-root callers holding
+    their own live read-store reference); it takes precedence over both the
+    context-bound service and the module-level fallback.
+    """
+    items = list(_get_active_read_store(explicit=read_store).list_personas() or [])
     records_by_id: Dict[str, Dict[str, Any]] = {}
     for item in items:
         if not isinstance(item, dict):

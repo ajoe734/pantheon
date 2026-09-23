@@ -229,7 +229,7 @@ from .personas.service import (
     _checkpoint_persona_provisioning_readback,
     _evaluate_persona_provisioning_status,
     _get_persona_directory_snapshot,
-    _list_persona_records,
+    _list_persona_records as _personas_list_persona_records,
     _normalize_lifecycle_state,
     _normalize_risk_level,
     _openclaw_agent_reconcile_request,
@@ -249,6 +249,15 @@ from .personas.service import (
     _register_persona_cron_required,
     _remove_persona_cron_required,
 )
+def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Composition-root binding: personas/service.py is the sole owner of this
+    projection; explicitly inject the live ``read_store`` global so callers
+    outside an active PersonaService request context (composition-root and
+    seam-test callers) still resolve against whatever store this module
+    currently holds, matching the injected pattern used by the other main.py
+    consumer seams instead of relying on personas/service.py's own module
+    fallback."""
+    return _personas_list_persona_records(tenant_id, read_store=read_store)
 try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
@@ -4598,136 +4607,10 @@ def _performance_ranking_source_surface(
     normalized["coverage"] = 0.0 if status == "unavailable" or source == "missing" else 1.0
     normalized["missing_bindings"] = status == "unavailable" or source == "missing"
     return normalized
-def _extract_ids_from_item(item: Dict[str, Any], keys: List[str]) -> List[str]:
-    extracted = []
-    # 檢查 root 級別
-    for key in keys:
-        val = item.get(key)
-        if val:
-            if isinstance(val, list):
-                extracted.extend([str(v).strip() for v in val if v])
-            else:
-                extracted.append(str(val).strip())
-    # 檢查是否含有 id 欄位 (可能正是這個 entity 本身)
-    if "id" in item:
-        entity_id = str(item["id"]).strip()
-        # 看看是否符合特定 prefix 格式，例如 pool-alpha、persona-xxx 等
-        for key in keys:
-            if key == "persona_id" and "persona" in entity_id:
-                extracted.append(entity_id)
-            elif key == "capital_pool_id" and "pool" in entity_id:
-                extracted.append(entity_id)
-    return list(set(extracted))
-def _filter_by_common_identifiers(
-    items: List[Dict[str, Any]],
-    *,
-    persona_id: Optional[str] = None,
-    persona: Optional[str] = None,
-    runtime_id: Optional[str] = None,
-    runtime: Optional[str] = None,
-    strategy_id: Optional[str] = None,
-    strategy: Optional[str] = None,
-    capital_pool_id: Optional[str] = None,
-    pool: Optional[str] = None,
-    sleeve_id: Optional[str] = None,
-    sleeve: Optional[str] = None,
-    artifact_id: Optional[str] = None,
-    artifact: Optional[str] = None,
-    broker_id: Optional[str] = None,
-    broker: Optional[str] = None,
-    stage: Optional[str] = None,
-    period: Optional[str] = None,
-    as_of: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    # 合併 query 參數值
-    persona_id = _resolve_param(persona_id)
-    persona = _resolve_param(persona)
-    runtime_id = _resolve_param(runtime_id)
-    runtime = _resolve_param(runtime)
-    strategy_id = _resolve_param(strategy_id)
-    strategy = _resolve_param(strategy)
-    capital_pool_id = _resolve_param(capital_pool_id)
-    pool = _resolve_param(pool)
-    sleeve_id = _resolve_param(sleeve_id)
-    sleeve = _resolve_param(sleeve)
-    artifact_id = _resolve_param(artifact_id)
-    artifact = _resolve_param(artifact)
-    broker_id = _resolve_param(broker_id)
-    broker = _resolve_param(broker)
-    stage = _resolve_param(stage)
-    period = _resolve_param(period)
-    as_of = _resolve_param(as_of)
-
-    p_id = persona_id or persona
-    r_id = runtime_id or runtime
-    s_id = strategy_id or strategy
-    cp_id = capital_pool_id or pool
-    sl_id = sleeve_id or sleeve
-    art_id = artifact_id or artifact
-    bk_id = broker_id or broker
-
-    filtered = []
-    for item in items:
-        # 取出該項目內可能包含的各種 ID
-        item_persona_ids = _extract_ids_from_item(item, ["persona_id", "personaId", "persona_ids", "persona"])
-        item_runtime_ids = _extract_ids_from_item(item, ["runtime_id", "runtimeId", "runtime_ids", "runtime"])
-        item_strategy_ids = _extract_ids_from_item(item, ["strategy_id", "strategyId", "strategy_ids", "strategy"])
-        item_pool_ids = _extract_ids_from_item(item, ["capital_pool_id", "capitalPoolId", "capital_pool_ids", "pool_id", "pool_ids", "pool"])
-        item_sleeve_ids = _extract_ids_from_item(item, ["sleeve_id", "sleeveId", "sleeve_ids", "sleeve"])
-        item_artifact_ids = _extract_ids_from_item(item, ["artifact_id", "artifactId", "artifact_ids", "artifact"])
-        item_broker_ids = _extract_ids_from_item(item, ["broker_id", "brokerId", "broker_ids", "broker"])
-
-        # 額外支援在 source_refs, target 或 links 中查找
-        source_refs = item.get("source_refs") or {}
-        if isinstance(source_refs, dict):
-            if "persona_ids" in source_refs:
-                item_persona_ids.extend(source_refs["persona_ids"])
-            if "runtime_ids" in source_refs:
-                item_runtime_ids.extend(source_refs["runtime_ids"])
-            if "strategy_ids" in source_refs:
-                item_strategy_ids.extend(source_refs["strategy_ids"])
-            if "capital_pool_ids" in source_refs:
-                item_pool_ids.extend(source_refs["capital_pool_ids"])
-
-        target = item.get("target") or {}
-        if isinstance(target, dict):
-            t_type = target.get("type")
-            t_id = target.get("id")
-            if t_type == "persona" and t_id:
-                item_persona_ids.append(t_id)
-
-        # 進行匹配 (如果 filter parameter 有給，則 item 的 ID 必須符合)
-        if p_id and not any(str(p_id).strip() == str(val).strip() for val in item_persona_ids):
-            continue
-        if r_id and not any(str(r_id).strip() == str(val).strip() for val in item_runtime_ids):
-            continue
-        if s_id and not any(str(s_id).strip() == str(val).strip() for val in item_strategy_ids):
-            continue
-        if cp_id and not any(str(cp_id).strip() == str(val).strip() for val in item_pool_ids):
-            continue
-        if sl_id and not any(str(sl_id).strip() == str(val).strip() for val in item_sleeve_ids):
-            continue
-        if art_id and not any(str(art_id).strip() == str(val).strip() for val in item_artifact_ids):
-            continue
-        if bk_id and not any(str(bk_id).strip() == str(val).strip() for val in item_broker_ids):
-            continue
-
-        # stage, period, as_of 匹配
-        item_stage = item.get("stage") or item.get("lifecycle_state") or item.get("status")
-        if stage and str(item_stage).strip().lower() != str(stage).strip().lower():
-            continue
-
-        item_period = item.get("period")
-        if period and str(item_period).strip().lower() != str(period).strip().lower():
-            continue
-
-        # as_of 可以檢查 meta 或是 item_as_of
-        item_as_of = item.get("as_of") or item.get("observed_at") or item.get("collected_at")
-        if as_of and str(item_as_of).strip() != str(as_of).strip():
-            continue
-
-        filtered.append(item)
-    return filtered
+from .personas.service import (
+    _extract_ids_from_item,
+    _filter_by_common_identifiers,
+)
 _INCIDENT_SEVERITY_MAP = {
     "critical": "sev1",
     "high": "sev1",
@@ -16787,94 +16670,29 @@ _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 # _GOV_BFF_IDEMPOTENCY defined earlier
 _ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
-_INCIDENT_CASE_ALIAS_FIELDS = {
-    "binding_id": ("binding_id", "runtime_binding_id"),
-    "deployment_stage": ("deployment_stage", "deployment_mode"),
-    "deployment_plan_id": ("deployment_plan_id", "plan_id"),
-    "capital_pool_id": ("capital_pool_id", "affected_pool_id"),
-    "persona_capital_binding_id": ("persona_capital_binding_id",),
-    "artifact_id": ("artifact_id",),
-    "artifact_version": ("artifact_version",),
-    "runtime_id": ("runtime_id",),
-    "trace_id": ("trace_id", "correlation_id"),
-}
-def _first_present(payload: Dict[str, Any], keys: tuple[str, ...]) -> Any:
-    for key in keys:
-        value = payload.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-def _project_bff_incident_case(incident: Dict[str, Any]) -> Dict[str, Any]:
-    payload = dict(incident)
-    incident_id = str(payload.get("incident_id") or payload.get("id") or "")
-    if incident_id:
-        payload["id"] = payload.get("id") or incident_id
-        payload["incident_id"] = incident_id
-
-    for field, aliases in _INCIDENT_CASE_ALIAS_FIELDS.items():
-        value = _first_present(payload, aliases)
-        if value is not None:
-            payload[field] = value
-
-    created_at = payload.get("created_at") or payload.get("opened_at")
-    if created_at:
-        payload["created_at"] = created_at
-        payload["opened_at"] = payload.get("opened_at") or created_at
-
-    if not payload.get("lineage_ref") and payload.get("artifact_id") and payload.get("artifact_version"):
-        payload["lineage_ref"] = f"{payload['artifact_id']}@{payload['artifact_version']}"
-
-    return payload
-def _bff_incident_matches_filters(
-    incident: Dict[str, Any],
-    *,
-    status: Optional[str],
-    severity: Optional[str],
-    affected_pool_id: Optional[str],
-) -> bool:
-    if status:
-        requested_statuses = {token.strip().lower() for token in status.split(",") if token.strip()}
-        if str(incident.get("status") or "").lower() not in requested_statuses:
-            return False
-    if severity and str(incident.get("severity") or "").lower() != severity.lower():
-        return False
-    if affected_pool_id and (incident.get("capital_pool_id") or incident.get("affected_pool_id")) != affected_pool_id:
-        return False
-    return True
+from .incidents.service import IncidentService as _IncidentService
+def _current_read_store_for_legacy_incident_seam() -> Any:
+    return read_store
+def _bff_incident_service() -> _IncidentService:
+    """Composition-root binding: incidents/service.py's IncidentService is the
+    sole owner of Incident-case projection and filtering; inject the live
+    ``read_store``/``_ACKNOWLEDGED_ALERTS`` globals rather than duplicating
+    the projection logic here."""
+    return _IncidentService(
+        get_read_store=_current_read_store_for_legacy_incident_seam,
+        acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
+    )
 def _list_bff_incidents(
     *,
     status: Optional[str] = None,
     severity: Optional[str] = None,
     affected_pool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    incidents = [
-        _project_bff_incident_case(incident)
-        for incident in read_store.list_incidents(
-            status=status,
-            severity=severity,
-            affected_pool_id=affected_pool_id,
-        )
-    ]
-    anchor = [
-        incident
-        for incident in incidents
-        if str(incident.get("incident_id") or incident.get("id") or "") == "inc-20260410-001"
-    ]
-    rest = [
-        incident
-        for incident in incidents
-        if str(incident.get("incident_id") or incident.get("id") or "") != "inc-20260410-001"
-    ]
-    return anchor + sorted(
-        rest,
-        key=lambda item: str(item.get("created_at") or item.get("submitted_at") or ""),
-        reverse=True,
+    return _bff_incident_service().list_bff_incidents(
+        status=status, severity=severity, affected_pool_id=affected_pool_id
     )
 def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
-    incident = read_store.get_incident(incident_id)
-    if incident:
-        return _project_bff_incident_case(incident)
-    return None
+    return _bff_incident_service().get_bff_incident(incident_id)
 def _gov_bff_action_command(
     entity_type: ObjectType,
     entity_id: str,
