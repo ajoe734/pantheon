@@ -185,7 +185,7 @@ def _nudge_run_scheduled(
     source_ingest_url: str,
     controller_token: str,
     request_timeout_seconds: float,
-) -> None:
+) -> dict[str, Any]:
     """Best-effort nudge of a fresh ingest pass for any due connector.
 
     The nudge is a no-op for a connector whose watermark is already inside
@@ -194,9 +194,21 @@ def _nudge_run_scheduled(
     is safe to call whenever the polled snapshot is not yet admissible,
     regardless of whether that is because it has never been ingested (404)
     or because the only snapshot on record has gone stale.
+
+    "Best-effort" governs whether a failed nudge aborts the wait -- it must
+    not, since the caller's own bounded poll loop is what decides when to
+    give up. It must not also mean "silent": a caller-authorization denial
+    (401/403) or a per-connector provider fetch failure reported in the
+    response body's ``failed`` list are real, actionable diagnostics, not
+    noise, so this returns them instead of discarding them in a bare
+    ``except Exception: pass`` -- see DEV-PAPER-FIRST-INGEST-ON-PROVISION-001
+    AC2, where exactly that discard caused a real HTTP 403 authorization
+    denial and a real per-connector provider fetch failure to both surface
+    only as the caller's own generic "market_input_stale" timeout, with the
+    connector identity and actual failure reason lost.
     """
     try:
-        _post_json(
+        status, body = _post_json(
             f"{source_ingest_url.rstrip('/')}/api/source-ingest/run-scheduled",
             {"max_concurrency": 1},
             headers=(
@@ -206,8 +218,68 @@ def _nudge_run_scheduled(
             ),
             timeout_seconds=request_timeout_seconds,
         )
-    except Exception:
-        pass
+        failed = body.get("failed") if isinstance(body, Mapping) else None
+        return {
+            "attempted": True,
+            "http_status": status,
+            "body": body,
+            "failed": failed if isinstance(failed, list) else [],
+            "transport_error": None,
+        }
+    except Exception as exc:
+        return {
+            "attempted": True,
+            "http_status": None,
+            "body": None,
+            "failed": [],
+            "transport_error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _nudge_diagnostic_summary(
+    nudge_result: Mapping[str, Any] | None,
+    *,
+    connector_candidates: Sequence[str] = (),
+) -> str | None:
+    """Extract a connector identity plus HTTP/provider/transport reason.
+
+    Returns None when the nudge outcome carries nothing actionable (a clean
+    HTTP 200 with no per-connector failures), so the caller's own
+    market-snapshot-derived reason (market_input_stale, etc.) stays the
+    surfaced diagnostic in that unchanged case.
+    """
+    if not nudge_result:
+        return None
+
+    transport_error = nudge_result.get("transport_error")
+    if transport_error:
+        return f"run-scheduled nudge transport error: {transport_error}"
+
+    status = nudge_result.get("http_status")
+    if status in (401, 403):
+        body = nudge_result.get("body") or {}
+        detail = body.get("detail") if isinstance(body, Mapping) else None
+        return f"run-scheduled nudge HTTP {status}: {detail or body}"
+    if status is not None and status != 200:
+        return f"run-scheduled nudge HTTP {status}: {nudge_result.get('body')}"
+
+    failed = nudge_result.get("failed") or []
+    if not failed:
+        return None
+    candidates = set(connector_candidates)
+    relevant = [
+        entry
+        for entry in failed
+        if isinstance(entry, Mapping)
+        and (not candidates or entry.get("connector_id") in candidates)
+    ]
+    target = relevant or [entry for entry in failed if isinstance(entry, Mapping)]
+    if not target:
+        return None
+    entries = "; ".join(
+        f"{entry.get('connector_id')}: {entry.get('error')}" for entry in target
+    )
+    return f"run-scheduled reported connector failure(s): {entries}"
 
 
 def ensure_dev_market_snapshot_ready(
@@ -218,6 +290,7 @@ def ensure_dev_market_snapshot_ready(
     poll_seconds: float = 2.0,
     request_timeout_seconds: float = 10.0,
     controller_token: str = "",
+    connector_candidates: Sequence[str] = (),
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
@@ -284,11 +357,17 @@ def ensure_dev_market_snapshot_ready(
             last_detail = f"source-ingest responded with HTTP {status}: {body}"
 
         if needs_nudge:
-            _nudge_run_scheduled(
+            nudge_result = _nudge_run_scheduled(
                 source_ingest_url=source_ingest_url,
                 controller_token=controller_token,
                 request_timeout_seconds=request_timeout_seconds,
             )
+            nudge_diagnostic = _nudge_diagnostic_summary(
+                nudge_result, connector_candidates=connector_candidates
+            )
+            if nudge_diagnostic:
+                last_reason = "ingest_nudge_failed"
+                last_detail = f"{last_detail}; {nudge_diagnostic}"
 
         if monotonic() >= deadline:
             raise BootstrapError(
@@ -586,6 +665,14 @@ def ensure_paper_baseline(
             controller_token=provisioning_controller_token,
             request_timeout_seconds=request_timeout_seconds,
         )
+        connector_candidates = [
+            candidate
+            for source in required_data_sources
+            for candidate in (
+                (source.get("connector_candidates") if isinstance(source, Mapping) else None)
+                or []
+            )
+        ]
         ensure_dev_market_snapshot_ready(
             source_ingest_url=effective_source_url,
             symbol=market_symbol,
@@ -593,6 +680,7 @@ def ensure_paper_baseline(
             poll_seconds=poll_seconds,
             request_timeout_seconds=request_timeout_seconds,
             controller_token=provisioning_controller_token,
+            connector_candidates=connector_candidates,
             monotonic=monotonic,
             sleep=sleep,
         )

@@ -890,6 +890,126 @@ def test_market_snapshot_wait_nudges_stale_existing_snapshot_then_succeeds() -> 
     assert post_headers["run-scheduled"] == {"Authorization": "Bearer controller-token-test"}
 
 
+def test_market_snapshot_wait_surfaces_nudge_authorization_denial() -> None:
+    """DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 AC2 regression: an
+    independently reproduced HTTP 403 authorization denial on the
+    run-scheduled nudge must surface in the timeout error, not disappear
+    behind the caller's own generic market_input_stale reason."""
+
+    stale_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-stale",
+        "symbol": "SPY",
+        "event_time": "2020-01-01T00:00:00Z",
+        "observed_at": "2020-01-01T00:00:00Z",
+        "closes": [500.0, 501.5],
+    }
+
+    def fake_post_json(url, payload=None, **kwargs):
+        assert "run-scheduled" in url
+        return (
+            403,
+            {"detail": "controller service authorization is invalid for controller-owned scheduled source execution"},
+        )
+
+    times = [0.0, 100.0]
+    with patch.object(bootstrap, "_get_json", return_value=(200, stale_snapshot)), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), pytest.raises(bootstrap.BootstrapError) as exc_info:
+        bootstrap.ensure_dev_market_snapshot_ready(
+            source_ingest_url="http://mock-source:8097",
+            symbol="SPY",
+            timeout_seconds=5.0,
+            poll_seconds=0.01,
+            controller_token="stale-or-rotated-token",
+            connector_candidates=["dev-paper-us-equity-simulation"],
+            monotonic=lambda: times.pop(0) if times else 999.0,
+            sleep=lambda _seconds: None,
+        )
+
+    message = str(exc_info.value)
+    assert "symbol 'SPY'" in message
+    assert "ingest_nudge_failed" in message
+    assert "run-scheduled nudge HTTP 403" in message
+    assert "authorization is invalid" in message
+
+
+def test_market_snapshot_wait_surfaces_nudge_connector_provider_failure() -> None:
+    """DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 AC2 regression: a run-scheduled
+    HTTP 200 response whose ``failed`` list names the connector and its
+    provider fetch error must surface that connector identity and reason in
+    the bounded timeout error rather than only the polling-side
+    market_input_stale label."""
+
+    stale_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-stale",
+        "symbol": "SPY",
+        "event_time": "2020-01-01T00:00:00Z",
+        "observed_at": "2020-01-01T00:00:00Z",
+        "closes": [500.0, 501.5],
+    }
+
+    def fake_post_json(url, payload=None, **kwargs):
+        assert "run-scheduled" in url
+        return (
+            200,
+            {
+                "failed": [
+                    {
+                        "connector_id": "dev-paper-us-equity-simulation",
+                        "error": "source ingest run ended with status=failed",
+                    }
+                ],
+                "ran": [],
+                "skipped": [],
+            },
+        )
+
+    times = [0.0, 100.0]
+    with patch.object(bootstrap, "_get_json", return_value=(200, stale_snapshot)), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), pytest.raises(bootstrap.BootstrapError) as exc_info:
+        bootstrap.ensure_dev_market_snapshot_ready(
+            source_ingest_url="http://mock-source:8097",
+            symbol="SPY",
+            timeout_seconds=5.0,
+            poll_seconds=0.01,
+            controller_token="controller-token-test",
+            connector_candidates=["dev-paper-us-equity-simulation"],
+            monotonic=lambda: times.pop(0) if times else 999.0,
+            sleep=lambda _seconds: None,
+        )
+
+    message = str(exc_info.value)
+    assert "symbol 'SPY'" in message
+    assert "ingest_nudge_failed" in message
+    assert "dev-paper-us-equity-simulation" in message
+    assert "source ingest run ended with status=failed" in message
+
+
+def test_nudge_diagnostic_summary_ignores_clean_200_with_no_failures() -> None:
+    """A successful nudge (HTTP 200, no per-connector failures) must not
+    override the caller's own market-snapshot-derived reason -- this is the
+    steady-state/no-op nudge shape covered by the pre-existing tests above."""
+
+    assert bootstrap._nudge_diagnostic_summary(
+        {"attempted": True, "http_status": 200, "body": {"ran": []}, "failed": [], "transport_error": None}
+    ) is None
+
+
+def test_nudge_diagnostic_summary_surfaces_transport_error() -> None:
+    result = {
+        "attempted": True,
+        "http_status": None,
+        "body": None,
+        "failed": [],
+        "transport_error": "URLError: [Errno 111] Connection refused",
+    }
+    summary = bootstrap._nudge_diagnostic_summary(result)
+    assert summary == "run-scheduled nudge transport error: URLError: [Errno 111] Connection refused"
+
+
 def test_replay_with_missing_snapshot_still_raises_market_snapshot_not_found() -> None:
     """AC4 regression: an idempotent successful replay must still surface a
     named, bounded failure when the connector has never produced a snapshot
