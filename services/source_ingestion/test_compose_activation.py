@@ -37,12 +37,6 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     source_ingest_env = _env_map(source_ingest)
     assert source_ingest["build"]["dockerfile"] == "services/source_ingestion/Dockerfile"
     assert source_ingest_env["PORT"] == "8097"
-    # DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001: is_dev_environment() reads
-    # PANTHEON_ENV from the process environment. Without this, the actual
-    # source-ingest API container never sees PANTHEON_ENV=dev, so the
-    # dev-only synthetic simulation connector factory stays disabled even
-    # when the operator explicitly runs the dev stack.
-    assert source_ingest_env["PANTHEON_ENV"] == "${PANTHEON_ENV:-dev}"
     assert source_ingest_env["SOURCE_INGEST_DATA_DIR"] == "/data/source-ingest"
     assert source_ingest_env["SOURCE_INGEST_CONNECTOR_STORE_PATH"] == "/data/source-ingest/connector_config.jsonl"
     assert source_ingest_env["SOURCE_INGEST_EVIDENCE_STORE_PATH"] == "/data/source-ingest/source_evidence.jsonl"

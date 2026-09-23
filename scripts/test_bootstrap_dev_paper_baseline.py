@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -227,8 +228,12 @@ def test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_firs
         ],
     }
 
+    post_headers: dict[str, object] = {}
+
     def fake_post_json(url, payload=None, **kwargs):
         call_order.append(f"post:{url}")
+        if "run-scheduled" in url:
+            post_headers["run-scheduled"] = kwargs.get("headers")
         for key, responses in post_queue.items():
             if key in url:
                 return responses.pop(0)
@@ -269,6 +274,14 @@ def test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_firs
     # The 404 branch actively nudges the reconciler via run-scheduled instead
     # of only passively polling.
     assert any("run-scheduled" in c for c in call_order)
+
+    # The run-scheduled nudge must carry the resolved source-ingest
+    # controller token: the real runtime guard
+    # (SourceIngestRuntime.run_scheduled_connectors) requires controller
+    # authorization for any controller-owned connector -- which the newly
+    # provisioned dev-paper-us-equity-simulation connector always is -- and
+    # rejects an unauthenticated nudge with 401.
+    assert post_headers["run-scheduled"] == {"Authorization": "Bearer controller-token-test"}
 
 
 def test_market_snapshot_already_fresh_steady_state_does_not_delay_reconcile() -> None:
@@ -970,3 +983,19 @@ def test_controller_token_reads_from_file_when_unset(tmp_path) -> None:
 
 def test_controller_token_empty_when_unconfigured() -> None:
     assert bootstrap.source_ingest_controller_token({}) == ""
+
+
+def test_compose_source_ingest_wires_pantheon_env() -> None:
+    """Regression for DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 P1:
+    services.source_ingestion.persona_source_reconciler.is_dev_environment()
+    reads PANTHEON_ENV from the process environment, but docker-compose.yml's
+    source-ingest service previously omitted it from its environment block,
+    so the real API container never saw PANTHEON_ENV=dev and the dev-only
+    synthetic simulation connector factory stayed disabled regardless of how
+    correct the reconciler/bootstrap code was."""
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[1]
+    compose = yaml.safe_load((repo_root / "docker-compose.yml").read_text(encoding="utf-8"))
+    source_ingest_env = compose["services"]["source-ingest"]["environment"]
+    assert source_ingest_env["PANTHEON_ENV"] == "${PANTHEON_ENV:-dev}"
