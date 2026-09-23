@@ -33,6 +33,7 @@ if str(THIS_DIR) not in sys.path:
 
 from functools import wraps
 import model_rotation
+import pi_runtime
 import runtime_state as promotion_state
 import auto_integrator_unblock_contract as unblock_contract
 from approval_queue import prune_stale_approvals
@@ -4676,7 +4677,25 @@ def update_from_log(
     meaningful_progress_advanced = False
     latest_meaningful_key: str | None = None
     latest_meaningful_type: str | None = None
-    for line in content.splitlines():
+    is_pi = worker.get("mode") == "pi" or worker.get("adapter") == "pi"
+    if is_pi:
+        pi_state = pi_runtime.stream_state(content)
+        if pi_state["session_id"]:
+            worker["session_id"] = pi_state["session_id"]
+        if pi_state["settled"]:
+            worker["provider_terminal_status"] = "error" if pi_state["error"] else "success"
+            if pi_state["error"]:
+                worker["provider_error"] = pi_state["error"]
+            else:
+                worker.pop("provider_error", None)
+            worker["provider_usage"] = {key: value for key, value in pi_state["usage"].items()
+                                        if isinstance(value, (int, float)) and not isinstance(value, bool)}
+        else:
+            worker.pop("provider_terminal_status", None)
+            worker.pop("provider_error", None)
+    # Pi text/retry events are liveness, not durable task progress. Existing
+    # source/commit observations still advance the worker's work lease.
+    for line in ([] if is_pi else content.splitlines()):
         line = line.strip()
         if not line.startswith("{"):
             continue
@@ -4906,9 +4925,21 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     if not log_path.exists():
         return None
     try:
-        lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+        lines = content.splitlines()
     except OSError:
         return None
+
+    if worker.get("mode") == "pi" or worker.get("adapter") == "pi":
+        pi_state = pi_runtime.stream_state(content)
+        # Do not convert an interrupted run or a recoverable retry into an
+        # account failure. Pi's exit code alone does not prove model success.
+        if worker_was_terminated_by_sigterm(worker):
+            return None
+        error = pi_state["error"] if pi_state["settled"] else None
+        if not pi_state["settled"] and worker.get("runner_status") in {"completed", "failed"}:
+            error = "Pi exited without a settled model result"
+        return json.dumps({"type": "result", "is_error": True, "error": error}) if error else None
 
     runner_failed = worker_has_authoritative_runner_failure(worker)
     is_sigterm = worker_was_terminated_by_sigterm(worker)

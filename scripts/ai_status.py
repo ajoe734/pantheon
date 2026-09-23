@@ -1185,6 +1185,10 @@ def validate_status_root_binding() -> None:
     assert_task_archive_root_binding()
 
 KNOWN_AGENTS = {
+    "PiAstra": {
+        "capability_lane": ["integration", "status-system", "schema", "acceptance"],
+        "default_branch": "feat/pi-astra-collab-system",
+    },
     "Claude": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude-execution-control",

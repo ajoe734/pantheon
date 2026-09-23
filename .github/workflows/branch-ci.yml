@@ -341,6 +341,7 @@ jobs:
         if: steps.boundary.outputs.development_tooling_touched == 'true'
         run: |
           PYTHONPATH=.orchestrator python3 -m unittest \
+            test_pi_worker test_adapter_delivery_policy \
             test_supervisor test_runtime_state test_approval_queue \
             rewrite.test_task_contract \
             test_supervisor_recovery_process_e2e test_supervisor_watchdog \
