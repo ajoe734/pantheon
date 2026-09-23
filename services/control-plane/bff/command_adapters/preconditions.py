@@ -2180,9 +2180,18 @@ def _validate_activate_kill_switch(params: Dict[str, Any], identity: OperatorIde
         raise _err(
             403, ErrorCode.FORBIDDEN,
             "ActivateKillSwitch requires 'admin' role",
-            "Operator does not hold the required role",
+            "Operator does not hold the admin role",
             precondition_failed="role_check",
-            suggestion="Escalate to a user with admin role",
+            suggestion="Escalate to an admin-role operator",
+        )
+    # MFA required for kill-switch (§3.2.3)
+    if not identity.mfa_verified:
+        raise _err(
+            403, ErrorCode.AUTH_REQUIRED,
+            "ActivateKillSwitch requires MFA verification",
+            "Admin action requires MFA validation",
+            precondition_failed="mfa_check",
+            suggestion="Provide a valid MFA token in your session",
         )
 
 

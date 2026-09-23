@@ -69,13 +69,19 @@
   "test_results": {
     "new_composition_seam_suite": {
       "command": "pytest -v services/control-plane/bff/tests/test_main_composition_seam_extraction_002.py",
-      "passed": 18,
+      "passed": 19,
       "failed": 0,
       "status": "PASS"
     },
     "architecture_gate": {
       "command": "pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
       "passed": 8,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "smoke_suite": {
+      "command": "python3 -m services.control_plane.bff.smoke_test",
+      "passed": 26,
       "failed": 0,
       "status": "PASS"
     },

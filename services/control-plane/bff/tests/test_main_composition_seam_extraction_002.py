@@ -32,6 +32,7 @@ from services.control_plane.bff.shared.module_retirement_guard import (
 from services.control_plane.bff.command_adapters.preconditions import (
     _VALIDATORS,
     _enforce_ops_console_preconditions,
+    _validate_activate_kill_switch,
 )
 from services.control_plane.bff.governance.promotion_review import (
     _PROMOTION_REVIEW_DECISIONS,
@@ -148,6 +149,7 @@ def test_command_adapter_validators_registry():
     assert CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT in _VALIDATORS
     assert CommandType.HUMAN_GATE_APPROVE in _VALIDATORS
     assert CommandType.HUMAN_GATE_REJECT in _VALIDATORS
+    assert CommandType.ACTIVATE_KILL_SWITCH in _VALIDATORS
 
 
 def test_command_adapter_precondition_enforcement_and_fresh_app_mounting():
@@ -182,6 +184,42 @@ def test_command_adapter_precondition_enforcement_and_fresh_app_mounting():
     assert response.status_code == 422
     data = response.json()
     assert "error" in data
+
+
+def test_command_adapter_activate_kill_switch_mfa_and_role_preconditions():
+    validator = _VALIDATORS[CommandType.ACTIVATE_KILL_SWITCH]
+    valid_params = {"scope": "all", "activate": True, "severity": "critical"}
+
+    # 1. Non-admin operator is rejected with 403 FORBIDDEN and role_check
+    operator_identity = OperatorIdentity(operator_id="op-1", roles=["operator"], mfa_verified=True)
+    with pytest.raises(HTTPException) as exc_info:
+        validator(valid_params, operator_identity)
+    assert exc_info.value.status_code == 403
+    err_code = exc_info.value.detail.get("error", {}).get("code")
+    assert err_code in (ErrorCode.FORBIDDEN, ErrorCode.FORBIDDEN.value)
+    assert exc_info.value.detail.get("error", {}).get("details", {}).get("precondition_failed") == "role_check"
+
+    # 2. Admin operator without MFA verification is rejected with 403 AUTH_REQUIRED and mfa_check
+    admin_no_mfa = OperatorIdentity(operator_id="admin-1", roles=["admin"], mfa_verified=False)
+    with pytest.raises(HTTPException) as exc_info:
+        validator(valid_params, admin_no_mfa)
+    assert exc_info.value.status_code == 403
+    err_code = exc_info.value.detail.get("error", {}).get("code")
+    assert err_code in (ErrorCode.AUTH_REQUIRED, ErrorCode.AUTH_REQUIRED.value)
+    assert exc_info.value.detail.get("error", {}).get("details", {}).get("precondition_failed") == "mfa_check"
+
+    # 3. Direct function call also rejects admin without MFA verification
+    with pytest.raises(HTTPException) as exc_info_direct:
+        _validate_activate_kill_switch(valid_params, admin_no_mfa)
+    assert exc_info_direct.value.status_code == 403
+    err_code_direct = exc_info_direct.value.detail.get("error", {}).get("code")
+    assert err_code_direct in (ErrorCode.AUTH_REQUIRED, ErrorCode.AUTH_REQUIRED.value)
+    assert exc_info_direct.value.detail.get("error", {}).get("details", {}).get("precondition_failed") == "mfa_check"
+
+    # 4. Admin operator with MFA verification passes without error
+    admin_with_mfa = OperatorIdentity(operator_id="admin-1", roles=["admin"], mfa_verified=True)
+    validator(valid_params, admin_with_mfa)
+    _validate_activate_kill_switch(valid_params, admin_with_mfa)
 
 
 
