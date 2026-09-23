@@ -11,6 +11,7 @@ import subprocess
 import threading
 
 import model_rotation
+import pi_runtime
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -1612,6 +1613,59 @@ def _configured_provider_binary(config: dict[str, Any], provider: str, section: 
     return command_exists(provider_settings.get("cli") or default)
 
 
+def _pi_auth_probe(config: dict[str, Any], provider_id: str) -> dict[str, Any]:
+    profile = pi_runtime.settings(config, provider_id)
+    cli = pi_runtime.binary(profile)
+    env = pi_runtime.environment(profile)
+    metadata = {"model": profile.get("model", "gpt-6-astra"),
+                "agent_dir": env["PI_CODING_AGENT_DIR"]}
+
+    def record(ready: bool, status: str, error: str | None = None) -> dict[str, Any]:
+        return _auth_probe_record(provider_id, "pi", ready=ready, status=status,
+                                  method="pi_model_request", error=error, metadata=metadata)
+
+    if not cli:
+        return record(False, "cli_missing", "Configured Pi CLI is not installed.")
+    auth_path = Path(env["PI_CODING_AGENT_DIR"]) / "auth.json"
+    if not auth_path.is_file() and not env.get("OPENAI_API_KEY"):
+        return record(False, "auth_material_missing", "Pi login is missing for this agent directory.")
+    probe = _auth_probe_settings(config, provider_id)
+    expected = str(probe.get("probe_expected_output") or AUTH_PROBE_EXPECTED_OUTPUT)
+    argv = pi_runtime.command(cli, profile, str(probe.get("probe_prompt") or AUTH_PROBE_PROMPT), probe=True)
+    try:
+        result = run_command(argv, timeout=float(probe["probe_timeout_seconds"]), env=env)
+    except subprocess.TimeoutExpired:
+        return record(False, "probe_timeout", "Pi model access probe timed out.")
+    except OSError as exc:
+        return record(False, "probe_error", str(exc))
+    state = pi_runtime.stream_state(result.stdout)
+    if result.returncode == 0 and state["settled"] and not state["error"] and state["text"].strip() == expected:
+        return record(True, "ready")
+    error = _compact_auth_error(state["error"] or result.stderr) or "Pi did not return the expected settled model response."
+    # This provider uses the same OpenAI authentication/quota error vocabulary.
+    _, _, status = _codex_probe_ready(1, "", error, expected_output=expected)
+    return record(False, status, error)
+
+
+def _pi_provider_report(config: dict[str, Any], provider_id: str) -> dict[str, Any]:
+    profile = pi_runtime.settings(config, provider_id)
+    cli = pi_runtime.binary(profile)
+    probe = _pi_auth_probe(config, provider_id)
+    ready = bool(probe["ready"])
+    return {
+        "installed": bool(cli), "host_layer": "CLI", "delivery_mode": "pi",
+        "approval_mode": "worker_sandbox", "supports_auto_approve": ready,
+        "supports_defer_resume": False, "local_cli_worker_supported": ready,
+        "vscode_link_supported": False, "cloud_agent_supported": False,
+        "auth_ready": ready, "auth_error": probe.get("error"), "auth_probe": probe,
+        "auth_method": probe["method"], "last_auth_probe_at": probe["checked_at"],
+        "selected_model": profile.get("model", "gpt-6-astra"), "applied": bool(cli),
+        "verified": "verified" if ready else "partial" if cli else "unavailable",
+        "paths": {"binary": cli, "home": pi_runtime.environment(profile)["PI_CODING_AGENT_DIR"]},
+        "notes": ["Task/worktree boundaries are enforced by worker_runner's sandbox."],
+    }
+
+
 def probe_provider_auth(
     config: dict[str, Any],
     provider_id: str,
@@ -1636,6 +1690,8 @@ def probe_provider_auth(
     provider = (config.get("providers", {}).get(provider_key, {}) or {})
     delivery_mode = str(provider.get("delivery_mode") or provider_key).strip().lower()
 
+    if delivery_mode == "pi":
+        return _pi_auth_probe(config, provider_key)
     if delivery_mode == "codex":
         binary = _configured_provider_binary(config, provider_key, "codex", "codex")
         return _codex_auth_probe(
@@ -2449,6 +2505,9 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             },
             **_antigravity_provider_reports(config, antigravity_provider_ids),
             **{provider_id: codex_provider_report(provider_id) for provider_id in codex_provider_ids},
+            **{provider_id: _pi_provider_report(config, provider_id)
+               for provider_id, provider in config.get("providers", {}).items()
+               if provider.get("delivery_mode") == "pi"},
             "copilot": {
                 "installed": copilot_installed,
                 "host_layer": "CLI + VS Code extension + GitHub CLI"
