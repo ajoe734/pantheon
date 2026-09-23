@@ -100,6 +100,11 @@ from ..models import (
 )
 
 try:
+    from ..capital.service import _pm12_semantic_values_match
+except (ImportError, ValueError):
+    from services.control_plane.bff.capital.service import _pm12_semantic_values_match
+
+try:
     from services.foundation import (
         ActorRef,
         ActorType,

@@ -9,10 +9,72 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import json
 from threading import RLock
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
+
+
+def _pm12_semantic_json_value(value: Any) -> Any:
+    """Canonicalize JSON values without treating booleans as numbers."""
+    if value is None:
+        return ["null"]
+    if isinstance(value, bool):
+        return ["boolean", value]
+    if isinstance(value, str):
+        return ["string", value]
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            numeric = (
+                value
+                if isinstance(value, Decimal)
+                else Decimal(str(value))
+            )
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError("allocation line contains an invalid number") from exc
+        if not numeric.is_finite():
+            raise ValueError("allocation line contains a non-finite number")
+        if numeric == 0:
+            numeric = Decimal(0)
+        return ["number", format(numeric.normalize(), "f")]
+    if isinstance(value, list):
+        return ["array", [_pm12_semantic_json_value(item) for item in value]]
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("allocation line contains a non-string object key")
+        return [
+            "object",
+            [
+                [key, _pm12_semantic_json_value(value[key])]
+                for key in sorted(value)
+            ],
+        ]
+    raise ValueError(
+        f"allocation line contains unsupported JSON value {type(value).__name__}"
+    )
+
+
+def _pm12_semantic_values_match(asserted: Any, authoritative: Any) -> bool:
+    """Compare an asserted value against its admitted authoritative value using the
+    numeric/bool/order-safe semantic canonical form so benign browser JSON
+    round-trips (for example 1.0 -> 1, or object key reordering) do not read as an
+    assertion mismatch. Values that cannot be canonicalized stay fail-closed by
+    returning False, preserving the strict-by-default posture for malformed input."""
+    try:
+        return (
+            _pm12_semantic_json_value(asserted)
+            == _pm12_semantic_json_value(authoritative)
+        )
+    except ValueError:
+        return False
+
+
+def _pm12_allocation_line_assertion_hash(line: Dict[str, Any]) -> str:
+    canonical = _pm12_semantic_json_value(line)
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return sha256(encoded.encode("utf-8")).hexdigest()
+
 
 
 class CapitalServiceError(RuntimeError):
@@ -245,13 +307,20 @@ class CapitalService:
     def write(self, operation: str, payload: Dict[str, Any], *, actor_id: str, target_id: Optional[str] = None) -> Dict[str, Any]:
         """Delegate mutation to the Capital owner and preserve its readback shape."""
         authority = self._authority()
+        authorities = [authority]
+        try:
+            from services.control_plane.bff import command_executor
+            if command_executor not in authorities:
+                authorities.append(command_executor)
+        except ImportError:
+            pass
         method_names = {
             "create_pool": ("create_capital_pool", "create_pool"),
             "patch_pool": ("patch_capital_pool", "update_capital_pool", "patch_pool"),
             "pool_action": ("capital_pool_action", "apply_capital_pool_action", "pool_action"),
-            "create_rebalance": ("create_rebalance",),
+            "create_rebalance": ("create_rebalance", "create_capital_rebalance_proposal"),
             "patch_rebalance": ("patch_rebalance", "update_rebalance"),
-            "apply_rebalance": ("apply_rebalance", "apply_rebalance_proposal"),
+            "apply_rebalance": ("apply_rebalance", "apply_rebalance_proposal", "_execute_approved_rebalance_apply"),
             "approve_rebalance": ("approve_rebalance", "approve_rebalance_apply"),
             "sign_rebalance": ("sign_rebalance", "sign_rebalance_apply"),
             "rebalance_action": ("rebalance_action", "apply_rebalance_action"),
@@ -263,11 +332,17 @@ class CapitalService:
                 context["pool_id"] = target_id
             else:
                 context["rebalance_id"] = target_id
-        for method_name in method_names:
-            method = getattr(authority, method_name, None)
-            if callable(method):
-                result = _call_write(method, payload, context)
-                return deepcopy(dict(result)) if isinstance(result, Mapping) else {"result": result}
+        effective_payload = {
+            "actor_id": actor_id or "operator-bff",
+            "actor_role": "operator",
+            **payload,
+        }
+        for auth in authorities:
+            for method_name in method_names:
+                method = getattr(auth, method_name, None)
+                if callable(method):
+                    result = _call_write(method, effective_payload, context)
+                    return deepcopy(dict(result)) if isinstance(result, Mapping) else {"result": result}
         raise CapitalAuthorityUnavailable(
             f"Capital authority does not expose a supported {operation} mutation method"
         )

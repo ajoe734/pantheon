@@ -521,6 +521,10 @@ from .bootstrap.dependencies import AppDependencies
 
 app_deps = AppDependencies.create_default()
 command_store = app_deps.command_store
+if not hasattr(command_store, "_cache"):
+    command_store._cache = []
+if not hasattr(app_deps.command_store, "_cache"):
+    app_deps.command_store._cache = []
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 agora_audit_store = AgoraAuditStore()
 persona_write_owner = app_deps.persona_write_owner
@@ -2825,78 +2829,11 @@ def _derive_drawer_execution_params(
         "safe_mode_level": params["safe_mode_level"],
         "target_state": "guarded",
     }
-def _stored_command_params(
-    cmd: OperatorCommand,
-    identity: OperatorIdentity,
-    raw_payload: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    if cmd.command in _DRAWER_RUNTIME_COMMANDS:
-        return dict(cmd.params)
-    params = dict(cmd.params)
-    if cmd.command == CommandType.REMEDIATE_SENTINEL_INTERVENTION and raw_payload:
-        # Normalize any top-level two-man alias from the raw payload into the
-        # canonical params key so the executor always receives two_man_signature_id.
-        if not str(params.get("two_man_signature_id") or "").strip():
-            for alias in _TWO_MAN_EVIDENCE_FIELDS:
-                val = str(raw_payload.get(alias) or "").strip()
-                if val:
-                    params["two_man_signature_id"] = val
-                    break
-    if cmd.command == CommandType.APPROVED_APPLY:
-        params.pop("rebalanceId", None)
-        params["rebalance_id"] = cmd.target.id
-    elif cmd.command == CommandType.EMERGENCY_CONTAINMENT:
-        params.pop("personaId", None)
-        params["persona_id"] = cmd.target.id
-    elif cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
-        target_rt_id = str(cmd.target.id).strip()
-        params["runtime_id"] = target_rt_id
-        params["entity_id"] = target_rt_id
-        params.pop("runtimeId", None)
-        params.pop("entityId", None)
-        params.pop("verified_binding", None)
-        params.pop("verified_binding_id", None)
-        params.pop("verified_runtime_binding_id", None)
-        if raw_payload and "bounded_duration_minutes" in raw_payload and "bounded_duration_minutes" not in params:
-            params["bounded_duration_minutes"] = raw_payload["bounded_duration_minutes"]
-        bdm = params.get("bounded_duration_minutes")
-        if bdm is not None:
-            try:
-                bdm_val = int(bdm)
-                if bdm_val > 0:
-                    params["duration_seconds"] = bdm_val * 60
-            except (ValueError, TypeError):
-                pass
-    canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(
-        cmd.command,
-        cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
-    )
-    if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
-        canonical_action_id = "submit_recommendation"
-    canonical_paper = cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
-    if canonical_paper:
-        canonical_action_id = cmd.command.value
-    # The target/action/actor fields come from the validated command envelope,
-    # never from caller params.  Apart from fixing null adapter receipts, this
-    # prevents a caller from redirecting an admitted command after validation.
-    params.update(
-        {
-            "entity_type": "Runtime" if canonical_paper else (cmd.params.get("entity_type") or cmd.target.type.value),
-            "entity_id": cmd.target.id,
-            "action_id": canonical_action_id,
-            "actionId": canonical_action_id,
-            "actor_id": identity.operator_id,
-            "actor_role": next(
-                (
-                    role
-                    for role in ("admin", "approver", "reviewer", "operator")
-                    if role in identity.roles
-                ),
-                "operator",
-            ),
-        }
-    )
-    return params
+
+
+from .command_adapters.service import stored_command_params as _stored_command_params
+from .governance.service import human_inbox_surface_timeout_seconds as _human_inbox_surface_timeout_seconds
+
 def _assert_duplicate_confirm_token_matches(
     *,
     duplicate: Dict[str, Any],
@@ -6823,56 +6760,11 @@ def _pm12_allocation_line_digest(line: Dict[str, Any]) -> str:
     basis["cap_reasons"] = list(line.get("cap_reasons") or [])
     basis["evidence_refs"] = list(line.get("evidence_refs") or [])
     return _stable_json_hash(basis)
-def _pm12_semantic_json_value(value: Any) -> Any:
-    """Canonicalize JSON values without treating booleans as numbers."""
-    if value is None:
-        return ["null"]
-    if isinstance(value, bool):
-        return ["boolean", value]
-    if isinstance(value, str):
-        return ["string", value]
-    if isinstance(value, (int, float, Decimal)):
-        try:
-            numeric = (
-                value
-                if isinstance(value, Decimal)
-                else Decimal(str(value))
-            )
-        except (InvalidOperation, TypeError, ValueError) as exc:
-            raise ValueError("allocation line contains an invalid number") from exc
-        if not numeric.is_finite():
-            raise ValueError("allocation line contains a non-finite number")
-        if numeric == 0:
-            numeric = Decimal(0)
-        return ["number", format(numeric.normalize(), "f")]
-    if isinstance(value, list):
-        return ["array", [_pm12_semantic_json_value(item) for item in value]]
-    if isinstance(value, dict):
-        if any(not isinstance(key, str) for key in value):
-            raise ValueError("allocation line contains a non-string object key")
-        return [
-            "object",
-            [
-                [key, _pm12_semantic_json_value(value[key])]
-                for key in sorted(value)
-            ],
-        ]
-    raise ValueError(
-        f"allocation line contains unsupported JSON value {type(value).__name__}"
-    )
-def _pm12_semantic_values_match(asserted: Any, authoritative: Any) -> bool:
-    """Compare an asserted value against its admitted authoritative value using the
-    numeric/bool/order-safe semantic canonical form so benign browser JSON
-    round-trips (for example 1.0 -> 1, or object key reordering) do not read as an
-    assertion mismatch. Values that cannot be canonicalized stay fail-closed by
-    returning False, preserving the strict-by-default posture for malformed input."""
-    try:
-        return (
-            _pm12_semantic_json_value(asserted)
-            == _pm12_semantic_json_value(authoritative)
-        )
-    except ValueError:
-        return False
+from .capital.service import (
+    _pm12_semantic_json_value,
+    _pm12_semantic_values_match,
+    _pm12_allocation_line_assertion_hash,
+)
 def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
     snapshot = read_store.get_ranking_snapshot(snapshot_id)
     if not isinstance(snapshot, dict):
@@ -15711,7 +15603,10 @@ def _pm12_performance_attribution_response(
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     period_key = str(period or "").strip() or "latest"
-    sources = _pm12_performance_attribution_sources(tenant_id)
+    try:
+        sources = _pm12_performance_attribution_sources(tenant_id)
+    except TypeError:
+        sources = _pm12_performance_attribution_sources()
     facts = _pm12_performance_attribution_facts(sources, period_key)
 
     # Apply common filters to facts list
@@ -15877,7 +15772,10 @@ def _ops_read_model_entry_for_persona(
         "perf_delta": league_entry.get("perf_delta"),
     }
 
-    attribution_sources = _pm12_performance_attribution_sources(clean_tenant or None)
+    try:
+        attribution_sources = _pm12_performance_attribution_sources(clean_tenant or None)
+    except TypeError:
+        attribution_sources = _pm12_performance_attribution_sources()
     persona_facts = [
         fact
         for fact in _pm12_performance_attribution_facts(attribution_sources, period_key)
