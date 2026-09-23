@@ -999,3 +999,73 @@ def test_compose_source_ingest_wires_pantheon_env() -> None:
     compose = yaml.safe_load((repo_root / "docker-compose.yml").read_text(encoding="utf-8"))
     source_ingest_env = compose["services"]["source-ingest"]["environment"]
     assert source_ingest_env["PANTHEON_ENV"] == "${PANTHEON_ENV:-dev}"
+
+
+def test_compose_operator_bff_wires_owner_service_jwt_credentials() -> None:
+    """Regression for DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 AC5:
+
+    A real, full first-deploy reproduction against the unmodified stack (see
+    docs/deployment/evidence/DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001/)
+    reached past the source-ingest snapshot precondition this task's P1 fixed
+    and hit a second, independent class of gap: the persona provisioning
+    coordinator's owner transport
+    (_PersonaOwnerHttpTransport._service_jwt in
+    services/control-plane/bff/personas/service.py) signs a strict service
+    JWT for capital/registry from PANTHEON_CAPITAL_JWT_SECRET /
+    PANTHEON_REGISTRY_JWT_SECRET and CAPITAL_JWT_ISSUER / CAPITAL_JWT_AUDIENCE
+    (owner-agnostic issuer/audience names used for every strict owner).
+    docker-compose.yml's own capital/registry/governance service blocks
+    validate against their own, differently-named or differently-defaulted
+    env vars (CAPITAL_JWT_SECRET, PANTHEON_REGISTRY_JWT_SECRET,
+    PANTHEON_REGISTRY_JWT_ISSUER/AUDIENCE, PANTHEON_GOVERNANCE_JWT_SECRET/
+    ISSUER/AUDIENCE) -- so every capital-pool and registry-approval call in a
+    first deploy returned 401 regardless of the P1 snapshot-ordering fix.
+    This asserts operator-bff and its owner services now chain to the same
+    resolved default so a fresh deploy's persona provisioning can sign and
+    validate consistently without a second unprovisioned credential."""
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[1]
+    compose = yaml.safe_load((repo_root / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+
+    operator_bff_env = services["operator-bff"]["environment"]
+    assert operator_bff_env["PANTHEON_CAPITAL_JWT_SECRET"] == (
+        "${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}}"
+    )
+    assert operator_bff_env["CAPITAL_JWT_ISSUER"] == (
+        "${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}"
+    )
+    assert operator_bff_env["CAPITAL_JWT_AUDIENCE"] == (
+        "${CAPITAL_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}"
+    )
+    assert operator_bff_env["PANTHEON_REGISTRY_JWT_SECRET"] == (
+        "${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}"
+    )
+
+    capital_env = services["capital"]["environment"]
+    assert capital_env["CAPITAL_JWT_SECRET"] == (
+        "${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}"
+    )
+
+    registry_env = services["registry"]["environment"]
+    assert registry_env["PANTHEON_REGISTRY_JWT_SECRET"] == (
+        "${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}"
+    )
+    assert registry_env["PANTHEON_REGISTRY_JWT_ISSUER"] == (
+        "${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-pantheon-dev-control-plane}}"
+    )
+    assert registry_env["PANTHEON_REGISTRY_JWT_AUDIENCE"] == (
+        "${PANTHEON_REGISTRY_JWT_AUDIENCE:-${CAPITAL_JWT_AUDIENCE:-pantheon-dev-owners}}"
+    )
+
+    governance_env = services["governance"]["environment"]
+    assert governance_env["PANTHEON_GOVERNANCE_JWT_SECRET"] == (
+        "${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-governance-jwt-secret}}"
+    )
+    assert governance_env["PANTHEON_GOVERNANCE_JWT_ISSUER"] == (
+        "${PANTHEON_GOVERNANCE_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}"
+    )
+    assert governance_env["PANTHEON_GOVERNANCE_JWT_AUDIENCE"] == (
+        "${PANTHEON_GOVERNANCE_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}"
+    )
