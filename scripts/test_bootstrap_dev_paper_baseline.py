@@ -1001,6 +1001,29 @@ def test_compose_source_ingest_wires_pantheon_env() -> None:
     assert source_ingest_env["PANTHEON_ENV"] == "${PANTHEON_ENV:-dev}"
 
 
+def test_compose_paper_fleet_reconciler_wires_pantheon_env() -> None:
+    """Regression for DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001: the
+    market-input bootstrap grace period
+    (PaperFleetReconciler.__init__'s ``is_dev`` check in
+    services/paper_fleet_reconciler/paper_fleet_reconciler.py, which raises
+    the grace default from 0s to 120s) only ever activates when the process
+    sees PANTHEON_ENV=dev. docker-compose.yml's paper-fleet-reconciler
+    service previously omitted PANTHEON_ENV from its environment block
+    entirely (unlike every other PANTHEON_ENV-scoped service in this file),
+    so a never-provisioned connector's market_input_missing pause was never
+    deferred and paused the brand-new RuntimeBinding before the dev
+    synthetic connector had any chance to produce its first snapshot -- the
+    exact ordering gap this task's title names, independent of the
+    market_input_missing resume-gap fix in the reconciler's own resume
+    defense."""
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[1]
+    compose = yaml.safe_load((repo_root / "docker-compose.yml").read_text(encoding="utf-8"))
+    reconciler_env = compose["services"]["paper-fleet-reconciler"]["environment"]
+    assert reconciler_env["PANTHEON_ENV"] == "${PANTHEON_ENV:-dev}"
+
+
 def test_compose_operator_bff_wires_owner_service_jwt_credentials() -> None:
     """Regression for DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 AC5:
 
