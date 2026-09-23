@@ -595,7 +595,7 @@ def bind_worker_sandbox(
         home / ".rustup",
         home / ".antigravity",
     ]
-    for env_var in ("ANTIGRAVITY_HOME", "CODEX_HOME", "CLAUDE_HOME", "CLAUDE_CONFIG_DIR", "GH_CONFIG_DIR"):
+    for env_var in ("ANTIGRAVITY_HOME", "CODEX_HOME", "CLAUDE_HOME", "CLAUDE_CONFIG_DIR", "GH_CONFIG_DIR", "PI_CODING_AGENT_DIR"):
         val = os.environ.get(env_var)
         if val and val.strip():
             p = Path(os.path.expanduser(val.strip())).resolve()

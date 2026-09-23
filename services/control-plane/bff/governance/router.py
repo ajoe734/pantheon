@@ -127,6 +127,7 @@ def create_governance_router(
     read_surface_state: Optional[Callable[[], str]] = None,
     governance_service: Optional[GovernanceService] = None,
     reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
+    command_store: Optional[Any] = None,
 ) -> APIRouter:
     """Build the exact 35-route Governance domain router."""
 
@@ -180,6 +181,7 @@ def create_governance_router(
                 redact_evidence_refs=_redact,
                 capabilities_for_identity=_capabilities,
                 read_surface_state=_read_surface_state,
+                command_store=command_store,
             )
         return resolved_service
 
