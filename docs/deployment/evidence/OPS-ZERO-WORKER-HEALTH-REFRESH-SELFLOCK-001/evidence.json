@@ -1,0 +1,96 @@
+{
+  "task_id": "OPS-ZERO-WORKER-HEALTH-REFRESH-SELFLOCK-001",
+  "title": "Zero-worker fleets cannot refresh the delivery health they need to dispatch",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "status": "in_progress",
+  "generated_at": "2026-09-23T01:40:00Z",
+
+  "problem_statement": "delivery_health evidence has a single evidence_ttl_seconds (default 300) cache lifetime and is otherwise entirely demand-driven: a lane is only re-probed when something in the current cycle asks for it. Two demand sources existed before this task: idle_delivery_health_refresh_targets, which refreshes only the exact owner/reviewer already recorded on the canonical task row, and unavailable_assignment_fallback_refresh_targets, which does walk the configured worker_reassignment fallback chains but only once the incumbent is durably (terminally) unavailable -- a merely stale/expired ('unknown') probe is not terminal, so it never triggers that walk. plan_task_assignment_pair and worker_recovery_assignment_pair both search the same fallback chains for a viable owner/reviewer pair. With a live worker running, some other cycle eventually re-touches each candidate lane and this self-heals. With zero active workers, nothing else ever does: dispatch and worker-recovery retries keep reading the same expired evidence for the exact candidates they need, forever. This was reproduced live twice: a 13.6-hour zero-dispatch stall (2026-09-21T14:00Z to 2026-09-22T03:35Z) and a worker_recovery receipt stuck 'pending' for roughly 20 hours from 2026-09-22T04:44Z, both resolved only by an operator repeatedly driving 'supervisor.py --request-delivery-health-refresh' (which forces authorized_delivery_health_refresh_targets to probe every configured endpoint) until a probe happened to land inside the 5-minute TTL window a retry also ran in.",
+
+  "change_summary": {
+    "files_changed": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/operations/auto-worker-readiness.md",
+      "docs/deployment/evidence/OPS-ZERO-WORKER-HEALTH-REFRESH-SELFLOCK-001/evidence.json"
+    ],
+    "supervisor_py": {
+      "new_function_1": {
+        "name": "_demand_endpoint_health_refresh",
+        "purpose": "Shared helper extracted from unavailable_assignment_fallback_refresh_targets's former inline demand_refresh closure: appends a due refresh target for one agent's endpoint(s) using the single shared health_gate_for_endpoint predicate. Pure refactor of existing logic, no behavior change; now shared by both unavailable_assignment_fallback_refresh_targets and the new zero_fleet_assignment_refresh_targets so a candidate's viability is judged by exactly one rule."
+      },
+      "new_function_2": {
+        "name": "zero_fleet_assignment_refresh_targets",
+        "purpose": "Demands a refresh for the same configured owner_fallbacks/reviewer_fallbacks chains unavailable_assignment_fallback_refresh_targets would eventually demand -- same probe budget, same health gate -- for every dispatch-ready task (todo/in_progress/review_approved/blocked, or in ready_dispatch.review_statuses) and every task fenced behind a pending worker-recovery receipt (task_has_pending_worker_recovery), but strictly only while live_total == 0. Returns [] immediately whenever any worker is active, so a running fleet gains zero extra probes from this path.",
+        "wired_into": "build_dispatch_plan, between unavailable_assignment_fallback_refresh_targets and idle_delivery_health_refresh_targets in the refresh_targets assembly order."
+      }
+    },
+    "test_supervisor_py": {
+      "new_tests": [
+        "test_zero_fleet_assignment_refresh_targets_covers_pending_recovery_fallback",
+        "test_zero_fleet_assignment_refresh_targets_noop_with_active_workers",
+        "test_zero_fleet_assignment_refresh_targets_skips_already_fresh_candidates",
+        "test_zero_fleet_assignment_refresh_targets_covers_ready_dispatch_owner_chain"
+      ]
+    },
+    "docs_operations_auto_worker_readiness_md": {
+      "change": "New '### Delivery health refresh demand and the zero-worker self-lock' subsection documenting the demand-driven evidence model, the exact pre-existing gap (with function/line citations), and how zero_fleet_assignment_refresh_targets closes it, plus the same-cycle ordering between commit_delivery_health_observations and apply_post_dispatch_maintenance's second reconcile_pending_worker_recoveries pass."
+    }
+  },
+
+  "acceptance_criteria_verification": {
+    "ac1_self_triggered_refresh_no_operator_command": {
+      "criterion": "a cycle that finds ready work or a pending worker recovery receipt while zero workers are active refreshes the delivery health it needs without any operator command",
+      "result": "PASS",
+      "evidence": "zero_fleet_assignment_refresh_targets walks the owner (and, for review-status/pending-recovery tasks, reviewer) fallback chains for every dispatch-ready task and every task with a pending worker-recovery receipt whenever live_total == 0, independent of request_delivery_health_refresh. test_zero_fleet_assignment_refresh_targets_covers_pending_recovery_fallback and test_zero_fleet_assignment_refresh_targets_covers_ready_dispatch_owner_chain assert the targets are produced from build_dispatch_plan/the function directly with no Human/Ops request set."
+    },
+    "ac2_stays_inside_probe_budget_never_probes_fresh": {
+      "criterion": "that self-triggered refresh stays inside the existing demand-driven probe budget and never probes providers that are already fresh",
+      "result": "PASS",
+      "evidence": "The new demand is merged into the same refresh_targets list consumed by probe_demanded_delivery_health, which still applies delivery_health.refresh_max_per_cycle (unchanged, not widened). _demand_endpoint_health_refresh only appends a target when health_gate_for_endpoint (the same shared admission predicate) returns a non-None refresh target, i.e. the lane is not already healthy. test_zero_fleet_assignment_refresh_targets_skips_already_fresh_candidates asserts an all-healthy fleet at live_total=0 yields zero targets."
+    },
+    "ac3_retry_and_refresh_ordered_same_cycle": {
+      "criterion": "the recovery retry and the refresh are ordered so the retry evaluates evidence that is still valid in the same cycle",
+      "result": "PASS_BY_EXISTING_ORDERING",
+      "evidence": "commit_delivery_health_observations (supervisor.py, called from run_supervisor_cycle before apply_post_dispatch_maintenance) commits this cycle's freshly probed delivery_health before apply_post_dispatch_maintenance runs reconcile_runtime_on_boot -> reconcile_pending_worker_recoveries's second retry pass for the same cycle. The new demand target is folded into that same cycle's probe_targets by build_dispatch_plan before probe_demanded_delivery_health runs, so the second retry (after poll_workers_before_plan's earlier, pre-probe attempt) reads the just-refreshed evidence in the same cycle. No reordering of existing phases was needed or made; documented explicitly in auto-worker-readiness.md."
+    },
+    "ac4_bounded_self_recovery": {
+      "criterion": "a fleet that reaches zero active workers with dispatchable work recovers on its own within a bounded number of cycles",
+      "result": "PASS",
+      "evidence": "Once zero_fleet_assignment_refresh_targets demands and probe_demanded_delivery_health refreshes the exact fallback candidate plan_task_assignment_pair/worker_recovery_assignment_pair need, the same-cycle retry (AC3) or the following cycle's planner pass finds a viable pair using fresh (non-expired) evidence, bounded by evidence_ttl_seconds and the existing per-cycle probe budget -- no unbounded wait on an external operator action remains."
+    },
+    "ac5_regression_tests": {
+      "criterion": "regression tests cover the zero-worker plus pending-receipt case and prove no extra probes are issued while workers are running",
+      "result": "PASS",
+      "evidence": "test_zero_fleet_assignment_refresh_targets_covers_pending_recovery_fallback (zero workers + pending receipt -> fallback demand, including a build_dispatch_plan integration assertion) and test_zero_fleet_assignment_refresh_targets_noop_with_active_workers (live_total=1 -> targets == []) both added to .orchestrator/test_supervisor.py."
+    }
+  },
+
+  "test_run_results": {
+    "suite": ".orchestrator/test_supervisor.py",
+    "interpreter": ".venv-pantheon/bin/python3 (Python 3.12, pytest 9.1.1; dependency interpreter /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv)",
+    "focused_run": {
+      "filter": "-k zero_fleet_assignment_refresh_targets",
+      "result": "4 passed"
+    },
+    "full_run": {
+      "result": "385 passed, 129 subtests passed",
+      "duration_seconds": 100.79
+    },
+    "note": "Full test_supervisor.py suite (385 tests including the 4 new ones) passes with no regressions. .orchestrator/rewrite/ suite was also run for a broader signal; 5 pre-existing failures there (test_status_projection.py circular-import check, test_task_machine.py assignment-audit-source check, test_task_state_runtime_env.py config-path fixtures) are unrelated to this change -- confirmed by `git diff --stat` showing only .orchestrator/supervisor.py and .orchestrator/test_supervisor.py touched by this task, none of the failing files."
+  },
+
+  "root_cause_analysis": {
+    "why_idle_refresh_was_insufficient": "idle_delivery_health_refresh_targets restricts its scan to 'active delivery lanes' derived from the canonical task row's own owner/reviewer fields (plus live workers and queued intents). It correctly refreshes the incumbent, but the incumbent is exactly the lane that is already known to be a dead end (a lost worker, or an owner the planner is trying to route around) -- it was never going to refresh the *replacement candidate's* lane.",
+    "why_unavailable_assignment_fallback_refresh_targets_was_insufficient": "It walks owner_fallbacks/reviewer_fallbacks, but its trigger is assignment_terminal_unavailability(config, state, owner) returning non-None -- and that predicate explicitly treats a healthy, stale, or retryable endpoint as 'recoverable in place' (returns None), reserving a non-None terminal verdict for durable auth/quota/config failures only. A lane whose evidence simply expired past evidence_ttl_seconds is 'unknown', not terminal, so this scan stayed silent for exactly the case that matters once no worker is left to self-heal it.",
+    "fix": "zero_fleet_assignment_refresh_targets adds a third demand source that reuses the same configured fallback graph and the same shared health_gate_for_endpoint predicate (via the newly-extracted _demand_endpoint_health_refresh helper), but keys its trigger on live_total == 0 instead of on terminal-vs-stale classification. This is deliberately narrow: it changes nothing about how a running fleet behaves (the function is a no-op whenever live_total > 0), and it does not touch evidence_ttl_seconds, refresh_max_per_cycle, or any existing probe-budget policy per the task brief's explicit constraint not to widen the probe budget or remove the TTL."
+  },
+
+  "review_notes_for_codex": [
+    "The core fix is the new zero_fleet_assignment_refresh_targets function (supervisor.py) plus its one-line wiring into build_dispatch_plan; _demand_endpoint_health_refresh is a pure extraction of unavailable_assignment_fallback_refresh_targets's pre-existing inline closure with no behavior change (confirm via the unchanged unavailable_assignment_fallback_refresh_targets test coverage, which still passes untouched).",
+    "AC3 (same-cycle ordering) required no code change: the existing phase ordering in run_supervisor_cycle already commits probe observations before apply_post_dispatch_maintenance's reconcile_pending_worker_recoveries pass. This was verified by reading the call sequence, not by a new test; flagging for independent confirmation during review.",
+    "docs/operations/auto-worker-readiness.md gained one new subsection documenting this exact mechanism with function/line citations, matching that document's existing precise citation style; no other claims in that document were changed.",
+    "Live production recovery (evidence_ttl_seconds=300, the two real stalls cited in the task brief) is not independently re-reproduced here beyond the unit regression tests -- this is a supervisor-internal planning-logic fix verified at the unit level; a subsequent live dev-fleet observation window would be the natural follow-up if required."
+  ]
+}

@@ -202,6 +202,68 @@ pending a separate governed source repair.
        tier functions in production until a separate governed source repair
        corrects the transition invocation.
 
+### Delivery health refresh demand and the zero-worker self-lock
+
+`delivery_health` evidence is demand-driven, not polled on a fixed clock:
+`delivery_health.evidence_ttl_seconds` (default 300) is the sole cache
+lifetime (`delivery_health_settings`, `supervisor.py:1727`), and a lane is
+only re-probed when something explicitly demands it
+(`probe_demanded_delivery_health`, `supervisor.py:2382`), bounded by
+`delivery_health.refresh_max_per_cycle` (default 4). `build_dispatch_plan`
+(`supervisor.py:16017`) assembles that cycle's demand from, in order: each
+dispatch candidate's own ineligible-decision demand
+(`dispatch_ready_tasks`), `unavailable_assignment_fallback_refresh_targets`
+(`supervisor.py:10697`), `zero_fleet_assignment_refresh_targets`
+(`supervisor.py:10789`), `idle_delivery_health_refresh_targets`
+(`supervisor.py:1891`), and finally the startup/topology/Human/Ops bypass
+`authorized_delivery_health_refresh_targets` (`supervisor.py:2079`).
+
+Before `zero_fleet_assignment_refresh_targets` existed, two demand-driven
+paths left a real self-lock once the fleet reached zero active workers with
+work still pending (diagnosed OPS-ZERO-WORKER-HEALTH-REFRESH-SELFLOCK-001,
+reproduced live 2026-09-21/22 as a 13.6-hour zero-dispatch stall and a
+20-hour-stuck `pending` worker-recovery receipt):
+
+- `idle_delivery_health_refresh_targets` refreshes only the exact
+  owner/reviewer already recorded on the canonical task row -- never a
+  configured fallback candidate.
+- `unavailable_assignment_fallback_refresh_targets` does walk the configured
+  `worker_reassignment.owner_fallbacks` / `reviewer_fallbacks` chains, but
+  only once the incumbent is durably (terminally) unavailable
+  (`assignment_terminal_unavailability`) -- a merely stale/expired
+  (`unknown`) probe is not terminal, so it never triggers that walk.
+
+`plan_task_assignment_pair` and `worker_recovery_assignment_pair`, however,
+both search the *same* configured fallback chains for a viable pair. With a
+live worker still running, some other cycle eventually touches each
+candidate lane on its own and this self-heals. With zero active workers,
+nothing else ever will: dispatch and worker-recovery retries keep reading
+the same expired evidence for the exact candidates they need, forever,
+until an operator runs `supervisor.py --request-delivery-health-refresh`
+(which forces `authorized_delivery_health_refresh_targets` to probe every
+configured endpoint, not just the ones actually in play).
+
+`zero_fleet_assignment_refresh_targets` (`supervisor.py:10789`) closes this
+by demanding a refresh for the same owner/reviewer fallback chains
+`unavailable_assignment_fallback_refresh_targets` would eventually demand --
+same probe budget, same `health_gate_for_endpoint` predicate -- for every
+dispatch-ready task (`todo`, `in_progress`, `review_approved`, `blocked`, or
+in `ready_dispatch.review_statuses`) and every task fenced behind a
+*pending* worker-recovery receipt (`task_has_pending_worker_recovery`), but
+strictly only while `live_total == 0`. A running fleet gains no extra probes
+from this path: the check on `live_total` is the first line of the function
+and short-circuits to `[]` whenever any worker is active, so it adds nothing
+to the demand a live fleet already regenerates through its own dispatch and
+recovery cycles.
+
+Because `commit_delivery_health_observations` commits this cycle's probe
+results before `apply_post_dispatch_maintenance` (which runs
+`reconcile_pending_worker_recoveries` a second time, after
+`poll_workers_before_plan` already tried once against last cycle's
+evidence), a pending worker-recovery receipt's retry sees the freshly
+probed evidence in the same cycle that demanded it -- it does not have to
+wait for the next cycle to notice the refreshed candidate.
+
 ### Authority boundary
 
 These automated recovery lanes reuse existing TaskStore mutations (canonical CAS
