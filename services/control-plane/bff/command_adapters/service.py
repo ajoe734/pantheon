@@ -6,6 +6,7 @@ remaining completely decoupled from ``bff.main``.
 """
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -15,6 +16,12 @@ import os
 import re
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+async def _execute_command_background_task(task_fn: Callable[[str], Any], command_id: str) -> None:
+    res = task_fn(command_id)
+    if asyncio.iscoroutine(res):
+        await res
 
 from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse
@@ -62,12 +69,105 @@ except (ImportError, ValueError):
 from .base import ActionUnavailableError
 from .contracts import (
     _FINAL_COMMAND_ROUTE,
+    _HUMAN_GATE_DECISIONS_BY_COMMAND,
     build_foundation_command_context,
     normalize_operator_command_payload,
     resolve_final_idempotency_key,
     serialize_foundation_context,
     stable_json_hash,
 )
+
+_DRAWER_RUNTIME_COMMANDS = {
+    CommandType.PAUSE_EXECUTION,
+    CommandType.ISSUE_RISK_OFF,
+    CommandType.LIQUIDATE_ALL,
+    CommandType.HARD_ROLLBACK,
+    CommandType.ISSUE_SAFE_MODE,
+}
+
+_TWO_MAN_EVIDENCE_FIELDS = (
+    "twoManSignatureId",
+    "two_man_signature_id",
+    "twoManApprovalId",
+    "two_man_approval_id",
+    "secondOperatorId",
+    "second_operator_id",
+    "secondOperatorSignature",
+    "second_operator_signature",
+)
+
+
+def stored_command_params(
+    cmd: OperatorCommand,
+    identity: OperatorIdentity,
+    raw_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if cmd.command in _DRAWER_RUNTIME_COMMANDS:
+        return dict(cmd.params)
+    params = dict(cmd.params)
+    if cmd.command == CommandType.REMEDIATE_SENTINEL_INTERVENTION and raw_payload:
+        if not str(params.get("two_man_signature_id") or "").strip():
+            for alias in _TWO_MAN_EVIDENCE_FIELDS:
+                val = str(raw_payload.get(alias) or "").strip()
+                if val:
+                    params["two_man_signature_id"] = val
+                    break
+    if cmd.command == CommandType.APPROVED_APPLY:
+        params.pop("rebalanceId", None)
+        params["rebalance_id"] = cmd.target.id
+    elif cmd.command == CommandType.EMERGENCY_CONTAINMENT:
+        params.pop("personaId", None)
+        params["persona_id"] = cmd.target.id
+    elif cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
+        target_rt_id = str(cmd.target.id).strip()
+        params["runtime_id"] = target_rt_id
+        params["entity_id"] = target_rt_id
+        params.pop("runtimeId", None)
+        params.pop("entityId", None)
+        params.pop("verified_binding", None)
+        params.pop("verified_binding_id", None)
+        params.pop("verified_runtime_binding_id", None)
+        if raw_payload and "bounded_duration_minutes" in raw_payload and "bounded_duration_minutes" not in params:
+            params["bounded_duration_minutes"] = raw_payload["bounded_duration_minutes"]
+        bdm = params.get("bounded_duration_minutes")
+        if bdm is not None:
+            try:
+                bdm_val = int(bdm)
+                if bdm_val > 0:
+                    params["duration_seconds"] = bdm_val * 60
+            except (ValueError, TypeError):
+                pass
+    canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(
+        cmd.command,
+        cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
+    )
+    if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
+        canonical_action_id = "submit_recommendation"
+    canonical_paper = cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
+    if canonical_paper:
+        canonical_action_id = cmd.command.value
+    params.update(
+        {
+            "entity_type": "Runtime" if canonical_paper else (cmd.params.get("entity_type") or cmd.target.type.value),
+            "entity_id": cmd.target.id,
+            "action_id": canonical_action_id,
+            "actionId": canonical_action_id,
+            "actor_id": identity.operator_id,
+            "actor_role": next(
+                (
+                    role
+                    for role in ("admin", "approver", "reviewer", "operator")
+                    if role in identity.roles
+                ),
+                "operator",
+            ),
+        }
+    )
+    return params
+
+
+_stored_command_params = stored_command_params
+
 from .preconditions import (
     assert_duplicate_confirm_token_matches,
     canonicalize_validated_precondition_evidence,
@@ -1357,7 +1457,7 @@ class CommandAdapterService:
                 )
                 if self._process_command_task and background_tasks and hasattr(background_tasks, "add_task"):
                     background_tasks.add_task(
-                        self._process_command_task, str(duplicate["command_id"])
+                        _execute_command_background_task, self._process_command_task, str(duplicate["command_id"])
                     )
                 duplicate_status = CommandStatus.SUBMITTED
             return project_final_command_response(
@@ -1387,7 +1487,7 @@ class CommandAdapterService:
         except HTTPException as exc:
             raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
-        stored_params = dict(cmd.params)
+        stored_params = stored_command_params(cmd, identity, payload)
         stored_params["idempotency_key"] = resolved_key
         stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
         canonicalize_validated_precondition_evidence(
@@ -1553,7 +1653,7 @@ class CommandAdapterService:
         )
 
         if enqueue and self._process_command_task and background_tasks and hasattr(background_tasks, "add_task"):
-            background_tasks.add_task(self._process_command_task, command_id)
+            background_tasks.add_task(_execute_command_background_task, self._process_command_task, command_id)
 
         return project_final_command_response(
             command_id=command_id,
