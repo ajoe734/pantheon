@@ -14,7 +14,11 @@ from fastapi import HTTPException
 
 try:
     from ..action_catalog import get_catalog_entry
-    from ..auth.policy import bff_error as _auth_bff_error
+    from ..auth.policy import (
+        bff_error as _auth_bff_error,
+        bff_me_tenant_payload as _auth_bff_me_tenant_payload,
+        require_admin_mfa as _auth_require_admin_mfa,
+    )
     from ..models import (
         CommandStatus,
         CommandType,
@@ -25,7 +29,11 @@ try:
     )
 except (ImportError, ValueError):
     from action_catalog import get_catalog_entry
-    from auth.policy import bff_error as _auth_bff_error
+    from auth.policy import (
+        bff_error as _auth_bff_error,
+        bff_me_tenant_payload as _auth_bff_me_tenant_payload,
+        require_admin_mfa as _auth_require_admin_mfa,
+    )
     from models import (
         CommandStatus,
         CommandType,
@@ -1502,3 +1510,1630 @@ def require_final_command_preconditions(
         )
 
     return evidence
+
+
+# ---------------------------------------------------------------------------
+# Ops Console Preconditions & Command Validator Graph
+# ---------------------------------------------------------------------------
+
+_APPROVE_DEPLOYMENT_REQUIRED = {"deployment_plan_id", "approval_decision"}
+_VALID_APPROVAL_DECISIONS = {"approve", "reject"}
+_APPROVE_DECISION_REQUIRED = {"decision_id"}
+_REJECT_DECISION_REQUIRED = {"decision_id", "rejection_reason"}
+_REQUEST_APPROVAL_REVISION_REQUIRED = {"decision_id", "revision_notes"}
+_ESCALATE_DIFF_REQUIRED = {"plan_id", "escalation_reason"}
+_PAUSE_RUNTIME_REQUIRED = {"runtime_binding_id", "pause_action"}
+_VALID_PAUSE_ACTIONS = {"pause", "resume"}
+_PAUSE_EXECUTION_REQUIRED = {"pause_new_entries", "cancel_open_orders"}
+_ROLLBACK_REQUIRED = {"rollback_target_type", "target_id", "rollback_to_version"}
+_VALID_ROLLBACK_TARGET_TYPES = {"deployment", "runtime"}
+_APPROVE_ROLLBACK_REQUIRED = {"rollback_id"}
+_REJECT_ROLLBACK_REQUIRED = {"rollback_id", "rejection_reason"}
+_RISK_OFF_REQUIRED = {"reduce_exposure_pct"}
+_SAFE_MODE_LEVELS = {"soft"}
+_KILL_SWITCH_REQUIRED = {"scope", "activate"}
+_VALID_SCOPES = {"persona", "pool", "all"}
+_VALID_SEVERITIES = {"critical", "high", "medium"}
+_APPROVE_EVO_REQUIRED = {"evolution_decision_id", "approval_action"}
+_VALID_EVO_APPROVAL_ACTIONS = {"approve", "reject"}
+_EXECUTE_EVO_REQUIRED = {"evolution_decision_id", "action_type"}
+_VALID_EVO_ACTION_TYPES = {"freeze", "retrain", "revalidate", "mutate", "retire"}
+_APPROVE_MUTATION_REQUIRED = {"decision_id"}
+_REJECT_MUTATION_REQUIRED = {"decision_id"}
+_REVIEW_MUTATION_REQUIRED = {"decision_id", "approval_decision_id"}
+_EXECUTE_MUTATION_REQUIRED = {"decision_id"}
+_RECORD_SPONSOR_DECISION_REQUIRED = {"committee_id", "sponsor_decision", "rationale_ref"}
+_VALID_SPONSOR_DECISIONS = {"approved", "rejected", "conditional"}
+_REMEDIATE_SENTINEL_REQUIRED = {"intervention_id", "remediation_action"}
+_VALID_REMEDIATION_ACTIONS = {"resolve", "dismiss", "escalate"}
+_DECIDE_V5_INTERVENTION_REQUIRED = {"intervention_id", "decision"}
+_VALID_V5_INTERVENTION_DECISIONS = {"approve", "reject", "defer", "dismiss"}
+_HUMAN_GATE_REQUIRED = {"human_gate_item_id", "decision"}
+_VALID_HUMAN_GATE_DECISIONS = set(_HUMAN_GATE_DECISIONS_BY_COMMAND.values())
+_HUMAN_GATE_APPROVER_DECISIONS = {"approve", "reject", "revoke", "extend_ttl"}
+_HUMAN_GATE_SELF_APPROVAL_DECISIONS = {"approve", "reject", "revoke"}
+_HUMAN_GATE_HIGH_RISK_LEVELS = {"high", "critical"}
+_HUMAN_GATE_DEFAULT_MAX_TTL_SECONDS = 604800
+
+_OPS_CONSOLE_READ_SURFACE_RESOLVER: Optional[Callable[[], Any]] = None
+_OPS_CONSOLE_OPS_READ_MODEL_RESOLVER: Optional[Callable[[str], Any]] = None
+_OPS_CONSOLE_BFF_ERROR_RESOLVER: Optional[Callable[..., Any]] = None
+_OPS_CONSOLE_UTC_NOW_RESOLVER: Optional[Callable[[], str]] = None
+
+
+def set_ops_console_precondition_resolvers(
+    *,
+    read_surface: Optional[Callable[[], Any]] = None,
+    ops_read_model: Optional[Callable[[str], Any]] = None,
+    bff_error: Optional[Callable[..., Any]] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> None:
+    global _OPS_CONSOLE_READ_SURFACE_RESOLVER, _OPS_CONSOLE_OPS_READ_MODEL_RESOLVER
+    global _OPS_CONSOLE_BFF_ERROR_RESOLVER, _OPS_CONSOLE_UTC_NOW_RESOLVER
+    if read_surface is not None:
+        _OPS_CONSOLE_READ_SURFACE_RESOLVER = read_surface
+    if ops_read_model is not None:
+        _OPS_CONSOLE_OPS_READ_MODEL_RESOLVER = ops_read_model
+    if bff_error is not None:
+        _OPS_CONSOLE_BFF_ERROR_RESOLVER = bff_error
+    if utc_now is not None:
+        _OPS_CONSOLE_UTC_NOW_RESOLVER = utc_now
+
+
+def _resolve_read_surface(provided: Optional[Any] = None) -> Any:
+    if provided is not None:
+        return provided() if callable(provided) else provided
+    if _OPS_CONSOLE_READ_SURFACE_RESOLVER is not None:
+        return _OPS_CONSOLE_READ_SURFACE_RESOLVER()
+    import sys
+    main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+    if main_mod is not None and hasattr(main_mod, "read_store"):
+        return getattr(main_mod, "read_store")
+    return None
+
+
+def _resolve_ops_read_model(persona_id: str, provided: Optional[Callable[[str], Any]] = None) -> Any:
+    if provided is not None:
+        return provided(persona_id)
+    if _OPS_CONSOLE_OPS_READ_MODEL_RESOLVER is not None:
+        return _OPS_CONSOLE_OPS_READ_MODEL_RESOLVER(persona_id)
+    import sys
+    main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+    if main_mod is not None and hasattr(main_mod, "_ops_read_model_entry_for_persona"):
+        return getattr(main_mod, "_ops_read_model_entry_for_persona")(persona_id)
+    return None
+
+
+def _resolve_bff_error(provided: Optional[Callable[..., Any]] = None) -> Callable[..., Any]:
+    if provided is not None:
+        return provided
+    if _OPS_CONSOLE_BFF_ERROR_RESOLVER is not None:
+        return _OPS_CONSOLE_BFF_ERROR_RESOLVER
+    import sys
+    main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+    if main_mod is not None and hasattr(main_mod, "_bff_error"):
+        return getattr(main_mod, "_bff_error")
+    return _auth_bff_error
+
+
+def _resolve_utc_now(provided: Optional[Callable[[], str]] = None) -> str:
+    if provided is not None:
+        return provided()
+    if _OPS_CONSOLE_UTC_NOW_RESOLVER is not None:
+        return _OPS_CONSOLE_UTC_NOW_RESOLVER()
+    import sys
+    main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+    if main_mod is not None and hasattr(main_mod, "utc_now"):
+        return getattr(main_mod, "utc_now")()
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _human_gate_max_ttl_seconds() -> int:
+    raw = os.getenv("PANTHEON_HUMAN_GATE_MAX_TTL_SECONDS", str(_HUMAN_GATE_DEFAULT_MAX_TTL_SECONDS)).strip()
+    try:
+        configured = int(raw)
+    except (TypeError, ValueError):
+        configured = _HUMAN_GATE_DEFAULT_MAX_TTL_SECONDS
+    return max(1, configured)
+
+
+def _check_binding_tenant_ownership(
+    binding: Any,
+    identity: OperatorIdentity,
+    *,
+    bff_me_tenant_payload_fn: Optional[Callable[..., Any]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> str:
+    _err = bff_error_fn or _resolve_bff_error()
+    binding_tenant = ""
+    metadata = binding.get("metadata") if isinstance(binding, dict) else getattr(binding, "metadata", None)
+    if isinstance(metadata, dict):
+        for key in ("tenant_id", "tenantId", "tenant"):
+            val = metadata.get(key)
+            if val is not None and str(val).strip():
+                binding_tenant = str(val).strip()
+                break
+    if not binding_tenant:
+        for key in ("tenant_id", "tenantId", "tenant"):
+            val = binding.get(key) if isinstance(binding, dict) else getattr(binding, key, None)
+            if val is not None and str(val).strip():
+                binding_tenant = str(val).strip()
+                break
+    if not binding_tenant:
+        raise _err(403, ErrorCode.FORBIDDEN, "Runtime tenant is unavailable", "Cannot determine the runtime owner tenant", precondition_failed="cross_tenant")
+
+    _tenant_fn = bff_me_tenant_payload_fn or _auth_bff_me_tenant_payload
+    try:
+        _tenant_fn(identity, requested_tenant=binding_tenant)
+    except HTTPException as exc:
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Cross-tenant access forbidden",
+            f"Caller cannot operate on runtime binding in tenant '{binding_tenant}'",
+            precondition_failed="cross_tenant",
+        ) from exc
+    return binding_tenant
+
+
+def _enforce_ops_console_preconditions(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    required_bindings: Optional[List[str]] = None,
+    *,
+    read_surface: Optional[Any] = None,
+    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
+    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    _read_store = _resolve_read_surface(read_surface)
+    _check_tenant = check_binding_tenant_ownership_fn or _check_binding_tenant_ownership
+
+    entity_type = str(params.get("entity_type") or params.get("entityType") or "").strip().lower()
+    persona_id = ""
+    runtime_id = ""
+
+    if entity_type == "persona":
+        persona_id = (
+            params.get("persona_id")
+            or params.get("personaId")
+            or params.get("entity_id")
+            or params.get("entityId")
+            or ""
+        ).strip()
+    elif entity_type in ("runtime", "paper-runtime"):
+        runtime_id = (
+            params.get("runtime_id")
+            or params.get("runtimeId")
+            or params.get("entity_id")
+            or params.get("entityId")
+            or ""
+        ).strip()
+
+    if not persona_id:
+        persona_id = (params.get("persona_id") or params.get("personaId") or "").strip()
+    if not runtime_id:
+        runtime_id = (params.get("runtime_id") or params.get("runtimeId") or "").strip()
+
+    if persona_id and _read_store:
+        persona = _read_store.get_persona(persona_id)
+        if not persona:
+            raise _err(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Persona not found",
+                f"Persona {persona_id} does not exist",
+            )
+
+        read_model = _resolve_ops_read_model(persona_id, ops_read_model_fn)
+        if read_model:
+            confidence = getattr(read_model, "data_confidence", None)
+            if isinstance(confidence, str):
+                confidence_str = confidence
+            elif hasattr(confidence, "value"):
+                confidence_str = confidence.value
+            else:
+                confidence_str = str(confidence or "")
+
+            if confidence_str.lower() in ("unavailable", "unverifiable"):
+                raise _err(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    f"Action blocked due to {confidence_str} source confidence for persona {persona_id}",
+                    "Source confidence must be formal, partial, fallback, or degraded",
+                    precondition_failed="source_confidence",
+                )
+
+            if required_bindings:
+                identity_obj = getattr(read_model, "identity", None)
+                if "runtime" in required_bindings:
+                    runtime_ids = getattr(identity_obj, "runtime_ids", None) if identity_obj else None
+                    if not runtime_ids:
+                        raise _err(
+                            422,
+                            ErrorCode.VALIDATION_FAILED,
+                            f"Persona {persona_id} must have an active runtime binding",
+                            "No active runtime binding found for this persona",
+                            precondition_failed="runtime_binding_missing",
+                        )
+                if "capital" in required_bindings:
+                    pool_ids = getattr(identity_obj, "capital_pool_ids", None) if identity_obj else None
+                    ledger_ids = getattr(identity_obj, "paper_ledger_ids", None) if identity_obj else None
+                    if not pool_ids and not ledger_ids:
+                        raise _err(
+                            422,
+                            ErrorCode.VALIDATION_FAILED,
+                            f"Persona {persona_id} must have a capital pool or paper ledger binding",
+                            "No active capital or ledger binding found for this persona",
+                            precondition_failed="capital_binding_missing",
+                        )
+
+    is_runtime_target = (
+        entity_type in ("runtime", "paper-runtime")
+        or (required_bindings and "paper" in required_bindings)
+        or str(params.get("target_type") or "").strip().lower() in ("runtime", "paper-runtime")
+    )
+    if not runtime_id and is_runtime_target:
+        runtime_id = (
+            params.get("runtime_id")
+            or params.get("runtimeId")
+            or params.get("entity_id")
+            or params.get("entityId")
+            or ""
+        ).strip()
+    if runtime_id and _read_store:
+        binding = _read_store.get_runtime_binding_by_runtime_id(runtime_id)
+        if not binding:
+            raise _err(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Runtime not found",
+                f"Runtime {runtime_id} does not exist",
+            )
+        resolved_rt_id = (
+            binding.get("runtime_id") or binding.get("runtimeId")
+            if isinstance(binding, dict)
+            else getattr(binding, "runtime_id", getattr(binding, "runtimeId", None))
+        )
+        resolved_rt_id = str(resolved_rt_id or "").strip()
+        if resolved_rt_id and resolved_rt_id != runtime_id:
+            raise _err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Runtime ID mismatch",
+                f"Binding runtime ID '{resolved_rt_id}' does not match requested runtime ID '{runtime_id}'",
+                precondition_failed="runtime_id_mismatch",
+            )
+        payload_binding_id = str(
+            params.get("binding_id")
+            or params.get("bindingId")
+            or params.get("runtime_binding_id")
+            or params.get("runtimeBindingId")
+            or ""
+        ).strip()
+        actual_binding_id = (
+            binding.get("binding_id") or binding.get("id") or binding.get("bindingId")
+            if isinstance(binding, dict)
+            else getattr(binding, "binding_id", getattr(binding, "id", getattr(binding, "bindingId", None)))
+        )
+        actual_binding_id = str(actual_binding_id or "").strip()
+        if payload_binding_id and actual_binding_id and payload_binding_id != actual_binding_id:
+            raise _err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Binding ID mismatch",
+                f"Payload binding ID '{payload_binding_id}' does not match resolved binding '{actual_binding_id}'",
+                precondition_failed="binding_mismatch",
+            )
+        params["tenant_id"] = _check_tenant(binding, identity)
+        if required_bindings and "paper" in required_bindings:
+            stage = (
+                binding.get("deployment_mode")
+                or binding.get("deployment_stage")
+                or binding.get("stage")
+                if isinstance(binding, dict)
+                else getattr(binding, "deployment_mode", getattr(binding, "deployment_stage", getattr(binding, "stage", "")))
+            )
+            stage = str(stage or "").strip().lower()
+            if stage != "paper":
+                raise _err(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    f"Runtime {runtime_id} stage is {stage}, not paper",
+                    "Action is restricted to paper runtimes only",
+                    precondition_failed="stage_mismatch",
+                )
+        params.pop("verified_binding", None)
+        params.pop("verified_binding_id", None)
+        params.pop("verified_runtime_binding_id", None)
+        if actual_binding_id:
+            params["runtime_binding_id"] = actual_binding_id
+
+
+enforce_ops_console_preconditions = _enforce_ops_console_preconditions
+
+
+def _validate_pause_execution(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _PAUSE_EXECUTION_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for PauseExecution",
+            f"Missing fields: {sorted(missing)}",
+        )
+    for field in sorted(_PAUSE_EXECUTION_REQUIRED):
+        if not isinstance(params.get(field), bool):
+            raise _err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                f"Invalid {field} value",
+                f"{field} must be a boolean",
+            )
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "PauseExecution requires 'operator' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator or admin role",
+        )
+
+
+def _validate_issue_risk_off(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _RISK_OFF_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for IssueRiskOff",
+            f"Missing fields: {sorted(missing)}",
+        )
+    exposure_pct = params.get("reduce_exposure_pct")
+    if not isinstance(exposure_pct, (int, float)) or exposure_pct <= 0 or exposure_pct > 100:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid reduce_exposure_pct value",
+            "reduce_exposure_pct must be a number between 1 and 100",
+        )
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "IssueRiskOff requires 'operator' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator or admin role",
+        )
+
+
+def _validate_liquidate_all(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if params:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "LiquidateAll does not accept params",
+            "params must be an empty object for LiquidateAll",
+        )
+    _auth_require_admin_mfa(identity, "LiquidateAll")
+
+
+def _validate_hard_rollback(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    target_artifact_id = str(params.get("target_artifact_id") or "").strip()
+    if not target_artifact_id:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for HardRollback",
+            "target_artifact_id must be a non-empty string",
+        )
+    if not {"admin", "approver"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "HardRollback requires 'admin' or 'approver' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with admin or approver role",
+        )
+
+
+def _validate_issue_safe_mode(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    safe_mode_level = str(params.get("safe_mode_level") or "").strip().lower()
+    if safe_mode_level not in _SAFE_MODE_LEVELS:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid safe_mode_level",
+            f"safe_mode_level must be one of {sorted(_SAFE_MODE_LEVELS)}",
+        )
+    _auth_require_admin_mfa(identity, "IssueSafeMode")
+
+
+def _validate_approve_deployment(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _APPROVE_DEPLOYMENT_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ApproveDeployment",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if params["approval_decision"] not in _VALID_APPROVAL_DECISIONS:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Invalid approval_decision value",
+            f"Must be one of {_VALID_APPROVAL_DECISIONS}",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403, ErrorCode.FORBIDDEN,
+            "ApproveDeployment requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_approve_decision(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _APPROVE_DECISION_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ApproveDecision",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ApproveDecision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_reject_decision(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _REJECT_DECISION_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for RejectDecision",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not str(params.get("rejection_reason") or "").strip():
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "RejectDecision requires a non-empty rejection_reason",
+            "rejection_reason must be a non-empty string",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "RejectDecision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_request_approval_revision(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _REQUEST_APPROVAL_REVISION_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for RequestApprovalRevision",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not str(params.get("revision_notes") or "").strip():
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "RequestApprovalRevision requires non-empty revision_notes",
+            "revision_notes must be a non-empty string",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "RequestApprovalRevision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_pause_runtime(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _PAUSE_RUNTIME_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Missing required params for PauseRuntime",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if params["pause_action"] not in _VALID_PAUSE_ACTIONS:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Invalid pause_action value",
+            f"Must be one of {_VALID_PAUSE_ACTIONS}",
+        )
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _err(
+            403, ErrorCode.FORBIDDEN,
+            "PauseRuntime requires 'operator' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator or admin role",
+        )
+
+
+def _validate_execute_rollback(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _ROLLBACK_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ExecuteRollback",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if params["rollback_target_type"] not in _VALID_ROLLBACK_TARGET_TYPES:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Invalid rollback_target_type",
+            f"Must be one of {_VALID_ROLLBACK_TARGET_TYPES}",
+        )
+    if not {"admin", "approver"}.intersection(identity.roles):
+        raise _err(
+            403, ErrorCode.FORBIDDEN,
+            "ExecuteRollback requires 'admin' or 'approver' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with admin or approver role",
+        )
+
+
+def _validate_approve_rollback(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _APPROVE_ROLLBACK_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ApproveRollback",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403, ErrorCode.FORBIDDEN,
+            "ApproveRollback requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_reject_rollback(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _REJECT_ROLLBACK_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Missing required params for RejectRollback",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not str(params.get("rejection_reason") or "").strip():
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "RejectRollback requires a non-empty rejection_reason",
+            "rejection_reason must be a non-empty string",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403, ErrorCode.FORBIDDEN,
+            "RejectRollback requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_activate_kill_switch(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _KILL_SWITCH_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ActivateKillSwitch",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if params["scope"] not in _VALID_SCOPES:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Invalid scope for ActivateKillSwitch",
+            f"Must be one of {_VALID_SCOPES}",
+        )
+    severity = params.get("severity")
+    if severity is not None and severity not in _VALID_SEVERITIES:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Invalid severity for ActivateKillSwitch",
+            f"Must be one of {_VALID_SEVERITIES}",
+        )
+    if "admin" not in identity.roles:
+        raise _err(
+            403, ErrorCode.FORBIDDEN,
+            "ActivateKillSwitch requires 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with admin role",
+        )
+
+
+def _validate_escalate_diff(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _ESCALATE_DIFF_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for EscalateDiff",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not str(params.get("escalation_reason") or "").strip():
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "EscalateDiff requires a non-empty escalation_reason",
+            "escalation_reason must be a non-empty string",
+        )
+    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "EscalateDiff requires operator-level governance access",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
+        )
+
+
+def _validate_approve_evolution_decision(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _APPROVE_EVO_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ApproveEvolutionDecision",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if params["approval_action"] not in _VALID_EVO_APPROVAL_ACTIONS:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Invalid approval_action",
+            f"Must be one of {_VALID_EVO_APPROVAL_ACTIONS}",
+        )
+    if not {"reviewer", "admin", "approver"}.intersection(identity.roles):
+        raise _err(
+            403, ErrorCode.FORBIDDEN,
+            "ApproveEvolutionDecision requires 'reviewer', 'approver', or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with reviewer, approver, or admin role",
+        )
+
+
+def _validate_execute_evolution_action(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _EXECUTE_EVO_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ExecuteEvolutionAction",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if params["action_type"] not in _VALID_EVO_ACTION_TYPES:
+        raise _err(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Invalid action_type for ExecuteEvolutionAction",
+            f"Must be one of {_VALID_EVO_ACTION_TYPES}",
+        )
+    if not {"admin", "approver"}.intersection(identity.roles):
+        raise _err(
+            403, ErrorCode.FORBIDDEN,
+            "ExecuteEvolutionAction requires 'admin' or 'approver' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with admin or approver role",
+        )
+
+
+def _mutation_review_projection(
+    decision_id: str,
+    *,
+    identity: OperatorIdentity,
+    snapshot_at: str,
+    read_surface: Optional[Any] = None,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> Optional[Dict[str, Any]]:
+    try:
+        from ..governance.service import GovernanceService
+    except (ImportError, ValueError):
+        from governance.service import GovernanceService
+    store = _resolve_read_surface(read_surface)
+    now_fn = utc_now_fn or _resolve_utc_now
+    service = GovernanceService(
+        store,
+        utc_now=now_fn,
+    )
+    return service.mutation_review_projection(decision_id, identity=identity, snapshot_at=snapshot_at)
+
+
+def _validate_record_sponsor_decision(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+    read_surface: Optional[Any] = None,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    try:
+        from ..governance.service import GovernanceService
+    except (ImportError, ValueError):
+        from governance.service import GovernanceService
+
+    missing = _RECORD_SPONSOR_DECISION_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for RecordSponsorDecision",
+            f"Missing fields: {sorted(missing)}",
+        )
+    sponsor_decision = str(params.get("sponsor_decision") or "").strip().lower()
+    if sponsor_decision not in _VALID_SPONSOR_DECISIONS:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid sponsor_decision value",
+            f"sponsor_decision must be one of {sorted(_VALID_SPONSOR_DECISIONS)}",
+        )
+    rationale_ref = str(params.get("rationale_ref") or "").strip()
+    if not rationale_ref:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "RecordSponsorDecision requires a non-empty rationale_ref",
+            "rationale_ref must be a non-empty string",
+        )
+    committee_id = str(params.get("committee_id") or "").strip()
+    store = _resolve_read_surface(read_surface)
+    now_fn = utc_now_fn or _resolve_utc_now
+    governance_service = GovernanceService(
+        store,
+        utc_now=now_fn,
+    )
+    projection = governance_service.committee_projection(
+        committee_id,
+        identity=identity,
+        snapshot_at=now_fn(),
+    )
+    if projection is None:
+        raise _err(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Committee board not found",
+            f"Committee {committee_id} does not exist",
+        )
+    if projection["meta"]["surfaces"]["committee_board"] == "unavailable":
+        raise _err(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "RecordSponsorDecision is blocked while the committee board is unavailable",
+            "Committee evidence cannot be composed reliably",
+            precondition_failed="committee_board_surface",
+        )
+    if not projection["allowedActions"]["canRecordSponsorDecision"]:
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "RecordSponsorDecision is not allowed for this operator and committee state",
+            "allowedActions.canRecordSponsorDecision is false for the current read projection",
+            precondition_failed="allowedActions.canRecordSponsorDecision",
+        )
+
+
+def _validate_approve_mutation(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+    read_surface: Optional[Any] = None,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    now_fn = utc_now_fn or _resolve_utc_now
+    missing = _APPROVE_MUTATION_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ApproveMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=now_fn(), read_surface=read_surface, utc_now_fn=now_fn)
+    if projection is None:
+        raise _err(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Mutation review decision not found",
+            f"Evolution decision {decision_id} does not exist",
+        )
+    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        raise _err(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "ApproveMutation is blocked while the mutation-review surface is unavailable",
+            "Mutation-review evidence cannot be composed reliably",
+            precondition_failed="mutation_review_surface",
+        )
+    if not projection["allowedActions"]["canApproveMutation"]:
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ApproveMutation is not allowed for this operator and decision state",
+            "allowedActions.canApproveMutation is false for the current read projection",
+            precondition_failed="allowedActions.canApproveMutation",
+        )
+
+
+def _validate_reject_mutation(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+    read_surface: Optional[Any] = None,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    now_fn = utc_now_fn or _resolve_utc_now
+    missing = _REJECT_MUTATION_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for RejectMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=now_fn(), read_surface=read_surface, utc_now_fn=now_fn)
+    if projection is None:
+        raise _err(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Mutation review decision not found",
+            f"Evolution decision {decision_id} does not exist",
+        )
+    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        raise _err(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "RejectMutation is blocked while the mutation-review surface is unavailable",
+            "Mutation-review evidence cannot be composed reliably",
+            precondition_failed="mutation_review_surface",
+        )
+    if not projection["allowedActions"]["canRejectMutation"]:
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "RejectMutation is not allowed for this operator and decision state",
+            "allowedActions.canRejectMutation is false for the current read projection",
+            precondition_failed="allowedActions.canRejectMutation",
+        )
+
+
+def _validate_review_mutation(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+    read_surface: Optional[Any] = None,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    now_fn = utc_now_fn or _resolve_utc_now
+    missing = _REVIEW_MUTATION_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ReviewMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=now_fn(), read_surface=read_surface, utc_now_fn=now_fn)
+    if projection is None:
+        raise _err(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Mutation review decision not found",
+            f"Evolution decision {decision_id} does not exist",
+        )
+    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        raise _err(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "ReviewMutation is blocked while the mutation-review surface is unavailable",
+            "Mutation-review evidence cannot be composed reliably",
+            precondition_failed="mutation_review_surface",
+        )
+    if not projection["allowedActions"]["canReviewMutation"]:
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ReviewMutation is not allowed for this operator and decision state",
+            "allowedActions.canReviewMutation is false for the current read projection",
+            precondition_failed="allowedActions.canReviewMutation",
+        )
+
+
+def _validate_execute_mutation(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+    read_surface: Optional[Any] = None,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    now_fn = utc_now_fn or _resolve_utc_now
+    missing = _EXECUTE_MUTATION_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for ExecuteMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=now_fn(), read_surface=read_surface, utc_now_fn=now_fn)
+    if projection is None:
+        raise _err(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Mutation review decision not found",
+            f"Evolution decision {decision_id} does not exist",
+        )
+    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        raise _err(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "ExecuteMutation is blocked while the mutation-review surface is unavailable",
+            "Mutation-review evidence cannot be composed reliably",
+            precondition_failed="mutation_review_surface",
+        )
+    if not projection["allowedActions"]["canExecuteMutation"]:
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ExecuteMutation is not allowed for this operator and decision state",
+            "allowedActions.canExecuteMutation is false for the current read projection",
+            precondition_failed="allowedActions.canExecuteMutation",
+        )
+
+
+def _validate_remediate_sentinel_intervention(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _REMEDIATE_SENTINEL_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for RemediateSentinelIntervention",
+            f"Missing fields: {sorted(missing)}",
+        )
+    remediation_action = str(params.get("remediation_action") or "").strip()
+    if remediation_action not in _VALID_REMEDIATION_ACTIONS:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid remediation_action value",
+            f"remediation_action must be one of {sorted(_VALID_REMEDIATION_ACTIONS)}",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "RemediateSentinelIntervention requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_decide_v5_intervention(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _DECIDE_V5_INTERVENTION_REQUIRED - params.keys()
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for DecideV5Intervention",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="decision",
+        )
+    decision = str(params.get("decision") or "").strip().lower()
+    if decision not in _VALID_V5_INTERVENTION_DECISIONS:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid intervention decision value",
+            f"decision must be one of {sorted(_VALID_V5_INTERVENTION_DECISIONS)}",
+            precondition_failed="decision",
+        )
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "DecideV5Intervention requires 'operator', 'approver', or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, approver, or admin role",
+        )
+
+
+def _validate_human_gate_decision(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    missing = _HUMAN_GATE_REQUIRED - {key for key, value in params.items() if value not in (None, "")}
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for HumanGate command",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="human_gate",
+        )
+
+    decision = str(params.get("decision") or "").strip().lower()
+    if decision not in _VALID_HUMAN_GATE_DECISIONS:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid HumanGate decision value",
+            f"decision must be one of {sorted(_VALID_HUMAN_GATE_DECISIONS)}",
+            precondition_failed="decision",
+        )
+
+    if decision in _HUMAN_GATE_APPROVER_DECISIONS and not {"approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "HumanGate decision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+    if decision == "request_more_evidence" and not {"operator", "approver", "admin", "reviewer"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "HumanGate evidence request requires operator-level role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
+        )
+
+    if decision == "extend_ttl":
+        raw_ttl = (
+            params.get("ttl_seconds")
+            or params.get("ttlSeconds")
+            or params.get("extend_ttl_seconds")
+            or params.get("extendTtlSeconds")
+        )
+        try:
+            ttl_seconds = int(raw_ttl)
+        except (TypeError, ValueError):
+            ttl_seconds = 0
+        if ttl_seconds <= 0:
+            raise _err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "HumanGateExtendTtl requires a positive ttl_seconds value",
+                "ttl_seconds must be a positive integer number of seconds",
+                precondition_failed="ttl_seconds",
+            )
+        max_ttl_seconds = _human_gate_max_ttl_seconds()
+        if ttl_seconds > max_ttl_seconds:
+            raise _err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "HumanGateExtendTtl exceeds the maximum ttl_seconds cap",
+                "HUMAN_GATE_TTL_EXCEEDS_CAP",
+                precondition_failed="ttl_seconds",
+                suggestion="Retry with a shorter HumanGate TTL extension",
+                details_extra={
+                    "maxTtlSeconds": max_ttl_seconds,
+                    "ttlSeconds": ttl_seconds,
+                    "constraint": f"ttl_seconds must be less than or equal to {max_ttl_seconds}",
+                },
+            )
+        params["ttl_seconds"] = ttl_seconds
+        params["ttlSeconds"] = ttl_seconds
+
+
+def _validate_quarterly_ranking_recommendation_submit(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Quarterly ranking recommendation submission requires operator-level role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, approver, or admin role",
+        )
+    try:
+        from ..governance.promotion_review import _raise_if_promotion_review_direct_mutation_requested
+        from ..pm12.service import _pm12_resolve_quarterly_recommendation_submit_params, _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
+    except (ImportError, ValueError):
+        from governance.promotion_review import _raise_if_promotion_review_direct_mutation_requested
+        from pm12.service import _pm12_resolve_quarterly_recommendation_submit_params, _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
+
+    _raise_if_promotion_review_direct_mutation_requested(params)
+    resolved = _pm12_resolve_quarterly_recommendation_submit_params(params)
+    params.clear()
+    params.update(resolved)
+
+    required = {"quarter", "recommendation_id", "ranking_snapshot_id"}
+    missing = required - {key for key, value in params.items() if value not in (None, "")}
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for QuarterlyRankingRecommendationSubmit",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="quarterly_ranking_recommendation",
+        )
+    action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or ""
+    ).strip()
+    if action_id and action_id not in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid quarterly ranking recommendation action",
+            f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
+            precondition_failed="recommendation_action_id",
+        )
+
+
+def _validate_observe(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    read_surface: Optional[Any] = None,
+    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
+    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Observe action requires operator, reviewer, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    _enforce_ops_console_preconditions(
+        params,
+        identity,
+        read_surface=read_surface,
+        ops_read_model_fn=ops_read_model_fn,
+        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
+        bff_error_fn=_err,
+    )
+
+
+def _validate_request_review(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    read_surface: Optional[Any] = None,
+    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
+    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "RequestReview action requires operator or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    persona_id = params.get("persona_id") or params.get("personaId")
+    if not persona_id:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing persona_id for RequestReview",
+            "persona_id must be provided to request a review",
+            precondition_failed="missing_persona",
+        )
+    _enforce_ops_console_preconditions(
+        params,
+        identity,
+        read_surface=read_surface,
+        ops_read_model_fn=ops_read_model_fn,
+        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
+        bff_error_fn=_err,
+    )
+
+
+def _validate_pause_paper_runtime(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    read_surface: Optional[Any] = None,
+    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
+    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "PausePaperRuntime action requires operator or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    runtime_id = (
+        params.get("runtime_id")
+        or params.get("runtimeId")
+        or params.get("entity_id")
+        or params.get("entityId")
+    )
+    if not runtime_id or not str(runtime_id).strip():
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing runtime_id for PausePaperRuntime",
+            "runtime_id must be provided",
+            precondition_failed="missing_runtime",
+        )
+    if "bounded_duration_minutes" in params and params["bounded_duration_minutes"] is not None:
+        val = params["bounded_duration_minutes"]
+        valid = False
+        if isinstance(val, int) and not isinstance(val, bool) and val > 0:
+            valid = True
+        elif isinstance(val, str) and val.strip().isdigit() and int(val.strip()) > 0:
+            valid = True
+        if not valid:
+            raise _err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid bounded_duration_minutes",
+                "bounded_duration_minutes must be a positive integer",
+                precondition_failed="bounded_duration_minutes",
+            )
+    _enforce_ops_console_preconditions(
+        params,
+        identity,
+        required_bindings=["paper"],
+        read_surface=read_surface,
+        ops_read_model_fn=ops_read_model_fn,
+        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
+        bff_error_fn=_err,
+    )
+
+
+def _validate_resume_paper_runtime(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    read_surface: Optional[Any] = None,
+    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
+    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ResumePaperRuntime action requires operator, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    runtime_id = (
+        params.get("runtime_id")
+        or params.get("runtimeId")
+        or params.get("entity_id")
+        or params.get("entityId")
+    )
+    if not runtime_id or not str(runtime_id).strip():
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing runtime_id for ResumePaperRuntime",
+            "runtime_id must be provided",
+            precondition_failed="missing_runtime",
+        )
+    _enforce_ops_console_preconditions(
+        params,
+        identity,
+        required_bindings=["paper"],
+        read_surface=read_surface,
+        ops_read_model_fn=ops_read_model_fn,
+        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
+        bff_error_fn=_err,
+    )
+
+
+def _validate_demote(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    read_surface: Optional[Any] = None,
+    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
+    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Demote action requires operator, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    persona_id = params.get("persona_id") or params.get("personaId")
+    if not persona_id:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing persona_id for Demote",
+            "persona_id must be provided",
+            precondition_failed="missing_persona",
+        )
+    _enforce_ops_console_preconditions(
+        params,
+        identity,
+        read_surface=read_surface,
+        ops_read_model_fn=ops_read_model_fn,
+        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
+        bff_error_fn=_err,
+    )
+
+
+def _validate_promote_candidate(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    read_surface: Optional[Any] = None,
+    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
+    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "PromoteCandidate action requires operator, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    persona_id = params.get("persona_id") or params.get("personaId")
+    if not persona_id:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing persona_id for PromoteCandidate",
+            "persona_id must be provided",
+            precondition_failed="missing_persona",
+        )
+    _enforce_ops_console_preconditions(
+        params,
+        identity,
+        read_surface=read_surface,
+        ops_read_model_fn=ops_read_model_fn,
+        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
+        bff_error_fn=_err,
+    )
+
+
+def _validate_rebalance_proposal(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "RebalanceProposal action requires operator or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    raise _err(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        "RebalanceProposal requires server-side allocation admission",
+        "Submit the exact allocation evaluation through POST /bff/rebalances.",
+        precondition_failed="allocation_evaluation_id",
+        suggestion="Use POST /bff/management/allocation-policy/evaluate, then POST /bff/rebalances.",
+    )
+
+
+def _validate_approved_apply(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    read_surface: Optional[Any] = None,
+    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
+    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "ApprovedApply action requires operator, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    _enforce_ops_console_preconditions(
+        params,
+        identity,
+        read_surface=read_surface,
+        ops_read_model_fn=ops_read_model_fn,
+        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
+        bff_error_fn=_err,
+    )
+
+
+def _validate_emergency_containment(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    read_surface: Optional[Any] = None,
+    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
+    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    _err = bff_error_fn or _resolve_bff_error()
+    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "EmergencyContainment action requires operator, reviewer, approver, or admin role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+        )
+    try:
+        try:
+            from ..emergency_containment_policy import validate_emergency_containment
+        except (ImportError, ValueError):
+            from emergency_containment_policy import validate_emergency_containment
+        validate_emergency_containment(params)
+    except (TypeError, ValueError) as exc:
+        detail = str(exc)
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            detail[:1].upper() + detail[1:],
+            detail,
+            precondition_failed="emergency_containment_invalid_action",
+        ) from exc
+
+    _enforce_ops_console_preconditions(
+        params,
+        identity,
+        read_surface=read_surface,
+        ops_read_model_fn=ops_read_model_fn,
+        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
+        bff_error_fn=_err,
+    )
+
+
+def build_default_validators(
+    *,
+    read_surface: Optional[Any] = None,
+    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
+    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> Dict[CommandType, Callable[..., None]]:
+    return {
+        CommandType.APPROVE_DEPLOYMENT: lambda p, i: _validate_approve_deployment(p, i, bff_error_fn=bff_error_fn),
+        CommandType.APPROVE_DECISION: lambda p, i: _validate_approve_decision(p, i, bff_error_fn=bff_error_fn),
+        CommandType.REJECT_DECISION: lambda p, i: _validate_reject_decision(p, i, bff_error_fn=bff_error_fn),
+        CommandType.REQUEST_APPROVAL_REVISION: lambda p, i: _validate_request_approval_revision(p, i, bff_error_fn=bff_error_fn),
+        CommandType.PAUSE_RUNTIME: lambda p, i: _validate_pause_runtime(p, i, bff_error_fn=bff_error_fn),
+        CommandType.PAUSE_EXECUTION: lambda p, i: _validate_pause_execution(p, i, bff_error_fn=bff_error_fn),
+        CommandType.ESCALATE_DIFF: lambda p, i: _validate_escalate_diff(p, i, bff_error_fn=bff_error_fn),
+        CommandType.ISSUE_RISK_OFF: lambda p, i: _validate_issue_risk_off(p, i, bff_error_fn=bff_error_fn),
+        CommandType.LIQUIDATE_ALL: lambda p, i: _validate_liquidate_all(p, i, bff_error_fn=bff_error_fn),
+        CommandType.HARD_ROLLBACK: lambda p, i: _validate_hard_rollback(p, i, bff_error_fn=bff_error_fn),
+        CommandType.ISSUE_SAFE_MODE: lambda p, i: _validate_issue_safe_mode(p, i, bff_error_fn=bff_error_fn),
+        CommandType.EXECUTE_ROLLBACK: lambda p, i: _validate_execute_rollback(p, i, bff_error_fn=bff_error_fn),
+        CommandType.APPROVE_ROLLBACK: lambda p, i: _validate_approve_rollback(p, i, bff_error_fn=bff_error_fn),
+        CommandType.REJECT_ROLLBACK: lambda p, i: _validate_reject_rollback(p, i, bff_error_fn=bff_error_fn),
+        CommandType.ACTIVATE_KILL_SWITCH: lambda p, i: _validate_activate_kill_switch(p, i, bff_error_fn=bff_error_fn),
+        CommandType.APPROVE_EVOLUTION_DECISION: lambda p, i: _validate_approve_evolution_decision(p, i, bff_error_fn=bff_error_fn),
+        CommandType.EXECUTE_EVOLUTION_ACTION: lambda p, i: _validate_execute_evolution_action(p, i, bff_error_fn=bff_error_fn),
+        CommandType.APPROVE_MUTATION: lambda p, i: _validate_approve_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
+        CommandType.REJECT_MUTATION: lambda p, i: _validate_reject_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
+        CommandType.REVIEW_MUTATION: lambda p, i: _validate_review_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
+        CommandType.EXECUTE_MUTATION: lambda p, i: _validate_execute_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
+        CommandType.RECORD_SPONSOR_DECISION: lambda p, i: _validate_record_sponsor_decision(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
+        CommandType.REMEDIATE_SENTINEL_INTERVENTION: lambda p, i: _validate_remediate_sentinel_intervention(p, i, bff_error_fn=bff_error_fn),
+        CommandType.DECIDE_V5_INTERVENTION: lambda p, i: _validate_decide_v5_intervention(p, i, bff_error_fn=bff_error_fn),
+        CommandType.HUMAN_GATE_APPROVE: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
+        CommandType.HUMAN_GATE_REJECT: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
+        CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
+        CommandType.HUMAN_GATE_REVOKE: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
+        CommandType.HUMAN_GATE_EXTEND_TTL: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
+        CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: lambda p, i: _validate_quarterly_ranking_recommendation_submit(p, i, bff_error_fn=bff_error_fn),
+        CommandType.OBSERVE: lambda p, i: _validate_observe(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
+        CommandType.REQUEST_REVIEW: lambda p, i: _validate_request_review(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
+        CommandType.PAUSE_PAPER_RUNTIME: lambda p, i: _validate_pause_paper_runtime(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
+        CommandType.RESUME_PAPER_RUNTIME: lambda p, i: _validate_resume_paper_runtime(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
+        CommandType.DEMOTE: lambda p, i: _validate_demote(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
+        CommandType.PROMOTE_CANDIDATE: lambda p, i: _validate_promote_candidate(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
+        CommandType.REBALANCE_PROPOSAL: lambda p, i: _validate_rebalance_proposal(p, i, bff_error_fn=bff_error_fn),
+        CommandType.APPROVED_APPLY: lambda p, i: _validate_approved_apply(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
+        CommandType.EMERGENCY_CONTAINMENT: lambda p, i: _validate_emergency_containment(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
+    }
+
+
+_VALIDATORS = build_default_validators()
+VALIDATORS = _VALIDATORS

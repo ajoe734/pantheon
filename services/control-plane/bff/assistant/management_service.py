@@ -29,7 +29,11 @@ import os
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import quote
 
+from collections import deque
+import json
+import uuid
 from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
 
 from .management_contracts import ManagementNlUseCaseDeps
 from ..auth import policy as auth_policy
@@ -46,13 +50,14 @@ from ..management_nl_command_idempotency import (
     ManagementNlCommandScope,
     ManagementNlCommandStorageError,
 )
-from ..models import ErrorCode, OperatorIdentity
+from ..models import ErrorCode, OperatorIdentity, utc_now
 
 log = logging.getLogger(__name__)
 
 DEFAULT_MANAGEMENT_AI_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 
 _MGMT_AI_CONVERSATION_STORE: Optional[ManagementAiConversationStore] = None
+_MGMT_AI_AUDIT_EVENTS: deque = deque(maxlen=500)
 
 
 def get_management_ai_conversation_store() -> ManagementAiConversationStore:
@@ -734,3 +739,296 @@ class ManagementNlUseCase:
         except Exception:  # noqa: BLE001 - best-effort; caller already failed
             if on_failure is not None:
                 on_failure()
+
+
+# ---------------------------------------------------------------------------
+# Management AI Audit Events & Usage Metrics
+# ---------------------------------------------------------------------------
+
+_MGMT_AI_USAGE_OBSERVED_SOURCE = "management_ai_bff_audit"
+_MGMT_AI_USAGE_OBSERVED_COVERAGE = "bff_observed_management_ai_only"
+
+
+def _management_ai_audit_path() -> Optional[str]:
+    raw = os.getenv(
+        "PANTHEON_MANAGEMENT_AI_AUDIT_PATH",
+        "/tmp/pantheon-bff/management-ai-audit.jsonl",
+    ).strip()
+    if not raw or raw.lower() in {"off", "false", "disabled", "none"}:
+        return None
+    return raw
+
+
+def _management_ai_summary_value(value: Any, *, max_len: int = 400) -> Any:
+    if isinstance(value, str):
+        clean = value.strip()
+        if len(clean) > max_len:
+            return f"{clean[:max_len]}..."
+        return clean
+    return value
+
+
+def _management_ai_surface_summary(surfaces: Dict[str, Any]) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {}
+    for key, value in (surfaces or {}).items():
+        if not isinstance(value, dict):
+            continue
+        summary[str(key)] = {
+            clean_key: value.get(clean_key)
+            for clean_key in ("status", "source", "reason", "message")
+            if value.get(clean_key) is not None
+        }
+    return summary
+
+
+def _management_ai_provider_output_summary(provider_payload: Any) -> Dict[str, Any]:
+    data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
+    output = data.get("output") if isinstance(data, dict) else {}
+    if not isinstance(output, dict):
+        output = {}
+    events = output.get("json_events")
+    if not isinstance(events, list):
+        events = []
+        stdout = output.get("stdout")
+        if isinstance(stdout, str):
+            for line in stdout.splitlines():
+                clean = line.strip()
+                if not clean:
+                    continue
+                try:
+                    loaded = json.loads(clean)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(loaded, dict):
+                    events.append(loaded)
+
+    event_types: List[str] = []
+    assistant_messages: List[str] = []
+    usage: Optional[Dict[str, Any]] = None
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_type = str(event.get("type") or "").strip()
+        if event_type:
+            event_types.append(event_type)
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message" and item.get("text") is not None:
+            assistant_messages.append(str(_management_ai_summary_value(item.get("text"))))
+        if event_type == "turn.completed" and isinstance(event.get("usage"), dict):
+            usage = event.get("usage")
+
+    return {
+        "provider": data.get("provider") if isinstance(data, dict) else None,
+        "status": data.get("status") if isinstance(data, dict) else None,
+        "returncode": output.get("returncode"),
+        "duration_ms": output.get("duration_ms"),
+        "json_event_count": len(events),
+        "json_event_types": event_types,
+        "assistant_messages": assistant_messages[:3],
+        "usage": usage,
+    }
+
+
+def _management_ai_record_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    payload = jsonable_encoder(
+        {
+            "event_id": event.get("event_id") or f"mgmt-ai-evt-{uuid.uuid4().hex[:16]}",
+            "recorded_at": event.get("recorded_at") or utc_now(),
+            **event,
+        }
+    )
+    _MGMT_AI_AUDIT_EVENTS.append(payload)
+    path = _management_ai_audit_path()
+    if path:
+        try:
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+        except Exception:
+            log.warning("Failed to persist management AI audit event", exc_info=True)
+    return payload
+
+
+def _management_ai_read_audit_file(limit: int) -> List[Dict[str, Any]]:
+    path = _management_ai_audit_path()
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except Exception:
+        log.warning("Failed to read management AI audit log", exc_info=True)
+        return []
+    events: List[Dict[str, Any]] = []
+    for line in lines[-max(limit * 4, limit):]:
+        try:
+            loaded = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(loaded, dict):
+            events.append(loaded)
+    return events
+
+
+def _management_ai_event_matches(
+    event: Dict[str, Any],
+    *,
+    session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+) -> bool:
+    if session_id and str(event.get("session_id") or "") != session_id:
+        return False
+    if trace_id and str(event.get("trace_id") or "") != trace_id:
+        return False
+    if message_id and str(event.get("message_id") or "") != message_id:
+        return False
+    if event_type and str(event.get("event_type") or "") != event_type:
+        return False
+    return True
+
+
+def _management_ai_list_audit_events(
+    *,
+    session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    candidates = _management_ai_read_audit_file(limit) or list(_MGMT_AI_AUDIT_EVENTS)
+    filtered = [
+        event
+        for event in candidates
+        if _management_ai_event_matches(
+            event,
+            session_id=session_id,
+            trace_id=trace_id,
+            message_id=message_id,
+            event_type=event_type,
+        )
+    ]
+    return filtered[-limit:]
+
+
+def _management_ai_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        clean = str(value).strip()
+        return float(clean) if clean else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _management_ai_usage_number(usage: Any, *keys: str) -> Optional[float]:
+    if not isinstance(usage, dict):
+        return None
+    for key in keys:
+        value = _management_ai_number(usage.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _management_ai_provider_key(value: Any) -> str:
+    clean = str(value or "").strip().lower()
+    return clean or "unknown"
+
+
+def _management_ai_provider_display(provider: str) -> str:
+    labels = {
+        "codex": "Codex CLI",
+        "codex_cli": "Codex CLI",
+        "claude": "Claude CLI",
+        "claude_cli": "Claude CLI",
+        "openclaw": "OpenClaw",
+    }
+    return labels.get(provider, provider)
+
+
+def _management_ai_provider_route(provider: str, *, stream: bool = False) -> str:
+    normalized = _management_ai_provider_key(provider)
+    if normalized in {"claude", "claude_cli"}:
+        return "POST /api/openclaw-adapter/assistant/claude/invoke"
+    if normalized in {"openclaw", "openclaw_agent"}:
+        suffix = "/stream" if stream else ""
+        return f"POST /api/openclaw-adapter/assistant/providers/openclaw/invoke{suffix}"
+    return "POST /api/openclaw-adapter/assistant/providers/codex/invoke"
+
+
+def _management_ai_event_model(event: Dict[str, Any]) -> str:
+    output_summary = event.get("output_summary") if isinstance(event.get("output_summary"), dict) else {}
+    usage = output_summary.get("usage") if isinstance(output_summary.get("usage"), dict) else {}
+    for value in (
+        event.get("model"),
+        event.get("model_id"),
+        event.get("modelId"),
+        event.get("provider_model"),
+        event.get("providerModel"),
+        output_summary.get("model"),
+        output_summary.get("model_id"),
+        output_summary.get("modelId"),
+        usage.get("model"),
+        usage.get("model_id"),
+        usage.get("modelId"),
+    ):
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return "default"
+
+
+def _management_ai_quota_snapshot(provider: Dict[str, Any]) -> Dict[str, Any]:
+    usage = provider.get("usage") if isinstance(provider.get("usage"), dict) else None
+    quota = provider.get("quota") if isinstance(provider.get("quota"), dict) else None
+    source = usage or quota or {}
+    return {
+        "status": str(source.get("status") or "unknown"),
+        "source": str(source.get("source") or "not_configured"),
+        "remaining": source.get("remaining"),
+        "remaining_percent": source.get("remaining_percent", source.get("remainingPercent")),
+        "limit": source.get("limit"),
+        "used": source.get("used"),
+        "unit": source.get("unit"),
+        "reset_at": source.get("reset_at", source.get("resetAt")),
+        "updated_at": source.get("updated_at", source.get("updatedAt")),
+        "checked_at": source.get("checked_at", source.get("checkedAt")),
+        "reason": source.get("reason") or (
+            "provider_usage_source_not_configured" if not source else None
+        ),
+    }
+
+
+def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
+    return {
+        "provider": provider,
+        "provider_name": _management_ai_provider_display(provider),
+        "runtime": None,
+        "ready": None,
+        "auth_status": None,
+        "status": "unknown",
+        "live_auth": False,
+        "calls": 0,
+        "success_count": 0,
+        "failed_count": 0,
+        "started_count": 0,
+        "prompt_bytes": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "duration_ms": 0,
+        "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
+        "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
+        "truth_policy": "observed_bff_events_only",
+    }
+
+
+management_ai_record_event = _management_ai_record_event
+management_ai_list_audit_events = _management_ai_list_audit_events
+

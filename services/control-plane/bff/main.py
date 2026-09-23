@@ -2667,95 +2667,13 @@ def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComm
             "Invalid operator command payload",
             str(exc),
         ) from exc
-def _validate_pause_execution(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _PAUSE_EXECUTION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for PauseExecution",
-            f"Missing fields: {sorted(missing)}",
-        )
-    for field in sorted(_PAUSE_EXECUTION_REQUIRED):
-        if not isinstance(params.get(field), bool):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                f"Invalid {field} value",
-                f"{field} must be a boolean",
-            )
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "PauseExecution requires 'operator' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator or admin role",
-        )
-def _validate_issue_risk_off(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _RISK_OFF_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for IssueRiskOff",
-            f"Missing fields: {sorted(missing)}",
-        )
-    exposure_pct = params.get("reduce_exposure_pct")
-    if not isinstance(exposure_pct, (int, float)) or exposure_pct <= 0 or exposure_pct > 100:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid reduce_exposure_pct value",
-            "reduce_exposure_pct must be a number between 1 and 100",
-        )
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "IssueRiskOff requires 'operator' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator or admin role",
-        )
-def _validate_liquidate_all(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if params:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "LiquidateAll does not accept params",
-            "params must be an empty object for LiquidateAll",
-        )
-    _require_admin_mfa(identity, "LiquidateAll")
-def _validate_hard_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    target_artifact_id = str(params.get("target_artifact_id") or "").strip()
-    if not target_artifact_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for HardRollback",
-            "target_artifact_id must be a non-empty string",
-        )
-    if not {"admin", "approver"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "HardRollback requires 'admin' or 'approver' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with admin or approver role",
-        )
-def _validate_issue_safe_mode(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    safe_mode_level = str(params.get("safe_mode_level") or "").strip().lower()
-    if safe_mode_level not in _SAFE_MODE_LEVELS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid safe_mode_level",
-            f"safe_mode_level must be one of {sorted(_SAFE_MODE_LEVELS)}",
-        )
-    _require_admin_mfa(identity, "IssueSafeMode")
+from .command_adapters.preconditions import (
+    _validate_pause_execution,
+    _validate_issue_risk_off,
+    _validate_liquidate_all,
+    _validate_hard_rollback,
+    _validate_issue_safe_mode,
+)
 def _derive_drawer_execution_params(
     command: CommandType,
     runtime_id: str,
@@ -2951,1323 +2869,58 @@ def _resolve_execution_params_for_record(record: Dict[str, Any]) -> Dict[str, An
         reason=audit.get("reason"),
         incident_id=audit.get("incident_id"),
     )
-def _validate_approve_deployment(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _APPROVE_DEPLOYMENT_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveDeployment",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["approval_decision"] not in _VALID_APPROVAL_DECISIONS:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid approval_decision value",
-            f"Must be one of {_VALID_APPROVAL_DECISIONS}",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ApproveDeployment requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_approve_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _APPROVE_DECISION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveDecision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ApproveDecision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_reject_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REJECT_DECISION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RejectDecision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not str(params.get("rejection_reason") or "").strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "RejectDecision requires a non-empty rejection_reason",
-            "rejection_reason must be a non-empty string",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RejectDecision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_request_approval_revision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REQUEST_APPROVAL_REVISION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RequestApprovalRevision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not str(params.get("revision_notes") or "").strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "RequestApprovalRevision requires non-empty revision_notes",
-            "revision_notes must be a non-empty string",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RequestApprovalRevision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_pause_runtime(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _PAUSE_RUNTIME_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for PauseRuntime",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["pause_action"] not in _VALID_PAUSE_ACTIONS:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid pause_action value",
-            f"Must be one of {_VALID_PAUSE_ACTIONS}",
-        )
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "PauseRuntime requires 'operator' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator or admin role",
-        )
-def _validate_execute_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _ROLLBACK_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ExecuteRollback",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["rollback_target_type"] not in _VALID_ROLLBACK_TARGET_TYPES:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid rollback_target_type",
-            f"Must be one of {_VALID_ROLLBACK_TARGET_TYPES}",
-        )
-    if not {"admin", "approver"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ExecuteRollback requires 'admin' or 'approver' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with admin or approver role",
-        )
-def _validate_approve_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _APPROVE_ROLLBACK_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveRollback",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ApproveRollback requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_reject_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REJECT_ROLLBACK_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RejectRollback",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not str(params.get("rejection_reason") or "").strip():
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "RejectRollback requires a non-empty rejection_reason",
-            "rejection_reason must be a non-empty string",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "RejectRollback requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_activate_kill_switch(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _KILL_SWITCH_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ActivateKillSwitch",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["scope"] not in _VALID_SCOPES:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid scope for ActivateKillSwitch",
-            f"Must be one of {_VALID_SCOPES}",
-        )
-    severity = params.get("severity")
-    if severity is not None and severity not in _VALID_SEVERITIES:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid severity for ActivateKillSwitch",
-            f"Must be one of {_VALID_SEVERITIES}",
-        )
-    # Admin role required
-    if "admin" not in identity.roles:
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ActivateKillSwitch requires 'admin' role",
-            "Operator does not hold the admin role",
-            precondition_failed="role_check",
-            suggestion="Escalate to an admin-role operator",
-        )
-    # MFA required for kill-switch (§3.2.3)
-    if not identity.mfa_verified:
-        raise _bff_error(
-            403, ErrorCode.AUTH_REQUIRED,
-            "ActivateKillSwitch requires MFA verification",
-            "Admin action requires MFA validation",
-            precondition_failed="mfa_check",
-            suggestion="Provide a valid MFA token in your session",
-        )
-def _validate_escalate_diff(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _ESCALATE_DIFF_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for EscalateDiff",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not str(params.get("escalation_reason") or "").strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "EscalateDiff requires a non-empty escalation_reason",
-            "escalation_reason must be a non-empty string",
-        )
-    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "EscalateDiff requires operator-level governance access",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
-        )
-def _validate_approve_evolution_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _APPROVE_EVO_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveEvolutionDecision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["approval_action"] not in _VALID_EVO_APPROVAL_ACTIONS:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid approval_action",
-            f"Must be one of {_VALID_EVO_APPROVAL_ACTIONS}",
-        )
-    if not {"reviewer", "admin", "approver"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ApproveEvolutionDecision requires 'reviewer', 'approver', or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with reviewer, approver, or admin role",
-        )
-def _validate_execute_evolution_action(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _EXECUTE_EVO_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ExecuteEvolutionAction",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["action_type"] not in _VALID_EVO_ACTION_TYPES:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid action_type for ExecuteEvolutionAction",
-            f"Must be one of {_VALID_EVO_ACTION_TYPES}",
-        )
-    if not {"admin", "approver"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ExecuteEvolutionAction requires 'admin' or 'approver' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with admin or approver role",
-        )
-def _mutation_review_governance_service() -> "GovernanceService":
-    # Single owner of the mutation-review actor/state/evidence policy: both
-    # the direct POST action validators below and the nested GET projection
-    # (governance router + management evolution journal) call through this
-    # same GovernanceService method so they cannot drift out of sync.
-    from .governance.service import GovernanceService
+from .pm12.service import (
+    _pm12_resolve_quarterly_recommendation_submit_params,
+)
+from .command_adapters.preconditions import (
+    _validate_approve_deployment,
+    _validate_approve_decision,
+    _validate_reject_decision,
+    _validate_request_approval_revision,
+    _validate_pause_runtime,
+    _validate_pause_execution,
+    _validate_escalate_diff,
+    _validate_issue_risk_off,
+    _validate_liquidate_all,
+    _validate_hard_rollback,
+    _validate_issue_safe_mode,
+    _validate_execute_rollback,
+    _validate_approve_rollback,
+    _validate_reject_rollback,
+    _validate_activate_kill_switch,
+    _validate_approve_evolution_decision,
+    _validate_execute_evolution_action,
+    _mutation_review_projection,
+    _validate_record_sponsor_decision,
+    _validate_approve_mutation,
+    _validate_reject_mutation,
+    _validate_review_mutation,
+    _validate_execute_mutation,
+    _validate_remediate_sentinel_intervention,
+    _validate_decide_v5_intervention,
+    _validate_human_gate_decision,
+    _validate_quarterly_ranking_recommendation_submit,
+    _check_binding_tenant_ownership,
+    _enforce_ops_console_preconditions,
+    _validate_observe,
+    _validate_request_review,
+    _validate_pause_paper_runtime,
+    _validate_resume_paper_runtime,
+    _validate_demote,
+    _validate_promote_candidate,
+    _validate_rebalance_proposal,
+    _validate_approved_apply,
+    _validate_emergency_containment,
+    _VALIDATORS,
+    VALIDATORS,
+    set_ops_console_precondition_resolvers,
+)
 
-    return GovernanceService(
-        read_store,
-        utc_now=utc_now,
-        dataset_surface_status=_dataset_surface_status,
-        redact_evidence_refs=redact_evidence_refs,
-        capabilities_for_identity=_capabilities_for_identity,
-        read_surface_state=_read_surface_state,
-    )
-def _mutation_review_projection(
-    decision_id: str,
-    *,
-    identity: OperatorIdentity,
-    snapshot_at: str,
-) -> Optional[Dict[str, Any]]:
-    return _mutation_review_governance_service().mutation_review_projection(
-        decision_id, identity=identity, snapshot_at=snapshot_at
-    )
-def _validate_record_sponsor_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    from .governance.service import GovernanceService
 
-    missing = _RECORD_SPONSOR_DECISION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RecordSponsorDecision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    sponsor_decision = str(params.get("sponsor_decision") or "").strip().lower()
-    if sponsor_decision not in _VALID_SPONSOR_DECISIONS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid sponsor_decision value",
-            f"sponsor_decision must be one of {sorted(_VALID_SPONSOR_DECISIONS)}",
-        )
-    rationale_ref = str(params.get("rationale_ref") or "").strip()
-    if not rationale_ref:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "RecordSponsorDecision requires a non-empty rationale_ref",
-            "rationale_ref must be a non-empty string",
-        )
-    committee_id = str(params.get("committee_id") or "").strip()
-    governance_service = GovernanceService(
-        read_store,
-        utc_now=utc_now,
-        dataset_surface_status=_dataset_surface_status,
-    )
-    projection = governance_service.committee_projection(
-        committee_id,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
-    if projection is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Committee board not found",
-            f"Committee {committee_id} does not exist",
-        )
-    if projection["meta"]["surfaces"]["committee_board"] == "unavailable":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "RecordSponsorDecision is blocked while the committee board is unavailable",
-            "Committee evidence cannot be composed reliably",
-            precondition_failed="committee_board_surface",
-        )
-    if not projection["allowedActions"]["canRecordSponsorDecision"]:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RecordSponsorDecision is not allowed for this operator and committee state",
-            "allowedActions.canRecordSponsorDecision is false for the current read projection",
-            precondition_failed="allowedActions.canRecordSponsorDecision",
-        )
-def _validate_approve_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _APPROVE_MUTATION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveMutation",
-            f"Missing fields: {sorted(missing)}",
-        )
-    decision_id = str(params.get("decision_id") or "").strip()
-    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
-    if projection is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Mutation review decision not found",
-            f"Evolution decision {decision_id} does not exist",
-        )
-    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "ApproveMutation is blocked while the mutation-review surface is unavailable",
-            "Mutation-review evidence cannot be composed reliably",
-            precondition_failed="mutation_review_surface",
-        )
-    if not projection["allowedActions"]["canApproveMutation"]:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ApproveMutation is not allowed for this operator and decision state",
-            "allowedActions.canApproveMutation is false for the current read projection",
-            precondition_failed="allowedActions.canApproveMutation",
-        )
-def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REJECT_MUTATION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RejectMutation",
-            f"Missing fields: {sorted(missing)}",
-        )
-    decision_id = str(params.get("decision_id") or "").strip()
-    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
-    if projection is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Mutation review decision not found",
-            f"Evolution decision {decision_id} does not exist",
-        )
-    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "RejectMutation is blocked while the mutation-review surface is unavailable",
-            "Mutation-review evidence cannot be composed reliably",
-            precondition_failed="mutation_review_surface",
-        )
-    if not projection["allowedActions"]["canRejectMutation"]:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RejectMutation is not allowed for this operator and decision state",
-            "allowedActions.canRejectMutation is false for the current read projection",
-            precondition_failed="allowedActions.canRejectMutation",
-        )
-def _validate_review_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REVIEW_MUTATION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ReviewMutation",
-            f"Missing fields: {sorted(missing)}",
-        )
-    decision_id = str(params.get("decision_id") or "").strip()
-    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
-    if projection is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Mutation review decision not found",
-            f"Evolution decision {decision_id} does not exist",
-        )
-    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "ReviewMutation is blocked while the mutation-review surface is unavailable",
-            "Mutation-review evidence cannot be composed reliably",
-            precondition_failed="mutation_review_surface",
-        )
-    if not projection["allowedActions"]["canReviewMutation"]:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ReviewMutation is not allowed for this operator and decision state",
-            "allowedActions.canReviewMutation is false for the current read projection",
-            precondition_failed="allowedActions.canReviewMutation",
-        )
-def _validate_execute_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _EXECUTE_MUTATION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ExecuteMutation",
-            f"Missing fields: {sorted(missing)}",
-        )
-    decision_id = str(params.get("decision_id") or "").strip()
-    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
-    if projection is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Mutation review decision not found",
-            f"Evolution decision {decision_id} does not exist",
-        )
-    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "ExecuteMutation is blocked while the mutation-review surface is unavailable",
-            "Mutation-review evidence cannot be composed reliably",
-            precondition_failed="mutation_review_surface",
-        )
-    if not projection["allowedActions"]["canExecuteMutation"]:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ExecuteMutation is not allowed for this operator and decision state",
-            "allowedActions.canExecuteMutation is false for the current read projection",
-            precondition_failed="allowedActions.canExecuteMutation",
-        )
-def _validate_remediate_sentinel_intervention(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REMEDIATE_SENTINEL_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RemediateSentinelIntervention",
-            f"Missing fields: {sorted(missing)}",
-        )
-    remediation_action = str(params.get("remediation_action") or "").strip()
-    if remediation_action not in _VALID_REMEDIATION_ACTIONS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid remediation_action value",
-            f"remediation_action must be one of {sorted(_VALID_REMEDIATION_ACTIONS)}",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RemediateSentinelIntervention requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_decide_v5_intervention(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _DECIDE_V5_INTERVENTION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for DecideV5Intervention",
-            f"Missing fields: {sorted(missing)}",
-            precondition_failed="decision",
-        )
-    decision = str(params.get("decision") or "").strip().lower()
-    if decision not in _VALID_V5_INTERVENTION_DECISIONS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid intervention decision value",
-            f"decision must be one of {sorted(_VALID_V5_INTERVENTION_DECISIONS)}",
-            precondition_failed="decision",
-        )
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "DecideV5Intervention requires 'operator', 'approver', or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, approver, or admin role",
-        )
-def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _HUMAN_GATE_REQUIRED - {key for key, value in params.items() if value not in (None, "")}
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for HumanGate command",
-            f"Missing fields: {sorted(missing)}",
-            precondition_failed="human_gate",
-        )
 
-    decision = str(params.get("decision") or "").strip().lower()
-    if decision not in _VALID_HUMAN_GATE_DECISIONS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid HumanGate decision value",
-            f"decision must be one of {sorted(_VALID_HUMAN_GATE_DECISIONS)}",
-            precondition_failed="decision",
-        )
 
-    if decision in _HUMAN_GATE_APPROVER_DECISIONS and not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "HumanGate decision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-    if decision == "request_more_evidence" and not {"operator", "approver", "admin", "reviewer"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "HumanGate evidence request requires operator-level role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
-        )
 
-    if decision == "extend_ttl":
-        raw_ttl = (
-            params.get("ttl_seconds")
-            or params.get("ttlSeconds")
-            or params.get("extend_ttl_seconds")
-            or params.get("extendTtlSeconds")
-        )
-        try:
-            ttl_seconds = int(raw_ttl)
-        except (TypeError, ValueError):
-            ttl_seconds = 0
-        if ttl_seconds <= 0:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "HumanGateExtendTtl requires a positive ttl_seconds value",
-                "ttl_seconds must be a positive integer number of seconds",
-                precondition_failed="ttl_seconds",
-            )
-        max_ttl_seconds = _human_gate_max_ttl_seconds()
-        if ttl_seconds > max_ttl_seconds:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "HumanGateExtendTtl exceeds the maximum ttl_seconds cap",
-                "HUMAN_GATE_TTL_EXCEEDS_CAP",
-                precondition_failed="ttl_seconds",
-                suggestion="Retry with a shorter HumanGate TTL extension",
-                details_extra={
-                    "maxTtlSeconds": max_ttl_seconds,
-                    "ttlSeconds": ttl_seconds,
-                    "constraint": f"ttl_seconds must be less than or equal to {max_ttl_seconds}",
-                },
-            )
-        params["ttl_seconds"] = ttl_seconds
-        params["ttlSeconds"] = ttl_seconds
-def _pm12_resolve_quarterly_recommendation_submit_params(
-    params: Dict[str, Any],
-) -> Dict[str, Any]:
-    recommendation_id = str(
-        params.get("recommendation_id") or params.get("recommendationId") or ""
-    ).strip()
-    snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
-    quarter = str(params.get("quarter") or "").strip().upper()
-    if not recommendation_id or not snapshot_id or not quarter:
-        return dict(params)
-    snapshot = _pm12_recommendation_snapshot_record(snapshot_id)
-    snapshot_quarter = str(snapshot.get("period") or "").strip().upper()
-    if snapshot_quarter != quarter:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "quarter does not match the admitted ranking snapshot",
-            "The submitted quarter must be the immutable snapshot period.",
-            precondition_failed="quarter",
-        )
 
-    matched_item: Optional[Dict[str, Any]] = None
-    matched_action_id = ""
-    for item in snapshot.get("items") or []:
-        if not isinstance(item, dict):
-            continue
-        persona_id = str(item.get("persona_id") or "").strip()
-        for action_id in _pm12_recommendation_action_ids(item):
-            expected_id = f"pm12-{quarter.lower()}-{persona_id}-{action_id}"
-            if expected_id == recommendation_id:
-                matched_item = item
-                matched_action_id = action_id
-                break
-        if matched_item is not None:
-            break
-    if matched_item is None:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "recommendation is not in the admitted ranking snapshot",
-            "The recommendation id/action/persona tuple was not materialized by the snapshot.",
-            precondition_failed="recommendation_id",
-        )
-    review_revision_id = _promotion_review_revision_id(
-        recommendation_id,
-        snapshot_id,
-    )
-    for field in ("review_id", "promotion_review_id"):
-        asserted_review_id = str(params.get(field) or "").strip()
-        if (
-            asserted_review_id
-            and _promotion_review_clean_id(asserted_review_id)
-            != review_revision_id
-        ):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "promotion review revision assertion mismatch",
-                f"{field} does not match the admitted recommendation snapshot.",
-                precondition_failed=field,
-            )
-
-    asserted_action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    if asserted_action_id and asserted_action_id != matched_action_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "recommendation action does not match the admitted snapshot",
-            "The caller-supplied recommendation action is not authoritative.",
-            precondition_failed="recommendation_action_id",
-        )
-
-    item = {
-        **json.loads(json.dumps(matched_item)),
-        "ranking_snapshot_id": snapshot_id,
-        "evidence_refs": [],
-    }
-    quarter_window = _pm12_quarter_window(quarter, utc_now())
-    source_recommendation = _pm12_quarterly_recommendation_item(
-        item,
-        action_id=matched_action_id,
-        quarter_window=quarter_window,
-        evidence_refs=[],
-    )
-    source_recommendation["human_review_state"] = {
-        "status": "recommended_not_submitted",
-        "decision_status": "pending",
-        "submitted": False,
-        "submit_status": "not_submitted",
-        "decision": None,
-        "decided_at": None,
-        "decided_by": None,
-    }
-    stored_source = _promotion_review_stored_source(source_recommendation)
-    stage_path = _promotion_review_stage_path(source_recommendation)
-    canonical_assertions = {
-        "persona_id": item.get("persona_id"),
-        "stage": item.get("stage"),
-        "deployment_stage": item.get("deployment_stage"),
-        "stage_from": stage_path.get("from_stage"),
-        "stage_to": stage_path.get("target_stage"),
-        "review_kind": stage_path.get("review_kind"),
-        "current_weight": item.get("current_weight"),
-        "target_weight": item.get("target_weight"),
-        "delta": item.get("delta"),
-        "capital_scope": item.get("capital_scope"),
-        "capital_pool_id": item.get("capital_pool_id"),
-        "capital_sleeve_id": item.get("capital_sleeve_id"),
-        "evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
-    }
-    for field, authoritative_value in canonical_assertions.items():
-        if field not in params:
-            continue
-        asserted_value = params.get(field)
-        if field == "evidence_ref_ids":
-            asserted_value = sorted(asserted_value or [])
-        if not _pm12_semantic_values_match(asserted_value, authoritative_value):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "quarterly recommendation assertion mismatch",
-                f"{field} does not match the admitted ranking snapshot.",
-                precondition_failed=field,
-            )
-    if params.get("evidence_refs") not in (None, []):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "caller evidence is not admissible",
-            "Quarterly recommendation evidence is materialized server-side.",
-            precondition_failed="evidence_refs",
-        )
-    asserted_source = params.get("source_recommendation")
-    if asserted_source is not None:
-        if not isinstance(asserted_source, dict):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "source recommendation assertion mismatch",
-                "source_recommendation must be an object when supplied.",
-                precondition_failed="source_recommendation",
-            )
-        nested_assertions = {
-            "id": recommendation_id,
-            "recommendation_id": recommendation_id,
-            "review_id": review_revision_id,
-            "promotion_review_id": review_revision_id,
-            "ranking_snapshot_id": snapshot_id,
-            "quarter": quarter,
-            "persona_id": item.get("persona_id"),
-            "action_id": matched_action_id,
-            "recommendation_action_id": matched_action_id,
-            "stage": item.get("stage"),
-            "deployment_stage": item.get("deployment_stage"),
-            "stage_from": stage_path.get("from_stage"),
-            "stage_to": stage_path.get("target_stage"),
-            "review_kind": stage_path.get("review_kind"),
-            "current_weight": item.get("current_weight"),
-            "target_weight": item.get("target_weight"),
-            "delta": item.get("delta"),
-            "capital_scope": item.get("capital_scope"),
-            "capital_pool_id": item.get("capital_pool_id"),
-            "capital_sleeve_id": item.get("capital_sleeve_id"),
-            "evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
-        }
-        for field, authoritative_value in nested_assertions.items():
-            if field not in asserted_source:
-                continue
-            asserted_value = asserted_source.get(field)
-            if field == "evidence_ref_ids":
-                asserted_value = sorted(asserted_value or [])
-            if not _pm12_semantic_values_match(asserted_value, authoritative_value):
-                raise _bff_error(
-                    422,
-                    ErrorCode.VALIDATION_FAILED,
-                    "source recommendation assertion mismatch",
-                    f"source_recommendation.{field} does not match the admitted ranking snapshot.",
-                    precondition_failed=field,
-                )
-        if asserted_source.get("evidence_refs") not in (None, []):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "caller evidence is not admissible",
-                "source_recommendation evidence is materialized server-side.",
-                precondition_failed="evidence_refs",
-            )
-
-    canonical: Dict[str, Any] = {
-        "quarter": quarter,
-        "recommendation_id": recommendation_id,
-        "recommendationId": recommendation_id,
-        "review_id": review_revision_id,
-        "promotion_review_id": review_revision_id,
-        "recommendation_action_id": matched_action_id,
-        "recommendationActionId": matched_action_id,
-        "ranking_snapshot_id": snapshot_id,
-        "ranking_snapshot_content_digest": snapshot.get("content_digest"),
-        "ranking_item_digest": _stable_json_hash(matched_item),
-        "ranking_evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
-        "persona_id": item.get("persona_id"),
-        "stage": item.get("stage"),
-        "deployment_stage": item.get("deployment_stage"),
-        "current_weight": item.get("current_weight"),
-        "target_weight": item.get("target_weight"),
-        "capital_scope": item.get("capital_scope"),
-        "capital_pool_id": item.get("capital_pool_id"),
-        "capital_sleeve_id": item.get("capital_sleeve_id"),
-        "stage_from": stage_path.get("from_stage"),
-        "stage_to": stage_path.get("target_stage"),
-        "review_kind": stage_path.get("review_kind"),
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-        "liveCapitalMutation": False,
-        "direct_live_capital_mutation": False,
-        "runtime_mutation": False,
-        "source_type": "quarterly_ranking_recommendation",
-        "source_record_id": recommendation_id,
-        "source_recommendation": stored_source,
-        "audit_event": "quarterly_ranking.recommendation_submitted",
-        "policy": "promotion_governance_human_gate_no_direct_live_capital",
-    }
-    for field in ("reason", "note", "memo", "rationale"):
-        value = str(params.get(field) or "").strip()
-        if value:
-            canonical[field] = value
-    return canonical
-def _validate_quarterly_ranking_recommendation_submit(
-    params: Dict[str, Any],
-    identity: OperatorIdentity,
-) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Quarterly ranking recommendation submission requires operator-level role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, approver, or admin role",
-        )
-
-    _raise_if_promotion_review_direct_mutation_requested(params)
-    resolved = _pm12_resolve_quarterly_recommendation_submit_params(params)
-    params.clear()
-    params.update(resolved)
-
-    required = {"quarter", "recommendation_id", "ranking_snapshot_id"}
-    missing = required - {key for key, value in params.items() if value not in (None, "")}
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for QuarterlyRankingRecommendationSubmit",
-            f"Missing fields: {sorted(missing)}",
-            precondition_failed="quarterly_ranking_recommendation",
-        )
-    action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    if action_id and action_id not in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid quarterly ranking recommendation action",
-            f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
-            precondition_failed="recommendation_action_id",
-        )
-def _check_binding_tenant_ownership(binding: Any, identity: OperatorIdentity) -> str:
-    binding_tenant = ""
-    metadata = binding.get("metadata") if isinstance(binding, dict) else getattr(binding, "metadata", None)
-    if isinstance(metadata, dict):
-        for key in ("tenant_id", "tenantId", "tenant"):
-            val = metadata.get(key)
-            if val is not None and str(val).strip():
-                binding_tenant = str(val).strip()
-                break
-    if not binding_tenant:
-        for key in ("tenant_id", "tenantId", "tenant"):
-            val = binding.get(key) if isinstance(binding, dict) else getattr(binding, key, None)
-            if val is not None and str(val).strip():
-                binding_tenant = str(val).strip()
-                break
-    if not binding_tenant:
-        raise _bff_error(403, ErrorCode.FORBIDDEN, "Runtime tenant is unavailable", "Cannot determine the runtime owner tenant", precondition_failed="cross_tenant")
-
-    # Reuse the existing tenant resolver; do not maintain another claims policy.
-    try:
-        _bff_me_tenant_payload(identity, requested_tenant=binding_tenant)
-    except HTTPException as exc:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Cross-tenant access forbidden",
-            f"Caller cannot operate on runtime binding in tenant '{binding_tenant}'",
-            precondition_failed="cross_tenant",
-        ) from exc
-    return binding_tenant
-def _enforce_ops_console_preconditions(
-    params: Dict[str, Any],
-    identity: OperatorIdentity,
-    required_bindings: Optional[List[str]] = None,
-) -> None:
-    entity_type = str(params.get("entity_type") or params.get("entityType") or "").strip().lower()
-    persona_id = ""
-    runtime_id = ""
-
-    if entity_type == "persona":
-        persona_id = (
-            params.get("persona_id")
-            or params.get("personaId")
-            or params.get("entity_id")
-            or params.get("entityId")
-            or ""
-        ).strip()
-    elif entity_type in ("runtime", "paper-runtime"):
-        runtime_id = (
-            params.get("runtime_id")
-            or params.get("runtimeId")
-            or params.get("entity_id")
-            or params.get("entityId")
-            or ""
-        ).strip()
-
-    if not persona_id:
-        persona_id = (params.get("persona_id") or params.get("personaId") or "").strip()
-    if not runtime_id:
-        runtime_id = (params.get("runtime_id") or params.get("runtimeId") or "").strip()
-
-    if persona_id:
-        persona = read_store.get_persona(persona_id)
-        if not persona:
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Persona not found",
-                f"Persona {persona_id} does not exist",
-            )
-
-        read_model = _ops_read_model_entry_for_persona(persona_id)
-        if read_model:
-            confidence = read_model.data_confidence
-            if isinstance(confidence, str):
-                confidence_str = confidence
-            elif hasattr(confidence, "value"):
-                confidence_str = confidence.value
-            else:
-                confidence_str = str(confidence)
-
-            if confidence_str.lower() in ("unavailable", "unverifiable"):
-                raise _bff_error(
-                    422,
-                    ErrorCode.VALIDATION_FAILED,
-                    f"Action blocked due to {confidence_str} source confidence for persona {persona_id}",
-                    "Source confidence must be formal, partial, fallback, or degraded",
-                    precondition_failed="source_confidence",
-                )
-
-            if required_bindings:
-                if "runtime" in required_bindings:
-                    if not read_model.identity.runtime_ids:
-                        raise _bff_error(
-                            422,
-                            ErrorCode.VALIDATION_FAILED,
-                            f"Persona {persona_id} must have an active runtime binding",
-                            "No active runtime binding found for this persona",
-                            precondition_failed="runtime_binding_missing",
-                        )
-                if "capital" in required_bindings:
-                    if not read_model.identity.capital_pool_ids and not read_model.identity.paper_ledger_ids:
-                        raise _bff_error(
-                            422,
-                            ErrorCode.VALIDATION_FAILED,
-                            f"Persona {persona_id} must have a capital pool or paper ledger binding",
-                            "No active capital or ledger binding found for this persona",
-                            precondition_failed="capital_binding_missing",
-                        )
-
-    # Item 4: generic _enforce_ops_console_preconditions must NOT derive runtime_id from entity_id
-    # for persona actions Observe/RequestReview/etc. Runtime fallback only actual Runtime targets/paper runtime commands.
-    is_runtime_target = (
-        entity_type in ("runtime", "paper-runtime")
-        or (required_bindings and "paper" in required_bindings)
-        or str(params.get("target_type") or "").strip().lower() in ("runtime", "paper-runtime")
-    )
-    if not runtime_id and is_runtime_target:
-        runtime_id = (
-            params.get("runtime_id")
-            or params.get("runtimeId")
-            or params.get("entity_id")
-            or params.get("entityId")
-            or ""
-        ).strip()
-    if runtime_id:
-        binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
-        if not binding:
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Runtime not found",
-                f"Runtime {runtime_id} does not exist",
-            )
-        resolved_rt_id = (
-            binding.get("runtime_id") or binding.get("runtimeId")
-            if isinstance(binding, dict)
-            else getattr(binding, "runtime_id", getattr(binding, "runtimeId", None))
-        )
-        resolved_rt_id = str(resolved_rt_id or "").strip()
-        if resolved_rt_id and resolved_rt_id != runtime_id:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Runtime ID mismatch",
-                f"Binding runtime ID '{resolved_rt_id}' does not match requested runtime ID '{runtime_id}'",
-                precondition_failed="runtime_id_mismatch",
-            )
-        payload_binding_id = str(
-            params.get("binding_id")
-            or params.get("bindingId")
-            or params.get("runtime_binding_id")
-            or params.get("runtimeBindingId")
-            or ""
-        ).strip()
-        actual_binding_id = (
-            binding.get("binding_id") or binding.get("id") or binding.get("bindingId")
-            if isinstance(binding, dict)
-            else getattr(binding, "binding_id", getattr(binding, "id", getattr(binding, "bindingId", None)))
-        )
-        actual_binding_id = str(actual_binding_id or "").strip()
-        if payload_binding_id and actual_binding_id and payload_binding_id != actual_binding_id:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Binding ID mismatch",
-                f"Payload binding ID '{payload_binding_id}' does not match resolved binding '{actual_binding_id}'",
-                precondition_failed="binding_mismatch",
-            )
-        params["tenant_id"] = _check_binding_tenant_ownership(binding, identity)
-        if required_bindings and "paper" in required_bindings:
-            stage = (
-                binding.get("deployment_mode")
-                or binding.get("deployment_stage")
-                or binding.get("stage")
-                if isinstance(binding, dict)
-                else getattr(binding, "deployment_mode", getattr(binding, "deployment_stage", getattr(binding, "stage", "")))
-            )
-            stage = str(stage or "").strip().lower()
-            if stage != "paper":
-                raise _bff_error(
-                    422,
-                    ErrorCode.VALIDATION_FAILED,
-                    f"Runtime {runtime_id} stage is {stage}, not paper",
-                    "Action is restricted to paper runtimes only",
-                    precondition_failed="stage_mismatch",
-                )
-        # Discard caller-supplied verified_binding/verified_binding_id; server resolve authoritative owner
-        params.pop("verified_binding", None)
-        params.pop("verified_binding_id", None)
-        params.pop("verified_runtime_binding_id", None)
-        if actual_binding_id:
-            params["runtime_binding_id"] = actual_binding_id
-def _validate_observe(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Observe action requires operator, reviewer, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    _enforce_ops_console_preconditions(params, identity)
-def _validate_request_review(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RequestReview action requires operator or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    persona_id = params.get("persona_id") or params.get("personaId")
-    if not persona_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing persona_id for RequestReview",
-            "persona_id must be provided to request a review",
-            precondition_failed="missing_persona",
-        )
-    _enforce_ops_console_preconditions(params, identity)
-def _validate_pause_paper_runtime(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "PausePaperRuntime action requires operator or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    runtime_id = (
-        params.get("runtime_id")
-        or params.get("runtimeId")
-        or params.get("entity_id")
-        or params.get("entityId")
-    )
-    if not runtime_id or not str(runtime_id).strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing runtime_id for PausePaperRuntime",
-            "runtime_id must be provided",
-            precondition_failed="missing_runtime",
-        )
-    if "bounded_duration_minutes" in params and params["bounded_duration_minutes"] is not None:
-        val = params["bounded_duration_minutes"]
-        valid = False
-        if isinstance(val, int) and not isinstance(val, bool) and val > 0:
-            valid = True
-        elif isinstance(val, str) and val.strip().isdigit() and int(val.strip()) > 0:
-            valid = True
-        if not valid:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Invalid bounded_duration_minutes",
-                "bounded_duration_minutes must be a positive integer",
-                precondition_failed="bounded_duration_minutes",
-            )
-    _enforce_ops_console_preconditions(params, identity, required_bindings=["paper"])
-def _validate_resume_paper_runtime(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ResumePaperRuntime action requires operator, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    runtime_id = (
-        params.get("runtime_id")
-        or params.get("runtimeId")
-        or params.get("entity_id")
-        or params.get("entityId")
-    )
-    if not runtime_id or not str(runtime_id).strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing runtime_id for ResumePaperRuntime",
-            "runtime_id must be provided",
-            precondition_failed="missing_runtime",
-        )
-    _enforce_ops_console_preconditions(params, identity, required_bindings=["paper"])
-def _validate_demote(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Demote action requires operator, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    persona_id = params.get("persona_id") or params.get("personaId")
-    if not persona_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing persona_id for Demote",
-            "persona_id must be provided",
-            precondition_failed="missing_persona",
-        )
-    _enforce_ops_console_preconditions(params, identity)
-def _validate_promote_candidate(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "PromoteCandidate action requires operator, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    persona_id = params.get("persona_id") or params.get("personaId")
-    if not persona_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing persona_id for PromoteCandidate",
-            "persona_id must be provided",
-            precondition_failed="missing_persona",
-        )
-    _enforce_ops_console_preconditions(params, identity)
-def _validate_rebalance_proposal(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RebalanceProposal action requires operator or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    raise _bff_error(
-        422,
-        ErrorCode.VALIDATION_FAILED,
-        "RebalanceProposal requires server-side allocation admission",
-        "Submit the exact allocation evaluation through POST /bff/rebalances.",
-        precondition_failed="allocation_evaluation_id",
-        suggestion="Use POST /bff/management/allocation-policy/evaluate, then POST /bff/rebalances.",
-    )
-def _validate_approved_apply(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ApprovedApply action requires operator, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    _enforce_ops_console_preconditions(params, identity)
-def _validate_emergency_containment(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "EmergencyContainment action requires operator, reviewer, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    try:
-        validate_emergency_containment(params)
-    except (TypeError, ValueError) as exc:
-        detail = str(exc)
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            detail[:1].upper() + detail[1:],
-            detail,
-            precondition_failed="emergency_containment_invalid_action",
-        ) from exc
-
-    _enforce_ops_console_preconditions(params, identity)
-_VALIDATORS = {
-    CommandType.APPROVE_DEPLOYMENT: _validate_approve_deployment,
-    CommandType.APPROVE_DECISION: _validate_approve_decision,
-    CommandType.REJECT_DECISION: _validate_reject_decision,
-    CommandType.REQUEST_APPROVAL_REVISION: _validate_request_approval_revision,
-    CommandType.PAUSE_RUNTIME: _validate_pause_runtime,
-    CommandType.PAUSE_EXECUTION: _validate_pause_execution,
-    CommandType.ESCALATE_DIFF: _validate_escalate_diff,
-    CommandType.ISSUE_RISK_OFF: _validate_issue_risk_off,
-    CommandType.LIQUIDATE_ALL: _validate_liquidate_all,
-    CommandType.HARD_ROLLBACK: _validate_hard_rollback,
-    CommandType.ISSUE_SAFE_MODE: _validate_issue_safe_mode,
-    CommandType.EXECUTE_ROLLBACK: _validate_execute_rollback,
-    CommandType.APPROVE_ROLLBACK: _validate_approve_rollback,
-    CommandType.REJECT_ROLLBACK: _validate_reject_rollback,
-    CommandType.ACTIVATE_KILL_SWITCH: _validate_activate_kill_switch,
-    CommandType.APPROVE_EVOLUTION_DECISION: _validate_approve_evolution_decision,
-    CommandType.EXECUTE_EVOLUTION_ACTION: _validate_execute_evolution_action,
-    CommandType.APPROVE_MUTATION: _validate_approve_mutation,
-    CommandType.REJECT_MUTATION: _validate_reject_mutation,
-    CommandType.REVIEW_MUTATION: _validate_review_mutation,
-    CommandType.EXECUTE_MUTATION: _validate_execute_mutation,
-    CommandType.RECORD_SPONSOR_DECISION: _validate_record_sponsor_decision,
-    CommandType.REMEDIATE_SENTINEL_INTERVENTION: _validate_remediate_sentinel_intervention,
-    CommandType.DECIDE_V5_INTERVENTION: _validate_decide_v5_intervention,
-    CommandType.HUMAN_GATE_APPROVE: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_REJECT: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_REVOKE: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_EXTEND_TTL: _validate_human_gate_decision,
-    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _validate_quarterly_ranking_recommendation_submit,
-    CommandType.OBSERVE: _validate_observe,
-    CommandType.REQUEST_REVIEW: _validate_request_review,
-    CommandType.PAUSE_PAPER_RUNTIME: _validate_pause_paper_runtime,
-    CommandType.RESUME_PAPER_RUNTIME: _validate_resume_paper_runtime,
-    CommandType.DEMOTE: _validate_demote,
-    CommandType.PROMOTE_CANDIDATE: _validate_promote_candidate,
-    CommandType.REBALANCE_PROPOSAL: _validate_rebalance_proposal,
-    CommandType.APPROVED_APPLY: _validate_approved_apply,
-    CommandType.EMERGENCY_CONTAINMENT: _validate_emergency_containment,
-}
 _READ_ROLES = auth_policy._READ_ROLES
 _WRITE_ROLES = auth_policy._WRITE_ROLES
 _require_read_role = auth_policy.require_read_role
@@ -6268,16 +4921,13 @@ def _management_read_timeout_seconds() -> float:
     except (TypeError, ValueError):
         return 0.6
 
-class _ManagementReadTimeout(Exception):
-    """Raised when a management read exceeds its bounded wait budget (MGMT-LOAD-005)."""
-class _ManagementReadSaturated(Exception):
-    """Raised before submission when a bounded read executor has no capacity."""
-def _discard_late_management_read_result(task: "asyncio.Task[Any]") -> None:
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        log.warning("bff.management_read late worker-thread error after timeout budget: %r", exc)
+from .personas.routes.common import (
+    ManagementReadTimeout as _ManagementReadTimeout,
+    ManagementReadSaturated as _ManagementReadSaturated,
+    discard_late_management_read_result as _discard_late_management_read_result,
+    run_management_read as _domain_run_management_read,
+)
+
 async def _run_management_read(
     func: Callable[..., Any],
     *args: Any,
@@ -6286,46 +4936,15 @@ async def _run_management_read(
     executor: Optional[Executor] = None,
     **kwargs: Any,
 ) -> Any:
-    """Run a synchronous read-store aggregation on a worker thread, bounded by a wait budget.
-
-    Deliberately uses asyncio.wait rather than asyncio.wait_for: once an OS
-    thread has started synchronous work, Python cannot forcibly cancel it.
-    For capacity-bounded calls the semaphore is acquired before executor
-    submission and released by the actual concurrent future, so timed-out
-    work cannot create an unbounded queue of late jobs.
-    """
     budget = _management_read_timeout_seconds() if timeout_seconds is None else timeout_seconds
-    if capacity is None:
-        task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
-    else:
-        # Reserve capacity before submitting work. Acquiring inside ``func``
-        # would still allow an unbounded number of timed-out jobs to collect in
-        # the executor queue while earlier synchronous calls keep running.
-        if not capacity.acquire(blocking=False):
-            raise _ManagementReadSaturated()
-        context = copy_context()
-        call = partial(func, *args, **kwargs)
-        try:
-            worker_future = executor.submit(context.run, call) if executor else None
-            if worker_future is None:
-                raise RuntimeError("A bounded management read requires an executor")
-        except BaseException:
-            capacity.release()
-            raise
-
-        # Hold the reservation until the actual worker future finishes, not
-        # merely until the asyncio wrapper times out or is cancelled.
-        worker_future.add_done_callback(lambda _future: capacity.release())
-        task = asyncio.wrap_future(worker_future)
-    done, _pending = await asyncio.wait({task}, timeout=budget)
-    if task in done:
-        return task.result()
-    if capacity is not None:
-        # Cancels only work that has not started; a running thread keeps its
-        # reservation until the concurrent future's completion callback.
-        worker_future.cancel()
-    task.add_done_callback(_discard_late_management_read_result)
-    raise _ManagementReadTimeout()
+    return await _domain_run_management_read(
+        func,
+        *args,
+        timeout_seconds=budget,
+        capacity=capacity,
+        executor=executor,
+        **kwargs,
+    )
 async def _read_management_source_connector_registry(
     store: Any,
 ) -> Dict[str, Any]:
@@ -7048,20 +5667,15 @@ _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
-_RETIRED_PROCESS_OVERLAYS = frozenset({
-    "_PERSONA_BFF_OVERLAY",
-    "_STRATEGY_BFF_OVERLAY",
-    "_GOV_BFF_INCIDENT_OVERLAY",
-    "_GOV_BFF_JOB_OVERLAY",
-})
+from .shared.module_retirement_guard import (
+    DEFAULT_RETIRED_PROCESS_OVERLAYS as _RETIRED_PROCESS_OVERLAYS,
+    check_retired_overlay_getattr,
+)
 
 def __getattr__(name: str) -> Any:
-    if name in _RETIRED_PROCESS_OVERLAYS:
-        raise AttributeError(
-            f"{name} has been retired and deleted under OVERLAY-RETIRE-001; "
-            "process-local overlays are forbidden and canonical domain stores must be used directly."
-        )
+    check_retired_overlay_getattr(name, _RETIRED_PROCESS_OVERLAYS)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 _PERSONA_PROVISIONING_STORE = None
 _PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
@@ -7623,55 +6237,16 @@ def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
 
 from .agora.performance.service import (
     PM12_ATTRIBUTION_DIMENSIONS as _PM12_ATTRIBUTION_DIMENSIONS,
-    pm12_attribution_metrics,
-    pm12_performance_attribution_facts,
-    pm12_performance_attribution_response,
-    pm12_performance_attribution_rows,
-    pm12_performance_attribution_sources,
+)
+from .pm12.service import (
+    _pm12_attribution_metrics,
+    _pm12_performance_attribution_facts,
+    _pm12_performance_attribution_response,
+    _pm12_performance_attribution_response_impl,
+    _pm12_performance_attribution_rows,
+    _pm12_performance_attribution_sources,
 )
 
-
-def _pm12_attribution_metrics(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_attribution_metrics(entries)
-
-
-def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str) -> List[Dict[str, Any]]:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_performance_attribution_facts(sources, period_key)
-
-
-def _pm12_performance_attribution_rows(
-    entries: List[Dict[str, Any]],
-    *,
-    period_key: str,
-    sources: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_performance_attribution_rows(
-        entries,
-        period_key=period_key,
-        sources=sources,
-    )
-
-
-def _pm12_performance_attribution_response_impl(*args: Any, **kwargs: Any) -> Dict[str, Any]:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    return _agora_perf.pm12_performance_attribution_response(*args, **kwargs)
-
-
-def _pm12_performance_attribution_sources(
-    tenant_id: Optional[str] = None,
-    read_store: Optional[Any] = None,
-) -> Dict[str, Any]:
-    from services.control_plane.bff.agora.performance import service as _agora_perf
-    resolved_store = read_store if read_store is not None else globals().get("read_store")
-    return _agora_perf.pm12_performance_attribution_sources(
-        tenant_id=tenant_id,
-        read_store=resolved_store,
-        list_persona_records=lambda tid: _list_persona_records(tid, read_store=resolved_store) if (resolved_store is not None and hasattr(resolved_store, "list_personas")) else [],
-        list_strategy_summaries=lambda: list(resolved_store.list_strategy_specs() or []) if (resolved_store is not None and hasattr(resolved_store, "list_strategy_specs")) else [],
-    )
 def _persona_fleet_runtime_matches(
     runtime_binding: Dict[str, Any],
     *,
@@ -9498,156 +8073,17 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
         "System-wide mutations require operator gate approval. Use the appropriate governance route.",
     ),
 ]
-_MGMT_AI_AUDIT_EVENTS: deque = deque(maxlen=500)
-def _management_ai_audit_path() -> Optional[str]:
-    raw = os.getenv(
-        "PANTHEON_MANAGEMENT_AI_AUDIT_PATH",
-        "/tmp/pantheon-bff/management-ai-audit.jsonl",
-    ).strip()
-    if not raw or raw.lower() in {"off", "false", "disabled", "none"}:
-        return None
-    return raw
-def _management_ai_summary_value(value: Any, *, max_len: int = 400) -> Any:
-    if isinstance(value, str):
-        clean = value.strip()
-        if len(clean) > max_len:
-            return f"{clean[:max_len]}..."
-        return clean
-    return value
-def _management_ai_surface_summary(surfaces: Dict[str, Any]) -> Dict[str, Any]:
-    summary: Dict[str, Any] = {}
-    for key, value in (surfaces or {}).items():
-        if not isinstance(value, dict):
-            continue
-        summary[str(key)] = {
-            clean_key: value.get(clean_key)
-            for clean_key in ("status", "source", "reason", "message")
-            if value.get(clean_key) is not None
-        }
-    return summary
-def _management_ai_provider_output_summary(provider_payload: Any) -> Dict[str, Any]:
-    data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
-    output = data.get("output") if isinstance(data, dict) else {}
-    if not isinstance(output, dict):
-        output = {}
-    events = output.get("json_events")
-    if not isinstance(events, list):
-        events = []
-        stdout = output.get("stdout")
-        if isinstance(stdout, str):
-            for line in stdout.splitlines():
-                clean = line.strip()
-                if not clean:
-                    continue
-                try:
-                    loaded = json.loads(clean)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(loaded, dict):
-                    events.append(loaded)
-
-    event_types: List[str] = []
-    assistant_messages: List[str] = []
-    usage: Optional[Dict[str, Any]] = None
-    for event in events:
-        if not isinstance(event, dict):
-            continue
-        event_type = str(event.get("type") or "").strip()
-        if event_type:
-            event_types.append(event_type)
-        item = event.get("item")
-        if isinstance(item, dict) and item.get("type") == "agent_message" and item.get("text") is not None:
-            assistant_messages.append(str(_management_ai_summary_value(item.get("text"))))
-        if event_type == "turn.completed" and isinstance(event.get("usage"), dict):
-            usage = event.get("usage")
-
-    return {
-        "provider": data.get("provider") if isinstance(data, dict) else None,
-        "status": data.get("status") if isinstance(data, dict) else None,
-        "returncode": output.get("returncode"),
-        "duration_ms": output.get("duration_ms"),
-        "json_event_count": len(events),
-        "json_event_types": event_types,
-        "assistant_messages": assistant_messages[:3],
-        "usage": usage,
-    }
-def _management_ai_record_event(event: Dict[str, Any]) -> Dict[str, Any]:
-    payload = jsonable_encoder(
-        {
-            "event_id": event.get("event_id") or f"mgmt-ai-evt-{uuid.uuid4().hex[:16]}",
-            "recorded_at": event.get("recorded_at") or utc_now(),
-            **event,
-        }
-    )
-    _MGMT_AI_AUDIT_EVENTS.append(payload)
-    path = _management_ai_audit_path()
-    if path:
-        try:
-            directory = os.path.dirname(path)
-            if directory:
-                os.makedirs(directory, exist_ok=True)
-            with open(path, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
-        except Exception:
-            log.warning("Failed to persist management AI audit event", exc_info=True)
-    return payload
-def _management_ai_read_audit_file(limit: int) -> List[Dict[str, Any]]:
-    path = _management_ai_audit_path()
-    if not path or not os.path.exists(path):
-        return []
-    try:
-        with open(path, encoding="utf-8") as handle:
-            lines = handle.readlines()
-    except Exception:
-        log.warning("Failed to read management AI audit log", exc_info=True)
-        return []
-    events: List[Dict[str, Any]] = []
-    for line in lines[-max(limit * 4, limit):]:
-        try:
-            loaded = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(loaded, dict):
-            events.append(loaded)
-    return events
-def _management_ai_event_matches(
-    event: Dict[str, Any],
-    *,
-    session_id: Optional[str],
-    trace_id: Optional[str],
-    message_id: Optional[str],
-    event_type: Optional[str],
-) -> bool:
-    if session_id and str(event.get("session_id") or "") != session_id:
-        return False
-    if trace_id and str(event.get("trace_id") or "") != trace_id:
-        return False
-    if message_id and str(event.get("message_id") or "") != message_id:
-        return False
-    if event_type and str(event.get("event_type") or "") != event_type:
-        return False
-    return True
-def _management_ai_list_audit_events(
-    *,
-    session_id: Optional[str] = None,
-    trace_id: Optional[str] = None,
-    message_id: Optional[str] = None,
-    event_type: Optional[str] = None,
-    limit: int = 100,
-) -> List[Dict[str, Any]]:
-    candidates = _management_ai_read_audit_file(limit) or list(_MGMT_AI_AUDIT_EVENTS)
-    filtered = [
-        event
-        for event in candidates
-        if _management_ai_event_matches(
-            event,
-            session_id=session_id,
-            trace_id=trace_id,
-            message_id=message_id,
-            event_type=event_type,
-        )
-    ]
-    return filtered[-limit:]
+from .assistant.management_service import (
+    _MGMT_AI_AUDIT_EVENTS,
+    _management_ai_audit_path,
+    _management_ai_summary_value,
+    _management_ai_surface_summary,
+    _management_ai_provider_output_summary,
+    _management_ai_record_event,
+    _management_ai_read_audit_file,
+    _management_ai_event_matches,
+    _management_ai_list_audit_events,
+)
 def _management_ai_number(value: Any) -> Optional[float]:
     if isinstance(value, bool) or value is None:
         return None
@@ -14387,244 +12823,59 @@ def _pm12_quarterly_recommendation_item(
             "governance_queue": "/api/v1/operator/governance/approval-queue",
         },
     }
+from .governance.promotion_review import (
+    _PROMOTION_REVIEW_DECISIONS,
+    _PROMOTION_REVIEW_ID_PREFIX,
+    _PROMOTION_REVIEW_ID_QUARTER_RE,
+    _PROMOTION_REVIEW_PROMOTION_ACTION_IDS,
+    _PROMOTION_REVIEW_REVISION_MARKER,
+    _PROMOTION_REVIEW_REVISION_RE,
+    _PROMOTION_REVIEW_TARGET_PREFIX,
+    _latest_promotion_review_command as _domain_latest_promotion_review_command,
+    _promotion_review_clean_id,
+    _promotion_review_decision_projection as _domain_promotion_review_decision_projection,
+    _promotion_review_quarter_from_id,
+    _promotion_review_record_revision_id,
+    _promotion_review_revision_id,
+    _promotion_review_revision_recommendation_id,
+    _promotion_review_stage_path,
+    _promotion_review_stored_source,
+    _promotion_review_submission_projection as _domain_promotion_review_submission_projection,
+    _promotion_review_target_id,
+    _raise_if_promotion_review_direct_mutation_requested,
+)
+
 _PROMOTION_REVIEW_ACTION_IDS: Set[str] = set(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)
-_PROMOTION_REVIEW_PROMOTION_ACTION_IDS: Set[str] = {"promote_to_canary_candidate"}
-_PROMOTION_REVIEW_DECISIONS: Set[str] = {"approve", "approve_with_conditions", "reject"}
-_PROMOTION_REVIEW_ID_PREFIX = "promotion-review:"
-_PROMOTION_REVIEW_TARGET_PREFIX = "promotion_review:"
-_PROMOTION_REVIEW_REVISION_MARKER = "--snapshot-"
-_PROMOTION_REVIEW_REVISION_RE = re.compile(
-    r"^(?P<recommendation_id>.+)--snapshot-(?P<digest>[0-9a-f]{32})$"
-)
-_PROMOTION_REVIEW_ID_QUARTER_RE = re.compile(r"pm12-(?P<quarter>\d{4}-q[1-4])-", re.IGNORECASE)
-def _promotion_review_clean_id(review_id: Any) -> str:
-    clean_id = str(review_id or "").strip()
-    if clean_id.startswith(_PROMOTION_REVIEW_ID_PREFIX):
-        clean_id = clean_id[len(_PROMOTION_REVIEW_ID_PREFIX):]
-    if clean_id.startswith(_PROMOTION_REVIEW_TARGET_PREFIX):
-        clean_id = clean_id[len(_PROMOTION_REVIEW_TARGET_PREFIX):]
-    return clean_id
-def _promotion_review_target_id(review_id: Any) -> str:
-    return f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}"
-def _promotion_review_revision_id(
-    recommendation_id: Any,
-    ranking_snapshot_id: Any,
-) -> str:
-    clean_recommendation_id = _promotion_review_clean_id(recommendation_id)
-    clean_snapshot_id = str(ranking_snapshot_id or "").strip()
-    if not clean_recommendation_id or not clean_snapshot_id:
-        return clean_recommendation_id
-    digest = hashlib.sha256(
-        f"{clean_recommendation_id}\x00{clean_snapshot_id}".encode("utf-8")
-    ).hexdigest()[:32]
-    return (
-        f"{clean_recommendation_id}"
-        f"{_PROMOTION_REVIEW_REVISION_MARKER}{digest}"
-    )
-def _promotion_review_revision_recommendation_id(review_id: Any) -> str:
-    clean_id = _promotion_review_clean_id(review_id)
-    match = _PROMOTION_REVIEW_REVISION_RE.fullmatch(clean_id)
-    if match is None:
-        return clean_id
-    return match.group("recommendation_id")
-def _promotion_review_record_revision_id(command: Dict[str, Any]) -> str:
-    params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    recommendation_id = _human_inbox_promotion_recommendation_id(command)
-    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
-    expected_revision_id = _promotion_review_revision_id(
-        recommendation_id,
-        ranking_snapshot_id,
-    )
-    asserted_ids = [
-        str(params.get(key) or "").strip()
-        for key in ("review_id", "promotion_review_id")
-        if str(params.get(key) or "").strip()
-    ]
-    if ranking_snapshot_id:
-        if asserted_ids and any(
-            _promotion_review_clean_id(asserted_id) != expected_revision_id
-            for asserted_id in asserted_ids
-        ):
-            return ""
-        return expected_revision_id
-    # Snapshotless legacy records predate revision identities. They remain
-    # readable under the stable recommendation id but cannot authorize a
-    # snapshot-bound decision or allocation.
-    if asserted_ids and any(
-        _promotion_review_clean_id(asserted_id) != recommendation_id
-        for asserted_id in asserted_ids
-    ):
-        return ""
-    return recommendation_id
-def _promotion_review_quarter_from_id(review_id: Any) -> Optional[str]:
-    match = _PROMOTION_REVIEW_ID_QUARTER_RE.search(_promotion_review_clean_id(review_id))
-    if match is None:
-        return None
-    return match.group("quarter").upper()
-def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, Any]:
-    action_id = str(recommendation.get("action_id") or "").strip()
-    stage = str(
-        recommendation.get("stage") or recommendation.get("state") or ""
-    ).strip().lower()
-    if "canary" in stage:
-        from_stage = "canary"
-    elif "live" in stage:
-        from_stage = "live"
-    else:
-        from_stage = "paper"
-
-    if action_id in _PROMOTION_REVIEW_PROMOTION_ACTION_IDS:
-        if from_stage == "canary":
-            target_stage = "live_candidate"
-            review_kind = "canary_to_live_review"
-        elif from_stage == "live":
-            target_stage = "live_rebalance_review"
-            review_kind = "live_ranking_review"
-        else:
-            target_stage = "canary_candidate"
-            review_kind = "paper_to_canary_review"
-    elif action_id in {"reduce_capital_access", "freeze_persona", "suspend_persona", "retire_persona"}:
-        target_stage = "risk_containment_review"
-        review_kind = "risk_containment_review"
-    elif action_id in {"increase_research_budget", "grant_tool_access"}:
-        target_stage = "resource_change_review"
-        review_kind = "resource_change_review"
-    else:
-        target_stage = "governance_review"
-        review_kind = "ranking_governance_review"
-
-    return {
-        "from_stage": from_stage,
-        "target_stage": target_stage,
-        "review_kind": review_kind,
-        "eventual_live_stage": "live",
-        "live_requires_separate_human_gate": target_stage != "risk_containment_review",
-    }
-from .personas.service import (
-    _promotion_review_submission_projection as _personas_promotion_review_submission_projection,
-)
 
 
 def _promotion_review_submission_projection(
     review_id: Any,
     *,
     include_source_recommendation: bool = False,
+    command_store: Any = None,
 ) -> Optional[Dict[str, Any]]:
-    return _personas_promotion_review_submission_projection(
+    resolved_store = command_store if command_store is not None else globals().get("command_store")
+    return _domain_promotion_review_submission_projection(
         review_id,
         include_source_recommendation=include_source_recommendation,
-        command_store=command_store,
+        command_store=resolved_store,
     )
-def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
-    clean_id = _promotion_review_clean_id(review_id)
-    for record in reversed(command_store._get_all_commands()):
-        if (
-            _human_inbox_decision_recommendation_id(record) == clean_id
-            and _human_inbox_decision_projection_from_record(record) is not None
-        ):
-            return record
-    return None
-def _promotion_review_decision_projection(review_id: Any) -> Optional[Dict[str, Any]]:
-    record = _latest_promotion_review_command(review_id)
-    if record is None:
-        return None
-    return _human_inbox_decision_projection_from_record(record)
-def _raise_if_promotion_review_direct_mutation_requested(payload: Dict[str, Any]) -> None:
-    mutation_fields = (
-        "live_capital_mutation",
-        "liveCapitalMutation",
-        "liveCapitalSideEffects",
-        "runtime_mutation",
-        "runtimeMutation",
-    )
-    for field in mutation_fields:
-        if bool(payload.get(field)):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Promotion review decisions cannot request direct live/runtime mutation",
-                f"{field} must be false or omitted; promotion requires a human-gated command receipt only.",
-                precondition_failed=field,
-                suggestion="Submit the promotion review decision without live/runtime mutation flags.",
-            )
-def _promotion_review_stored_source(
-    recommendation: Dict[str, Any],
-) -> Dict[str, Any]:
-    stored = json.loads(json.dumps(recommendation))
-    # Command params are visible on governance read surfaces. Persist the
-    # Authoritative immutable ranking tuple, never submitter-supplied evidence.
-    stored["evidence_refs"] = []
-    stored["evidence_ref_ids"] = []
-    return stored
-def _pm12_performance_attribution_response(
-    *,
-    dimensions: List[str],
-    period: str,
-    page_token: Optional[str],
-    page_size: int,
-    data_id: str = "pm12-performance-attribution",
-    surface_key: str = "performance_attribution",
-    # Common filters:
-    persona_id: Optional[str] = None,
-    persona: Optional[str] = None,
-    runtime_id: Optional[str] = None,
-    runtime: Optional[str] = None,
-    strategy_id: Optional[str] = None,
-    strategy: Optional[str] = None,
-    capital_pool_id: Optional[str] = None,
-    pool: Optional[str] = None,
-    sleeve_id: Optional[str] = None,
-    sleeve: Optional[str] = None,
-    artifact_id: Optional[str] = None,
-    artifact: Optional[str] = None,
-    broker_id: Optional[str] = None,
-    broker: Optional[str] = None,
-    stage: Optional[str] = None,
-    as_of: Optional[str] = None,
-    tenant_id: Optional[str] = None,
-    read_store: Optional[Any] = None,
-    sources_fn: Optional[Callable[..., Any]] = None,
-    rows_fn: Optional[Callable[..., Any]] = None,
-) -> Dict[str, Any]:
-    resolved_store = read_store if read_store is not None else globals().get("read_store")
-    resolved_sources_fn = (
-        sources_fn
-        if sources_fn is not None
-        else (lambda t: _pm12_performance_attribution_sources(t, read_store=resolved_store))
-    )
-    return _pm12_performance_attribution_response_impl(
-        dimensions=dimensions,
-        period=period,
-        page_token=page_token,
-        page_size=page_size,
-        data_id=data_id,
-        surface_key=surface_key,
-        persona_id=persona_id,
-        persona=persona,
-        runtime_id=runtime_id,
-        runtime=runtime,
-        strategy_id=strategy_id,
-        strategy=strategy,
-        capital_pool_id=capital_pool_id,
-        pool=pool,
-        sleeve_id=sleeve_id,
-        sleeve=sleeve,
-        artifact_id=artifact_id,
-        artifact=artifact,
-        broker_id=broker_id,
-        broker=broker,
-        stage=stage,
-        as_of=as_of,
-        tenant_id=tenant_id,
-        utc_now=utc_now,
-        read_store=resolved_store,
-        sources_fn=resolved_sources_fn,
-        dataset_surface_status_fn=lambda ds, **kw: _dataset_surface_status(ds, read_store=resolved_store, **kw),
-        aggregate_group_surface_fn=_aggregate_group_surface,
-        performance_ranking_source_surface_fn=_performance_ranking_source_surface,
-        snapshot_meta_fn=_snapshot_meta,
-        rows_fn=rows_fn or _pm12_performance_attribution_rows,
-    )
+
+
+def _latest_promotion_review_command(
+    review_id: Any,
+    command_store: Any = None,
+) -> Optional[Dict[str, Any]]:
+    resolved_store = command_store if command_store is not None else globals().get("command_store")
+    return _domain_latest_promotion_review_command(review_id, command_store=resolved_store)
+
+
+def _promotion_review_decision_projection(
+    review_id: Any,
+    command_store: Any = None,
+) -> Optional[Dict[str, Any]]:
+    resolved_store = command_store if command_store is not None else globals().get("command_store")
+    return _domain_promotion_review_decision_projection(review_id, command_store=resolved_store)
 def _ops_read_model_entry_for_persona(
     persona_id: str,
     *,
@@ -17114,23 +15365,13 @@ bff_sse_deployment_events_alias = _mounted_router_endpoint(_deployment_router, "
 bff_sse_agora_signals_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/signals")
 bff_sse_agora_session_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/sessions/{sessionId}")
 
-import types as _types
-class _BffMainModule(_types.ModuleType):
-    def __getattr__(self, name: str) -> Any:
-        if name in _RETIRED_PROCESS_OVERLAYS:
-            raise AttributeError(
-                f"{name} has been retired and deleted under OVERLAY-RETIRE-001; "
-                "process-local overlays are forbidden and canonical domain stores must be used directly."
-            )
-        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
+from .shared.module_retirement_guard import (
+    ModuleRetirementGuard as _ModuleRetirementGuard,
+)
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name in _RETIRED_PROCESS_OVERLAYS:
-            raise AttributeError(
-                f"{name} has been retired and deleted under OVERLAY-RETIRE-001; "
-                "process-local overlays are forbidden and cannot be reinstated."
-            )
-        super().__setattr__(name, value)
+
+class _BffMainModule(_ModuleRetirementGuard):
+    def _on_setattr(self, name: str, value: Any) -> None:
         if name == "read_store" and hasattr(self, "app_deps") and hasattr(self.app_deps, "read_surface"):
             if value is not self.app_deps.read_surface:
                 self.app_deps.read_surface._active_delegate = value

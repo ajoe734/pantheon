@@ -351,9 +351,19 @@ class CommandAdapterService:
         fallback_utc_now = globals()["utc_now"]
         self._utc_now = utc_now or utc_now_fn or fallback_utc_now
         self._dispatch_command = dispatch_command_fn or dispatch_domain_command
-        self._publish_event = publish_event
         self._check_read_surface_state = check_read_surface_state
-        self._validators = validators or {}
+        if validators is not None:
+            self._validators = validators
+        else:
+            try:
+                from .preconditions import build_default_validators
+                self._validators = build_default_validators(
+                    read_surface=self._get_read_store,
+                    bff_error_fn=self._bff_error,
+                    utc_now_fn=self._utc_now,
+                )
+            except Exception:
+                self._validators = {}
         self._process_command_task = process_command_task
         self._submit_command_admission = submit_command_admission or self.submit_command_admission
 

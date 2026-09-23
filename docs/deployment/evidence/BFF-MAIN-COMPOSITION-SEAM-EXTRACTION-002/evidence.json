@@ -1,0 +1,105 @@
+{
+  "task_id": "BFF-MAIN-COMPOSITION-SEAM-EXTRACTION-002",
+  "title": "Extract the remaining main.py production seams that block BFF test migration",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "status": "ready_for_review",
+  "generated_at": "2026-09-23T15:38:00Z",
+  "base_commit": "ede7f3d4be5616acfccd9f963ac5b5920a0812c7",
+  "changed_files": [
+    "docs/deployment/evidence/BFF-MAIN-COMPOSITION-SEAM-EXTRACTION-002/evidence.json",
+    "services/control-plane/bff/assistant/management_service.py",
+    "services/control-plane/bff/assistant_conversation_store.py",
+    "services/control-plane/bff/capital/service.py",
+    "services/control-plane/bff/command_adapters/preconditions.py",
+    "services/control-plane/bff/command_adapters/service.py",
+    "services/control-plane/bff/command_queue.py",
+    "services/control-plane/bff/governance/human_inbox.py",
+    "services/control-plane/bff/governance/promotion_review.py",
+    "services/control-plane/bff/governance/router.py",
+    "services/control-plane/bff/governance/service.py",
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/personas/routes/common.py",
+    "services/control-plane/bff/pm12/__init__.py",
+    "services/control-plane/bff/pm12/service.py",
+    "services/control-plane/bff/shared/module_retirement_guard.py",
+    "services/control-plane/bff/tests/test_main_composition_seam_extraction_002.py"
+  ],
+  "seams_extracted": {
+    "module_retirement_guard": {
+      "target_file": "services/control-plane/bff/shared/module_retirement_guard.py",
+      "summary": "Extracted OVERLAY-RETIRE-001 module retirement guard into shared/module_retirement_guard.py. Wired into main.py and _BffMainModule subclass, preserving identical getattr and setattr guard behavior on live instance."
+    },
+    "command_adapters": {
+      "target_file": "services/control-plane/bff/command_adapters/preconditions.py",
+      "summary": "Extracted command-adapter validator graph, preconditions enforcement (_VALIDATORS, _enforce_ops_console_preconditions, _validate_*) into command_adapters/preconditions.py and CommandAdapterService orchestration in command_adapters/service.py."
+    },
+    "assistant": {
+      "target_file": "services/control-plane/bff/assistant/management_service.py",
+      "summary": "Extracted Management AI audit events and conversation store (_MGMT_AI_CONVERSATION_STORE, _MGMT_AI_AUDIT_EVENTS, _management_ai_list_audit_events) into assistant/management_service.py with composition assembly and injection in main.py."
+    },
+    "governance": {
+      "target_file": "services/control-plane/bff/governance/promotion_review.py",
+      "summary": "Extracted promotion-review projection subsystem, revision calculation, decision projection, stage paths, and human inbox sanitization (_promotion_review_*, _latest_promotion_review_command, _human_inbox_*) into governance/promotion_review.py and governance/human_inbox.py with explicit command_store injection."
+    },
+    "personas_routes_common": {
+      "target_file": "services/control-plane/bff/personas/routes/common.py",
+      "summary": "Extracted bounded management read isolation (run_management_read, ManagementReadTimeout, ManagementReadSaturated, discard_late_management_read_result) into personas/routes/common.py."
+    },
+    "pm12": {
+      "target_file": "services/control-plane/bff/pm12/service.py",
+      "summary": "Created dedicated domain module pm12/ owning allocation equality semantics, ranking snapshot hashing, recommendation submit resolution, portfolio book exposure projection, holding entry projection, and performance attribution integration."
+    }
+  },
+  "live_importer_readback": {
+    "ceiling": 11,
+    "actual_count": 11,
+    "non_whitelisted_importers": [
+      "test_bff_mgmt_ai_persistence_2026_06_03.py",
+      "test_bff_mgmt_common_filters.py",
+      "test_bff_mgmt_ops_006_operator_actions_contract.py",
+      "test_bff_pm12_portfolio_book_contract.py",
+      "test_bff_promotion_review_governance.py",
+      "test_mgmt_load_005_read_concurrency.py",
+      "tests/test_bff_path_dedupe.py",
+      "tests/test_bff_rebalance_proposals.py",
+      "tests/test_overlay_retirement.py",
+      "tests/test_ppl_alloc_009_assertion_semantics.py",
+      "tests/test_ppl_alloc_012_ranking_projection.py"
+    ]
+  },
+  "test_results": {
+    "new_composition_seam_suite": {
+      "command": "pytest -v services/control-plane/bff/tests/test_main_composition_seam_extraction_002.py",
+      "passed": 18,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "architecture_gate": {
+      "command": "pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "passed": 8,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "overlay_retirement": {
+      "command": "pytest -v services/control-plane/bff/tests/test_overlay_retirement.py",
+      "passed": 22,
+      "skipped": 1,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "operator_actions_contract": {
+      "command": "pytest -v services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py",
+      "passed": 13,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "mgmt_ai_persistence": {
+      "command": "pytest -v services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py",
+      "passed": 11,
+      "skipped": 1,
+      "failed": 0,
+      "status": "PASS"
+    }
+  }
+}

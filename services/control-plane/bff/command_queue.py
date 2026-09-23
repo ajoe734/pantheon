@@ -24,6 +24,7 @@ class CommandStore:
         self.lock_path = f"{os.path.abspath(self.file_path)}.lock"
         self._thread_lock = threading.RLock()
         self._local = threading.local()
+        self._cache: List[Any] = []
         parent = os.path.dirname(os.path.abspath(self.file_path))
         os.makedirs(parent, exist_ok=True)
         # Initialize the file if it doesn't exist
