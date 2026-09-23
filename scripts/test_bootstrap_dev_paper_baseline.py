@@ -27,6 +27,19 @@ PERMISSIVE_DEV_ENV = {
     "PANTHEON_BFF_AUTH_STUB": "true",
 }
 
+# The governed source provisioning prerequisite requires this bearer token
+# (bootstrap.source_ingest_controller_token) whenever a source_ingest_url is
+# passed; every test that exercises the market-snapshot wait path needs it.
+SOURCE_INGEST_DEV_ENV = {
+    **DEV_ENV,
+    "SOURCE_INGEST_CONTROLLER_TOKEN": "controller-token-test",
+}
+
+RECONCILE_OK_RESPONSE = (
+    200,
+    {"summary": {"mutated": 1, "satisfied": 0, "unsupported": 0, "conflicts": 0}},
+)
+
 
 def _run(**overrides):
     params = {
@@ -199,7 +212,7 @@ def test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_firs
                 },
             ),
         ],
-        "provisioning/reconcile": [
+        "/bff/personas/persona-1/provisioning/reconcile": [
             (
                 200,
                 {
@@ -208,6 +221,7 @@ def test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_firs
                 },
             ),
         ],
+        "persona-source-provisioning/reconcile": [RECONCILE_OK_RESPONSE],
         "run-scheduled": [
             (200, {"status": "ok"}),
         ],
@@ -229,7 +243,7 @@ def test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_firs
         call_order.append(f"get:{url}")
         return get_queue.pop(0)
 
-    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+    with patch.dict(os.environ, SOURCE_INGEST_DEV_ENV, clear=True), patch.object(
         bootstrap, "_post_json", side_effect=fake_post_json
     ), patch.object(bootstrap, "_get_json", side_effect=fake_get_json):
         result = _run(source_ingest_url="http://mock-source:8097")
@@ -238,15 +252,18 @@ def test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_firs
     assert result["persona_id"] == "persona-1"
 
     # The Persona create call is the second call overall (after login) --
-    # the market snapshot poll never runs before required_data_sources
-    # exists on a Persona.
+    # the source provisioning prerequisite and market snapshot poll never
+    # run before required_data_sources exists on a Persona.
     create_index = next(
         i for i, c in enumerate(call_order) if "create-paper-bundle" in c
     )
+    provisioning_index = next(
+        i for i, c in enumerate(call_order) if "persona-source-provisioning/reconcile" in c
+    )
     first_get_index = next(i for i, c in enumerate(call_order) if c.startswith("get:"))
-    assert create_index < first_get_index, (
-        "market snapshot wait must run after persona creation, not before "
-        f"(call_order={call_order})"
+    assert create_index < provisioning_index < first_get_index, (
+        "governed source provisioning must run after persona creation and "
+        f"before the market snapshot wait (call_order={call_order})"
     )
 
     # The 404 branch actively nudges the reconciler via run-scheduled instead
@@ -302,7 +319,7 @@ def test_market_snapshot_already_fresh_steady_state_does_not_delay_reconcile() -
                 },
             ),
         ],
-        "provisioning/reconcile": [
+        "/bff/personas/persona-1/provisioning/reconcile": [
             (
                 200,
                 {
@@ -311,6 +328,7 @@ def test_market_snapshot_already_fresh_steady_state_does_not_delay_reconcile() -
                 },
             ),
         ],
+        "persona-source-provisioning/reconcile": [RECONCILE_OK_RESPONSE],
     }
 
     def fake_post_json(url, payload=None, **kwargs):
@@ -324,7 +342,7 @@ def test_market_snapshot_already_fresh_steady_state_does_not_delay_reconcile() -
         call_order.append(f"get:{url}")
         return (200, valid_snapshot)
 
-    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+    with patch.dict(os.environ, SOURCE_INGEST_DEV_ENV, clear=True), patch.object(
         bootstrap, "_post_json", side_effect=fake_post_json
     ), patch.object(bootstrap, "_get_json", side_effect=fake_get_json):
         result = _run(source_ingest_url="http://mock-source:8097")
@@ -711,3 +729,244 @@ def test_refuses_non_paper_or_live_side_effect_response() -> None:
         bootstrap, "_post_json", side_effect=responses
     ), pytest.raises(bootstrap.BootstrapError, match="paper-only boundary"):
         _run()
+
+
+def _replay_post_queue(reconcile_response=None) -> dict[str, list]:
+    """An idempotent successful replay: create-paper-bundle already reports
+    paper_running/succeeded on the very first call, with no reconcile-loop
+    poll involved at all."""
+
+    return {
+        "/bff/auth/dev-login": [
+            (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        ],
+        "create-paper-bundle": [
+            (
+                201,
+                {
+                    "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "paper"},
+                    "meta": {
+                        "provisioning_state": "succeeded",
+                        "provisioning_step": "authoritative_readback_complete",
+                        "runtime_id": "rt-1",
+                        "runtime_binding_id": "rb-1",
+                        "deployment_plan_id": "plan-1",
+                        "live_capital_side_effects": False,
+                    },
+                },
+            ),
+        ],
+        "persona-source-provisioning/reconcile": [reconcile_response or RECONCILE_OK_RESPONSE],
+    }
+
+
+def test_replay_with_stale_snapshot_still_raises_market_input_stale() -> None:
+    """AC4 regression: an idempotent successful replay (create-paper-bundle
+    already returns paper_running/succeeded on the first call) must not
+    bypass the post-create freshness gate. Reproduces the independent
+    base/head finding for DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001: with
+    a stale SPY snapshot and a terminal successful create response, this must
+    still raise market_input_stale rather than returning ok."""
+
+    stale_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-stale",
+        "symbol": "SPY",
+        "event_time": "2020-01-01T00:00:00Z",
+        "observed_at": "2020-01-01T00:00:00Z",
+        "closes": [500.0, 501.5],
+    }
+    post_queue = _replay_post_queue()
+    call_order: list[str] = []
+
+    def fake_post_json(url, payload=None, **kwargs):
+        call_order.append(f"post:{url}")
+        for key, responses in post_queue.items():
+            if key in url:
+                return responses.pop(0)
+        raise AssertionError(f"unexpected POST {url}")
+
+    def fake_get_json(url, **kwargs):
+        call_order.append(f"get:{url}")
+        return (200, stale_snapshot)
+
+    times = [0, 100]  # start, then past a 5s market-input deadline
+    with patch.dict(os.environ, SOURCE_INGEST_DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), patch.object(bootstrap, "_get_json", side_effect=fake_get_json), pytest.raises(
+        bootstrap.BootstrapError, match="market_input_stale"
+    ):
+        _run(
+            source_ingest_url="http://mock-source:8097",
+            market_input_timeout_seconds=5.0,
+            monotonic=lambda: times.pop(0) if times else 999,
+        )
+
+    # Exactly one snapshot GET: the replay must not skip the freshness check,
+    # but also must not re-poll past the very first stale observation before
+    # the bounded deadline is (already) exceeded.
+    assert len([c for c in call_order if c.startswith("get:")]) == 1
+
+
+def test_replay_with_missing_snapshot_still_raises_market_snapshot_not_found() -> None:
+    """AC4 regression: an idempotent successful replay must still surface a
+    named, bounded failure when the connector has never produced a snapshot
+    at all, rather than returning ok without ever checking."""
+
+    post_queue = _replay_post_queue()
+    call_order: list[str] = []
+
+    def fake_post_json(url, payload=None, **kwargs):
+        call_order.append(f"post:{url}")
+        for key, responses in post_queue.items():
+            if key in url:
+                return responses.pop(0)
+        return (200, {"status": "ok"})  # run-scheduled nudge on 404
+
+    def fake_get_json(url, **kwargs):
+        call_order.append(f"get:{url}")
+        return (404, {"detail": {"code": "market_snapshot_not_found", "symbol": "SPY"}})
+
+    times = [0, 100]
+    with patch.dict(os.environ, SOURCE_INGEST_DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), patch.object(bootstrap, "_get_json", side_effect=fake_get_json), pytest.raises(
+        bootstrap.BootstrapError, match="market_snapshot_not_found"
+    ):
+        _run(
+            source_ingest_url="http://mock-source:8097",
+            market_input_timeout_seconds=5.0,
+            monotonic=lambda: times.pop(0) if times else 999,
+        )
+
+
+def test_replay_with_fresh_snapshot_returns_ok_after_one_get() -> None:
+    """AC4 regression: the already-fresh steady-state replay path still
+    converges immediately (the freshness gate is not merely present but also
+    not a regression in the common case)."""
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    fresh_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-fresh",
+        "symbol": "SPY",
+        "event_time": now_iso,
+        "observed_at": now_iso,
+        "closes": [500.0, 501.5],
+    }
+    post_queue = _replay_post_queue()
+    call_order: list[str] = []
+
+    def fake_post_json(url, payload=None, **kwargs):
+        call_order.append(f"post:{url}")
+        for key, responses in post_queue.items():
+            if key in url:
+                return responses.pop(0)
+        raise AssertionError(f"unexpected POST {url}")
+
+    def fake_get_json(url, **kwargs):
+        call_order.append(f"get:{url}")
+        return (200, fresh_snapshot)
+
+    with patch.dict(os.environ, SOURCE_INGEST_DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), patch.object(bootstrap, "_get_json", side_effect=fake_get_json):
+        result = _run(source_ingest_url="http://mock-source:8097")
+
+    assert result["status"] == "ok"
+    assert result["persona_id"] == "persona-1"
+    assert len([c for c in call_order if c.startswith("get:")]) == 1
+
+
+def test_source_provisioning_skipped_without_required_data_sources() -> None:
+    result = bootstrap.ensure_source_provisioning(
+        source_ingest_url="http://mock-source:8097",
+        persona_id="persona-1",
+        required_data_sources=[],
+        controller_token="",
+    )
+    assert result == {"status": "skipped", "reason": "no_required_data_sources"}
+
+
+def test_source_provisioning_requires_controller_token() -> None:
+    with pytest.raises(bootstrap.BootstrapError, match="controller token"):
+        bootstrap.ensure_source_provisioning(
+            source_ingest_url="http://mock-source:8097",
+            persona_id="persona-1",
+            required_data_sources=list(bootstrap.DEV_US_REQUIRED_DATA_SOURCES),
+            controller_token="",
+        )
+
+
+def test_source_provisioning_sends_authoritative_reconcile_request() -> None:
+    captured = {}
+
+    def fake_post_json(url, payload=None, **kwargs):
+        captured["url"] = url
+        captured["payload"] = payload
+        captured["headers"] = kwargs.get("headers")
+        return RECONCILE_OK_RESPONSE
+
+    with patch.object(bootstrap, "_post_json", side_effect=fake_post_json):
+        result = bootstrap.ensure_source_provisioning(
+            source_ingest_url="http://mock-source:8097",
+            persona_id="persona-1",
+            required_data_sources=list(bootstrap.DEV_US_REQUIRED_DATA_SOURCES),
+            controller_token="controller-token-test",
+        )
+
+    assert result == RECONCILE_OK_RESPONSE[1]
+    assert captured["url"] == "http://mock-source:8097/api/source-ingest/persona-source-provisioning/reconcile"
+    assert captured["payload"]["dry_run"] is False
+    assert captured["payload"]["persona"]["persona_id"] == "persona-1"
+    assert captured["payload"]["persona"]["required_data_sources"] == list(
+        bootstrap.DEV_US_REQUIRED_DATA_SOURCES
+    )
+    assert captured["headers"]["Authorization"] == "Bearer controller-token-test"
+
+
+def test_source_provisioning_raises_on_unsupported_requirement() -> None:
+    with patch.object(
+        bootstrap,
+        "_post_json",
+        return_value=(200, {"summary": {"mutated": 0, "unsupported": 1, "conflicts": 0}}),
+    ), pytest.raises(bootstrap.BootstrapError, match="unsupported"):
+        bootstrap.ensure_source_provisioning(
+            source_ingest_url="http://mock-source:8097",
+            persona_id="persona-1",
+            required_data_sources=list(bootstrap.DEV_US_REQUIRED_DATA_SOURCES),
+            controller_token="controller-token-test",
+        )
+
+
+def test_source_provisioning_raises_on_non_200() -> None:
+    with patch.object(
+        bootstrap, "_post_json", return_value=(500, {"error": "boom"})
+    ), pytest.raises(bootstrap.BootstrapError, match="prerequisite failed"):
+        bootstrap.ensure_source_provisioning(
+            source_ingest_url="http://mock-source:8097",
+            persona_id="persona-1",
+            required_data_sources=list(bootstrap.DEV_US_REQUIRED_DATA_SOURCES),
+            controller_token="controller-token-test",
+        )
+
+
+def test_controller_token_prefers_explicit_env_over_file(tmp_path) -> None:
+    token_file = tmp_path / "controller_token"
+    token_file.write_text("file-token\n", encoding="utf-8")
+    env = {
+        "SOURCE_INGEST_CONTROLLER_TOKEN": "explicit-token",
+        "SOURCE_INGEST_CONTROLLER_TOKEN_FILE": str(token_file),
+    }
+    assert bootstrap.source_ingest_controller_token(env) == "explicit-token"
+
+
+def test_controller_token_reads_from_file_when_unset(tmp_path) -> None:
+    token_file = tmp_path / "controller_token"
+    token_file.write_text("file-token\n", encoding="utf-8")
+    env = {"SOURCE_INGEST_CONTROLLER_TOKEN_FILE": str(token_file)}
+    assert bootstrap.source_ingest_controller_token(env) == "file-token"
+
+
+def test_controller_token_empty_when_unconfigured() -> None:
+    assert bootstrap.source_ingest_controller_token({}) == ""

@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 
@@ -40,6 +41,27 @@ DEFAULT_IDEMPOTENCY_KEY = "dev-paper-bootstrap-20260720-operator-a-v3"
 # fallback default to stay in lock-step with the server's own timeout.
 DEFAULT_SERVER_PROVISIONING_TIMEOUT_SECONDS = 600.0
 SERVER_TIMEOUT_SAFETY_MARGIN_SECONDS = 30.0
+
+# Mirrors services/control-plane/bff/personas/service.py
+# _market_persona_required_data_sources(market="US") for PANTHEON_ENV=dev.
+# The Persona create response is the canonical source for this (it is used
+# whenever present); this is only a fallback for a response shape that omits
+# requiredDataSources, so the governed source provisioning prerequisite below
+# still has a requirement to reconcile against.
+DEV_US_REQUIRED_DATA_SOURCES: tuple[dict[str, Any], ...] = (
+    {
+        "dataset": "us_price_daily",
+        "market": "US",
+        "cadence": "daily",
+        "source_class": "live_pull",
+        "connector_candidates": ["dev-paper-us-equity-simulation"],
+        "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+        ],
+    },
+)
 
 
 class BootstrapError(RuntimeError):
@@ -239,6 +261,87 @@ def ensure_dev_market_snapshot_ready(
         sleep(poll_seconds)
 
 
+def source_ingest_controller_token(environ: Mapping[str, str] | None = None) -> str:
+    """Read the source-ingest controller's own bearer token.
+
+    Mirrors services/source_ingestion/controller_auth.load_controller_token's
+    explicit-value-then-file precedence, read-only: this process never
+    creates the token file, it only reads the token the source-ingest
+    service itself already created at startup (runtime.py,
+    ``load_controller_token(..., create=True)``).
+    """
+
+    env = environ if environ is not None else os.environ
+    explicit = str(env.get("SOURCE_INGEST_CONTROLLER_TOKEN") or "").strip()
+    if explicit:
+        return explicit
+    token_file = str(env.get("SOURCE_INGEST_CONTROLLER_TOKEN_FILE") or "").strip()
+    if not token_file:
+        return ""
+    try:
+        return Path(token_file).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def ensure_source_provisioning(
+    *,
+    source_ingest_url: str,
+    persona_id: str,
+    required_data_sources: Sequence[Mapping[str, Any]],
+    controller_token: str,
+    request_timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    """Provision the Persona's declared data-source connector/schedule now.
+
+    The BFF's async provisioning reconciler
+    (PANTHEON_PERSONA_PROVISIONING_RECONCILE_SECONDS) only evaluates
+    lifecycle readbacks -- it never provisions source connectors. The
+    source-ingest controller's own scheduler tick instead reads a static
+    desired-state file or URL (SOURCE_INGEST_DESIRED_STATE_PATH /
+    SOURCE_INGEST_DESIRED_STATE_URL) that has no knowledge of a Persona
+    created after that file was written. On a fresh host neither path ever
+    registers the dev synthetic connector (dev-paper-us-equity-simulation),
+    so its snapshot can never appear -- see
+    DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001. This calls source-ingest's
+    own authoritative persona-source-provisioning/reconcile endpoint
+    directly (the same governed API the desired-state controller itself
+    uses) so a first deploy converges without waiting on that external tick.
+    """
+
+    if not required_data_sources:
+        return {"status": "skipped", "reason": "no_required_data_sources"}
+    if not controller_token:
+        raise BootstrapError(
+            "governed source provisioning prerequisite requires a "
+            "source-ingest controller token (SOURCE_INGEST_CONTROLLER_TOKEN "
+            "or SOURCE_INGEST_CONTROLLER_TOKEN_FILE) but none is configured"
+        )
+    persona_payload = {
+        "persona_id": persona_id,
+        "lifecycle_state": "provisioning",
+        "required_data_sources": list(required_data_sources),
+    }
+    status, body = _post_json(
+        f"{source_ingest_url.rstrip('/')}/api/source-ingest/persona-source-provisioning/reconcile",
+        {"persona": persona_payload, "dry_run": False},
+        headers={"Authorization": f"Bearer {controller_token}"},
+        timeout_seconds=request_timeout_seconds,
+    )
+    if status != 200:
+        raise BootstrapError(
+            "governed source provisioning prerequisite failed: "
+            + json.dumps({"http_status": status, "body": body}, sort_keys=True)
+        )
+    summary = body.get("summary") if isinstance(body.get("summary"), Mapping) else {}
+    if summary.get("unsupported") or summary.get("conflicts"):
+        raise BootstrapError(
+            "governed source provisioning prerequisite reported an "
+            "unsupported or conflicting requirement: "
+            + json.dumps(summary, sort_keys=True)
+        )
+    return body
+
 
 def _login(base_url: str, *, request_timeout_seconds: float) -> str:
     client_id, client_secret, expected_identity = _login_credential_pair()
@@ -408,6 +511,53 @@ def ensure_paper_baseline(
     runtime_binding_id = str(meta.get("runtime_binding_id") or "").strip()
 
     if (
+        state in {"provisioning_failed", "failed"}
+        or provisioning_state in {"failed", "compensated"}
+    ):
+        raise BootstrapError(
+            "dev paper provisioning reached an unexpected non-success state: "
+            + json.dumps(
+                {
+                    "state": state,
+                    "provisioning_state": provisioning_state,
+                    "provisioning_step": meta.get("provisioning_step"),
+                },
+                sort_keys=True,
+            )
+        )
+
+    # Both the never-provisioned first-run path and an idempotent successful
+    # replay must run this gate before returning "ok": the Persona (and its
+    # required_data_sources declaration) already exists by this point, so
+    # provisioning the connector here can never deadlock on a producer that
+    # does not exist yet -- see DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001.
+    # Skipping this on the early paper_running/succeeded replay return would
+    # bypass freshness validation on that replay instead of merely skipping
+    # redundant provisioning work.
+    if effective_source_url:
+        required_data_sources = (
+            data.get("requiredDataSources")
+            or data.get("required_data_sources")
+            or (list(DEV_US_REQUIRED_DATA_SOURCES) if str(data.get("market") or "US").strip().upper() == "US" else [])
+        )
+        ensure_source_provisioning(
+            source_ingest_url=effective_source_url,
+            persona_id=persona_id,
+            required_data_sources=required_data_sources,
+            controller_token=source_ingest_controller_token(env),
+            request_timeout_seconds=request_timeout_seconds,
+        )
+        ensure_dev_market_snapshot_ready(
+            source_ingest_url=effective_source_url,
+            symbol=market_symbol,
+            timeout_seconds=market_input_timeout_seconds,
+            poll_seconds=poll_seconds,
+            request_timeout_seconds=request_timeout_seconds,
+            monotonic=monotonic,
+            sleep=sleep,
+        )
+
+    if (
         state == "paper_running"
         and provisioning_state == "succeeded"
         and runtime_id
@@ -426,44 +576,6 @@ def ensure_paper_baseline(
             "capital_mode": "paper",
             "live_capital_side_effects": False,
         }
-
-    if (
-        state in {"provisioning_failed", "failed"}
-        or provisioning_state in {"failed", "compensated"}
-    ):
-        raise BootstrapError(
-            "dev paper provisioning reached an unexpected non-success state: "
-            + json.dumps(
-                {
-                    "state": state,
-                    "provisioning_state": provisioning_state,
-                    "provisioning_step": meta.get("provisioning_step"),
-                },
-                sort_keys=True,
-            )
-        )
-
-    # The dev synthetic market connector (dev-paper-us-equity-simulation) is
-    # only provisioned by persona_source_reconciler once a Persona has
-    # declared it under required_data_sources, which happens above as part
-    # of create-paper-bundle. Waiting for the snapshot before the Persona
-    # exists would wait on a producer that can never be provisioned -- see
-    # DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001. This wait therefore runs
-    # only once the Persona (and its required_data_sources declaration)
-    # already exists, so a fresh host with zero prior data source instances
-    # still converges: it gives the async reconciler loop
-    # (PANTHEON_PERSONA_PROVISIONING_RECONCILE_SECONDS, default 5s) time to
-    # configure the connector and schedule before this polls run-scheduled.
-    if effective_source_url:
-        ensure_dev_market_snapshot_ready(
-            source_ingest_url=effective_source_url,
-            symbol=market_symbol,
-            timeout_seconds=market_input_timeout_seconds,
-            poll_seconds=poll_seconds,
-            request_timeout_seconds=request_timeout_seconds,
-            monotonic=monotonic,
-            sleep=sleep,
-        )
 
     effective_timeout_seconds = effective_poll_timeout_seconds(timeout_seconds, environ=environ)
     deadline = monotonic() + effective_timeout_seconds
@@ -787,13 +899,18 @@ def run_self_tests() -> int:
             assert "market_input_invalid" in str(exc)
             tests_run += 1
 
-    # Test 7: Integration in ensure_paper_baseline with effective_source_url
+    # Test 7: Integration in ensure_paper_baseline with effective_source_url.
+    # This is an idempotent successful replay (the create response already
+    # reports paper_running/succeeded), so it also proves the governed source
+    # provisioning prerequisite and the freshness gate both still run on that
+    # early-return path (DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 AC4).
     dev_env = {
         "PANTHEON_ENV": "dev",
         "PANTHEON_BFF_AUTH_MODE": "strict",
         "PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID": "op-a",
         "PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET": "op-sec",
         "SOURCE_MANAGEMENT_API_URL": "http://source-ingest:8097",
+        "SOURCE_INGEST_CONTROLLER_TOKEN": "controller-token-test",
     }
     bff_responses = [
         (200, {"access_token": "token-1", "meta": {"identity": "operator_a"}}),
@@ -807,6 +924,7 @@ def run_self_tests() -> int:
                 "live_capital_side_effects": False,
             },
         }),
+        (200, {"summary": {"mutated": 1, "satisfied": 0, "unsupported": 0, "conflicts": 0}}),
     ]
     with patch.dict(os.environ, dev_env, clear=True), \
          patch.object(this_module, "_get_json", return_value=(200, valid_snapshot)), \

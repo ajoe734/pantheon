@@ -7,49 +7,65 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "execution",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "ce8e6ab8bc01d3e5e659df8abcf61032da2ae21c",
+  "base_sha": "5aeb5dc564316788f036f6f675caf2c4ba3634b8",
+  "prior_review_findings_addressed": {
+    "p1_missing_source_provisioning_prerequisite": "Independent review found that moving the snapshot wait after persona creation was not sufficient: the BFF's async provisioning reconciler (_persona_provisioning_reconciler_loop, services/control-plane/bff/personas/service.py) only evaluates lifecycle readbacks and never provisions source connectors, and the source-ingest controller's own scheduler tick (services/source_ingestion/controller_worker.py:load_desired_state) reads a static desired-state file/URL that has no knowledge of a Persona created after that file was written. On a fresh host neither path ever registers dev-paper-us-equity-simulation for a newly created Persona.",
+    "p2_freshness_gate_bypassed_on_replay": "Independent review reproduced base-vs-head with a stale SPY snapshot and a terminal successful create response: base raised market_input_stale (one snapshot GET); head returned ok with zero snapshot GETs, because the early paper_running/succeeded return (then at lines 410-428) preceded the snapshot wait."
+  },
   "scope": {
     "owned": [
-      "scripts/bootstrap_dev_paper_baseline.py ensure_paper_baseline call ordering",
-      "regression coverage for the never-provisioned first-run and already-fresh steady-state paths"
+      "scripts/bootstrap_dev_paper_baseline.py: added ensure_source_provisioning() and source_ingest_controller_token(), and moved both the source provisioning call and the market snapshot wait to run unconditionally right after Persona creation/terminal-failure checks and before ANY success return (first-run or idempotent replay)",
+      "scripts/test_bootstrap_dev_paper_baseline.py: regression coverage for the governed source provisioning call ordering, and for the freshness gate on an idempotent successful replay (stale/missing/fresh)",
+      "docker-compose.yml: operator-bff gains read-only access to the source-ingest controller token (source-ingest-data volume + SOURCE_INGEST_CONTROLLER_TOKEN_FILE) so the bootstrap script -- which runs inside the operator-bff container -- can call source-ingest's own authoritative persona-source-provisioning/reconcile endpoint"
     ],
     "not_changing": [
-      "services/source_ingestion/persona_source_reconciler.py connector/schedule provisioning logic",
-      "services/control-plane/bff/personas/service.py required_data_sources declaration and reconcile lifecycle",
-      "ensure_dev_market_snapshot_ready's freshness/admissibility rules"
+      "services/source_ingestion/persona_source_reconciler.py: connector/schedule provisioning logic and its dev-only PANTHEON_ENV=dev gate for dev-paper-us-equity-simulation are unmodified. bootstrap now calls this reconciler's own HTTP endpoint (services/source_ingestion/routers/catalog_controller.py POST /api/source-ingest/persona-source-provisioning/reconcile) directly instead of waiting on an external tick to reach it.",
+      "services/control-plane/bff/personas/service.py: _evaluate_persona_provisioning_status / _persona_provisioning_reconciler_loop and required_data_sources declaration are unmodified. The BFF's own reconciler loop still only evaluates lifecycle readbacks; this task does not add source provisioning inside the BFF process. The fix instead has the operator-side bootstrap script call source-ingest directly, which converges without changing the BFF saga's blast radius.",
+      "ensure_dev_market_snapshot_ready's freshness/admissibility rules (staleness threshold, future-timestamp rejection, minimum closes) -- unchanged"
     ],
     "composes_with": [
-      "the async persona provisioning reconciler loop (_persona_provisioning_reconciler_loop, default 5s interval)"
+      "the async persona provisioning reconciler loop (_persona_provisioning_reconciler_loop, default 5s interval) for lifecycle/runtime-binding readback, which still runs unchanged and in parallel",
+      "the source-ingest controller's own scheduled tick (source-ingest-scheduler, default 60s interval), which will also converge once the static desired-state file lists a persona -- unaffected by this change"
+    ],
+    "deliberately_not_attempted": [
+      "Wiring the source-ingest controller's own desired-state discovery (SOURCE_INGEST_DESIRED_STATE_PATH/_URL) to read personas dynamically from the BFF/persona store. That is a larger, separate architectural change (replacing a static per-deployment file with a live persona-store-backed authority) and was judged out of scope for this ordering-deadlock fix; the governed persona-source-provisioning/reconcile endpoint the desired-state controller itself calls already gives an authoritative, synchronous provisioning path that does not require that larger change."
     ]
   },
-  "failure_reproduction": {
-    "case": "bootstrap_dev_paper_baseline.py called ensure_dev_market_snapshot_ready() before creating the Persona. The dev synthetic connector (dev-paper-us-equity-simulation) is only provisioned by persona_source_reconciler once a Persona has declared it under required_data_sources -- which only happens inside create-paper-bundle, later in the same function. On a host that has never provisioned that connector, the wait wanted a snapshot whose only producer could not yet exist, and the wait could never observe anything but 404 until its own bounded timeout.",
-    "prior_outcome": "run 35688428543: persona_provisioning never even created a row; VM data_source_instances stayed at 0 and the scheduler recognized only 2 connectors.",
-    "regression": "test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_first_run proves the create-paper-bundle POST happens before the first snapshot GET, and that a 404-then-appears cycle (with an active run-scheduled nudge on 404) still converges to paper_running. test_market_snapshot_already_fresh_steady_state_does_not_delay_reconcile proves an already-fresh snapshot resolves on the very first poll with no run-scheduled call, so the reorder does not slow down an already-healthy host."
-  },
   "implementation": {
-    "call_ordering": "ensure_dev_market_snapshot_ready() no longer runs before the create-paper-bundle POST. It now runs after the Persona is created and confirmed not already terminal (paper_running/succeeded or failed), so required_data_sources has already been declared and the async reconciler loop has a chance to provision the connector and schedule before the wait's first poll.",
-    "deadline_accounting": "effective_timeout_seconds/deadline computation for the provisioning reconcile loop was moved to after the market snapshot wait, so the snapshot wait's own bounded timeout is additive rather than eating into the reconcile loop's budget.",
+    "governed_source_provisioning_prerequisite": "Added ensure_source_provisioning(), which POSTs {persona: {persona_id, lifecycle_state, required_data_sources}, dry_run: false} to source-ingest's own POST /api/source-ingest/persona-source-provisioning/reconcile with an Authorization: Bearer <source-ingest controller token>. This is the exact authoritative endpoint services/source_ingestion/controller_worker.py:reconcile_desired_state itself calls to provision connectors/schedules; calling it directly after Persona creation removes the dependency on either the BFF's readback-only reconciler or the static desired-state file/URL. required_data_sources is taken from the create-paper-bundle response's requiredDataSources/required_data_sources field when present, falling back to the known dev-only DEV_US_REQUIRED_DATA_SOURCES constant (mirrors services/control-plane/bff/personas/service.py:_market_persona_required_data_sources(market='US') under PANTHEON_ENV=dev) when the response omits it.",
+    "controller_token_wiring": "Added source_ingest_controller_token(), read-only counterpart to services/source_ingestion/controller_auth.load_controller_token: prefers an explicit SOURCE_INGEST_CONTROLLER_TOKEN, else reads SOURCE_INGEST_CONTROLLER_TOKEN_FILE. docker-compose.yml mounts the existing source-ingest-data volume read-only into operator-bff and points that env var at the same controller_token path source-ingest already creates at its own startup (runtime.py, create=True), so no new credential is minted and no other service's boundary changes.",
+    "call_ordering_fix": "Both ensure_source_provisioning() and ensure_dev_market_snapshot_ready() now run unconditionally right after the terminal-failure check and before the paper_running/succeeded early return, instead of after it. This means: (a) first-run: the Persona (and its required_data_sources declaration) already exists by this point, so provisioning can never deadlock on a producer that does not exist yet; (b) idempotent successful replay: the freshness gate is no longer skipped on the early-return path, closing the P2 regression the independent review reproduced (stale snapshot + terminal successful create must still raise market_input_stale, not return ok).",
     "bounded_wait_preserved": "ensure_dev_market_snapshot_ready itself is unchanged: it still bounds its wait, still names the symbol and last-seen reason on timeout, still refuses stale/future/insufficient snapshots, and still nudges run-scheduled on 404.",
-    "no_freshness_relaxation": "No snapshot admissibility, staleness, or fabrication rule was touched; only the point in ensure_paper_baseline where the wait is invoked changed.",
-    "no_new_endpoints": "No new BFF, source-ingest, or reconciler endpoints or schemas were added."
+    "no_freshness_relaxation": "No snapshot admissibility, staleness, or fabrication rule was touched.",
+    "no_new_endpoints": "No new BFF, source-ingest, or reconciler HTTP endpoints or schemas were added; only an existing source-ingest endpoint is now called by an additional caller."
   },
   "verification": {
     "passed": [
       {
-        "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_bootstrap_dev_paper_baseline.py",
-        "result": "22 passed"
+        "command": "/tmp/pantheon-auth-venv/bin/python -m pytest -q scripts/test_bootstrap_dev_paper_baseline.py",
+        "result": "33 passed",
+        "note": "Includes: governed source-provisioning call-order regressions (never-provisioned first-run, already-fresh steady-state); AC4 replay regressions (test_replay_with_stale_snapshot_still_raises_market_input_stale, test_replay_with_missing_snapshot_still_raises_market_snapshot_not_found, test_replay_with_fresh_snapshot_returns_ok_after_one_get); unit coverage for ensure_source_provisioning and source_ingest_controller_token."
       },
       {
-        "command": "./.venv-pantheon/bin/python3 scripts/bootstrap_dev_paper_baseline.py --self-test",
+        "command": "python3 scripts/bootstrap_dev_paper_baseline.py --self-test",
         "result": "7 tests passed (bootstrap_dev_paper_baseline_self_test)"
+      },
+      {
+        "command": "/tmp/pantheon-auth-venv/bin/python -m pytest -q services/source_ingestion/tests/test_persona_source_reconciler.py",
+        "result": "27 passed",
+        "note": "Unmodified by this task; run to confirm the reconciler behavior bootstrap now depends on synchronously (including test_dev_only_us_simulation_connector_provisioned_when_pantheon_env_dev, which proves the dev-paper-us-equity-simulation connector/schedule are created for a US persona under PANTHEON_ENV=dev) is unaffected."
+      },
+      {
+        "command": "docker compose config -q",
+        "result": "exit 0",
+        "note": "Confirms the docker-compose.yml volume/env addition to operator-bff is syntactically valid and resolves."
       }
     ],
-    "broader_nonpassing_observations": [
+    "not_performed": [
       {
-        "command": "./.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_dev_paper_simulation.py",
-        "result": "collection error, pre-existing environment issue",
-        "detail": "ImportError: cannot import name 'Sentinel' from 'typing_extensions' inside a stale sibling .venv discovered by fastapi/pydantic_core import chain; unrelated to this task's scope (scripts/bootstrap_dev_paper_baseline.py only), and neither persona_source_reconciler.py nor personas/service.py was modified."
+        "gap": "A live hosted first deploy onto a fresh dev VM with zero prior data_source_instances (AC1/AC5), proving: persona create -> persona-source-provisioning/reconcile provisions dev-paper-us-equity-simulation -> run-scheduled executes it -> a fresh SPY snapshot appears -> paper_running is reached, end to end through the real operator-bff/source-ingest/postgres stack.",
+        "reason": "This requires bringing up the full docker-compose dev stack (30+ services including postgres-backed dependents) on a real or ephemeral dev host and is a shared-infrastructure deploy action; it was not attempted in this bounded worker session. The unit-level evidence above verifies the new call ordering and the exact HTTP contract against source-ingest's real, unmodified reconcile endpoint semantics (via the existing, passing test_persona_source_reconciler.py suite plus this task's mocked-transport regressions of bootstrap's own call sequence), but does not substitute for that hosted proof.",
+        "recommended_next_step": "Reviewer or a dedicated deploy task should trigger an actual dev-host redeploy from this branch and capture: controller/readback showing dev-paper-us-equity-simulation configured+scheduled, a fresh /api/source-ingest/snapshots/latest?symbol=SPY response, and the persona reaching paper_running, all from a host with data_source_instances=0 beforehand."
       }
     ],
     "runner": {
@@ -57,13 +73,14 @@
       "pytest": "9.1.1"
     },
     "checksums": {
-      "scripts/bootstrap_dev_paper_baseline.py": "68db0797272b044c395a5da10af058c63e8812c46433bcbc5572797b98d9d267",
-      "scripts/test_bootstrap_dev_paper_baseline.py": "9db042fdb25e3529f70bbe2824c34da05175ca0391e4bc2ca3f2a5e485c94dc2"
+      "scripts/bootstrap_dev_paper_baseline.py": "b143ad8b709c176f2f4f0b915c0ff749e14aee1bd2e9e4611b4ba18bf711ef26",
+      "scripts/test_bootstrap_dev_paper_baseline.py": "545f5a7594ad3ac99db4ecdb34e968423254ca3c3a1f462b8aa421844478b849",
+      "docker-compose.yml": "86aaf0aac2156ff1cd0a37d5eec6c9a6c0f62c0096bb9fe9c17ac6d0c0930469"
     }
   },
   "review_decision": {
     "status": "pending",
     "reviewer": "Codex",
-    "note": "Independently verify: create-paper-bundle now precedes the market snapshot wait; the never-provisioned first-run and already-fresh steady-state regressions; that no freshness/admissibility rule was relaxed; and that the reconcile-loop deadline still gets the full effective_timeout_seconds budget after the snapshot wait resolves."
+    "note": "Independently verify: the governed source provisioning prerequisite (ensure_source_provisioning) runs before the market snapshot wait on both the first-run and idempotent-replay paths; the freshness gate is no longer bypassed on a successful replay with a stale snapshot; the docker-compose.yml token wiring is minimal (read-only, reuses the existing source-ingest-created token, no new credential); and that a hosted first-deploy end-to-end run (still outstanding per not_performed above) is scheduled before this closes AC1/AC5."
   }
 }
