@@ -82,6 +82,7 @@ components:
       - docs/02-architecture/development-tooling-product-boundary.md
       - docs/orchestrator-portability.md
       - docs/operations/provider-auth-health-contract.md
+      - docs/operations/pi-astra-worker.md
       - docs/deployment/main-py-test-coupling-measurement.md
       - docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md
       - docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/data/

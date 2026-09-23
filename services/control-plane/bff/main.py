@@ -115,8 +115,17 @@ from .models import (
     TargetObject,
     utc_now,
 )
-from .action_catalog import get_action_catalog, get_catalog_entry
 from .command_queue import CommandStore
+
+if not hasattr(CommandStore, "_cache"):
+    CommandStore._cache = []
+
+try:
+    from . import assistant_conversation_store as _acs_mod
+    sys.modules.setdefault("assistant_conversation_store", _acs_mod)
+except Exception:
+    pass
+
 from .command_executor import (
     create_capital_binding,
     create_capital_pool,
@@ -229,7 +238,7 @@ from .personas.service import (
     _checkpoint_persona_provisioning_readback,
     _evaluate_persona_provisioning_status,
     _get_persona_directory_snapshot,
-    _list_persona_records,
+    _list_persona_records as _personas_list_persona_records,
     _normalize_lifecycle_state,
     _normalize_risk_level,
     _openclaw_agent_reconcile_request,
@@ -249,6 +258,19 @@ from .personas.service import (
     _register_persona_cron_required,
     _remove_persona_cron_required,
 )
+def _list_persona_records(
+    tenant_id: Optional[str] = None,
+    read_store: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """Composition-root binding: personas/service.py is the sole owner of this
+    projection; explicitly inject the live ``read_store`` global so callers
+    outside an active PersonaService request context (composition-root and
+    seam-test callers) still resolve against whatever store this module
+    currently holds, matching the injected pattern used by the other main.py
+    consumer seams instead of relying on personas/service.py's own module
+    fallback."""
+    resolved_store = read_store if read_store is not None else globals().get("read_store")
+    return _personas_list_persona_records(tenant_id, read_store=resolved_store)
 try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
@@ -2654,95 +2676,13 @@ def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComm
             "Invalid operator command payload",
             str(exc),
         ) from exc
-def _validate_pause_execution(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _PAUSE_EXECUTION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for PauseExecution",
-            f"Missing fields: {sorted(missing)}",
-        )
-    for field in sorted(_PAUSE_EXECUTION_REQUIRED):
-        if not isinstance(params.get(field), bool):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                f"Invalid {field} value",
-                f"{field} must be a boolean",
-            )
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "PauseExecution requires 'operator' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator or admin role",
-        )
-def _validate_issue_risk_off(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _RISK_OFF_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for IssueRiskOff",
-            f"Missing fields: {sorted(missing)}",
-        )
-    exposure_pct = params.get("reduce_exposure_pct")
-    if not isinstance(exposure_pct, (int, float)) or exposure_pct <= 0 or exposure_pct > 100:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid reduce_exposure_pct value",
-            "reduce_exposure_pct must be a number between 1 and 100",
-        )
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "IssueRiskOff requires 'operator' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator or admin role",
-        )
-def _validate_liquidate_all(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if params:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "LiquidateAll does not accept params",
-            "params must be an empty object for LiquidateAll",
-        )
-    _require_admin_mfa(identity, "LiquidateAll")
-def _validate_hard_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    target_artifact_id = str(params.get("target_artifact_id") or "").strip()
-    if not target_artifact_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for HardRollback",
-            "target_artifact_id must be a non-empty string",
-        )
-    if not {"admin", "approver"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "HardRollback requires 'admin' or 'approver' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with admin or approver role",
-        )
-def _validate_issue_safe_mode(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    safe_mode_level = str(params.get("safe_mode_level") or "").strip().lower()
-    if safe_mode_level not in _SAFE_MODE_LEVELS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid safe_mode_level",
-            f"safe_mode_level must be one of {sorted(_SAFE_MODE_LEVELS)}",
-        )
-    _require_admin_mfa(identity, "IssueSafeMode")
+from .command_adapters.preconditions import (
+    _validate_pause_execution,
+    _validate_issue_risk_off,
+    _validate_liquidate_all,
+    _validate_hard_rollback,
+    _validate_issue_safe_mode,
+)
 def _derive_drawer_execution_params(
     command: CommandType,
     runtime_id: str,
@@ -2816,78 +2756,11 @@ def _derive_drawer_execution_params(
         "safe_mode_level": params["safe_mode_level"],
         "target_state": "guarded",
     }
-def _stored_command_params(
-    cmd: OperatorCommand,
-    identity: OperatorIdentity,
-    raw_payload: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    if cmd.command in _DRAWER_RUNTIME_COMMANDS:
-        return dict(cmd.params)
-    params = dict(cmd.params)
-    if cmd.command == CommandType.REMEDIATE_SENTINEL_INTERVENTION and raw_payload:
-        # Normalize any top-level two-man alias from the raw payload into the
-        # canonical params key so the executor always receives two_man_signature_id.
-        if not str(params.get("two_man_signature_id") or "").strip():
-            for alias in _TWO_MAN_EVIDENCE_FIELDS:
-                val = str(raw_payload.get(alias) or "").strip()
-                if val:
-                    params["two_man_signature_id"] = val
-                    break
-    if cmd.command == CommandType.APPROVED_APPLY:
-        params.pop("rebalanceId", None)
-        params["rebalance_id"] = cmd.target.id
-    elif cmd.command == CommandType.EMERGENCY_CONTAINMENT:
-        params.pop("personaId", None)
-        params["persona_id"] = cmd.target.id
-    elif cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
-        target_rt_id = str(cmd.target.id).strip()
-        params["runtime_id"] = target_rt_id
-        params["entity_id"] = target_rt_id
-        params.pop("runtimeId", None)
-        params.pop("entityId", None)
-        params.pop("verified_binding", None)
-        params.pop("verified_binding_id", None)
-        params.pop("verified_runtime_binding_id", None)
-        if raw_payload and "bounded_duration_minutes" in raw_payload and "bounded_duration_minutes" not in params:
-            params["bounded_duration_minutes"] = raw_payload["bounded_duration_minutes"]
-        bdm = params.get("bounded_duration_minutes")
-        if bdm is not None:
-            try:
-                bdm_val = int(bdm)
-                if bdm_val > 0:
-                    params["duration_seconds"] = bdm_val * 60
-            except (ValueError, TypeError):
-                pass
-    canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(
-        cmd.command,
-        cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
-    )
-    if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
-        canonical_action_id = "submit_recommendation"
-    canonical_paper = cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
-    if canonical_paper:
-        canonical_action_id = cmd.command.value
-    # The target/action/actor fields come from the validated command envelope,
-    # never from caller params.  Apart from fixing null adapter receipts, this
-    # prevents a caller from redirecting an admitted command after validation.
-    params.update(
-        {
-            "entity_type": "Runtime" if canonical_paper else (cmd.params.get("entity_type") or cmd.target.type.value),
-            "entity_id": cmd.target.id,
-            "action_id": canonical_action_id,
-            "actionId": canonical_action_id,
-            "actor_id": identity.operator_id,
-            "actor_role": next(
-                (
-                    role
-                    for role in ("admin", "approver", "reviewer", "operator")
-                    if role in identity.roles
-                ),
-                "operator",
-            ),
-        }
-    )
-    return params
+
+
+from .command_adapters.service import stored_command_params as _stored_command_params
+from .governance.service import human_inbox_surface_timeout_seconds as _human_inbox_surface_timeout_seconds
+
 def _assert_duplicate_confirm_token_matches(
     *,
     duplicate: Dict[str, Any],
@@ -3005,1323 +2878,58 @@ def _resolve_execution_params_for_record(record: Dict[str, Any]) -> Dict[str, An
         reason=audit.get("reason"),
         incident_id=audit.get("incident_id"),
     )
-def _validate_approve_deployment(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _APPROVE_DEPLOYMENT_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveDeployment",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["approval_decision"] not in _VALID_APPROVAL_DECISIONS:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid approval_decision value",
-            f"Must be one of {_VALID_APPROVAL_DECISIONS}",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ApproveDeployment requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_approve_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _APPROVE_DECISION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveDecision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ApproveDecision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_reject_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REJECT_DECISION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RejectDecision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not str(params.get("rejection_reason") or "").strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "RejectDecision requires a non-empty rejection_reason",
-            "rejection_reason must be a non-empty string",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RejectDecision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_request_approval_revision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REQUEST_APPROVAL_REVISION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RequestApprovalRevision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not str(params.get("revision_notes") or "").strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "RequestApprovalRevision requires non-empty revision_notes",
-            "revision_notes must be a non-empty string",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RequestApprovalRevision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_pause_runtime(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _PAUSE_RUNTIME_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for PauseRuntime",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["pause_action"] not in _VALID_PAUSE_ACTIONS:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid pause_action value",
-            f"Must be one of {_VALID_PAUSE_ACTIONS}",
-        )
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "PauseRuntime requires 'operator' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator or admin role",
-        )
-def _validate_execute_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _ROLLBACK_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ExecuteRollback",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["rollback_target_type"] not in _VALID_ROLLBACK_TARGET_TYPES:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid rollback_target_type",
-            f"Must be one of {_VALID_ROLLBACK_TARGET_TYPES}",
-        )
-    if not {"admin", "approver"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ExecuteRollback requires 'admin' or 'approver' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with admin or approver role",
-        )
-def _validate_approve_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _APPROVE_ROLLBACK_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveRollback",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ApproveRollback requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_reject_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REJECT_ROLLBACK_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RejectRollback",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not str(params.get("rejection_reason") or "").strip():
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "RejectRollback requires a non-empty rejection_reason",
-            "rejection_reason must be a non-empty string",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "RejectRollback requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_activate_kill_switch(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _KILL_SWITCH_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ActivateKillSwitch",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["scope"] not in _VALID_SCOPES:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid scope for ActivateKillSwitch",
-            f"Must be one of {_VALID_SCOPES}",
-        )
-    severity = params.get("severity")
-    if severity is not None and severity not in _VALID_SEVERITIES:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid severity for ActivateKillSwitch",
-            f"Must be one of {_VALID_SEVERITIES}",
-        )
-    # Admin role required
-    if "admin" not in identity.roles:
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ActivateKillSwitch requires 'admin' role",
-            "Operator does not hold the admin role",
-            precondition_failed="role_check",
-            suggestion="Escalate to an admin-role operator",
-        )
-    # MFA required for kill-switch (§3.2.3)
-    if not identity.mfa_verified:
-        raise _bff_error(
-            403, ErrorCode.AUTH_REQUIRED,
-            "ActivateKillSwitch requires MFA verification",
-            "Admin action requires MFA validation",
-            precondition_failed="mfa_check",
-            suggestion="Provide a valid MFA token in your session",
-        )
-def _validate_escalate_diff(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _ESCALATE_DIFF_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for EscalateDiff",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not str(params.get("escalation_reason") or "").strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "EscalateDiff requires a non-empty escalation_reason",
-            "escalation_reason must be a non-empty string",
-        )
-    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "EscalateDiff requires operator-level governance access",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
-        )
-def _validate_approve_evolution_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _APPROVE_EVO_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveEvolutionDecision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["approval_action"] not in _VALID_EVO_APPROVAL_ACTIONS:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid approval_action",
-            f"Must be one of {_VALID_EVO_APPROVAL_ACTIONS}",
-        )
-    if not {"reviewer", "admin", "approver"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ApproveEvolutionDecision requires 'reviewer', 'approver', or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with reviewer, approver, or admin role",
-        )
-def _validate_execute_evolution_action(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _EXECUTE_EVO_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ExecuteEvolutionAction",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if params["action_type"] not in _VALID_EVO_ACTION_TYPES:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Invalid action_type for ExecuteEvolutionAction",
-            f"Must be one of {_VALID_EVO_ACTION_TYPES}",
-        )
-    if not {"admin", "approver"}.intersection(identity.roles):
-        raise _bff_error(
-            403, ErrorCode.FORBIDDEN,
-            "ExecuteEvolutionAction requires 'admin' or 'approver' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with admin or approver role",
-        )
-def _mutation_review_governance_service() -> "GovernanceService":
-    # Single owner of the mutation-review actor/state/evidence policy: both
-    # the direct POST action validators below and the nested GET projection
-    # (governance router + management evolution journal) call through this
-    # same GovernanceService method so they cannot drift out of sync.
-    from .governance.service import GovernanceService
+from .pm12.service import (
+    _pm12_resolve_quarterly_recommendation_submit_params,
+)
+from .command_adapters.preconditions import (
+    _validate_approve_deployment,
+    _validate_approve_decision,
+    _validate_reject_decision,
+    _validate_request_approval_revision,
+    _validate_pause_runtime,
+    _validate_pause_execution,
+    _validate_escalate_diff,
+    _validate_issue_risk_off,
+    _validate_liquidate_all,
+    _validate_hard_rollback,
+    _validate_issue_safe_mode,
+    _validate_execute_rollback,
+    _validate_approve_rollback,
+    _validate_reject_rollback,
+    _validate_activate_kill_switch,
+    _validate_approve_evolution_decision,
+    _validate_execute_evolution_action,
+    _mutation_review_projection,
+    _validate_record_sponsor_decision,
+    _validate_approve_mutation,
+    _validate_reject_mutation,
+    _validate_review_mutation,
+    _validate_execute_mutation,
+    _validate_remediate_sentinel_intervention,
+    _validate_decide_v5_intervention,
+    _validate_human_gate_decision,
+    _validate_quarterly_ranking_recommendation_submit,
+    _check_binding_tenant_ownership,
+    _enforce_ops_console_preconditions,
+    _validate_observe,
+    _validate_request_review,
+    _validate_pause_paper_runtime,
+    _validate_resume_paper_runtime,
+    _validate_demote,
+    _validate_promote_candidate,
+    _validate_rebalance_proposal,
+    _validate_approved_apply,
+    _validate_emergency_containment,
+    _VALIDATORS,
+    VALIDATORS,
+    set_ops_console_precondition_resolvers,
+)
 
-    return GovernanceService(
-        read_store,
-        utc_now=utc_now,
-        dataset_surface_status=_dataset_surface_status,
-        redact_evidence_refs=redact_evidence_refs,
-        capabilities_for_identity=_capabilities_for_identity,
-        read_surface_state=_read_surface_state,
-    )
-def _mutation_review_projection(
-    decision_id: str,
-    *,
-    identity: OperatorIdentity,
-    snapshot_at: str,
-) -> Optional[Dict[str, Any]]:
-    return _mutation_review_governance_service().mutation_review_projection(
-        decision_id, identity=identity, snapshot_at=snapshot_at
-    )
-def _validate_record_sponsor_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    from .governance.service import GovernanceService
 
-    missing = _RECORD_SPONSOR_DECISION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RecordSponsorDecision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    sponsor_decision = str(params.get("sponsor_decision") or "").strip().lower()
-    if sponsor_decision not in _VALID_SPONSOR_DECISIONS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid sponsor_decision value",
-            f"sponsor_decision must be one of {sorted(_VALID_SPONSOR_DECISIONS)}",
-        )
-    rationale_ref = str(params.get("rationale_ref") or "").strip()
-    if not rationale_ref:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "RecordSponsorDecision requires a non-empty rationale_ref",
-            "rationale_ref must be a non-empty string",
-        )
-    committee_id = str(params.get("committee_id") or "").strip()
-    governance_service = GovernanceService(
-        read_store,
-        utc_now=utc_now,
-        dataset_surface_status=_dataset_surface_status,
-    )
-    projection = governance_service.committee_projection(
-        committee_id,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
-    if projection is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Committee board not found",
-            f"Committee {committee_id} does not exist",
-        )
-    if projection["meta"]["surfaces"]["committee_board"] == "unavailable":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "RecordSponsorDecision is blocked while the committee board is unavailable",
-            "Committee evidence cannot be composed reliably",
-            precondition_failed="committee_board_surface",
-        )
-    if not projection["allowedActions"]["canRecordSponsorDecision"]:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RecordSponsorDecision is not allowed for this operator and committee state",
-            "allowedActions.canRecordSponsorDecision is false for the current read projection",
-            precondition_failed="allowedActions.canRecordSponsorDecision",
-        )
-def _validate_approve_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _APPROVE_MUTATION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveMutation",
-            f"Missing fields: {sorted(missing)}",
-        )
-    decision_id = str(params.get("decision_id") or "").strip()
-    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
-    if projection is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Mutation review decision not found",
-            f"Evolution decision {decision_id} does not exist",
-        )
-    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "ApproveMutation is blocked while the mutation-review surface is unavailable",
-            "Mutation-review evidence cannot be composed reliably",
-            precondition_failed="mutation_review_surface",
-        )
-    if not projection["allowedActions"]["canApproveMutation"]:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ApproveMutation is not allowed for this operator and decision state",
-            "allowedActions.canApproveMutation is false for the current read projection",
-            precondition_failed="allowedActions.canApproveMutation",
-        )
-def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REJECT_MUTATION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RejectMutation",
-            f"Missing fields: {sorted(missing)}",
-        )
-    decision_id = str(params.get("decision_id") or "").strip()
-    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
-    if projection is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Mutation review decision not found",
-            f"Evolution decision {decision_id} does not exist",
-        )
-    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "RejectMutation is blocked while the mutation-review surface is unavailable",
-            "Mutation-review evidence cannot be composed reliably",
-            precondition_failed="mutation_review_surface",
-        )
-    if not projection["allowedActions"]["canRejectMutation"]:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RejectMutation is not allowed for this operator and decision state",
-            "allowedActions.canRejectMutation is false for the current read projection",
-            precondition_failed="allowedActions.canRejectMutation",
-        )
-def _validate_review_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REVIEW_MUTATION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ReviewMutation",
-            f"Missing fields: {sorted(missing)}",
-        )
-    decision_id = str(params.get("decision_id") or "").strip()
-    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
-    if projection is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Mutation review decision not found",
-            f"Evolution decision {decision_id} does not exist",
-        )
-    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "ReviewMutation is blocked while the mutation-review surface is unavailable",
-            "Mutation-review evidence cannot be composed reliably",
-            precondition_failed="mutation_review_surface",
-        )
-    if not projection["allowedActions"]["canReviewMutation"]:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ReviewMutation is not allowed for this operator and decision state",
-            "allowedActions.canReviewMutation is false for the current read projection",
-            precondition_failed="allowedActions.canReviewMutation",
-        )
-def _validate_execute_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _EXECUTE_MUTATION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ExecuteMutation",
-            f"Missing fields: {sorted(missing)}",
-        )
-    decision_id = str(params.get("decision_id") or "").strip()
-    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
-    if projection is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Mutation review decision not found",
-            f"Evolution decision {decision_id} does not exist",
-        )
-    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "ExecuteMutation is blocked while the mutation-review surface is unavailable",
-            "Mutation-review evidence cannot be composed reliably",
-            precondition_failed="mutation_review_surface",
-        )
-    if not projection["allowedActions"]["canExecuteMutation"]:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ExecuteMutation is not allowed for this operator and decision state",
-            "allowedActions.canExecuteMutation is false for the current read projection",
-            precondition_failed="allowedActions.canExecuteMutation",
-        )
-def _validate_remediate_sentinel_intervention(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _REMEDIATE_SENTINEL_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RemediateSentinelIntervention",
-            f"Missing fields: {sorted(missing)}",
-        )
-    remediation_action = str(params.get("remediation_action") or "").strip()
-    if remediation_action not in _VALID_REMEDIATION_ACTIONS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid remediation_action value",
-            f"remediation_action must be one of {sorted(_VALID_REMEDIATION_ACTIONS)}",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RemediateSentinelIntervention requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-def _validate_decide_v5_intervention(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _DECIDE_V5_INTERVENTION_REQUIRED - params.keys()
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for DecideV5Intervention",
-            f"Missing fields: {sorted(missing)}",
-            precondition_failed="decision",
-        )
-    decision = str(params.get("decision") or "").strip().lower()
-    if decision not in _VALID_V5_INTERVENTION_DECISIONS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid intervention decision value",
-            f"decision must be one of {sorted(_VALID_V5_INTERVENTION_DECISIONS)}",
-            precondition_failed="decision",
-        )
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "DecideV5Intervention requires 'operator', 'approver', or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, approver, or admin role",
-        )
-def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    missing = _HUMAN_GATE_REQUIRED - {key for key, value in params.items() if value not in (None, "")}
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for HumanGate command",
-            f"Missing fields: {sorted(missing)}",
-            precondition_failed="human_gate",
-        )
 
-    decision = str(params.get("decision") or "").strip().lower()
-    if decision not in _VALID_HUMAN_GATE_DECISIONS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid HumanGate decision value",
-            f"decision must be one of {sorted(_VALID_HUMAN_GATE_DECISIONS)}",
-            precondition_failed="decision",
-        )
 
-    if decision in _HUMAN_GATE_APPROVER_DECISIONS and not {"approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "HumanGate decision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-    if decision == "request_more_evidence" and not {"operator", "approver", "admin", "reviewer"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "HumanGate evidence request requires operator-level role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
-        )
 
-    if decision == "extend_ttl":
-        raw_ttl = (
-            params.get("ttl_seconds")
-            or params.get("ttlSeconds")
-            or params.get("extend_ttl_seconds")
-            or params.get("extendTtlSeconds")
-        )
-        try:
-            ttl_seconds = int(raw_ttl)
-        except (TypeError, ValueError):
-            ttl_seconds = 0
-        if ttl_seconds <= 0:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "HumanGateExtendTtl requires a positive ttl_seconds value",
-                "ttl_seconds must be a positive integer number of seconds",
-                precondition_failed="ttl_seconds",
-            )
-        max_ttl_seconds = _human_gate_max_ttl_seconds()
-        if ttl_seconds > max_ttl_seconds:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "HumanGateExtendTtl exceeds the maximum ttl_seconds cap",
-                "HUMAN_GATE_TTL_EXCEEDS_CAP",
-                precondition_failed="ttl_seconds",
-                suggestion="Retry with a shorter HumanGate TTL extension",
-                details_extra={
-                    "maxTtlSeconds": max_ttl_seconds,
-                    "ttlSeconds": ttl_seconds,
-                    "constraint": f"ttl_seconds must be less than or equal to {max_ttl_seconds}",
-                },
-            )
-        params["ttl_seconds"] = ttl_seconds
-        params["ttlSeconds"] = ttl_seconds
-def _pm12_resolve_quarterly_recommendation_submit_params(
-    params: Dict[str, Any],
-) -> Dict[str, Any]:
-    recommendation_id = str(
-        params.get("recommendation_id") or params.get("recommendationId") or ""
-    ).strip()
-    snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
-    quarter = str(params.get("quarter") or "").strip().upper()
-    if not recommendation_id or not snapshot_id or not quarter:
-        return dict(params)
-    snapshot = _pm12_recommendation_snapshot_record(snapshot_id)
-    snapshot_quarter = str(snapshot.get("period") or "").strip().upper()
-    if snapshot_quarter != quarter:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "quarter does not match the admitted ranking snapshot",
-            "The submitted quarter must be the immutable snapshot period.",
-            precondition_failed="quarter",
-        )
 
-    matched_item: Optional[Dict[str, Any]] = None
-    matched_action_id = ""
-    for item in snapshot.get("items") or []:
-        if not isinstance(item, dict):
-            continue
-        persona_id = str(item.get("persona_id") or "").strip()
-        for action_id in _pm12_recommendation_action_ids(item):
-            expected_id = f"pm12-{quarter.lower()}-{persona_id}-{action_id}"
-            if expected_id == recommendation_id:
-                matched_item = item
-                matched_action_id = action_id
-                break
-        if matched_item is not None:
-            break
-    if matched_item is None:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "recommendation is not in the admitted ranking snapshot",
-            "The recommendation id/action/persona tuple was not materialized by the snapshot.",
-            precondition_failed="recommendation_id",
-        )
-    review_revision_id = _promotion_review_revision_id(
-        recommendation_id,
-        snapshot_id,
-    )
-    for field in ("review_id", "promotion_review_id"):
-        asserted_review_id = str(params.get(field) or "").strip()
-        if (
-            asserted_review_id
-            and _promotion_review_clean_id(asserted_review_id)
-            != review_revision_id
-        ):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "promotion review revision assertion mismatch",
-                f"{field} does not match the admitted recommendation snapshot.",
-                precondition_failed=field,
-            )
-
-    asserted_action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    if asserted_action_id and asserted_action_id != matched_action_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "recommendation action does not match the admitted snapshot",
-            "The caller-supplied recommendation action is not authoritative.",
-            precondition_failed="recommendation_action_id",
-        )
-
-    item = {
-        **json.loads(json.dumps(matched_item)),
-        "ranking_snapshot_id": snapshot_id,
-        "evidence_refs": [],
-    }
-    quarter_window = _pm12_quarter_window(quarter, utc_now())
-    source_recommendation = _pm12_quarterly_recommendation_item(
-        item,
-        action_id=matched_action_id,
-        quarter_window=quarter_window,
-        evidence_refs=[],
-    )
-    source_recommendation["human_review_state"] = {
-        "status": "recommended_not_submitted",
-        "decision_status": "pending",
-        "submitted": False,
-        "submit_status": "not_submitted",
-        "decision": None,
-        "decided_at": None,
-        "decided_by": None,
-    }
-    stored_source = _promotion_review_stored_source(source_recommendation)
-    stage_path = _promotion_review_stage_path(source_recommendation)
-    canonical_assertions = {
-        "persona_id": item.get("persona_id"),
-        "stage": item.get("stage"),
-        "deployment_stage": item.get("deployment_stage"),
-        "stage_from": stage_path.get("from_stage"),
-        "stage_to": stage_path.get("target_stage"),
-        "review_kind": stage_path.get("review_kind"),
-        "current_weight": item.get("current_weight"),
-        "target_weight": item.get("target_weight"),
-        "delta": item.get("delta"),
-        "capital_scope": item.get("capital_scope"),
-        "capital_pool_id": item.get("capital_pool_id"),
-        "capital_sleeve_id": item.get("capital_sleeve_id"),
-        "evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
-    }
-    for field, authoritative_value in canonical_assertions.items():
-        if field not in params:
-            continue
-        asserted_value = params.get(field)
-        if field == "evidence_ref_ids":
-            asserted_value = sorted(asserted_value or [])
-        if not _pm12_semantic_values_match(asserted_value, authoritative_value):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "quarterly recommendation assertion mismatch",
-                f"{field} does not match the admitted ranking snapshot.",
-                precondition_failed=field,
-            )
-    if params.get("evidence_refs") not in (None, []):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "caller evidence is not admissible",
-            "Quarterly recommendation evidence is materialized server-side.",
-            precondition_failed="evidence_refs",
-        )
-    asserted_source = params.get("source_recommendation")
-    if asserted_source is not None:
-        if not isinstance(asserted_source, dict):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "source recommendation assertion mismatch",
-                "source_recommendation must be an object when supplied.",
-                precondition_failed="source_recommendation",
-            )
-        nested_assertions = {
-            "id": recommendation_id,
-            "recommendation_id": recommendation_id,
-            "review_id": review_revision_id,
-            "promotion_review_id": review_revision_id,
-            "ranking_snapshot_id": snapshot_id,
-            "quarter": quarter,
-            "persona_id": item.get("persona_id"),
-            "action_id": matched_action_id,
-            "recommendation_action_id": matched_action_id,
-            "stage": item.get("stage"),
-            "deployment_stage": item.get("deployment_stage"),
-            "stage_from": stage_path.get("from_stage"),
-            "stage_to": stage_path.get("target_stage"),
-            "review_kind": stage_path.get("review_kind"),
-            "current_weight": item.get("current_weight"),
-            "target_weight": item.get("target_weight"),
-            "delta": item.get("delta"),
-            "capital_scope": item.get("capital_scope"),
-            "capital_pool_id": item.get("capital_pool_id"),
-            "capital_sleeve_id": item.get("capital_sleeve_id"),
-            "evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
-        }
-        for field, authoritative_value in nested_assertions.items():
-            if field not in asserted_source:
-                continue
-            asserted_value = asserted_source.get(field)
-            if field == "evidence_ref_ids":
-                asserted_value = sorted(asserted_value or [])
-            if not _pm12_semantic_values_match(asserted_value, authoritative_value):
-                raise _bff_error(
-                    422,
-                    ErrorCode.VALIDATION_FAILED,
-                    "source recommendation assertion mismatch",
-                    f"source_recommendation.{field} does not match the admitted ranking snapshot.",
-                    precondition_failed=field,
-                )
-        if asserted_source.get("evidence_refs") not in (None, []):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "caller evidence is not admissible",
-                "source_recommendation evidence is materialized server-side.",
-                precondition_failed="evidence_refs",
-            )
-
-    canonical: Dict[str, Any] = {
-        "quarter": quarter,
-        "recommendation_id": recommendation_id,
-        "recommendationId": recommendation_id,
-        "review_id": review_revision_id,
-        "promotion_review_id": review_revision_id,
-        "recommendation_action_id": matched_action_id,
-        "recommendationActionId": matched_action_id,
-        "ranking_snapshot_id": snapshot_id,
-        "ranking_snapshot_content_digest": snapshot.get("content_digest"),
-        "ranking_item_digest": _stable_json_hash(matched_item),
-        "ranking_evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
-        "persona_id": item.get("persona_id"),
-        "stage": item.get("stage"),
-        "deployment_stage": item.get("deployment_stage"),
-        "current_weight": item.get("current_weight"),
-        "target_weight": item.get("target_weight"),
-        "capital_scope": item.get("capital_scope"),
-        "capital_pool_id": item.get("capital_pool_id"),
-        "capital_sleeve_id": item.get("capital_sleeve_id"),
-        "stage_from": stage_path.get("from_stage"),
-        "stage_to": stage_path.get("target_stage"),
-        "review_kind": stage_path.get("review_kind"),
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-        "liveCapitalMutation": False,
-        "direct_live_capital_mutation": False,
-        "runtime_mutation": False,
-        "source_type": "quarterly_ranking_recommendation",
-        "source_record_id": recommendation_id,
-        "source_recommendation": stored_source,
-        "audit_event": "quarterly_ranking.recommendation_submitted",
-        "policy": "promotion_governance_human_gate_no_direct_live_capital",
-    }
-    for field in ("reason", "note", "memo", "rationale"):
-        value = str(params.get(field) or "").strip()
-        if value:
-            canonical[field] = value
-    return canonical
-def _validate_quarterly_ranking_recommendation_submit(
-    params: Dict[str, Any],
-    identity: OperatorIdentity,
-) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Quarterly ranking recommendation submission requires operator-level role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, approver, or admin role",
-        )
-
-    _raise_if_promotion_review_direct_mutation_requested(params)
-    resolved = _pm12_resolve_quarterly_recommendation_submit_params(params)
-    params.clear()
-    params.update(resolved)
-
-    required = {"quarter", "recommendation_id", "ranking_snapshot_id"}
-    missing = required - {key for key, value in params.items() if value not in (None, "")}
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for QuarterlyRankingRecommendationSubmit",
-            f"Missing fields: {sorted(missing)}",
-            precondition_failed="quarterly_ranking_recommendation",
-        )
-    action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    if action_id and action_id not in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid quarterly ranking recommendation action",
-            f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
-            precondition_failed="recommendation_action_id",
-        )
-def _check_binding_tenant_ownership(binding: Any, identity: OperatorIdentity) -> str:
-    binding_tenant = ""
-    metadata = binding.get("metadata") if isinstance(binding, dict) else getattr(binding, "metadata", None)
-    if isinstance(metadata, dict):
-        for key in ("tenant_id", "tenantId", "tenant"):
-            val = metadata.get(key)
-            if val is not None and str(val).strip():
-                binding_tenant = str(val).strip()
-                break
-    if not binding_tenant:
-        for key in ("tenant_id", "tenantId", "tenant"):
-            val = binding.get(key) if isinstance(binding, dict) else getattr(binding, key, None)
-            if val is not None and str(val).strip():
-                binding_tenant = str(val).strip()
-                break
-    if not binding_tenant:
-        raise _bff_error(403, ErrorCode.FORBIDDEN, "Runtime tenant is unavailable", "Cannot determine the runtime owner tenant", precondition_failed="cross_tenant")
-
-    # Reuse the existing tenant resolver; do not maintain another claims policy.
-    try:
-        _bff_me_tenant_payload(identity, requested_tenant=binding_tenant)
-    except HTTPException as exc:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Cross-tenant access forbidden",
-            f"Caller cannot operate on runtime binding in tenant '{binding_tenant}'",
-            precondition_failed="cross_tenant",
-        ) from exc
-    return binding_tenant
-def _enforce_ops_console_preconditions(
-    params: Dict[str, Any],
-    identity: OperatorIdentity,
-    required_bindings: Optional[List[str]] = None,
-) -> None:
-    entity_type = str(params.get("entity_type") or params.get("entityType") or "").strip().lower()
-    persona_id = ""
-    runtime_id = ""
-
-    if entity_type == "persona":
-        persona_id = (
-            params.get("persona_id")
-            or params.get("personaId")
-            or params.get("entity_id")
-            or params.get("entityId")
-            or ""
-        ).strip()
-    elif entity_type in ("runtime", "paper-runtime"):
-        runtime_id = (
-            params.get("runtime_id")
-            or params.get("runtimeId")
-            or params.get("entity_id")
-            or params.get("entityId")
-            or ""
-        ).strip()
-
-    if not persona_id:
-        persona_id = (params.get("persona_id") or params.get("personaId") or "").strip()
-    if not runtime_id:
-        runtime_id = (params.get("runtime_id") or params.get("runtimeId") or "").strip()
-
-    if persona_id:
-        persona = read_store.get_persona(persona_id)
-        if not persona:
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Persona not found",
-                f"Persona {persona_id} does not exist",
-            )
-
-        read_model = _ops_read_model_entry_for_persona(persona_id)
-        if read_model:
-            confidence = read_model.data_confidence
-            if isinstance(confidence, str):
-                confidence_str = confidence
-            elif hasattr(confidence, "value"):
-                confidence_str = confidence.value
-            else:
-                confidence_str = str(confidence)
-
-            if confidence_str.lower() in ("unavailable", "unverifiable"):
-                raise _bff_error(
-                    422,
-                    ErrorCode.VALIDATION_FAILED,
-                    f"Action blocked due to {confidence_str} source confidence for persona {persona_id}",
-                    "Source confidence must be formal, partial, fallback, or degraded",
-                    precondition_failed="source_confidence",
-                )
-
-            if required_bindings:
-                if "runtime" in required_bindings:
-                    if not read_model.identity.runtime_ids:
-                        raise _bff_error(
-                            422,
-                            ErrorCode.VALIDATION_FAILED,
-                            f"Persona {persona_id} must have an active runtime binding",
-                            "No active runtime binding found for this persona",
-                            precondition_failed="runtime_binding_missing",
-                        )
-                if "capital" in required_bindings:
-                    if not read_model.identity.capital_pool_ids and not read_model.identity.paper_ledger_ids:
-                        raise _bff_error(
-                            422,
-                            ErrorCode.VALIDATION_FAILED,
-                            f"Persona {persona_id} must have a capital pool or paper ledger binding",
-                            "No active capital or ledger binding found for this persona",
-                            precondition_failed="capital_binding_missing",
-                        )
-
-    # Item 4: generic _enforce_ops_console_preconditions must NOT derive runtime_id from entity_id
-    # for persona actions Observe/RequestReview/etc. Runtime fallback only actual Runtime targets/paper runtime commands.
-    is_runtime_target = (
-        entity_type in ("runtime", "paper-runtime")
-        or (required_bindings and "paper" in required_bindings)
-        or str(params.get("target_type") or "").strip().lower() in ("runtime", "paper-runtime")
-    )
-    if not runtime_id and is_runtime_target:
-        runtime_id = (
-            params.get("runtime_id")
-            or params.get("runtimeId")
-            or params.get("entity_id")
-            or params.get("entityId")
-            or ""
-        ).strip()
-    if runtime_id:
-        binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
-        if not binding:
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Runtime not found",
-                f"Runtime {runtime_id} does not exist",
-            )
-        resolved_rt_id = (
-            binding.get("runtime_id") or binding.get("runtimeId")
-            if isinstance(binding, dict)
-            else getattr(binding, "runtime_id", getattr(binding, "runtimeId", None))
-        )
-        resolved_rt_id = str(resolved_rt_id or "").strip()
-        if resolved_rt_id and resolved_rt_id != runtime_id:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Runtime ID mismatch",
-                f"Binding runtime ID '{resolved_rt_id}' does not match requested runtime ID '{runtime_id}'",
-                precondition_failed="runtime_id_mismatch",
-            )
-        payload_binding_id = str(
-            params.get("binding_id")
-            or params.get("bindingId")
-            or params.get("runtime_binding_id")
-            or params.get("runtimeBindingId")
-            or ""
-        ).strip()
-        actual_binding_id = (
-            binding.get("binding_id") or binding.get("id") or binding.get("bindingId")
-            if isinstance(binding, dict)
-            else getattr(binding, "binding_id", getattr(binding, "id", getattr(binding, "bindingId", None)))
-        )
-        actual_binding_id = str(actual_binding_id or "").strip()
-        if payload_binding_id and actual_binding_id and payload_binding_id != actual_binding_id:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Binding ID mismatch",
-                f"Payload binding ID '{payload_binding_id}' does not match resolved binding '{actual_binding_id}'",
-                precondition_failed="binding_mismatch",
-            )
-        params["tenant_id"] = _check_binding_tenant_ownership(binding, identity)
-        if required_bindings and "paper" in required_bindings:
-            stage = (
-                binding.get("deployment_mode")
-                or binding.get("deployment_stage")
-                or binding.get("stage")
-                if isinstance(binding, dict)
-                else getattr(binding, "deployment_mode", getattr(binding, "deployment_stage", getattr(binding, "stage", "")))
-            )
-            stage = str(stage or "").strip().lower()
-            if stage != "paper":
-                raise _bff_error(
-                    422,
-                    ErrorCode.VALIDATION_FAILED,
-                    f"Runtime {runtime_id} stage is {stage}, not paper",
-                    "Action is restricted to paper runtimes only",
-                    precondition_failed="stage_mismatch",
-                )
-        # Discard caller-supplied verified_binding/verified_binding_id; server resolve authoritative owner
-        params.pop("verified_binding", None)
-        params.pop("verified_binding_id", None)
-        params.pop("verified_runtime_binding_id", None)
-        if actual_binding_id:
-            params["runtime_binding_id"] = actual_binding_id
-def _validate_observe(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Observe action requires operator, reviewer, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    _enforce_ops_console_preconditions(params, identity)
-def _validate_request_review(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RequestReview action requires operator or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    persona_id = params.get("persona_id") or params.get("personaId")
-    if not persona_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing persona_id for RequestReview",
-            "persona_id must be provided to request a review",
-            precondition_failed="missing_persona",
-        )
-    _enforce_ops_console_preconditions(params, identity)
-def _validate_pause_paper_runtime(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "PausePaperRuntime action requires operator or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    runtime_id = (
-        params.get("runtime_id")
-        or params.get("runtimeId")
-        or params.get("entity_id")
-        or params.get("entityId")
-    )
-    if not runtime_id or not str(runtime_id).strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing runtime_id for PausePaperRuntime",
-            "runtime_id must be provided",
-            precondition_failed="missing_runtime",
-        )
-    if "bounded_duration_minutes" in params and params["bounded_duration_minutes"] is not None:
-        val = params["bounded_duration_minutes"]
-        valid = False
-        if isinstance(val, int) and not isinstance(val, bool) and val > 0:
-            valid = True
-        elif isinstance(val, str) and val.strip().isdigit() and int(val.strip()) > 0:
-            valid = True
-        if not valid:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Invalid bounded_duration_minutes",
-                "bounded_duration_minutes must be a positive integer",
-                precondition_failed="bounded_duration_minutes",
-            )
-    _enforce_ops_console_preconditions(params, identity, required_bindings=["paper"])
-def _validate_resume_paper_runtime(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ResumePaperRuntime action requires operator, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    runtime_id = (
-        params.get("runtime_id")
-        or params.get("runtimeId")
-        or params.get("entity_id")
-        or params.get("entityId")
-    )
-    if not runtime_id or not str(runtime_id).strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing runtime_id for ResumePaperRuntime",
-            "runtime_id must be provided",
-            precondition_failed="missing_runtime",
-        )
-    _enforce_ops_console_preconditions(params, identity, required_bindings=["paper"])
-def _validate_demote(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Demote action requires operator, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    persona_id = params.get("persona_id") or params.get("personaId")
-    if not persona_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing persona_id for Demote",
-            "persona_id must be provided",
-            precondition_failed="missing_persona",
-        )
-    _enforce_ops_console_preconditions(params, identity)
-def _validate_promote_candidate(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "PromoteCandidate action requires operator, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    persona_id = params.get("persona_id") or params.get("personaId")
-    if not persona_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing persona_id for PromoteCandidate",
-            "persona_id must be provided",
-            precondition_failed="missing_persona",
-        )
-    _enforce_ops_console_preconditions(params, identity)
-def _validate_rebalance_proposal(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RebalanceProposal action requires operator or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    raise _bff_error(
-        422,
-        ErrorCode.VALIDATION_FAILED,
-        "RebalanceProposal requires server-side allocation admission",
-        "Submit the exact allocation evaluation through POST /bff/rebalances.",
-        precondition_failed="allocation_evaluation_id",
-        suggestion="Use POST /bff/management/allocation-policy/evaluate, then POST /bff/rebalances.",
-    )
-def _validate_approved_apply(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ApprovedApply action requires operator, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    _enforce_ops_console_preconditions(params, identity)
-def _validate_emergency_containment(params: Dict[str, Any], identity: OperatorIdentity) -> None:
-    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "EmergencyContainment action requires operator, reviewer, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    try:
-        validate_emergency_containment(params)
-    except (TypeError, ValueError) as exc:
-        detail = str(exc)
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            detail[:1].upper() + detail[1:],
-            detail,
-            precondition_failed="emergency_containment_invalid_action",
-        ) from exc
-
-    _enforce_ops_console_preconditions(params, identity)
-_VALIDATORS = {
-    CommandType.APPROVE_DEPLOYMENT: _validate_approve_deployment,
-    CommandType.APPROVE_DECISION: _validate_approve_decision,
-    CommandType.REJECT_DECISION: _validate_reject_decision,
-    CommandType.REQUEST_APPROVAL_REVISION: _validate_request_approval_revision,
-    CommandType.PAUSE_RUNTIME: _validate_pause_runtime,
-    CommandType.PAUSE_EXECUTION: _validate_pause_execution,
-    CommandType.ESCALATE_DIFF: _validate_escalate_diff,
-    CommandType.ISSUE_RISK_OFF: _validate_issue_risk_off,
-    CommandType.LIQUIDATE_ALL: _validate_liquidate_all,
-    CommandType.HARD_ROLLBACK: _validate_hard_rollback,
-    CommandType.ISSUE_SAFE_MODE: _validate_issue_safe_mode,
-    CommandType.EXECUTE_ROLLBACK: _validate_execute_rollback,
-    CommandType.APPROVE_ROLLBACK: _validate_approve_rollback,
-    CommandType.REJECT_ROLLBACK: _validate_reject_rollback,
-    CommandType.ACTIVATE_KILL_SWITCH: _validate_activate_kill_switch,
-    CommandType.APPROVE_EVOLUTION_DECISION: _validate_approve_evolution_decision,
-    CommandType.EXECUTE_EVOLUTION_ACTION: _validate_execute_evolution_action,
-    CommandType.APPROVE_MUTATION: _validate_approve_mutation,
-    CommandType.REJECT_MUTATION: _validate_reject_mutation,
-    CommandType.REVIEW_MUTATION: _validate_review_mutation,
-    CommandType.EXECUTE_MUTATION: _validate_execute_mutation,
-    CommandType.RECORD_SPONSOR_DECISION: _validate_record_sponsor_decision,
-    CommandType.REMEDIATE_SENTINEL_INTERVENTION: _validate_remediate_sentinel_intervention,
-    CommandType.DECIDE_V5_INTERVENTION: _validate_decide_v5_intervention,
-    CommandType.HUMAN_GATE_APPROVE: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_REJECT: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_REVOKE: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_EXTEND_TTL: _validate_human_gate_decision,
-    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _validate_quarterly_ranking_recommendation_submit,
-    CommandType.OBSERVE: _validate_observe,
-    CommandType.REQUEST_REVIEW: _validate_request_review,
-    CommandType.PAUSE_PAPER_RUNTIME: _validate_pause_paper_runtime,
-    CommandType.RESUME_PAPER_RUNTIME: _validate_resume_paper_runtime,
-    CommandType.DEMOTE: _validate_demote,
-    CommandType.PROMOTE_CANDIDATE: _validate_promote_candidate,
-    CommandType.REBALANCE_PROPOSAL: _validate_rebalance_proposal,
-    CommandType.APPROVED_APPLY: _validate_approved_apply,
-    CommandType.EMERGENCY_CONTAINMENT: _validate_emergency_containment,
-}
 _READ_ROLES = auth_policy._READ_ROLES
 _WRITE_ROLES = auth_policy._WRITE_ROLES
 _require_read_role = auth_policy.require_read_role
@@ -4427,9 +3035,18 @@ def _dataset_surface_status(
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
     source: Optional[str] = None,
+    read_store: Optional[Any] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    source = source or read_store.dataset_source(dataset)
+    resolved_store = read_store if read_store is not None else globals().get("read_store")
+    if source is None:
+        if resolved_store is not None and hasattr(resolved_store, "dataset_source"):
+            try:
+                source = str(resolved_store.dataset_source(dataset) or "missing")
+            except Exception:
+                source = "missing"
+        else:
+            source = "missing"
     return _format_dataset_surface_status(
         dataset,
         snapshot_at=snapshot_at,
@@ -4586,148 +3203,12 @@ def _performance_ranking_source_surface(
     snapshot_at: str,
 ) -> Dict[str, Any]:
     """Add the cross-center confidence vocabulary without changing global envelopes."""
-    normalized = dict(surface)
-    source = str(normalized.get("source") or "unknown")
-    status = str(normalized.get("status") or "unavailable")
-    normalized["observed_time"] = snapshot_at
-    normalized["freshness"] = (
-        normalized.get("staleness", {}).get("served_from")
-        if isinstance(normalized.get("staleness"), dict)
-        else None
-    ) or source
-    normalized["coverage"] = 0.0 if status == "unavailable" or source == "missing" else 1.0
-    normalized["missing_bindings"] = status == "unavailable" or source == "missing"
-    return normalized
-def _extract_ids_from_item(item: Dict[str, Any], keys: List[str]) -> List[str]:
-    extracted = []
-    # 檢查 root 級別
-    for key in keys:
-        val = item.get(key)
-        if val:
-            if isinstance(val, list):
-                extracted.extend([str(v).strip() for v in val if v])
-            else:
-                extracted.append(str(val).strip())
-    # 檢查是否含有 id 欄位 (可能正是這個 entity 本身)
-    if "id" in item:
-        entity_id = str(item["id"]).strip()
-        # 看看是否符合特定 prefix 格式，例如 pool-alpha、persona-xxx 等
-        for key in keys:
-            if key == "persona_id" and "persona" in entity_id:
-                extracted.append(entity_id)
-            elif key == "capital_pool_id" and "pool" in entity_id:
-                extracted.append(entity_id)
-    return list(set(extracted))
-def _filter_by_common_identifiers(
-    items: List[Dict[str, Any]],
-    *,
-    persona_id: Optional[str] = None,
-    persona: Optional[str] = None,
-    runtime_id: Optional[str] = None,
-    runtime: Optional[str] = None,
-    strategy_id: Optional[str] = None,
-    strategy: Optional[str] = None,
-    capital_pool_id: Optional[str] = None,
-    pool: Optional[str] = None,
-    sleeve_id: Optional[str] = None,
-    sleeve: Optional[str] = None,
-    artifact_id: Optional[str] = None,
-    artifact: Optional[str] = None,
-    broker_id: Optional[str] = None,
-    broker: Optional[str] = None,
-    stage: Optional[str] = None,
-    period: Optional[str] = None,
-    as_of: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    # 合併 query 參數值
-    persona_id = _resolve_param(persona_id)
-    persona = _resolve_param(persona)
-    runtime_id = _resolve_param(runtime_id)
-    runtime = _resolve_param(runtime)
-    strategy_id = _resolve_param(strategy_id)
-    strategy = _resolve_param(strategy)
-    capital_pool_id = _resolve_param(capital_pool_id)
-    pool = _resolve_param(pool)
-    sleeve_id = _resolve_param(sleeve_id)
-    sleeve = _resolve_param(sleeve)
-    artifact_id = _resolve_param(artifact_id)
-    artifact = _resolve_param(artifact)
-    broker_id = _resolve_param(broker_id)
-    broker = _resolve_param(broker)
-    stage = _resolve_param(stage)
-    period = _resolve_param(period)
-    as_of = _resolve_param(as_of)
-
-    p_id = persona_id or persona
-    r_id = runtime_id or runtime
-    s_id = strategy_id or strategy
-    cp_id = capital_pool_id or pool
-    sl_id = sleeve_id or sleeve
-    art_id = artifact_id or artifact
-    bk_id = broker_id or broker
-
-    filtered = []
-    for item in items:
-        # 取出該項目內可能包含的各種 ID
-        item_persona_ids = _extract_ids_from_item(item, ["persona_id", "personaId", "persona_ids", "persona"])
-        item_runtime_ids = _extract_ids_from_item(item, ["runtime_id", "runtimeId", "runtime_ids", "runtime"])
-        item_strategy_ids = _extract_ids_from_item(item, ["strategy_id", "strategyId", "strategy_ids", "strategy"])
-        item_pool_ids = _extract_ids_from_item(item, ["capital_pool_id", "capitalPoolId", "capital_pool_ids", "pool_id", "pool_ids", "pool"])
-        item_sleeve_ids = _extract_ids_from_item(item, ["sleeve_id", "sleeveId", "sleeve_ids", "sleeve"])
-        item_artifact_ids = _extract_ids_from_item(item, ["artifact_id", "artifactId", "artifact_ids", "artifact"])
-        item_broker_ids = _extract_ids_from_item(item, ["broker_id", "brokerId", "broker_ids", "broker"])
-
-        # 額外支援在 source_refs, target 或 links 中查找
-        source_refs = item.get("source_refs") or {}
-        if isinstance(source_refs, dict):
-            if "persona_ids" in source_refs:
-                item_persona_ids.extend(source_refs["persona_ids"])
-            if "runtime_ids" in source_refs:
-                item_runtime_ids.extend(source_refs["runtime_ids"])
-            if "strategy_ids" in source_refs:
-                item_strategy_ids.extend(source_refs["strategy_ids"])
-            if "capital_pool_ids" in source_refs:
-                item_pool_ids.extend(source_refs["capital_pool_ids"])
-
-        target = item.get("target") or {}
-        if isinstance(target, dict):
-            t_type = target.get("type")
-            t_id = target.get("id")
-            if t_type == "persona" and t_id:
-                item_persona_ids.append(t_id)
-
-        # 進行匹配 (如果 filter parameter 有給，則 item 的 ID 必須符合)
-        if p_id and not any(str(p_id).strip() == str(val).strip() for val in item_persona_ids):
-            continue
-        if r_id and not any(str(r_id).strip() == str(val).strip() for val in item_runtime_ids):
-            continue
-        if s_id and not any(str(s_id).strip() == str(val).strip() for val in item_strategy_ids):
-            continue
-        if cp_id and not any(str(cp_id).strip() == str(val).strip() for val in item_pool_ids):
-            continue
-        if sl_id and not any(str(sl_id).strip() == str(val).strip() for val in item_sleeve_ids):
-            continue
-        if art_id and not any(str(art_id).strip() == str(val).strip() for val in item_artifact_ids):
-            continue
-        if bk_id and not any(str(bk_id).strip() == str(val).strip() for val in item_broker_ids):
-            continue
-
-        # stage, period, as_of 匹配
-        item_stage = item.get("stage") or item.get("lifecycle_state") or item.get("status")
-        if stage and str(item_stage).strip().lower() != str(stage).strip().lower():
-            continue
-
-        item_period = item.get("period")
-        if period and str(item_period).strip().lower() != str(period).strip().lower():
-            continue
-
-        # as_of 可以檢查 meta 或是 item_as_of
-        item_as_of = item.get("as_of") or item.get("observed_at") or item.get("collected_at")
-        if as_of and str(item_as_of).strip() != str(as_of).strip():
-            continue
-
-        filtered.append(item)
-    return filtered
+    from services.control_plane.bff.agora.performance.service import canonical_performance_ranking_source_surface
+    return canonical_performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+from .personas.service import (
+    _extract_ids_from_item,
+    _filter_by_common_identifiers,
+)
 _INCIDENT_SEVERITY_MAP = {
     "critical": "sev1",
     "high": "sev1",
@@ -5135,18 +3616,15 @@ def _aggregate_group_surface(
     unavailable_message: str,
     degraded_message: str,
 ) -> Dict[str, Any]:
-    surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
-    surface["source"] = "bff_composed"
-    statuses = [entry.get("status", "ok") for entry in source_surfaces]
-    if statuses and all(status == "ok" for status in statuses):
-        return surface
-    if statuses and all(status == "unavailable" for status in statuses):
-        surface["status"] = "unavailable"
-        surface["message"] = unavailable_message
-        return surface
-    surface["status"] = "degraded"
-    surface["message"] = degraded_message
-    return surface
+    from services.control_plane.bff.agora.performance.service import canonical_performance_aggregate_group_surface
+    return canonical_performance_aggregate_group_surface(
+        surface_key,
+        source_surfaces,
+        snapshot_at=snapshot_at,
+        unavailable_message=unavailable_message,
+        degraded_message=degraded_message,
+        utc_now=utc_now,
+    )
 def _alert_target_ref(
     *,
     surface_id: str,
@@ -6233,13 +4711,8 @@ _MANAGEMENT_DATA_SOURCES_READ_EXECUTOR = ThreadPoolExecutor(
     thread_name_prefix="bff-management-data-sources",
 )
 def _snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-    }
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-    return meta
+    from services.control_plane.bff.agora.performance.service import canonical_performance_snapshot_meta
+    return canonical_performance_snapshot_meta(snapshot_at, utc_now=utc_now)
 _COMMAND_RECEIPT_STATUS_MAP = {
     CommandStatus.SUBMITTED.value: CommandReceiptStatus.ACCEPTED,
     CommandStatus.PROCESSING.value: CommandReceiptStatus.QUEUED,
@@ -6457,16 +4930,13 @@ def _management_read_timeout_seconds() -> float:
     except (TypeError, ValueError):
         return 0.6
 
-class _ManagementReadTimeout(Exception):
-    """Raised when a management read exceeds its bounded wait budget (MGMT-LOAD-005)."""
-class _ManagementReadSaturated(Exception):
-    """Raised before submission when a bounded read executor has no capacity."""
-def _discard_late_management_read_result(task: "asyncio.Task[Any]") -> None:
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        log.warning("bff.management_read late worker-thread error after timeout budget: %r", exc)
+from .personas.routes.common import (
+    ManagementReadTimeout as _ManagementReadTimeout,
+    ManagementReadSaturated as _ManagementReadSaturated,
+    discard_late_management_read_result as _discard_late_management_read_result,
+    run_management_read as _domain_run_management_read,
+)
+
 async def _run_management_read(
     func: Callable[..., Any],
     *args: Any,
@@ -6475,46 +4945,15 @@ async def _run_management_read(
     executor: Optional[Executor] = None,
     **kwargs: Any,
 ) -> Any:
-    """Run a synchronous read-store aggregation on a worker thread, bounded by a wait budget.
-
-    Deliberately uses asyncio.wait rather than asyncio.wait_for: once an OS
-    thread has started synchronous work, Python cannot forcibly cancel it.
-    For capacity-bounded calls the semaphore is acquired before executor
-    submission and released by the actual concurrent future, so timed-out
-    work cannot create an unbounded queue of late jobs.
-    """
     budget = _management_read_timeout_seconds() if timeout_seconds is None else timeout_seconds
-    if capacity is None:
-        task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
-    else:
-        # Reserve capacity before submitting work. Acquiring inside ``func``
-        # would still allow an unbounded number of timed-out jobs to collect in
-        # the executor queue while earlier synchronous calls keep running.
-        if not capacity.acquire(blocking=False):
-            raise _ManagementReadSaturated()
-        context = copy_context()
-        call = partial(func, *args, **kwargs)
-        try:
-            worker_future = executor.submit(context.run, call) if executor else None
-            if worker_future is None:
-                raise RuntimeError("A bounded management read requires an executor")
-        except BaseException:
-            capacity.release()
-            raise
-
-        # Hold the reservation until the actual worker future finishes, not
-        # merely until the asyncio wrapper times out or is cancelled.
-        worker_future.add_done_callback(lambda _future: capacity.release())
-        task = asyncio.wrap_future(worker_future)
-    done, _pending = await asyncio.wait({task}, timeout=budget)
-    if task in done:
-        return task.result()
-    if capacity is not None:
-        # Cancels only work that has not started; a running thread keeps its
-        # reservation until the concurrent future's completion callback.
-        worker_future.cancel()
-    task.add_done_callback(_discard_late_management_read_result)
-    raise _ManagementReadTimeout()
+    return await _domain_run_management_read(
+        func,
+        *args,
+        timeout_seconds=budget,
+        capacity=capacity,
+        executor=executor,
+        **kwargs,
+    )
 async def _read_management_source_connector_registry(
     store: Any,
 ) -> Dict[str, Any]:
@@ -6940,56 +5379,11 @@ def _pm12_allocation_line_digest(line: Dict[str, Any]) -> str:
     basis["cap_reasons"] = list(line.get("cap_reasons") or [])
     basis["evidence_refs"] = list(line.get("evidence_refs") or [])
     return _stable_json_hash(basis)
-def _pm12_semantic_json_value(value: Any) -> Any:
-    """Canonicalize JSON values without treating booleans as numbers."""
-    if value is None:
-        return ["null"]
-    if isinstance(value, bool):
-        return ["boolean", value]
-    if isinstance(value, str):
-        return ["string", value]
-    if isinstance(value, (int, float, Decimal)):
-        try:
-            numeric = (
-                value
-                if isinstance(value, Decimal)
-                else Decimal(str(value))
-            )
-        except (InvalidOperation, TypeError, ValueError) as exc:
-            raise ValueError("allocation line contains an invalid number") from exc
-        if not numeric.is_finite():
-            raise ValueError("allocation line contains a non-finite number")
-        if numeric == 0:
-            numeric = Decimal(0)
-        return ["number", format(numeric.normalize(), "f")]
-    if isinstance(value, list):
-        return ["array", [_pm12_semantic_json_value(item) for item in value]]
-    if isinstance(value, dict):
-        if any(not isinstance(key, str) for key in value):
-            raise ValueError("allocation line contains a non-string object key")
-        return [
-            "object",
-            [
-                [key, _pm12_semantic_json_value(value[key])]
-                for key in sorted(value)
-            ],
-        ]
-    raise ValueError(
-        f"allocation line contains unsupported JSON value {type(value).__name__}"
-    )
-def _pm12_semantic_values_match(asserted: Any, authoritative: Any) -> bool:
-    """Compare an asserted value against its admitted authoritative value using the
-    numeric/bool/order-safe semantic canonical form so benign browser JSON
-    round-trips (for example 1.0 -> 1, or object key reordering) do not read as an
-    assertion mismatch. Values that cannot be canonicalized stay fail-closed by
-    returning False, preserving the strict-by-default posture for malformed input."""
-    try:
-        return (
-            _pm12_semantic_json_value(asserted)
-            == _pm12_semantic_json_value(authoritative)
-        )
-    except ValueError:
-        return False
+from .capital.service import (
+    _pm12_semantic_json_value,
+    _pm12_semantic_values_match,
+    _pm12_allocation_line_assertion_hash,
+)
 def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
     snapshot = read_store.get_ranking_snapshot(snapshot_id)
     if not isinstance(snapshot, dict):
@@ -7282,20 +5676,15 @@ _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
-_RETIRED_PROCESS_OVERLAYS = frozenset({
-    "_PERSONA_BFF_OVERLAY",
-    "_STRATEGY_BFF_OVERLAY",
-    "_GOV_BFF_INCIDENT_OVERLAY",
-    "_GOV_BFF_JOB_OVERLAY",
-})
+from .shared.module_retirement_guard import (
+    DEFAULT_RETIRED_PROCESS_OVERLAYS as _RETIRED_PROCESS_OVERLAYS,
+    check_retired_overlay_getattr,
+)
 
 def __getattr__(name: str) -> Any:
-    if name in _RETIRED_PROCESS_OVERLAYS:
-        raise AttributeError(
-            f"{name} has been retired and deleted under OVERLAY-RETIRE-001; "
-            "process-local overlays are forbidden and canonical domain stores must be used directly."
-        )
+    check_retired_overlay_getattr(name, _RETIRED_PROCESS_OVERLAYS)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 _PERSONA_PROVISIONING_STORE = None
 _PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
@@ -7853,627 +6242,20 @@ def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
-def _management_first_non_empty(*values: Any) -> Any:
-    for value in values:
-        if value not in (None, ""):
-            return value
-    return None
-def _management_dict_value(record: Dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        value = record.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-def _management_nested_dict(record: Dict[str, Any], *keys: str) -> Dict[str, Any]:
-    for key in keys:
-        value = record.get(key)
-        if isinstance(value, dict):
-            return value
-    return {}
-def _management_position_records(telemetry: Dict[str, Any]) -> List[Dict[str, Any]]:
-    for key in ("positions", "holdings", "position_snapshots"):
-        raw_items = telemetry.get(key)
-        if isinstance(raw_items, list):
-            items = [item for item in raw_items if isinstance(item, dict)]
-            if items:
-                return items
-    for key in ("position", "holding"):
-        raw_item = telemetry.get(key)
-        if isinstance(raw_item, dict):
-            return [raw_item]
-    return []
-def _management_latest_timestamp(items: List[Dict[str, Any]], *fields: str) -> Optional[str]:
-    latest: Optional[str] = None
-    for item in items:
-        for field in fields:
-            value = str(item.get(field) or "").strip()
-            if value and (latest is None or value > latest):
-                latest = value
-    return latest
-def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
-    if not record_id:
-        return None
-    return f"{path}/{record_id}"
-_PM12_ATTRIBUTION_DIMENSIONS = ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime")
-def _pm12_metric_or_split(
-    value: Any,
-    fallback: Optional[float],
-    split_count: int,
-) -> Optional[float]:
-    metric = _management_as_float(value)
-    if metric is not None:
-        return metric
-    if fallback is None:
-        return None
-    return round(fallback / max(split_count, 1), 6)
-def _pm12_dimension_key(value: Any) -> str:
-    key = str(value or "").strip()
-    return key if key else "unassigned"
-def _pm12_attribution_dimension_label(
-    dimension: str,
-    key: str,
-    *,
-    personas_by_id: Dict[str, Dict[str, Any]],
-    strategies_by_id: Dict[str, Dict[str, Any]],
-    pools_by_id: Dict[str, Dict[str, Any]],
-) -> str:
-    if key == "unassigned":
-        return "Unassigned"
-    if dimension == "persona":
-        persona = personas_by_id.get(key, {})
-        return str(persona.get("name") or persona.get("display_name") or key)
-    if dimension == "strategy":
-        strategy = strategies_by_id.get(key, {})
-        return str(strategy.get("title") or strategy.get("name") or key)
-    if dimension == "pool":
-        pool = pools_by_id.get(key, {})
-        return str(pool.get("name") or key)
-    return key
-def _pm12_performance_attribution_sources(
-    tenant_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    runtime_bindings = read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
-    deployment_plans = read_store.list_deployment_plans() or []
-    bindings = read_store.list_bindings(include_market_persona_defaults=True) or []
-    capital_pools = read_store.list_capital_pools(include_market_persona_defaults=True) or []
-    clean_tenant = str(tenant_id or "").strip()
-    personas = _list_persona_records(clean_tenant or None)
-    strategies = _list_strategy_summaries()
 
-    plans_by_id = {
-        _management_record_id(plan, "plan_id", "id"): plan
-        for plan in deployment_plans
-        if _management_record_id(plan, "plan_id", "id")
-    }
-    bindings_by_id = {
-        _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id"): binding
-        for binding in bindings
-        if _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id")
-    }
-    pools_by_id = {
-        _management_record_id(pool, "pool_id", "id"): pool
-        for pool in capital_pools
-        if _management_record_id(pool, "pool_id", "id")
-    }
-    personas_by_id = {
-        _management_record_id(persona, "persona_id", "id"): persona
-        for persona in personas
-        if _management_record_id(persona, "persona_id", "id")
-    }
-    strategies_by_id = {
-        _management_record_id(strategy, "strategy_id", "id"): strategy
-        for strategy in strategies
-        if _management_record_id(strategy, "strategy_id", "id")
-    }
 
-    # A single telemetry-list projection is the canonical bounded source for
-    # this aggregate.  Do not issue one record read per runtime when that
-    # projection supplied rows.  The record lookup fallback is retained for
-    # older stores that expose no telemetry-list rows at all (including
-    # isolated legacy fixtures that only expose the historical record lookup).
-    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
-    try:
-        telemetry_summaries = list(read_store.list_telemetry_summaries() or [])
-    except Exception:
-        telemetry_summaries = []
-    has_bulk_telemetry_projection = bool(telemetry_summaries)
-    for telemetry in telemetry_summaries:
-        if not isinstance(telemetry, dict):
-            continue
-        runtime_id = _management_record_id(
-            telemetry,
-            "runtime_id",
-            "runtimeId",
-            "execution_runtime_id",
-            "id",
-        )
-        if runtime_id:
-            telemetry_by_runtime_id[runtime_id] = telemetry
+from .agora.performance.service import (
+    PM12_ATTRIBUTION_DIMENSIONS as _PM12_ATTRIBUTION_DIMENSIONS,
+)
+from .pm12.service import (
+    _pm12_attribution_metrics,
+    _pm12_performance_attribution_facts,
+    _pm12_performance_attribution_response,
+    _pm12_performance_attribution_response_impl,
+    _pm12_performance_attribution_rows,
+    _pm12_performance_attribution_sources,
+)
 
-    for runtime in runtime_bindings:
-        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
-        if not runtime_id:
-            continue
-        telemetry = telemetry_by_runtime_id.get(runtime_id)
-        if telemetry is None and not has_bulk_telemetry_projection:
-            telemetry = read_store.get_telemetry_summary(runtime_id)
-        if telemetry is not None:
-            telemetry_by_runtime_id[runtime_id] = telemetry
-
-    return {
-        "tenant_id": clean_tenant or None,
-        "runtime_bindings": runtime_bindings,
-        "deployment_plans": deployment_plans,
-        "bindings": bindings,
-        "capital_pools": capital_pools,
-        "personas": personas,
-        "strategies": strategies,
-        "plans_by_id": plans_by_id,
-        "bindings_by_id": bindings_by_id,
-        "pools_by_id": pools_by_id,
-        "personas_by_id": personas_by_id,
-        "strategies_by_id": strategies_by_id,
-        "telemetry_by_runtime_id": telemetry_by_runtime_id,
-    }
-def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str) -> List[Dict[str, Any]]:
-    facts: List[Dict[str, Any]] = []
-    plans_by_id = sources["plans_by_id"]
-    bindings_by_id = sources["bindings_by_id"]
-    pools_by_id = sources["pools_by_id"]
-    telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
-    scoped_tenant = str(sources.get("tenant_id") or "").strip()
-    personas_by_id = sources["personas_by_id"]
-
-    for runtime in sources["runtime_bindings"]:
-        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
-        runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
-        plan_id = _management_record_id(runtime, "plan_id", "deployment_plan_id")
-        plan = plans_by_id.get(plan_id, {})
-        plan_binding_ids = [
-            str(value).strip()
-            for value in (plan.get("binding_ids") or [])
-            if str(value).strip()
-        ]
-        persona_binding_id = (
-            _management_record_id(runtime, "persona_capital_binding_id")
-            or (plan_binding_ids[0] if plan_binding_ids else "")
-        )
-        persona_binding = bindings_by_id.get(persona_binding_id, {})
-        telemetry = telemetry_by_runtime_id.get(runtime_id, {})
-        summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
-        positions = _management_position_records(telemetry) or [{}]
-        split_count = len(positions)
-
-        runtime_pnl = _management_as_float(
-            _management_first_non_empty(telemetry.get("pnl"), summary.get("total_pnl"))
-        )
-        runtime_unrealized_pnl = _management_as_float(
-            _management_first_non_empty(telemetry.get("unrealized_pnl"), summary.get("unrealized_pnl"))
-        )
-        runtime_realized_pnl = _management_as_float(
-            _management_first_non_empty(telemetry.get("realized_pnl"), summary.get("realized_pnl"))
-        )
-        runtime_trades = _management_as_float(
-            _management_first_non_empty(telemetry.get("total_trades"), summary.get("total_trades"))
-        )
-
-        for index, position in enumerate(positions):
-            instrument = _management_nested_dict(position, "instrument", "asset", "contract")
-            mark = _management_nested_dict(position, "mark", "mark_price", "market_price")
-            capital_pool_id = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "capital_pool_id", "pool_id"),
-                    _management_dict_value(runtime, "capital_pool_id", "pool_id"),
-                    _management_dict_value(plan, "capital_pool_id", "target_pool_id", "pool_id"),
-                    _management_dict_value(persona_binding, "capital_pool_id", "pool_id"),
-                )
-                or ""
-            )
-            capital_pool = pools_by_id.get(capital_pool_id, {})
-            canonical_persona_id = str(persona_binding.get("persona_id") or "").strip()
-            if canonical_persona_id:
-                persona_id = canonical_persona_id
-            else:
-                persona_id = str(runtime.get("persona_id") or "").strip()
-            if scoped_tenant and persona_id and persona_id not in personas_by_id:
-                # A request-scoped attribution response may only disclose
-                # runtime facts whose Persona has an explicit matching tenant
-                # admission in the durable directory.
-                continue
-            strategy_id = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "strategy_id", "strategy_ref"),
-                    _management_dict_value(runtime, "strategy_id", "strategy_ref"),
-                    _management_dict_value(plan, "strategy_id", "strategy_ref"),
-                    _management_dict_value(persona_binding, "strategy_id"),
-                )
-                or ""
-            )
-            symbol = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "symbol", "instrument_id", "asset_id", "contract_id"),
-                    _management_dict_value(instrument, "symbol", "instrument_id", "asset_id", "contract_id"),
-                    _management_dict_value(telemetry, "symbol", "instrument_id", "asset_id", "contract_id"),
-                )
-                or ""
-            )
-            broker_id = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "broker_id", "broker", "broker_ref"),
-                    _management_dict_value(telemetry, "broker_id", "broker", "broker_ref"),
-                    _management_dict_value(runtime, "broker_id", "broker", "broker_ref"),
-                    _management_dict_value(plan, "broker_id", "broker", "broker_ref"),
-                )
-                or ""
-            )
-            regime = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "regime", "market_regime", "risk_regime"),
-                    _management_dict_value(telemetry, "regime", "market_regime", "risk_regime"),
-                    _management_dict_value(runtime, "regime", "market_regime", "risk_regime"),
-                    _management_dict_value(plan, "regime", "market_regime", "risk_regime"),
-                )
-                or ""
-            )
-            quantity = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "quantity", "qty", "net_quantity", "position_quantity"),
-                    _management_dict_value(telemetry, "quantity", "position_quantity"),
-                    _management_dict_value(summary, "quantity", "position_quantity"),
-                )
-            )
-            mark_price = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "mark_price", "market_price", "last_price"),
-                    _management_dict_value(mark, "price", "mark_price", "market_price", "last_price"),
-                    _management_dict_value(telemetry, "mark_price", "market_price", "last_price"),
-                    _management_dict_value(summary, "mark_price", "market_price", "last_price"),
-                )
-            )
-            market_value = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "market_value", "value"),
-                    _management_dict_value(telemetry, "market_value"),
-                    _management_dict_value(summary, "market_value"),
-                )
-            )
-            if market_value is None and quantity is not None and mark_price is not None:
-                market_value = round(quantity * mark_price, 6)
-            notional = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "notional", "gross_notional"),
-                    _management_dict_value(telemetry, "notional", "gross_notional"),
-                    _management_dict_value(summary, "notional", "gross_notional"),
-                    market_value,
-                )
-            )
-            if notional is not None:
-                notional = abs(notional)
-            exposure = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "exposure", "gross_exposure"),
-                    _management_dict_value(telemetry, "exposure", "gross_exposure"),
-                    _management_dict_value(summary, "exposure", "gross_exposure"),
-                    notional,
-                )
-            )
-            total_pnl = _pm12_metric_or_split(
-                _management_first_non_empty(
-                    _management_dict_value(position, "total_pnl", "pnl"),
-                    _management_dict_value(position, "realized_plus_unrealized_pnl"),
-                ),
-                runtime_pnl,
-                split_count,
-            )
-            unrealized_pnl = _pm12_metric_or_split(
-                _management_dict_value(position, "unrealized_pnl", "unrealized"),
-                runtime_unrealized_pnl,
-                split_count,
-            )
-            realized_pnl = _pm12_metric_or_split(
-                _management_dict_value(position, "realized_pnl", "realized"),
-                runtime_realized_pnl,
-                split_count,
-            )
-            drawdown = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "drawdown", "max_drawdown"),
-                    _management_dict_value(telemetry, "drawdown"),
-                    _management_dict_value(summary, "max_drawdown"),
-                )
-            )
-            value_at_risk = _management_as_float(
-                _management_first_non_empty(
-                    _management_first_float(
-                        position,
-                        "value_at_risk",
-                        "valueAtRisk",
-                        "var",
-                        "VaR",
-                        "risk.value_at_risk",
-                        "risk.valueAtRisk",
-                        "risk.var",
-                    ),
-                    _management_first_float(
-                        telemetry,
-                        "value_at_risk",
-                        "valueAtRisk",
-                        "var",
-                        "VaR",
-                        "risk.value_at_risk",
-                        "risk.valueAtRisk",
-                        "risk.var",
-                        "summary.value_at_risk",
-                        "summary.valueAtRisk",
-                        "summary.var",
-                    ),
-                )
-            )
-            fill_rate = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "fill_rate"),
-                    _management_dict_value(telemetry, "fill_rate"),
-                    _management_dict_value(summary, "fill_rate"),
-                )
-            )
-            avg_slippage_bps = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "avg_slippage_bps", "slippage_bps"),
-                    _management_dict_value(telemetry, "avg_slippage_bps", "slippage_bps"),
-                    _management_dict_value(summary, "avg_slippage_bps", "slippage_bps"),
-                )
-            )
-            total_trades = _pm12_metric_or_split(
-                _management_dict_value(position, "total_trades", "trade_count", "trades"),
-                runtime_trades,
-                split_count,
-            )
-            collected_at = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "collected_at", "marked_at", "updated_at"),
-                    _management_dict_value(telemetry, "collected_at", "updated_at"),
-                    _management_dict_value(summary, "collected_at", "updated_at"),
-                )
-                or ""
-            )
-
-            facts.append({
-                "id": f"{runtime_id or runtime_binding_id or 'runtime'}:{index}",
-                "period": period_key,
-                "runtime_id": runtime_id,
-                "runtime_binding_id": runtime_binding_id,
-                "deployment_plan_id": plan_id or _management_record_id(plan, "plan_id", "id"),
-                "persona_capital_binding_id": persona_binding_id,
-                "capital_pool_id": capital_pool_id,
-                "capital_pool_name": capital_pool.get("name") or capital_pool_id,
-                "persona_id": persona_id,
-                "strategy_id": strategy_id,
-                "symbol": symbol,
-                "broker_id": broker_id,
-                "regime": regime,
-                "deployment_stage": str(
-                    runtime.get("deployment_stage") or runtime.get("deployment_mode") or plan.get("target_stage") or ""
-                ),
-                "status": str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown")),
-                "total_pnl": total_pnl,
-                "unrealized_pnl": unrealized_pnl,
-                "realized_pnl": realized_pnl,
-                "notional": notional,
-                "market_value": market_value,
-                "exposure": exposure,
-                "drawdown": drawdown,
-                "value_at_risk": value_at_risk,
-                "fill_rate": fill_rate,
-                "avg_slippage_bps": avg_slippage_bps,
-                "total_trades": total_trades,
-                "collected_at": collected_at or None,
-                "telemetry_available": runtime_id in telemetry_by_runtime_id if runtime_id else False,
-                "dimensions": {
-                    "persona": _pm12_dimension_key(persona_id),
-                    "strategy": _pm12_dimension_key(strategy_id),
-                    "pool": _pm12_dimension_key(capital_pool_id),
-                    "asset": _pm12_dimension_key(symbol),
-                    "broker": _pm12_dimension_key(broker_id),
-                    "runtime": _pm12_dimension_key(runtime_id or runtime_binding_id),
-                    "regime": _pm12_dimension_key(regime),
-                },
-            })
-
-    return facts
-def _pm12_metric_sum(facts: List[Dict[str, Any]], field: str) -> Optional[float]:
-    values = [
-        value
-        for value in (_management_as_float(fact.get(field)) for fact in facts)
-        if value is not None
-    ]
-    return round(sum(values), 6) if values else None
-def _pm12_metric_avg(facts: List[Dict[str, Any]], field: str) -> Optional[float]:
-    values = [
-        value
-        for value in (_management_as_float(fact.get(field)) for fact in facts)
-        if value is not None
-    ]
-    return _management_avg(values)
-def _pm12_attribution_metrics(facts: List[Dict[str, Any]]) -> Dict[str, Any]:
-    drawdown_values = [
-        value
-        for value in (_management_as_float(fact.get("drawdown")) for fact in facts)
-        if value is not None
-    ]
-    trade_total = _pm12_metric_sum(facts, "total_trades")
-    runtime_ids = sorted({
-        str(fact.get("runtime_id") or "")
-        for fact in facts
-        if str(fact.get("runtime_id") or "")
-    })
-    telemetry_runtime_ids = sorted({
-        str(fact.get("runtime_id") or "")
-        for fact in facts
-        if str(fact.get("runtime_id") or "") and fact.get("telemetry_available")
-    })
-    return {
-        "runtime_count": len(runtime_ids),
-        "telemetry_runtime_count": len(telemetry_runtime_ids),
-        "holding_count": len(facts),
-        "total_pnl": _pm12_metric_sum(facts, "total_pnl"),
-        "unrealized_pnl": _pm12_metric_sum(facts, "unrealized_pnl"),
-        "realized_pnl": _pm12_metric_sum(facts, "realized_pnl"),
-        "total_notional": _pm12_metric_sum(facts, "notional"),
-        "total_market_value": _pm12_metric_sum(facts, "market_value"),
-        "total_exposure": _pm12_metric_sum(facts, "exposure"),
-        "worst_drawdown": max(drawdown_values) if drawdown_values else None,
-        "average_fill_rate": _pm12_metric_avg(facts, "fill_rate"),
-        "average_slippage_bps": _pm12_metric_avg(facts, "avg_slippage_bps"),
-        "total_trades": int(trade_total) if trade_total is not None else 0,
-        "latest_telemetry_at": _management_latest_timestamp(facts, "collected_at"),
-    }
-def _pm12_performance_attribution_group_entries(
-    facts: List[Dict[str, Any]],
-    *,
-    dimensions: List[str],
-) -> List[Dict[str, Any]]:
-    total_metrics = _pm12_attribution_metrics(facts)
-    portfolio_pnl = _management_as_float(total_metrics.get("total_pnl"))
-    portfolio_notional = _management_as_float(total_metrics.get("total_notional"))
-    entries: List[Dict[str, Any]] = []
-
-    for dimension in dimensions:
-        grouped: Dict[str, List[Dict[str, Any]]] = {}
-        for fact in facts:
-            dims = fact.get("dimensions") if isinstance(fact.get("dimensions"), dict) else {}
-            key = _pm12_dimension_key(dims.get(dimension))
-            grouped.setdefault(key, []).append(fact)
-
-        ranked_groups: List[tuple[str, List[Dict[str, Any]], Dict[str, Any]]] = []
-        for key, group_facts in grouped.items():
-            ranked_groups.append((key, group_facts, _pm12_attribution_metrics(group_facts)))
-        ranked_groups.sort(
-            key=lambda item: (
-                _management_as_float(item[2].get("total_pnl")) is None,
-                -(_management_as_float(item[2].get("total_pnl")) or 0.0),
-                item[0],
-            )
-        )
-
-        for rank, (key, group_facts, metrics) in enumerate(ranked_groups, start=1):
-            pnl = _management_as_float(metrics.get("total_pnl"))
-            notional = _management_as_float(metrics.get("total_notional"))
-            pnl_contribution = None
-            if pnl is not None and portfolio_pnl not in (None, 0):
-                pnl_contribution = round(pnl / portfolio_pnl, 6)
-            notional_weight = None
-            if notional is not None and portfolio_notional not in (None, 0):
-                notional_weight = round(notional / portfolio_notional, 6)
-            entries.append({
-                "dimension": dimension,
-                "dimension_key": key,
-                "group_facts": group_facts,
-                "metrics": metrics,
-                "notional_weight": notional_weight,
-                "pnl_contribution_pct": pnl_contribution,
-                "rank": rank,
-            })
-
-    return entries
-def _pm12_performance_attribution_page_entries(
-    facts: List[Dict[str, Any]],
-    *,
-    dimensions: List[str],
-    page_token: Optional[str],
-    page_size: int,
-) -> tuple[List[Dict[str, Any]], int, Optional[str], Dict[str, Any]]:
-    entries = _pm12_performance_attribution_group_entries(facts, dimensions=dimensions)
-    page_entries, next_page_token = _page_slice(entries, page_token, page_size)
-    return page_entries, len(entries), next_page_token, _pm12_attribution_metrics(facts)
-def _pm12_attribution_data_confidence(metrics: Dict[str, Any]) -> str:
-    holding_count = int(metrics.get("holding_count") or 0)
-    runtime_count = int(metrics.get("runtime_count") or 0)
-    telemetry_runtime_count = int(metrics.get("telemetry_runtime_count") or 0)
-    if holding_count <= 0:
-        return "unavailable"
-    if telemetry_runtime_count <= 0:
-        return "partial"
-    if runtime_count and telemetry_runtime_count < runtime_count:
-        return "degraded"
-    if _management_as_float(metrics.get("total_pnl")) is None:
-        return "partial"
-    return "formal"
-def _pm12_performance_attribution_rows(
-    entries: List[Dict[str, Any]],
-    *,
-    period_key: str,
-    sources: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-
-    for entry in entries:
-        dimension = str(entry.get("dimension") or "")
-        key = str(entry.get("dimension_key") or "")
-        group_facts = entry.get("group_facts") if isinstance(entry.get("group_facts"), list) else []
-        metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
-        runtime_ids = sorted({
-            str(fact.get("runtime_id") or "")
-            for fact in group_facts
-            if str(fact.get("runtime_id") or "")
-        })
-        pool_ids = sorted({
-            str(fact.get("capital_pool_id") or "")
-            for fact in group_facts
-            if str(fact.get("capital_pool_id") or "")
-        })
-        persona_ids = sorted({
-            str(fact.get("persona_id") or "")
-            for fact in group_facts
-            if str(fact.get("persona_id") or "")
-        })
-        strategy_ids = sorted({
-            str(fact.get("strategy_id") or "")
-            for fact in group_facts
-            if str(fact.get("strategy_id") or "")
-        })
-        label = _pm12_attribution_dimension_label(
-            dimension,
-            key,
-            personas_by_id=sources["personas_by_id"],
-            strategies_by_id=sources["strategies_by_id"],
-            pools_by_id=sources["pools_by_id"],
-        )
-        data_confidence = _pm12_attribution_data_confidence(metrics)
-        rows.append({
-            "id": f"pm12-performance-attribution-{dimension}-{key}",
-            "dimension": dimension,
-            "dimension_key": key,
-            "label": label,
-            "period": period_key,
-            "data_confidence": data_confidence,
-            "source_status": "ok" if data_confidence == "formal" else data_confidence,
-            "rank": entry.get("rank"),
-            "metrics": {
-                **metrics,
-                "data_confidence": data_confidence,
-                "pnl_contribution_pct": entry.get("pnl_contribution_pct"),
-                "notional_weight": entry.get("notional_weight"),
-            },
-            "total_pnl": metrics["total_pnl"],
-            "pnl_contribution_pct": entry.get("pnl_contribution_pct"),
-            "notional_weight": entry.get("notional_weight"),
-            "runtime_count": metrics["runtime_count"],
-            "holding_count": metrics["holding_count"],
-            "source_refs": {
-                "runtime_ids": runtime_ids,
-                "capital_pool_ids": pool_ids,
-                "persona_ids": persona_ids,
-                "strategy_ids": strategy_ids,
-            },
-            "links": {
-                "runtime": _management_link("/bff/runtimes", key) if dimension == "runtime" else None,
-                "capital_pool": _management_link("/bff/capital-pools", key) if dimension == "pool" else None,
-                "persona": _management_link("/bff/personas", key) if dimension == "persona" else None,
-                "strategy": _management_link("/bff/strategies", key) if dimension == "strategy" else None,
-            },
-        })
-
-    return rows
 def _persona_fleet_runtime_matches(
     runtime_binding: Dict[str, Any],
     *,
@@ -8772,1450 +6554,53 @@ def _project_persona_fleet_item(
     ]
     item["owner_observations"] = owner_observations
     return item, owner_observations
-_HUMAN_INBOX_OPEN_APPROVAL_STATES = {
-    "pending",
-    "in_review",
-    "under_review",
-    "reviewed",
-    "proposed",
-}
-_HUMAN_INBOX_OPEN_INTERVENTION_STATUSES = {"pending", "escalated"}
-_HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES = {
-    "pending",
-    "open",
-    "in_review",
-    "under_review",
-    "reviewed",
-}
-_HUMAN_INBOX_OPEN_SENTINEL_STATUSES = {"pending", "open", "active", "escalated"}
-_HUMAN_INBOX_PRIORITY_RANK = {
-    "critical": 4,
-    "high": 3,
-    "medium": 2,
-    "low": 1,
-    "unknown": 0,
-}
-def _human_inbox_csv_filter(value: Optional[str]) -> Optional[set[str]]:
-    if not value:
-        return None
-    requested = {part.strip().lower() for part in value.split(",") if part.strip()}
-    return requested or None
-def _human_inbox_priority(value: Any, *, fallback: str = "medium") -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized in _HUMAN_INBOX_PRIORITY_RANK:
-        return normalized
-    if normalized in {"sev1", "p0"}:
-        return "critical"
-    if normalized in {"sev2", "p1"}:
-        return "high"
-    if normalized in {"sev3", "p2"}:
-        return "medium"
-    return fallback
-def _human_inbox_attach_common_fields(
-    projected: Dict[str, Any],
-    *,
-    inbox_type: str,
-    source_dataset: str,
-    risk_level: str,
-    created_at: Optional[str],
-    updated_at: Optional[str],
-    href: str,
-    source_record: Dict[str, Any],
-) -> Dict[str, Any]:
-    projected.setdefault("kind", inbox_type)
-    projected["inbox_type"] = inbox_type
-    projected["sourceDataset"] = source_dataset
-    projected["source_dataset"] = source_dataset
-    projected["riskLevel"] = risk_level
-    projected["risk_level"] = risk_level
-    projected["createdAt"] = created_at
-    projected["created_at"] = created_at
-    projected["updatedAt"] = updated_at
-    projected["updated_at"] = updated_at
-    projected["href"] = href
-    projected.setdefault("route", href)
-    return projected
-def _human_inbox_action_state(status: str, open_statuses: set[str]) -> str:
-    return "pending" if status in open_statuses else "resolved"
-def _human_inbox_governance_review_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    item_id = _management_record_id(item, "item_id", "id", "review_id")
-    if not item_id:
-        return None
-    review_type = str(item.get("item_type") or item.get("review_type") or "GovernanceReview").strip()
-    status = str(item.get("status") or item.get("governance_outcome") or "pending").strip().lower() or "pending"
-    risk_level = str(item.get("risk_level") or "unknown").strip().lower() or "unknown"
-    priority = _human_inbox_priority(item.get("priority") or risk_level, fallback="medium")
-    created_at = item.get("submitted_at") or item.get("created_at")
-    updated_at = item.get("updated_at") or created_at
-    route = f"{_GOVERNANCE_REVIEW_QUEUE_ROUTE}?item={item_id}"
-    action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES)
-    projected = {
-        "id": f"governance_review:{item_id}",
-        "inbox_id": f"governance_review:{item_id}",
-        "inboxType": "governance_review",
-        "source_type": "governance_review",
-        "source_id": item_id,
-        "review_item_id": item_id,
-        "title": item.get("title") or f"Governance review: {review_type}",
-        "summary": item.get("summary") or item.get("description") or "Governance review awaiting human action.",
-        "priority": priority,
-        "risk_level": risk_level,
-        "status": status,
-        "action_state": action_state,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "submitted_by": item.get("submitted_by"),
-        "target": {
-            "type": review_type,
-            "id": item.get("target_id") or item.get("plan_id") or item.get("artifact_id") or item_id,
-        },
-        "route": route,
-        "bff_detail_path": route,
-        "allowedActions": _management_json_clone(item.get("allowedActions") or {
-            "canReview": action_state == "pending",
-            "canRequestRevision": action_state == "pending",
-        }),
-    }
-    return _human_inbox_attach_common_fields(
-        projected,
-        inbox_type="governance_review",
-        source_dataset="governance_review_queue_items",
-        risk_level=risk_level,
-        created_at=created_at,
-        updated_at=updated_at,
-        href=route,
-        source_record=item,
-    )
-def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    decision_id = _management_record_id(item, "decision_id", "id", "approval_decision_id")
-    if not decision_id:
-        return None
-    decision_type = str(item.get("decision_type") or item.get("target_type") or "ApprovalDecision").strip()
-    risk_level = str(item.get("risk_level") or "unknown").strip().lower() or "unknown"
-    state = str(item.get("decision_state") or item.get("state") or "pending").strip().lower() or "pending"
-    context = item.get("decision_context") if isinstance(item.get("decision_context"), dict) else {}
-    governance_chain = context.get("governance_chain") if isinstance(context.get("governance_chain"), dict) else {}
-    priority = _human_inbox_priority(item.get("priority") or risk_level, fallback="medium")
-    risk_summary = str(context.get("risk_summary") or "").strip()
-    target_type = str(governance_chain.get("target_type") or decision_type or "ApprovalDecision").strip()
-    target_id = str(governance_chain.get("target_id") or governance_chain.get("linked_review_item_id") or "").strip()
-    action_state = "pending" if state in _HUMAN_INBOX_OPEN_APPROVAL_STATES else "resolved"
-    route = f"/management/approvals?approval={decision_id}"
-    created_at = item.get("submitted_at")
-    updated_at = item.get("updated_at") or created_at
-    projected = {
-        "id": f"approval:{decision_id}",
-        "inbox_id": f"approval:{decision_id}",
-        "inboxType": "approval",
-        "source_type": "approval",
-        "source_id": decision_id,
-        "approval_decision_id": decision_id,
-        "title": item.get("title") or f"{decision_type} approval",
-        "summary": risk_summary or "Approval decision awaiting human review.",
-        "priority": priority,
-        "risk_level": risk_level,
-        "status": state,
-        "action_state": action_state,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "submitted_by": item.get("submitted_by"),
-        "target": {
-            "type": target_type,
-            "id": target_id or None,
-        },
-        "route": route,
-        "bff_detail_path": f"/bff/approvals/{decision_id}",
-        "decision_context": json.loads(json.dumps(context)),
-        "allowedActions": json.loads(json.dumps(item.get("allowedActions") or {})),
-    }
-    return _human_inbox_attach_common_fields(
-        projected,
-        inbox_type="approval",
-        source_dataset="approval_queue_items",
-        risk_level=risk_level,
-        created_at=created_at,
-        updated_at=updated_at,
-        href=route,
-        source_record=item,
-    )
-def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    intervention_id = _management_record_id(record, "intervention_id", "id")
-    if not intervention_id:
-        return None
-    status = str(record.get("status") or "pending").strip().lower() or "pending"
-    kind = str(record.get("kind") or "hiq_sentinel").strip().lower() or "hiq_sentinel"
-    priority = _human_inbox_priority(
-        record.get("priority") or record.get("severity") or record.get("risk_level"),
-        fallback="critical" if status == "pending" and kind == "hiq_sentinel" else "high",
-    )
-    action_state = "pending" if status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES else "resolved"
-    raw_allowed_actions = record.get("allowedActions") if isinstance(record.get("allowedActions"), dict) else {}
-    allowed_actions = {
-        "canClaim": status == "pending",
-        "canRelease": status == "claimed",
-        "canEscalate": status == "pending",
-        "canDecide": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
-        "canRemediate": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
-        **raw_allowed_actions,
-    }
-    route = f"/management/interventions?intervention={intervention_id}"
-    created_at = record.get("triggered_at") or record.get("created_at")
-    updated_at = record.get("remediated_at") or record.get("updated_at") or created_at
-    projected = {
-        "id": f"intervention:{intervention_id}",
-        "inbox_id": f"intervention:{intervention_id}",
-        "inboxType": "intervention",
-        "source_type": "intervention",
-        "source_id": intervention_id,
-        "intervention_id": intervention_id,
-        "title": record.get("title") or f"{kind.replace('_', ' ').title()} intervention",
-        "summary": record.get("description") or "Human intervention is required before the loop can continue.",
-        "priority": priority,
-        "risk_level": str(record.get("risk_level") or priority).strip().lower(),
-        "status": status,
-        "action_state": action_state,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "triggered_by": record.get("triggered_by"),
-        "target": {
-            "type": record.get("target_type"),
-            "id": record.get("target_id"),
-        },
-        "route": route,
-        "bff_detail_path": f"/bff/v5/interventions/{intervention_id}",
-        "remediation_context": {
-            "kind": kind,
-            "remediation_action": record.get("remediation_action"),
-            "two_man_signature_id": record.get("two_man_signature_id"),
-            "correlation_id": record.get("correlation_id"),
-        },
-        "allowedActions": json.loads(json.dumps(allowed_actions)),
-    }
-    return _human_inbox_attach_common_fields(
-        projected,
-        inbox_type="intervention",
-        source_dataset="v5_interventions",
-        risk_level=str(record.get("risk_level") or priority).strip().lower(),
-        created_at=created_at,
-        updated_at=updated_at,
-        href=route,
-        source_record=record,
-    )
-def _human_inbox_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    finding_id = _management_record_id(record, "id", "finding_id", "incident_id")
-    if not finding_id:
-        return None
-    status = str(record.get("status") or "open").strip().lower() or "open"
-    if status not in _HUMAN_INBOX_OPEN_SENTINEL_STATUSES:
-        return None
-    kind = str(record.get("kind") or "sentinel_finding").strip().lower() or "sentinel_finding"
-    risk_level = str(record.get("severity") or record.get("risk_level") or "high").strip().lower() or "high"
-    priority = _human_inbox_priority(record.get("priority") or risk_level, fallback="high")
-    created_at = record.get("triggered_at") or record.get("created_at") or record.get("opened_at")
-    updated_at = record.get("updated_at") or record.get("last_seen_at") or created_at
-    runtime_id = record.get("runtime_id") or record.get("target_id")
-    persona_id = record.get("persona_id")
-    target_type = "Persona" if persona_id else "Runtime" if runtime_id else record.get("target_type")
-    target_id = persona_id or runtime_id or record.get("target_id") or finding_id
-    route = f"/management/sentinel?finding={finding_id}"
-    action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_SENTINEL_STATUSES)
-    projected = {
-        "id": f"sentinel_finding:{finding_id}",
-        "inbox_id": f"sentinel_finding:{finding_id}",
-        "inboxType": "sentinel_finding",
-        "source_type": "sentinel_finding",
-        "source_id": finding_id,
-        "finding_id": finding_id,
-        "title": record.get("title") or f"Sentinel finding: {kind}",
-        "summary": record.get("summary") or record.get("description") or "Sentinel finding requires operator review.",
-        "priority": priority,
-        "risk_level": risk_level,
-        "status": status,
-        "action_state": action_state,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "target": {
-            "type": target_type,
-            "id": target_id,
-        },
-        "route": route,
-        "bff_detail_path": f"/bff/v5/sentinel/findings/{finding_id}",
-        "sentinel_context": {
-            "kind": kind,
-            "runtime_id": runtime_id,
-            "persona_id": persona_id,
-            "derived_from_incident_id": record.get("derived_from_incident_id"),
-        },
-        "allowedActions": _management_json_clone(record.get("allowedActions") or {
-            "canReview": action_state == "pending",
-            "canRemediate": action_state == "pending",
-        }),
-    }
-    return _human_inbox_attach_common_fields(
-        projected,
-        inbox_type="sentinel_finding",
-        source_dataset="sentinel_findings",
-        risk_level=risk_level,
-        created_at=created_at,
-        updated_at=updated_at,
-        href=route,
-        source_record=record,
-    )
-def _human_inbox_persona_blocking_reasons(row: Dict[str, Any]) -> List[str]:
-    reasons: List[str] = []
-    current_work = str(row.get("current_work") or row.get("currentWork") or "").strip()
-    if current_work:
-        reasons.append(current_work)
-    recommendation = str(row.get("recommendation") or "").strip()
-    if recommendation:
-        reasons.append(f"governance recommendation: {recommendation}")
-    research_status = row.get("research_status") if isinstance(row.get("research_status"), dict) else {}
-    pending_task_ids = research_status.get("pending_task_ids")
-    if isinstance(pending_task_ids, list) and pending_task_ids:
-        reasons.append(f"pending research tasks: {', '.join(str(task_id) for task_id in pending_task_ids)}")
-    if row.get("can_deploy") is False or row.get("canDeploy") is False:
-        reasons.append("deployment is blocked until human review clears")
-    return reasons
-def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str) -> Optional[Dict[str, Any]]:
-    persona_id = _management_record_id(row, "persona_id", "personaId", "id")
-    if not persona_id or not bool(row.get("human_needed") or row.get("humanNeeded")):
-        return None
-    name = str(row.get("persona_name") or row.get("personaName") or row.get("name") or persona_id).strip()
-    status = str(row.get("state") or row.get("status") or "needs_human_approval").strip().lower()
-    research_status = row.get("research_status") if isinstance(row.get("research_status"), dict) else {}
-    current_projects = row.get("current_research_projects") if isinstance(row.get("current_research_projects"), list) else []
-    blocking_reasons = _human_inbox_persona_blocking_reasons(row)
-    risk_level = "high" if status in {"critical", "needs_human_approval", "blocked"} or blocking_reasons else "medium"
-    priority = _human_inbox_priority(row.get("priority") or risk_level, fallback=risk_level)
-    created_at = row.get("updated_at") or row.get("lastMutation") or row.get("last_mutation") or snapshot_at
-    route = f"/management/persona-fleet?persona={persona_id}"
-    summary = (
-        str(row.get("current_work") or row.get("currentWork") or "").strip()
-        or str(research_status.get("summary") or "").strip()
-        or "Persona readiness is blocked on human governance review."
-    )
-    projected = {
-        "id": f"readiness_blocker:persona:{persona_id}",
-        "inbox_id": f"readiness_blocker:persona:{persona_id}",
-        "inboxType": "readiness_blocker",
-        "source_type": "readiness_blocker",
-        "source_id": persona_id,
-        "persona_id": persona_id,
-        "title": f"Persona needs review: {name}",
-        "summary": summary,
-        "priority": priority,
-        "risk_level": risk_level,
-        "status": status,
-        "action_state": "pending",
-        "created_at": created_at,
-        "updated_at": created_at,
-        "target": {
-            "type": "persona",
-            "id": persona_id,
-        },
-        "route": route,
-        "bff_detail_path": f"/bff/management/human-inbox/readiness_blocker:persona:{persona_id}",
-        "blocking_reasons": list(blocking_reasons),
-        "can_proceed": False,
-        "research_context": {
-            "research_status": _management_json_clone(research_status),
-            "current_research_projects": _management_json_clone(current_projects),
-            "recommendation": row.get("recommendation"),
-            "current_work": row.get("current_work") or row.get("currentWork"),
-            "data_source_status": _management_json_clone(row.get("data_source_status") or {}),
-        },
-        "allowedActions": {
-            "canProceed": False,
-            "canDecide": False,
-            "canOpenPersonaFleet": True,
-            "canOpenResearch": bool(current_projects or research_status),
-            "canRequestRevision": True,
-        },
-    }
-    return _human_inbox_attach_common_fields(
-        projected,
-        inbox_type="readiness_blocker",
-        source_dataset="persona_fleet",
-        risk_level=risk_level,
-        created_at=created_at,
-        updated_at=created_at,
-        href=route,
-        source_record=row,
-    )
-_HUMAN_INBOX_PROMOTION_PRODUCER = "management_quarterly_ranking_recommendation_submit"
-_HUMAN_INBOX_INACTIVE_COMMAND_STATUSES = {
-    "canceled",
-    "cancelled",
-    "expired",
-    "failed",
-    "timed_out",
-    "timeout",
-}
-_HUMAN_INBOX_PROMOTION_SNAPSHOT_SCALARS = {
-    "action_id",
-    "action_label",
-    "archetype",
-    "binding_state",
-    "capital_mode",
-    "capital_pool_id",
-    "capital_scope",
-    "capital_scope_id",
-    "capital_sleeve_id",
-    "current_weight",
-    "current_weight_source",
-    "deployment_stage",
-    "eligible",
-    "exclusion_reason",
-    "formula_version",
-    "id",
-    "name",
-    "owner",
-    "paper_ledger_id",
-    "priority",
-    "quarter",
-    "rank",
-    "ranking_snapshot_id",
-    "rationale",
-    "recommendation_id",
-    "risk",
-    "risk_level",
-    "score",
-    "source_confidence",
-    "stage",
-    "state",
-    "target_weight",
-    "tier",
-    "tier_id",
-    "tier_label",
-    "persona_id",
-}
-_HUMAN_INBOX_PROMOTION_SNAPSHOT_STRING_LISTS = {
-    "artifact_ids",
-    "binding_ids",
-    "broker_ids",
-    "capital_pool_ids",
-    "exclusion_codes",
-    "exclusion_reasons",
-    "rationale_codes",
-    "runtime_ids",
-    "sleeve_ids",
-    "strategy_ids",
-}
-def _human_inbox_promotion_recommendation_id(command: Dict[str, Any]) -> str:
-    params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    target = command.get("target") if isinstance(command.get("target"), dict) else {}
-    return str(
-        params.get("recommendation_id")
-        or params.get("recommendationId")
-        or params.get("review_id")
-        or params.get("promotion_review_id")
-        or target.get("id")
-        or ""
-    ).strip()
-def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
-    if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
-        return False
-    if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
-        return False
-    params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    target = command.get("target") if isinstance(command.get("target"), dict) else {}
-    recommendation_id = _human_inbox_promotion_recommendation_id(command)
-    review_revision_id = _promotion_review_record_revision_id(command)
-    target_id = str(target.get("id") or "").strip()
-    if (
-        not recommendation_id
-        or target.get("type") != ObjectType.RANKING.value
-        or not review_revision_id
-        or target_id not in {recommendation_id, review_revision_id}
-    ):
-        return False
-    expected_quarter = _promotion_review_quarter_from_id(recommendation_id)
-    quarter = str(params.get("quarter") or "").strip().upper()
-    persona_id = str(params.get("persona_id") or "").strip()
-    action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    if not expected_quarter or quarter != expected_quarter or not persona_id:
-        return False
-    if action_id not in _PROMOTION_REVIEW_ACTION_IDS:
-        return False
-    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
-    if ranking_snapshot_id and review_revision_id != _promotion_review_revision_id(
-        recommendation_id,
-        ranking_snapshot_id,
-    ):
-        return False
-    for flag in (
-        "direct_live_capital_mutation",
-        "liveCapitalMutation",
-        "live_capital_mutation",
-        "runtime_mutation",
-    ):
-        if params.get(flag) not in (None, False):
-            return False
-
-    foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
-    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
-    audit_foundation = audit.get("foundation") if isinstance(audit.get("foundation"), dict) else {}
-    trusted_producer = (
-        foundation.get("trusted_evidence_producer")
-        or audit.get("trusted_evidence_producer")
-        or audit_foundation.get("trusted_evidence_producer")
-    )
-    if trusted_producer == _HUMAN_INBOX_PROMOTION_PRODUCER:
-        return True
-    # Legacy submissions from the dedicated semantic route predate the
-    # producer marker. Generic /bff/v1 command admission always persists an
-    # admission_route and must not manufacture viewer-visible inbox rows.
-    if foundation.get("admission_route"):
-        return False
-    if not foundation:
-        # Pre-foundation command-store rows were written by the dedicated
-        # semantic submit route. API-admitted generic commands always carry an
-        # admission_route, so this compatibility path cannot be reached by a
-        # current generic command request.
-        return True
-    return (
-        params.get("source_type") == "quarterly_ranking_recommendation"
-        and params.get("source_record_id") == recommendation_id
-        and params.get("audit_event") == "quarterly_ranking.recommendation_submitted"
-        and params.get("policy") == "promotion_governance_human_gate_no_direct_live_capital"
-    )
-def _human_inbox_sanitize_promotion_snapshot(
-    command: Dict[str, Any],
-) -> Optional[Dict[str, Any]]:
-    if not _human_inbox_trusted_promotion_submission(command):
-        return None
-    params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    recommendation_id = _human_inbox_promotion_recommendation_id(command)
-    expected_quarter = str(_promotion_review_quarter_from_id(recommendation_id) or "").upper()
-    persona_id = str(params.get("persona_id") or "").strip()
-    action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    raw_snapshot = params.get("source_recommendation")
-    if raw_snapshot is not None and not isinstance(raw_snapshot, dict):
-        return None
-    raw = raw_snapshot if isinstance(raw_snapshot, dict) else {}
-
-    for snapshot_id in (raw.get("id"), raw.get("recommendation_id")):
-        if snapshot_id not in (None, "") and str(snapshot_id).strip() != recommendation_id:
-            return None
-    snapshot_quarter = str(raw.get("quarter") or expected_quarter).strip().upper()
-    snapshot_persona = str(raw.get("persona_id") or persona_id).strip()
-    snapshot_action = str(raw.get("action_id") or action_id).strip()
-    if (
-        snapshot_quarter != expected_quarter
-        or snapshot_persona != persona_id
-        or snapshot_action != action_id
-    ):
-        return None
-    params_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
-    raw_snapshot_id = str(raw.get("ranking_snapshot_id") or "").strip()
-    if params_snapshot_id and raw_snapshot_id != params_snapshot_id:
-        return None
-
-    sanitized: Dict[str, Any] = {}
-    for key in _HUMAN_INBOX_PROMOTION_SNAPSHOT_SCALARS:
-        value = raw.get(key)
-        if value is None or isinstance(value, (dict, list)):
-            continue
-        sanitized[key] = value
-    for key in _HUMAN_INBOX_PROMOTION_SNAPSHOT_STRING_LISTS:
-        value = raw.get(key)
-        if isinstance(value, list):
-            sanitized[key] = [str(item) for item in value if isinstance(item, (str, int, float))]
-    for key in ("components", "metrics"):
-        value = raw.get(key)
-        if isinstance(value, dict):
-            sanitized[key] = {
-                str(metric): number
-                for metric, number in value.items()
-                if isinstance(number, (int, float)) and not isinstance(number, bool)
-            }
-
-    sanitized.update(
-        {
-            "id": recommendation_id,
-            "recommendation_id": recommendation_id,
-            "quarter": expected_quarter,
-            "persona_id": persona_id,
-            "action_id": action_id,
-            "name": sanitized.get("name") or params.get("persona_name") or persona_id,
-            "priority": sanitized.get("priority") or params.get("priority") or "high",
-            "risk_level": sanitized.get("risk_level") or params.get("risk_level") or "high",
-            "rationale": sanitized.get("rationale")
-            or params.get("rationale")
-            or "Submitted ranking recommendation requires Human Gate review.",
-            # Evidence bodies are request-scoped and may contain privileged
-            # material. Never replay arbitrary command params onto a read row.
-            "evidence_refs": [],
-            "evidence_ref_ids": [],
-        }
-    )
-    if params_snapshot_id:
-        sanitized["ranking_snapshot_id"] = params_snapshot_id
-    review_revision_id = _promotion_review_record_revision_id(command)
-    if not review_revision_id:
-        return None
-    sanitized["review_id"] = review_revision_id
-    sanitized["promotion_review_id"] = review_revision_id
-    stage_from = str(params.get("stage_from") or sanitized.get("stage") or sanitized.get("state") or "").strip()
-    if stage_from:
-        sanitized.setdefault("stage", stage_from)
-        sanitized.setdefault("state", stage_from)
-    expected_path = _promotion_review_stage_path(sanitized)
-    for param_key, path_key in (
-        ("stage_from", "from_stage"),
-        ("stage_to", "target_stage"),
-        ("review_kind", "review_kind"),
-    ):
-        value = str(params.get(param_key) or "").strip()
-        if value and value != str(expected_path.get(path_key) or ""):
-            return None
-    return sanitized
-def _human_inbox_submission_projection_from_record(
-    command: Dict[str, Any],
-    recommendation_id: str,
-) -> Dict[str, Any]:
-    params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
-    review_revision_id = _promotion_review_record_revision_id(command)
-    return {
-        "submitted": True,
-        "submit_status": command.get("status"),
-        "command_id": command.get("command_id"),
-        "commandId": command.get("command_id"),
-        "receipt_id": command.get("command_id"),
-        "submitted_at": command.get("submitted_at"),
-        "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
-        "recommendation_id": recommendation_id,
-        "review_id": review_revision_id,
-        "promotion_review_id": review_revision_id,
-        "recommendation_action_id": params.get("recommendation_action_id")
-        or params.get("recommendationActionId"),
-        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
-        "quarter": params.get("quarter"),
-        "persona_id": params.get("persona_id"),
-        "stage_from": params.get("stage_from"),
-        "stage_to": params.get("stage_to"),
-        "review_kind": params.get("review_kind"),
-        "human_inbox_id": _promotion_review_target_id(review_revision_id),
-        "live_capital_mutation": False,
-        "requires_human_gate_decision": True,
-    }
-def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
-    command_type = str(command.get("type") or "")
-    if command_type not in {
-        CommandType.HUMAN_GATE_APPROVE.value,
-        CommandType.HUMAN_GATE_REJECT.value,
-    }:
-        return ""
-    target = command.get("target") if isinstance(command.get("target"), dict) else {}
-    if target.get("type") != ObjectType.HUMAN_GATE_ITEM.value:
-        return ""
-    params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    raw_target_id = str(target.get("id") or "").strip()
-    review_revision_id = _promotion_review_clean_id(raw_target_id)
-    if (
-        not review_revision_id
-        or raw_target_id != _promotion_review_target_id(review_revision_id)
-    ):
-        return ""
-    recommendation_id = str(
-        params.get("recommendation_id")
-        or params.get("recommendationId")
-        or _promotion_review_revision_recommendation_id(review_revision_id)
-    ).strip()
-    if (
-        not recommendation_id
-        or _promotion_review_revision_recommendation_id(review_revision_id)
-        != recommendation_id
-    ):
-        return ""
-    for key in (
-        "human_gate_item_id",
-        "humanGateItemId",
-        "review_id",
-        "reviewId",
-        "promotion_review_id",
-        "promotionReviewId",
-    ):
-        alias = params.get(key)
-        if (
-            alias not in (None, "")
-            and _promotion_review_clean_id(alias) != review_revision_id
-        ):
-            return ""
-    for key in ("recommendation_id", "recommendationId"):
-        alias = params.get(key)
-        if alias not in (None, "") and str(alias).strip() != recommendation_id:
-            return ""
-    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
-    if ranking_snapshot_id:
-        if review_revision_id != _promotion_review_revision_id(
-            recommendation_id,
-            ranking_snapshot_id,
-        ):
-            return ""
-    elif review_revision_id != recommendation_id:
-        # A revision-aware decision without its snapshot lineage is unsafe.
-        return ""
-    return review_revision_id
-def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
-        return None
-    review_revision_id = _human_inbox_decision_recommendation_id(command)
-    if not review_revision_id:
-        return None
-    params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    decision = str(params.get("decision") or "").strip().lower()
-    if decision not in _PROMOTION_REVIEW_DECISIONS:
-        return None
-    command_type = str(command.get("type") or "")
-    if command_type == CommandType.HUMAN_GATE_REJECT.value and decision != "reject":
-        return None
-    if command_type == CommandType.HUMAN_GATE_APPROVE.value and decision not in {
-        "approve",
-        "approve_with_conditions",
-    }:
-        return None
-    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
-    projection: Dict[str, Any] = {
-        "decision": decision,
-        "decision_status": "accepted",
-        "command_id": command.get("command_id"),
-        "commandId": command.get("command_id"),
-        "receipt_id": command.get("command_id"),
-        "submitted_at": command.get("submitted_at"),
-        "decided_at": command.get("submitted_at"),
-        "decided_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
-        "command_status": command.get("status"),
-        "review_id": review_revision_id,
-        "promotion_review_id": review_revision_id,
-        "recommendation_id": params.get("recommendation_id")
-        or params.get("recommendationId")
-        or _promotion_review_revision_recommendation_id(
-            review_revision_id
-        ),
-        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
-        "live_capital_mutation": False,
-        "requires_human_gate_decision": True,
-    }
-    rationale = params.get("rationale") or params.get("reason") or params.get("rejection_reason") or params.get("memo")
-    if rationale not in (None, ""):
-        projection["rationale"] = rationale
-    if "conditions" in params:
-        projection["conditions"] = _management_json_clone(params.get("conditions"))
-    return projection
-def _human_inbox_promotion_review_from_projection(
-    recommendation: Dict[str, Any],
-    *,
-    submission: Dict[str, Any],
-    decision: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    recommendation_id = str(
-        recommendation.get("recommendation_id")
-        or recommendation.get("id")
-        or ""
-    )
-    review_id = str(
-        recommendation.get("promotion_review_id")
-        or recommendation.get("review_id")
-        or _promotion_review_revision_id(
-            recommendation_id,
-            recommendation.get("ranking_snapshot_id"),
-        )
-    )
-    stage_path = _promotion_review_stage_path(recommendation)
-    decision_status = "accepted" if decision else "pending"
-    item: Dict[str, Any] = {
-        **{
-            key: _management_json_clone(value)
-            for key, value in recommendation.items()
-            if key not in {"id", "status"}
-        },
-        "id": review_id,
-        "review_id": review_id,
-        "promotion_review_id": review_id,
-        "recommendation_id": recommendation_id,
-        "status": "decision_accepted" if decision else "pending_human_gate",
-        "decision_status": decision_status,
-        "submitted": True,
-        "submit_status": submission.get("submit_status"),
-        "human_inbox_id": _promotion_review_target_id(review_id),
-        "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
-        "allowedActions": {
-            "canSubmit": False,
-            "canApprove": not bool(decision),
-            "canApproveWithConditions": not bool(decision),
-            "canReject": not bool(decision),
-        },
-        "promotion_path": stage_path,
-        "review_kind": stage_path.get("review_kind"),
-        "source_recommendation": _management_json_clone(recommendation),
-        "submission": submission,
-        "governance": {
-            "requires_human_gate_decision": True,
-            "decision_status": decision_status,
-            "live_capital_mutation": False,
-            "direct_live_capital_mutation": False,
-            "policy": "promotion_governance_human_gate_no_direct_live_capital",
-        },
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-        "direct_live_capital_mutation": False,
-        "policy": "promotion_governance_human_gate_no_direct_live_capital",
-        "links": {
-            "persona": f"/bff/personas/{recommendation.get('persona_id')}",
-            "recommendation": "/bff/management/quarterly-ranking/recommendations",
-            "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
-            "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
-            "human_inbox": f"/bff/management/human-inbox/{quote(_promotion_review_target_id(review_id), safe='')}",
-        },
-    }
-    if decision:
-        item["decision"] = decision
-    return item
-def _submitted_promotion_review_record_from_command(
-    command: Dict[str, Any],
-    *,
-    decision: Optional[Dict[str, Any]] = None,
-) -> Optional[Dict[str, Any]]:
-    """Project one trusted durable submission without rebuilding PM12 reads."""
-    recommendation = _human_inbox_sanitize_promotion_snapshot(command)
-    if recommendation is None:
-        return None
-    recommendation_id = str(recommendation["recommendation_id"])
-    review_id = _promotion_review_record_revision_id(command)
-    if not review_id:
-        return None
-    return _human_inbox_promotion_review_from_projection(
-        recommendation,
-        submission=_human_inbox_submission_projection_from_record(command, recommendation_id),
-        decision=decision,
-    )
-def _submitted_promotion_review_records(
-    identity: OperatorIdentity,
-    *,
-    snapshot_at: str,
-) -> List[Dict[str, Any]]:
-    del identity, snapshot_at  # Projection is identity-stable; evidence is always stripped.
-    submissions: Dict[str, Dict[str, Any]] = {}
-    decisions: Dict[str, Dict[str, Any]] = {}
-    # One command-log read per aggregate, regardless of submitted row count.
-    for command in command_store._get_all_commands():
-        if command.get("type") == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
-            recommendation = _human_inbox_sanitize_promotion_snapshot(command)
-            if recommendation is not None:
-                review_id = _promotion_review_record_revision_id(command)
-                if review_id:
-                    submissions[review_id] = command
-            continue
-        review_id = _human_inbox_decision_recommendation_id(command)
-        decision = _human_inbox_decision_projection_from_record(command)
-        if review_id and decision is not None:
-            decisions[review_id] = decision
-
-    records: List[Dict[str, Any]] = []
-    for review_id, command in submissions.items():
-        review = _submitted_promotion_review_record_from_command(
-            command,
-            decision=decisions.get(review_id),
-        )
-        if review is not None:
-            records.append(review)
-    return records
-def _human_inbox_promotion_review_item(review: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    review_id = str(review.get("review_id") or review.get("promotion_review_id") or "").strip()
-    if not review_id:
-        return None
-    decision_status = str(review.get("decision_status") or "pending").strip().lower() or "pending"
-    status = "accepted" if decision_status == "accepted" else "pending"
-    risk_level = str(review.get("risk_level") or "high").strip().lower() or "high"
-    priority = _human_inbox_priority(review.get("priority") or risk_level, fallback="high")
-    submission = review.get("submission") if isinstance(review.get("submission"), dict) else {}
-    created_at = submission.get("submitted_at") or review.get("created_at")
-    updated_at = (review.get("decision") or {}).get("decided_at") if isinstance(review.get("decision"), dict) else None
-    updated_at = updated_at or created_at
-    inbox_id = _promotion_review_target_id(review_id)
-    route = f"/management/human-inbox/{quote(inbox_id, safe='')}"
-    action_state = "pending" if status == "pending" else "resolved"
-    stage_path = review.get("promotion_path") if isinstance(review.get("promotion_path"), dict) else {}
-    projected = {
-        "id": inbox_id,
-        "inbox_id": inbox_id,
-        "inboxType": "promotion_review",
-        "source_type": "promotion_review",
-        "source_id": review_id,
-        "review_id": review_id,
-        "promotion_review_id": review_id,
-        "recommendation_id": review.get("recommendation_id"),
-        "persona_id": review.get("persona_id"),
-        "title": f"Persona governance review: {review.get('name') or review.get('persona_id')}",
-        "summary": review.get("rationale") or "Persona ranking recommendation requires Human Gate approval.",
-        "priority": priority,
-        "risk_level": risk_level,
-        "status": status,
-        "action_state": action_state,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "submitted_by": submission.get("submitted_by"),
-        "target": {
-            "type": "persona",
-            "id": review.get("persona_id"),
-        },
-        "route": route,
-        "bff_detail_path": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
-        "decisionHref": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
-        "detailHref": route,
-        "promotion_review": _management_json_clone(review),
-        "promotion_context": {
-            "from_stage": stage_path.get("from_stage"),
-            "target_stage": stage_path.get("target_stage"),
-            "review_kind": review.get("review_kind") or stage_path.get("review_kind"),
-            "action_id": review.get("action_id"),
-            "ranking_snapshot_id": review.get("ranking_snapshot_id"),
-            "live_capital_mutation": False,
-        },
-        "allowedActions": _management_json_clone(review.get("allowedActions") or {
-            "canApprove": action_state == "pending",
-            "canApproveWithConditions": action_state == "pending",
-            "canReject": action_state == "pending",
-        }),
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-    }
-    return _human_inbox_attach_common_fields(
-        projected,
-        inbox_type="promotion_review",
-        source_dataset="promotion_reviews",
-        risk_level=risk_level,
-        created_at=created_at,
-        updated_at=updated_at,
-        href=route,
-        source_record=review,
-    )
-def _human_inbox_project_items(
-    *,
-    snapshot_at: str,
-    review_records: Sequence[Dict[str, Any]],
-    approval_records: Sequence[Dict[str, Any]],
-    intervention_records: Sequence[Dict[str, Any]],
-    sentinel_records: Sequence[Dict[str, Any]],
-    persona_rows: Sequence[Dict[str, Any]],
-    promotion_review_records: Sequence[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """Project already-loaded contributors into the canonical inbox rows."""
-    items: List[Dict[str, Any]] = []
-    projectors: Sequence[tuple[Sequence[Dict[str, Any]], Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]]] = (
-        (review_records, _human_inbox_governance_review_item),
-        (approval_records, _human_inbox_approval_item),
-        (intervention_records, _human_inbox_intervention_item),
-        (sentinel_records, _human_inbox_sentinel_item),
-        (
-            persona_rows,
-            lambda row: _human_inbox_persona_readiness_item(row, snapshot_at=snapshot_at),
-        ),
-        (promotion_review_records, _human_inbox_promotion_review_item),
-    )
-    for records, projector in projectors:
-        for record in records:
-            projected = projector(record)
-            if projected is not None:
-                items.append(projected)
-    items.sort(
-        key=lambda item: (
-            _HUMAN_INBOX_PRIORITY_RANK.get(str(item.get("priority") or "unknown"), 0),
-            str(item.get("created_at") or ""),
-            str(item.get("id") or ""),
-        ),
-        reverse=True,
-    )
-    return items
-def _human_inbox_governance_contributor(
-    snapshot_at: str,
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    records = list(read_store.list_governance_review_queue_items() or [])
-    return records, _dataset_surface_status(
-        "governance_review_queue_items",
-        snapshot_at=snapshot_at,
-        has_data=bool(records),
-        missing_message="Governance review queue has no readable source records.",
-        source=_dataset_source_after_read("governance_review_queue_items"),
-    )
-def _human_inbox_approval_contributor(
-    snapshot_at: str,
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    records = list(read_store.list_approval_queue_items() or [])
-    return records, _dataset_surface_status(
-        "approval_queue_items",
-        snapshot_at=snapshot_at,
-        has_data=bool(records),
-        missing_message="Approval queue has no readable source records.",
-        source=_dataset_source_after_read("approval_queue_items"),
-    )
-def _human_inbox_intervention_contributor(
-    snapshot_at: str,
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    records = list(_v5_intervention_records())
-    surface = _dataset_surface_status(
-        "v5_interventions",
-        snapshot_at=snapshot_at,
-        has_data=bool(records),
-        missing_message="V5 interventions have no readable source records.",
-        source=_dataset_source_after_read("v5_interventions"),
-    )
-    local_ids = {
-        str(record.get("intervention_id") or record.get("id") or "")
-        for record in _V5_INTERVENTIONS_STORE
-        if isinstance(record, dict)
-    }
-    has_local_record = any(
-        str(record.get("intervention_id") or record.get("id") or "") in local_ids
-        for record in records
-    )
-    if has_local_record and surface.get("source") == "missing":
-        surface = {**_surface_status(), "source": "bff_local_registry"}
-    return records, surface
-def _human_inbox_sentinel_contributor(
-    snapshot_at: str,
-) -> tuple[tuple[bool, List[Dict[str, Any]]], Dict[str, Any]]:
-    available, raw_records = read_store.list_sentinel_findings()
-    records = list(raw_records or [])
-    incidents_source = _dataset_source_after_read("incidents")
-    if incidents_source != "missing":
-        surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
-    else:
-        surface = _dataset_surface_status(
-            "sentinel_findings",
-            snapshot_at=snapshot_at,
-            source=_dataset_source_after_read("sentinel_findings") if available else "missing",
-        )
-    return (bool(available), records), surface
-def _build_persona_readiness_items(snapshot_at: str) -> List[Dict[str, Any]]:
-    """Build only the persona fields consumed by Human Inbox readiness rows.
-
-    The full Fleet projection performs per-persona binding, runtime, strategy,
-    source-health, incident, and evolution reads. Human Inbox does not consume
-    those fields, so using it here created a large N+1 latency chain. This
-    projection deliberately performs one persona read and one league read and
-    reuses the loaded personas when deriving market context defaults.
-    """
-    personas = list(
-        read_store.list_personas(include_market_persona_defaults=True) or []
-    )
-    league_by_persona = {
-        str(item.get("persona_id") or item.get("id") or "").strip(): item
-        for item in (
-            read_store.list_persona_league(
-                include_market_persona_defaults=True,
-            )
-            or []
-        )
-        if str(item.get("persona_id") or item.get("id") or "").strip()
-    }
-    context_defaults = _persona_fleet_context_defaults_by_market(personas)
-    rows: List[Dict[str, Any]] = []
-    for persona in personas:
-        persona_id = _persona_id(persona)
-        if not persona_id:
-            continue
-        metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
-        context_metadata, _context_persona = _persona_fleet_context_overlay(
-            persona,
-            metadata,
-            context_defaults,
-        )
-        league_entry = league_by_persona.get(persona_id, {})
-        governance_required = bool(
-            league_entry.get("governance_required")
-            if "governance_required" in league_entry
-            else context_metadata.get("governance_required", True)
-        )
-        recommendation = (
-            league_entry.get("recommendation")
-            or context_metadata.get("recommended_governance_action")
-            or ""
-        )
-        human_needed = governance_required and str(recommendation).strip().lower() not in {
-            "",
-            "none",
-            "no_change",
-        }
-        research_status = (
-            context_metadata.get("research_status")
-            if isinstance(context_metadata.get("research_status"), dict)
-            else {}
-        )
-        current_projects = (
-            context_metadata.get("current_research_projects")
-            if isinstance(context_metadata.get("current_research_projects"), list)
-            else []
-        )
-        can_deploy = research_status.get("can_deploy")
-        if can_deploy is None:
-            can_deploy = context_metadata.get("can_deploy")
-        rows.append(
-            {
-                "id": persona_id,
-                "persona_id": persona_id,
-                "name": persona.get("name") or persona_id,
-                "persona_name": persona.get("name") or persona_id,
-                "human_needed": human_needed,
-                "state": str(
-                    metadata.get("persona_status")
-                    or league_entry.get("status")
-                    or persona.get("status")
-                    or persona.get("lifecycle_state")
-                    or "unknown"
-                ),
-                "current_work": context_metadata.get("current_work"),
-                "recommendation": recommendation,
-                "can_deploy": can_deploy,
-                "priority": league_entry.get("priority") or context_metadata.get("priority"),
-                "updated_at": (
-                    league_entry.get("updated_at")
-                    or persona.get("updated_at")
-                    or persona.get("last_active_at")
-                    or snapshot_at
-                ),
-                "research_status": _management_json_clone(research_status),
-                "current_research_projects": _management_json_clone(current_projects),
-                "data_source_status": _management_json_clone(
-                    context_metadata.get("data_source_status") or {}
-                ),
-            }
-        )
-    return rows
-def _human_inbox_persona_contributor(
-    snapshot_at: str,
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    rows = list(_build_persona_readiness_items(snapshot_at) or [])
-    return rows, _composed_dataset_surface_status(
-        "persona_fleet",
-        rows,
-        snapshot_at=snapshot_at,
-        source="bff_composed",
-    )
-def _human_inbox_promotion_contributor(
-    identity: OperatorIdentity,
-    snapshot_at: str,
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    records = _submitted_promotion_review_records(identity, snapshot_at=snapshot_at)
-    return records, {**_surface_status(), "source": "command_store"}
-def _human_inbox_all_items(
-    snapshot_at: Optional[str] = None,
-    *,
-    identity: Optional[OperatorIdentity] = None,
-    source_types: Optional[set[str]] = None,
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    snapshot_at = snapshot_at or utc_now()
-    include_all = not source_types
-    review_records: List[Dict[str, Any]] = []
-    approval_records: List[Dict[str, Any]] = []
-    intervention_records: List[Dict[str, Any]] = []
-    sentinel_available = False
-    sentinel_records: List[Dict[str, Any]] = []
-    persona_rows: List[Dict[str, Any]] = []
-    promotion_review_records: List[Dict[str, Any]] = []
-    surfaces: Dict[str, Dict[str, Any]] = {}
-    if include_all or "governance_review" in source_types:
-        review_records, surfaces["governance_review_queue"] = _human_inbox_governance_contributor(snapshot_at)
-    if include_all or "approval" in source_types:
-        approval_records, surfaces["approval_queue"] = _human_inbox_approval_contributor(snapshot_at)
-    if include_all or "intervention" in source_types:
-        intervention_records, surfaces["v5_interventions"] = _human_inbox_intervention_contributor(snapshot_at)
-    if include_all or "sentinel_finding" in source_types:
-        sentinel_result, surfaces["sentinel_findings"] = _human_inbox_sentinel_contributor(snapshot_at)
-        sentinel_available, sentinel_records = sentinel_result
-    if include_all or "readiness_blocker" in source_types:
-        persona_rows, surfaces["persona_readiness"] = _human_inbox_persona_contributor(snapshot_at)
-    if identity is not None and (include_all or "promotion_review" in source_types):
-        promotion_review_records, surfaces["promotion_reviews"] = _human_inbox_promotion_contributor(
-            identity,
-            snapshot_at,
-        )
-    items = _human_inbox_project_items(
-        snapshot_at=snapshot_at,
-        review_records=review_records,
-        approval_records=approval_records,
-        intervention_records=intervention_records,
-        sentinel_records=sentinel_records,
-        persona_rows=persona_rows,
-        promotion_review_records=promotion_review_records,
-    )
-    return items, {
-        "governance_review_records": review_records,
-        "approval_records": approval_records,
-        "intervention_records": intervention_records,
-        "sentinel_available": sentinel_available,
-        "sentinel_records": sentinel_records,
-        "persona_rows": persona_rows,
-        "promotion_review_records": promotion_review_records,
-        "surfaces": surfaces,
-    }
-def _human_inbox_filter_items(
-    items: List[Dict[str, Any]],
-    *,
-    source_type: Optional[str] = None,
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    source_types = _human_inbox_csv_filter(source_type)
-    statuses = _human_inbox_csv_filter(status)
-    priorities = _human_inbox_csv_filter(priority)
-    filtered = items
-    if source_types:
-        filtered = [
-            item for item in filtered
-            if str(item.get("source_type") or item.get("inboxType") or "").lower() in source_types
-        ]
-    if statuses:
-        filtered = [
-            item for item in filtered
-            if str(item.get("status") or "").lower() in statuses
-            or str(item.get("action_state") or "").lower() in statuses
-        ]
-    if priorities:
-        filtered = [
-            item for item in filtered
-            if str(item.get("priority") or "").lower() in priorities
-            or str(item.get("risk_level") or "").lower() in priorities
-        ]
-    return filtered
-def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
-    pending_items = [item for item in items if str(item.get("action_state") or "") == "pending"]
-    by_type = _management_count_by(items, "inboxType")
-    by_status = _management_count_by(items, "status")
-    highest_risk_level = _highest_ranked_value(
-        [str(item.get("riskLevel") or item.get("risk_level") or "") for item in items],
-        _MANAGEMENT_RISK_LEVEL_ORDER,
-    )
-    return {
-        "total": len(items),
-        "total_items": len(items),
-        "returned_items": returned_count,
-        "pending_items": len(pending_items),
-        "by_type": by_type,
-        "by_status": by_status,
-        "highest_risk_level": highest_risk_level,
-        "governance_review_count": len([item for item in items if item.get("source_type") == "governance_review"]),
-        "approval_count": len([item for item in items if item.get("source_type") == "approval"]),
-        "intervention_count": len([item for item in items if item.get("source_type") == "intervention"]),
-        "sentinel_finding_count": len([item for item in items if item.get("source_type") == "sentinel_finding"]),
-        "readiness_blocker_count": len([item for item in items if item.get("source_type") == "readiness_blocker"]),
-        "critical_count": len([item for item in items if item.get("priority") == "critical"]),
-        "high_count": len([item for item in items if item.get("priority") == "high"]),
-    }
-def _human_inbox_loaded_surface(
-    *,
-    snapshot_at: str,
-    source: str,
-    available: bool = True,
-    has_data: Optional[bool] = None,
-    empty_is_unavailable: bool = False,
-    missing_message: Optional[str] = None,
-) -> Dict[str, Any]:
-    surface = dict(_surface_status())
-    surface["source"] = source
-    if not available or (empty_is_unavailable and has_data is False):
-        surface["status"] = "unavailable"
-        surface["source"] = "missing" if not available else source
-        if missing_message:
-            surface["message"] = missing_message
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        )
-    return surface
-def _human_inbox_surfaces(
-    *,
-    snapshot_at: str,
-    governance_review_records: List[Dict[str, Any]],
-    approval_records: List[Dict[str, Any]],
-    intervention_records: List[Dict[str, Any]],
-    sentinel_available: bool,
-    sentinel_records: List[Dict[str, Any]],
-    persona_rows: List[Dict[str, Any]],
-    promotion_review_records: List[Dict[str, Any]],
-    source_types: Optional[set[str]] = None,
-    surface_failures: Optional[Dict[str, Dict[str, Any]]] = None,
-    loaded_surfaces: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    include_all = not source_types
-    failures = surface_failures or {}
-    provenance = loaded_surfaces or {}
-    contributor_surfaces: Dict[str, Dict[str, Any]] = {}
-
-    if include_all or "governance_review" in source_types:
-        contributor_surfaces["governance_review_queue"] = failures.get(
-            "governance_review_queue"
-        ) or provenance.get("governance_review_queue") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="read_store",
-            has_data=bool(governance_review_records),
-            empty_is_unavailable=True,
-            missing_message="Governance review queue has no readable source records.",
-        )
-    if include_all or "approval" in source_types:
-        contributor_surfaces["approval_queue"] = failures.get(
-            "approval_queue"
-        ) or provenance.get("approval_queue") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="read_store",
-            has_data=bool(approval_records),
-            empty_is_unavailable=True,
-            missing_message="Approval queue has no readable source records.",
-        )
-    if include_all or "intervention" in source_types:
-        local_intervention_ids = {
-            str(record.get("intervention_id") or record.get("id") or "")
-            for record in _V5_INTERVENTIONS_STORE
-            if isinstance(record, dict)
-        }
-        has_local_intervention = any(
-            str(record.get("intervention_id") or record.get("id") or "") in local_intervention_ids
-            for record in intervention_records
-        )
-        contributor_surfaces["v5_interventions"] = failures.get(
-            "v5_interventions"
-        ) or provenance.get("v5_interventions") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="bff_local_registry" if has_local_intervention else "read_store",
-            has_data=bool(intervention_records),
-            empty_is_unavailable=True,
-            missing_message="V5 interventions have no readable source records.",
-        )
-    if include_all or "sentinel_finding" in source_types:
-        contributor_surfaces["sentinel_findings"] = failures.get(
-            "sentinel_findings"
-        ) or provenance.get("sentinel_findings") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="read_store" if sentinel_available else "missing",
-            available=sentinel_available,
-            has_data=bool(sentinel_records),
-            missing_message="Sentinel findings have no readable source records.",
-        )
-    if include_all or "readiness_blocker" in source_types:
-        contributor_surfaces["persona_readiness"] = failures.get(
-            "persona_readiness"
-        ) or provenance.get("persona_readiness") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="bff_composed",
-            has_data=bool(persona_rows),
-        )
-    if include_all or "promotion_review" in source_types:
-        contributor_surfaces["promotion_reviews"] = failures.get(
-            "promotion_reviews"
-        ) or provenance.get("promotion_reviews") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="command_store",
-            has_data=bool(promotion_review_records),
-        )
-
-    aggregate_surface = _aggregate_group_surface(
-        "human_inbox",
-        list(contributor_surfaces.values()),
-        snapshot_at=snapshot_at,
-        unavailable_message="Human inbox aggregate unavailable.",
-        degraded_message="Human inbox aggregate is available, but one or more contributing surfaces are degraded.",
-    )
-    return {
-        "human_inbox": aggregate_surface,
-        **contributor_surfaces,
-    }
-def _human_inbox_payload_from_loaded(
-    snapshot_at: str,
-    *,
-    items: List[Dict[str, Any]],
-    sources: Dict[str, Any],
-    source_types: Optional[set[str]],
-    source_type: Optional[str] = None,
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: Optional[int] = 20,
-    surface_failures: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    filtered = _human_inbox_filter_items(
-        items,
-        source_type=source_type,
-        status=status,
-        priority=priority,
-    )
-    total = len(filtered)
-    if page_size is None:
-        page_items = filtered
-        next_page_token = None
-        returned_page_size = len(page_items)
-    else:
-        page_items, next_page_token = _page_slice(filtered, page_token, page_size)
-        returned_page_size = page_size
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = _human_inbox_surfaces(
-        snapshot_at=snapshot_at,
-        governance_review_records=sources["governance_review_records"],
-        approval_records=sources["approval_records"],
-        intervention_records=sources["intervention_records"],
-        sentinel_available=bool(sources["sentinel_available"]),
-        sentinel_records=sources["sentinel_records"],
-        persona_rows=sources["persona_rows"],
-        promotion_review_records=sources["promotion_review_records"],
-        source_types=source_types,
-        surface_failures=surface_failures,
-        loaded_surfaces=sources.get("surfaces"),
-    )
-    if surface_failures:
-        meta["partial"] = True
-        meta["degradation"] = {
-            "reason": "one_or_more_human_inbox_contributors_incomplete",
-            "contributors": sorted(surface_failures),
-        }
-    summary = _human_inbox_summary(filtered, len(page_items))
-    canonical_page_items = _management_prune_camel_aliases(page_items)
-    return {
-        "data": {
-            "id": "management-human-inbox",
-            "items": canonical_page_items,
-            "summary": summary,
-        },
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-            "page_size": returned_page_size,
-        },
-        "meta": meta,
-    }
-def _human_inbox_payload(
-    snapshot_at: str,
-    *,
-    identity: Optional[OperatorIdentity] = None,
-    source_type: Optional[str] = None,
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: Optional[int] = 20,
-) -> Dict[str, Any]:
-    source_types = _human_inbox_csv_filter(source_type)
-    items, sources = _human_inbox_all_items(snapshot_at, identity=identity, source_types=source_types)
-    return _human_inbox_payload_from_loaded(
-        snapshot_at,
-        items=items,
-        sources=sources,
-        source_types=source_types,
-        source_type=source_type,
-        status=status,
-        priority=priority,
-        page_token=page_token,
-        page_size=page_size,
-    )
-_MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
-_MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG: Optional[Tuple[str, float]] = None
+from .governance.human_inbox import (
+    _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES,
+    _HUMAN_INBOX_OPEN_APPROVAL_STATES,
+    _HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES,
+    _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
+    _HUMAN_INBOX_OPEN_SENTINEL_STATUSES,
+    _HUMAN_INBOX_PRIORITY_RANK,
+    _HUMAN_INBOX_PROMOTION_PRODUCER,
+    _HUMAN_INBOX_PROMOTION_SNAPSHOT_SCALARS,
+    _HUMAN_INBOX_PROMOTION_SNAPSHOT_STRING_LISTS,
+    _build_persona_readiness_items,
+    _human_inbox_action_state,
+    _human_inbox_all_items,
+    _human_inbox_approval_contributor,
+    _human_inbox_approval_item,
+    _human_inbox_attach_common_fields,
+    _human_inbox_csv_filter,
+    _human_inbox_decision_projection_from_record,
+    _human_inbox_decision_recommendation_id,
+    _human_inbox_filter_items,
+    _human_inbox_governance_contributor,
+    _human_inbox_governance_review_item,
+    _human_inbox_intervention_contributor,
+    _human_inbox_intervention_item,
+    _human_inbox_loaded_surface,
+    _human_inbox_payload,
+    _human_inbox_payload_from_loaded,
+    _human_inbox_persona_blocking_reasons,
+    _human_inbox_persona_contributor,
+    _human_inbox_persona_readiness_item,
+    _human_inbox_priority,
+    _human_inbox_project_items,
+    _human_inbox_promotion_contributor,
+    _human_inbox_promotion_recommendation_id,
+    _human_inbox_promotion_review_from_projection,
+    _human_inbox_promotion_review_item,
+    _human_inbox_sanitize_promotion_snapshot,
+    _human_inbox_sentinel_contributor,
+    _human_inbox_sentinel_item,
+    _human_inbox_submission_projection_from_record,
+    _human_inbox_summary,
+    _human_inbox_surfaces,
+    _human_inbox_trusted_promotion_submission,
+    _submitted_promotion_review_record_from_command,
+    _submitted_promotion_review_records,
+    human_inbox_surface_timeout_seconds,
+)
 _MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
     Optional[ManagementNlCommandReservation]
 ] = ContextVar("management_nl_command_reservation", default=None)
@@ -10370,156 +6755,17 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
         "System-wide mutations require operator gate approval. Use the appropriate governance route.",
     ),
 ]
-_MGMT_AI_AUDIT_EVENTS: deque = deque(maxlen=500)
-def _management_ai_audit_path() -> Optional[str]:
-    raw = os.getenv(
-        "PANTHEON_MANAGEMENT_AI_AUDIT_PATH",
-        "/tmp/pantheon-bff/management-ai-audit.jsonl",
-    ).strip()
-    if not raw or raw.lower() in {"off", "false", "disabled", "none"}:
-        return None
-    return raw
-def _management_ai_summary_value(value: Any, *, max_len: int = 400) -> Any:
-    if isinstance(value, str):
-        clean = value.strip()
-        if len(clean) > max_len:
-            return f"{clean[:max_len]}..."
-        return clean
-    return value
-def _management_ai_surface_summary(surfaces: Dict[str, Any]) -> Dict[str, Any]:
-    summary: Dict[str, Any] = {}
-    for key, value in (surfaces or {}).items():
-        if not isinstance(value, dict):
-            continue
-        summary[str(key)] = {
-            clean_key: value.get(clean_key)
-            for clean_key in ("status", "source", "reason", "message")
-            if value.get(clean_key) is not None
-        }
-    return summary
-def _management_ai_provider_output_summary(provider_payload: Any) -> Dict[str, Any]:
-    data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
-    output = data.get("output") if isinstance(data, dict) else {}
-    if not isinstance(output, dict):
-        output = {}
-    events = output.get("json_events")
-    if not isinstance(events, list):
-        events = []
-        stdout = output.get("stdout")
-        if isinstance(stdout, str):
-            for line in stdout.splitlines():
-                clean = line.strip()
-                if not clean:
-                    continue
-                try:
-                    loaded = json.loads(clean)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(loaded, dict):
-                    events.append(loaded)
-
-    event_types: List[str] = []
-    assistant_messages: List[str] = []
-    usage: Optional[Dict[str, Any]] = None
-    for event in events:
-        if not isinstance(event, dict):
-            continue
-        event_type = str(event.get("type") or "").strip()
-        if event_type:
-            event_types.append(event_type)
-        item = event.get("item")
-        if isinstance(item, dict) and item.get("type") == "agent_message" and item.get("text") is not None:
-            assistant_messages.append(str(_management_ai_summary_value(item.get("text"))))
-        if event_type == "turn.completed" and isinstance(event.get("usage"), dict):
-            usage = event.get("usage")
-
-    return {
-        "provider": data.get("provider") if isinstance(data, dict) else None,
-        "status": data.get("status") if isinstance(data, dict) else None,
-        "returncode": output.get("returncode"),
-        "duration_ms": output.get("duration_ms"),
-        "json_event_count": len(events),
-        "json_event_types": event_types,
-        "assistant_messages": assistant_messages[:3],
-        "usage": usage,
-    }
-def _management_ai_record_event(event: Dict[str, Any]) -> Dict[str, Any]:
-    payload = jsonable_encoder(
-        {
-            "event_id": event.get("event_id") or f"mgmt-ai-evt-{uuid.uuid4().hex[:16]}",
-            "recorded_at": event.get("recorded_at") or utc_now(),
-            **event,
-        }
-    )
-    _MGMT_AI_AUDIT_EVENTS.append(payload)
-    path = _management_ai_audit_path()
-    if path:
-        try:
-            directory = os.path.dirname(path)
-            if directory:
-                os.makedirs(directory, exist_ok=True)
-            with open(path, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
-        except Exception:
-            log.warning("Failed to persist management AI audit event", exc_info=True)
-    return payload
-def _management_ai_read_audit_file(limit: int) -> List[Dict[str, Any]]:
-    path = _management_ai_audit_path()
-    if not path or not os.path.exists(path):
-        return []
-    try:
-        with open(path, encoding="utf-8") as handle:
-            lines = handle.readlines()
-    except Exception:
-        log.warning("Failed to read management AI audit log", exc_info=True)
-        return []
-    events: List[Dict[str, Any]] = []
-    for line in lines[-max(limit * 4, limit):]:
-        try:
-            loaded = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(loaded, dict):
-            events.append(loaded)
-    return events
-def _management_ai_event_matches(
-    event: Dict[str, Any],
-    *,
-    session_id: Optional[str],
-    trace_id: Optional[str],
-    message_id: Optional[str],
-    event_type: Optional[str],
-) -> bool:
-    if session_id and str(event.get("session_id") or "") != session_id:
-        return False
-    if trace_id and str(event.get("trace_id") or "") != trace_id:
-        return False
-    if message_id and str(event.get("message_id") or "") != message_id:
-        return False
-    if event_type and str(event.get("event_type") or "") != event_type:
-        return False
-    return True
-def _management_ai_list_audit_events(
-    *,
-    session_id: Optional[str] = None,
-    trace_id: Optional[str] = None,
-    message_id: Optional[str] = None,
-    event_type: Optional[str] = None,
-    limit: int = 100,
-) -> List[Dict[str, Any]]:
-    candidates = _management_ai_read_audit_file(limit) or list(_MGMT_AI_AUDIT_EVENTS)
-    filtered = [
-        event
-        for event in candidates
-        if _management_ai_event_matches(
-            event,
-            session_id=session_id,
-            trace_id=trace_id,
-            message_id=message_id,
-            event_type=event_type,
-        )
-    ]
-    return filtered[-limit:]
+from .assistant.management_service import (
+    _MGMT_AI_AUDIT_EVENTS,
+    _management_ai_audit_path,
+    _management_ai_summary_value,
+    _management_ai_surface_summary,
+    _management_ai_provider_output_summary,
+    _management_ai_record_event,
+    _management_ai_read_audit_file,
+    _management_ai_event_matches,
+    _management_ai_list_audit_events,
+)
 def _management_ai_number(value: Any) -> Optional[float]:
     if isinstance(value, bool) or value is None:
         return None
@@ -10930,285 +7176,63 @@ def _management_ai_audit_href(
         message_id=message_id,
         event_type=event_type,
     )
-def _management_ai_conversation_href(session_id: str, *, trace_id: Optional[str] = None) -> str:
-    route = f"/bff/management/ai/conversations/{quote(str(session_id or ''), safe='')}"
-    return route
+from .assistant.management_service import (
+    get_management_ai_conversation_store,
+    set_management_ai_conversation_store,
+    reset_management_ai_conversation_store,
+    management_ai_conversation_href as _management_ai_conversation_href,
+    management_ai_attachment_url as _management_ai_attachment_url,
+    management_ai_attachment_api_payload as _management_ai_attachment_api_payload,
+    management_ai_turn_api_payload as _management_ai_turn_api_payload,
+    management_ai_require_session_access as _management_ai_require_session_access,
+    management_ai_session_not_found as _management_ai_session_not_found,
+    management_ai_get_visible_session_or_404 as _management_ai_get_visible_session_or_404,
+    management_ai_get_session_or_404 as _management_ai_get_session_or_404,
+    management_ai_ensure_session as _management_ai_ensure_session_impl,
+    management_ai_store_attachments as _management_ai_store_attachments_impl,
+    management_ai_append_turn as _management_ai_append_turn_impl,
+    management_ai_server_conversation_context as _management_ai_server_conversation_context_impl,
+    management_ai_list_conversations as _management_ai_list_conversations,
+    management_ai_get_conversation as _management_ai_get_conversation,
+    management_ai_get_attachment as _management_ai_get_attachment,
+)
+
+
 _MGMT_AI_CONVERSATION_STORE: Optional[ManagementAiConversationStore] = None
 
 
 def _management_ai_conversation_store() -> ManagementAiConversationStore:
-    global _MGMT_AI_CONVERSATION_STORE
-    if _MGMT_AI_CONVERSATION_STORE is None:
-        _MGMT_AI_CONVERSATION_STORE = ManagementAiConversationStore()
-    return _MGMT_AI_CONVERSATION_STORE
-def _management_ai_attachment_url(attachment_id: str) -> str:
-    return f"/bff/management/ai/attachments/{quote(str(attachment_id or ''), safe='')}"
-def _management_ai_attachment_api_payload(attachment: Dict[str, Any]) -> Dict[str, Any]:
-    attachment_id = str(
-        attachment.get("id")
-        or attachment.get("attachmentId")
-        or attachment.get("attachment_id")
-        or ""
-    ).strip()
-    mime_type = str(attachment.get("mimeType") or attachment.get("mime_type") or "application/octet-stream")
-    size_bytes = int(attachment.get("sizeBytes") or attachment.get("size_bytes") or 0)
-    return {
-        "id": attachment_id,
-        "attachment_id": attachment_id,
-        "kind": str(attachment.get("kind") or "file"),
-        "mime_type": mime_type,
-        "filename": str(attachment.get("filename") or attachment_id or "attachment"),
-        "size_bytes": size_bytes,
-        "url": _management_ai_attachment_url(attachment_id) if attachment_id else "",
-    }
-def _management_ai_turn_api_payload(turn: Dict[str, Any]) -> Dict[str, Any]:
-    attachments = [
-        _management_ai_attachment_api_payload(item)
-        for item in (turn.get("attachments") or [])
-        if isinstance(item, dict)
-    ]
-    provider_status = (
-        turn.get("provider_status")
-        if isinstance(turn.get("provider_status"), dict)
-        else turn.get("providerStatus")
-        if isinstance(turn.get("providerStatus"), dict)
-        else None
-    )
-    ui_actions = (
-        turn.get("ui_actions")
-        if isinstance(turn.get("ui_actions"), list)
-        else turn.get("uiActions")
-        if isinstance(turn.get("uiActions"), list)
-        else []
-    )
-    payload = {
-        "id": turn.get("id"),
-        "turn_id": turn.get("turn_id") or turn.get("turnId") or turn.get("id"),
-        "message_id": turn.get("message_id") or turn.get("id"),
-        "session_id": turn.get("session_id") or turn.get("sessionId"),
-        "trace_id": turn.get("trace_id") or turn.get("traceId"),
-        "role": turn.get("role"),
-        "text": turn.get("text") or "",
-        "content": turn.get("text") or "",
-        "created_at": turn.get("created_at") or turn.get("createdAt"),
-        "provider_status": provider_status,
-        "attachments": attachments,
-        "ui_actions": ui_actions,
-        "actions": ui_actions,
-    }
-    ui_snapshot = (
-        turn.get("ui_snapshot")
-        if isinstance(turn.get("ui_snapshot"), dict)
-        else turn.get("uiSnapshot")
-        if isinstance(turn.get("uiSnapshot"), dict)
-        else None
-    )
-    if ui_snapshot is not None:
-        payload["ui_snapshot"] = ui_snapshot
-    return payload
-def _management_ai_require_session_access(
-    session: Dict[str, Any],
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str],
-) -> None:
-    owner_id = str(session.get("ownerId") or session.get("owner_id") or "").strip()
-    session_tenant_id = str(session.get("tenantId") or session.get("tenant_id") or "").strip()
-    clean_tenant_id = str(tenant_id or "").strip()
-    if owner_id and owner_id == identity.operator_id:
-        return
-    if clean_tenant_id and session_tenant_id and clean_tenant_id == session_tenant_id:
-        return
-    raise _bff_error(
-        403,
-        ErrorCode.FORBIDDEN,
-        "Management AI session is not visible to this operator",
-        "management_ai_session_not_visible",
-        precondition_failed="management_ai_session_visibility",
-    )
-def _management_ai_session_not_found(session_id: str) -> HTTPException:
-    clean_session_id = str(session_id or "").strip()
-    return _bff_error(
-        404,
-        ErrorCode.RESOURCE_NOT_FOUND,
-        f"Management AI session not found: {clean_session_id!r}",
-        "management_ai_session_not_found",
-        precondition_failed="management_ai_session",
-    )
-def _management_ai_get_visible_session_or_404(
-    session_id: str,
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str],
-) -> Dict[str, Any]:
-    clean_session_id = str(session_id or "").strip()
-    session = _management_ai_conversation_store().get_session(clean_session_id)
-    if session is None:
-        raise _management_ai_session_not_found(clean_session_id)
-    try:
-        _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
-    except HTTPException as exc:
-        if exc.status_code == 403:
-            raise _management_ai_session_not_found(clean_session_id) from exc
-        raise
-    return session
-def _management_ai_get_session_or_404(
-    session_id: str,
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str],
-) -> Dict[str, Any]:
-    clean_session_id = str(session_id or "").strip()
-    session = _management_ai_conversation_store().get_session(clean_session_id)
-    if session is None:
-        raise _management_ai_session_not_found(clean_session_id)
-    _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
-    return session
-def _management_ai_ensure_session(
-    *,
-    session_id: str,
-    identity: OperatorIdentity,
-    tenant_id: Optional[str],
-    now: str,
-    title: str,
-) -> Dict[str, Any]:
-    store = _management_ai_conversation_store()
-    existing = store.get_session(session_id)
-    if existing is not None:
-        _management_ai_require_session_access(existing, identity, tenant_id=tenant_id)
-    try:
-        return store.upsert_session(
-            session_id=session_id,
-            owner_id=identity.operator_id,
-            tenant_id=tenant_id,
-            now=now,
-            title=title,
-        )
-    except Exception as exc:
-        log.warning("Failed to persist Management AI session", exc_info=True)
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Management AI session store write failed",
-            str(exc),
-            precondition_failed="management_ai_session_store",
-        )
-def _management_ai_store_attachments(
-    *,
-    attachments: Any,
-    session_id: str,
-    turn_id: str,
-) -> List[Dict[str, Any]]:
-    try:
-        return _management_ai_conversation_store().store_attachments(
-            attachments,
-            session_id=session_id,
-            turn_id=turn_id,
-        )
-    except ManagementAiAttachmentError as exc:
-        status_code = int(getattr(exc, "status_code", 422) or 422)
-        code = ErrorCode.REQUEST_TOO_LARGE if status_code == 413 else ErrorCode.VALIDATION_FAILED
-        raise _bff_error(
-            status_code,
-            code,
-            (
-                "Management AI attachment payload is too large"
-                if status_code == 413
-                else "Management AI attachment payload is invalid"
-            ),
-            str(exc),
-            precondition_failed=getattr(exc, "precondition_failed", "management_ai_attachment"),
-            details_extra=getattr(exc, "details", {}),
-        )
-    except ValueError as exc:
-        raise _bff_error(
-            400,
-            ErrorCode.VALIDATION_FAILED,
-            "Management AI attachment payload is invalid",
-            str(exc),
-            precondition_failed="management_ai_attachment",
-        )
-    except Exception as exc:
-        log.warning("Failed to persist Management AI attachment", exc_info=True)
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Management AI attachment store write failed",
-            str(exc),
-            precondition_failed="management_ai_attachment_store",
-        )
-def _management_ai_append_turn(
-    *,
-    turn_id: str,
-    session_id: str,
-    role: str,
-    text: str,
-    created_at: str,
-    trace_id: Optional[str] = None,
-    attachments: Optional[List[Dict[str, Any]]] = None,
-    provider_status: Optional[Dict[str, Any]] = None,
-    ui_snapshot: Optional[Dict[str, Any]] = None,
-    ui_actions: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    try:
-        return _management_ai_conversation_store().append_turn(
-            turn_id=turn_id,
-            session_id=session_id,
-            role=role,
-            text=text,
-            created_at=created_at,
-            trace_id=trace_id,
-            attachments=attachments,
-            provider_status=provider_status,
-            ui_snapshot=ui_snapshot,
-            ui_actions=ui_actions,
-        )
-    except Exception as exc:
-        log.warning("Failed to persist Management AI turn", exc_info=True)
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Management AI turn store write failed",
-            str(exc),
-            precondition_failed="management_ai_turn_store",
-        )
+    if _MGMT_AI_CONVERSATION_STORE is not None:
+        return _MGMT_AI_CONVERSATION_STORE
+    return get_management_ai_conversation_store()
+
+
+def _management_ai_ensure_session(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    kwargs.setdefault("conversation_store", _management_ai_conversation_store())
+    return _management_ai_ensure_session_impl(*args, **kwargs)
+
+
+def _management_ai_store_attachments(*args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+    kwargs.setdefault("conversation_store", _management_ai_conversation_store())
+    return _management_ai_store_attachments_impl(*args, **kwargs)
+
+
+def _management_ai_append_turn(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    kwargs.setdefault("conversation_store", _management_ai_conversation_store())
+    return _management_ai_append_turn_impl(*args, **kwargs)
+
+
 def _management_ai_server_conversation_context(
     *,
     session_id: str,
     client_hint: Dict[str, Any],
 ) -> Dict[str, Any]:
-    stored_turns = _management_ai_conversation_store().list_turns(session_id)
-    turns = []
-    for turn in stored_turns:
-        api_turn = _management_ai_turn_api_payload(turn)
-        turns.append(
-            {
-                "id": api_turn.get("id"),
-                "role": api_turn.get("role"),
-                "content": api_turn.get("text") or "",
-                "text": api_turn.get("text") or "",
-                "created_at": api_turn.get("created_at"),
-                "attachments": api_turn.get("attachments") or [],
-                "provider_status": api_turn.get("provider_status"),
-                "trace_id": api_turn.get("trace_id"),
-            }
-        )
-    provider_turns, history_budget = _management_ai_provider_history_window(turns)
-    return {
-        "recent_turns": provider_turns,
-        "all_turns": provider_turns,
-        "turn_count": len(provider_turns),
-        "stored_turn_count": len(turns),
-        "source": "server",
-        "history_source": "management_ai_store",
-        "history_char_budget": history_budget["history_char_budget"],
-        "history_estimated_chars": history_budget["history_estimated_chars"],
-        "history_truncated": history_budget["history_truncated"],
-        "history_omitted_turn_count": history_budget["history_omitted_turn_count"],
-        "summary": client_hint.get("summary") or "",
-        "client_hint": client_hint,
-        "max_recent_turns": None,
-    }
+    return _management_ai_server_conversation_context_impl(
+        session_id=session_id,
+        client_hint=client_hint,
+        history_window_fn=_management_ai_provider_history_window,
+        conversation_store=_management_ai_conversation_store(),
+    )
 def _management_ai_provider_history_size(turns: List[Dict[str, Any]]) -> int:
     return len(json.dumps(turns, sort_keys=True, ensure_ascii=True))
 def _management_ai_provider_history_window(
@@ -12153,30 +8177,15 @@ def _mgmt_nl_idempotency_storage_key(
         ]
     )
     return f"management-nl-v2:{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
-def _mgmt_nl_command_recovery_seconds() -> float:
-    raw = os.getenv(
-        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS",
-        "300",
-    ).strip()
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        value = 300.0
-    return max(value, 0.001)
+from .assistant.management_service import (
+    get_mgmt_nl_command_recovery_seconds as _mgmt_nl_command_recovery_seconds,
+    get_mgmt_nl_command_idempotency_store,
+    reset_mgmt_nl_command_idempotency_store,
+)
+
+
 def _mgmt_nl_command_idempotency_store() -> ManagementNlCommandIdempotencyStore:
-    global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE, _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG
-    storage_path = os.getenv(
-        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
-        DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
-    ).strip()
-    config = (storage_path, _mgmt_nl_command_recovery_seconds())
-    if _MGMT_NL_COMMAND_IDEMPOTENCY_STORE is None or _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG != config:
-        _MGMT_NL_COMMAND_IDEMPOTENCY_STORE = ManagementNlCommandIdempotencyStore(
-            storage_path,
-            recovery_seconds=config[1],
-        )
-        _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = config
-    return _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
+    return get_mgmt_nl_command_idempotency_store()
 # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: ask and ask/stream are one durable
 # use case with two transports. They share this single canonical scope
 # route name (not the literal per-transport HTTP path) so a client can
@@ -15074,60 +11083,14 @@ async def bff_management_ai_conversations(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    sessions = _management_ai_conversation_store().list_sessions(
-        owner_id=identity.operator_id,
-        tenant_id=caller_tenant_id,
+    return _management_ai_list_conversations(
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
         limit=limit,
+        conversation_href_fn=_management_ai_conversation_href,
+        session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
+        conversation_store=_management_ai_conversation_store(),
     )
-    items: List[Dict[str, Any]] = []
-    for session in sessions:
-        session_id = str(session.get("sessionId") or session.get("session_id") or session.get("id") or "").strip()
-        if not session_id:
-            continue
-        try:
-            _management_ai_require_session_access(session, identity, tenant_id=caller_tenant_id)
-        except HTTPException:
-            continue
-        turn_count = len(_management_ai_conversation_store().list_turns(session_id))
-        items.append(
-            {
-                "id": session_id,
-                "session_id": session_id,
-                "title": session.get("title") or "",
-                "owner_id": session.get("owner_id") or session.get("ownerId"),
-                "tenant_id": session.get("tenant_id") or session.get("tenantId"),
-                "created_at": session.get("created_at") or session.get("createdAt"),
-                "updated_at": session.get("updated_at") or session.get("updatedAt"),
-                "turn_count": turn_count,
-                "href": _management_ai_conversation_href(session_id),
-            }
-        )
-    return {
-        "data": {
-            "id": "management_ai_conversations",
-            "items": items,
-            "summary": {
-                "total_sessions": len(items),
-                "returned_items": len(items),
-            },
-        },
-        "page_info": {
-            "next_page_token": None,
-            "total": len(items),
-            "page_size": limit,
-        },
-        "meta": {
-            "count": len(items),
-            "limit": limit,
-            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "surfaces": {
-                "management_ai_conversation_list": {
-                    "status": "ok",
-                    "source": "management_ai_store",
-                }
-            },
-        },
-    }
 async def bff_management_ai_conversation(
     session_id: str,
     trace_id: Optional[str] = None,
@@ -15144,54 +11107,16 @@ async def bff_management_ai_conversation(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    session = _management_ai_get_visible_session_or_404(
-        clean_session_id,
-        identity,
-        tenant_id=caller_tenant_id,
+    return _management_ai_get_conversation(
+        session_id=clean_session_id,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        trace_id=trace_id,
+        limit=limit,
+        audit_href_fn=lambda s_id, t_id: _management_ai_audit_href(session_id=s_id, trace_id=t_id),
+        session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
+        conversation_store=_management_ai_conversation_store(),
     )
-    turns = [
-        _management_ai_turn_api_payload(turn)
-        for turn in _management_ai_conversation_store().list_turns(clean_session_id)
-    ][:limit]
-    audit_log = {
-        "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
-        "trace_id": trace_id,
-    }
-    return {
-        "data": {
-            "session_id": clean_session_id,
-            "trace_id": trace_id,
-            "turns": turns,
-            "local_only": False,
-            "missing_in_store": False,
-            "owner_id": session.get("owner_id") or session.get("ownerId"),
-            "tenant_id": session.get("tenant_id") or session.get("tenantId"),
-            "created_at": session.get("created_at") or session.get("createdAt"),
-            "updated_at": session.get("updated_at") or session.get("updatedAt"),
-            "audit_log": audit_log,
-            "session": {
-                "session_id": clean_session_id,
-                "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            },
-        },
-        "meta": {
-            "count": len(turns),
-            "turn_cap": limit,
-            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "filters": {
-                "session_id": clean_session_id,
-                "trace_id": trace_id,
-                "trace_id_ignored": trace_id is not None,
-            },
-            "surfaces": {
-                "management_ai_conversation": {
-                    "status": "ok",
-                    "source": "management_ai_store",
-                    "reason": None,
-                }
-            },
-        },
-    }
 async def bff_management_ai_attachment(
     attachment_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -15201,35 +11126,16 @@ async def bff_management_ai_attachment(
     """Return a BFF-proxied Management AI attachment object for visible sessions."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    found = _management_ai_conversation_store().find_attachment(attachment_id)
-    if found is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            f"Management AI attachment not found: {attachment_id!r}",
-            "management_ai_attachment_not_found",
-            precondition_failed="management_ai_attachment",
-        )
-    metadata, turn = found
     caller_tenant_id = _mgmt_nl_caller_tenant(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    _management_ai_get_session_or_404(
-        str(turn.get("sessionId") or turn.get("session_id") or ""),
-        identity,
-        tenant_id=caller_tenant_id,
+    content, mime_type, filename = _management_ai_get_attachment(
+        attachment_id=attachment_id,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        conversation_store=_management_ai_conversation_store(),
     )
-    try:
-        content, mime_type, filename = _management_ai_conversation_store().read_attachment(attachment_id, metadata)
-    except FileNotFoundError:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            f"Management AI attachment object not found: {attachment_id!r}",
-            "management_ai_attachment_object_not_found",
-            precondition_failed="management_ai_attachment_object",
-        )
     return Response(
         content=content,
         media_type=mime_type,
@@ -15311,631 +11217,71 @@ def _ooda_packet_list_payload(
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
     }
-_PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
-_PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
-_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (
-    "promote_to_canary_candidate",
-    "increase_research_budget",
-    "grant_tool_access",
-    "reduce_capital_access",
-    "require_retraining",
-    "freeze_persona",
-    "suspend_persona",
-    "retire_persona",
+from .pm12.service import (
+    _PM12_LEAGUE_FORMULA_VERSION,
+    _PM12_QUARTER_PATTERN,
+    _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER,
+    _PM12_QUARTERLY_RECOMMENDATION_ACTIONS,
+    _pm12_add_recommendation_action,
+    _pm12_current_quarter_id,
+    _pm12_iso_z,
+    _pm12_quarter_window,
+    _pm12_quarterly_recommendation_item,
+    _pm12_recommendation_action_ids,
 )
-_PM12_QUARTERLY_RECOMMENDATION_ACTIONS = {
-    "promote_to_canary_candidate": {
-        "label": "Promote to canary candidate",
-        "priority": "high",
-        "riskLevel": "medium",
-        "risk_level": "medium",
-        "rationale": "Quarterly score and risk posture support canary-review consideration.",
-    },
-    "increase_research_budget": {
-        "label": "Increase research budget",
-        "priority": "medium",
-        "riskLevel": "low",
-        "risk_level": "low",
-        "rationale": "Quarterly score supports additional research-only budget.",
-    },
-    "grant_tool_access": {
-        "label": "Grant tool access",
-        "priority": "medium",
-        "riskLevel": "low",
-        "risk_level": "low",
-        "rationale": "Quarterly score and execution posture support expanded tool access review.",
-    },
-    "reduce_capital_access": {
-        "label": "Reduce capital access",
-        "priority": "high",
-        "riskLevel": "high",
-        "risk_level": "high",
-        "rationale": "Risk or overall score calls for capital-access reduction review.",
-    },
-    "require_retraining": {
-        "label": "Require retraining",
-        "priority": "medium",
-        "riskLevel": "medium",
-        "risk_level": "medium",
-        "rationale": "Quarterly component scores indicate retraining should be reviewed.",
-    },
-    "freeze_persona": {
-        "label": "Freeze persona",
-        "priority": "critical",
-        "riskLevel": "critical",
-        "risk_level": "critical",
-        "rationale": "Quarterly score is below the freeze-review threshold.",
-    },
-    "suspend_persona": {
-        "label": "Suspend persona",
-        "priority": "critical",
-        "riskLevel": "critical",
-        "risk_level": "critical",
-        "rationale": "Quarterly score is below the suspension-review threshold.",
-    },
-    "retire_persona": {
-        "label": "Retire persona",
-        "priority": "critical",
-        "riskLevel": "critical",
-        "risk_level": "critical",
-        "rationale": "Quarterly score is below the retirement-review threshold.",
-    },
-}
-def _pm12_current_quarter_id(snapshot_at: str) -> str:
-    timestamp = _audit_datetime(snapshot_at) or datetime.now(timezone.utc)
-    quarter = ((timestamp.month - 1) // 3) + 1
-    return f"{timestamp.year}-Q{quarter}"
-def _pm12_iso_z(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, Any]:
-    raw_quarter = str(quarter or "").strip().upper() or _pm12_current_quarter_id(snapshot_at)
-    match = _PM12_QUARTER_PATTERN.match(raw_quarter)
-    if not match:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": "invalid_quarter",
-                "message": "quarter must use YYYY-Qn format, for example 2026-Q2.",
-                "field": "quarter",
-            },
-        )
-    year = int(match.group("year"))
-    quarter_number = int(match.group("quarter"))
-    start_month = ((quarter_number - 1) * 3) + 1
-    start_at = datetime(year, start_month, 1, tzinfo=timezone.utc)
-    if quarter_number == 4:
-        end_exclusive_at = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-    else:
-        end_exclusive_at = datetime(year, start_month + 3, 1, tzinfo=timezone.utc)
-    quarter_id = f"{year}-Q{quarter_number}"
-    return {
-        "quarter": quarter_id,
-        "year": year,
-        "quarter_number": quarter_number,
-        "label": f"{year} Q{quarter_number}",
-        "start_at": _pm12_iso_z(start_at),
-        "end_exclusive_at": _pm12_iso_z(end_exclusive_at),
-        "timezone": "UTC",
-    }
-def _pm12_add_recommendation_action(action_ids: List[str], action_id: str) -> None:
-    if action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTIONS and action_id not in action_ids:
-        action_ids.append(action_id)
-def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
-    components = item.get("components") if isinstance(item.get("components"), dict) else {}
-    overall = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
-    risk_score = _management_number(components.get("risk_score"))
-    execution_score = _management_number(components.get("execution_score"))
-    activity_score = _management_number(components.get("activity_score"))
-    action_ids: List[str] = []
+from .governance.promotion_review import (
+    _PROMOTION_REVIEW_DECISIONS,
+    _PROMOTION_REVIEW_ID_PREFIX,
+    _PROMOTION_REVIEW_ID_QUARTER_RE,
+    _PROMOTION_REVIEW_PROMOTION_ACTION_IDS,
+    _PROMOTION_REVIEW_REVISION_MARKER,
+    _PROMOTION_REVIEW_REVISION_RE,
+    _PROMOTION_REVIEW_TARGET_PREFIX,
+    _latest_promotion_review_command as _domain_latest_promotion_review_command,
+    _promotion_review_clean_id,
+    _promotion_review_decision_projection as _domain_promotion_review_decision_projection,
+    _promotion_review_quarter_from_id,
+    _promotion_review_record_revision_id,
+    _promotion_review_revision_id,
+    _promotion_review_revision_recommendation_id,
+    _promotion_review_stage_path,
+    _promotion_review_stored_source,
+    _promotion_review_submission_projection as _domain_promotion_review_submission_projection,
+    _promotion_review_target_id,
+    _raise_if_promotion_review_direct_mutation_requested,
+)
 
-    if overall >= 85.0 and (risk_score is None or risk_score >= 70.0) and (
-        execution_score is None or execution_score >= 65.0
-    ):
-        _pm12_add_recommendation_action(action_ids, "promote_to_canary_candidate")
-        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
-        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
-    elif overall >= 70.0 and (risk_score is None or risk_score >= 60.0):
-        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
-        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
-
-    if risk_score is not None and risk_score < 55.0:
-        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
-    if (execution_score is not None and execution_score < 55.0) or (
-        activity_score is not None and activity_score < 45.0
-    ):
-        _pm12_add_recommendation_action(action_ids, "require_retraining")
-    if overall < 55.0:
-        _pm12_add_recommendation_action(action_ids, "require_retraining")
-        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
-    if overall < 45.0:
-        _pm12_add_recommendation_action(action_ids, "freeze_persona")
-    if overall < 35.0:
-        _pm12_add_recommendation_action(action_ids, "suspend_persona")
-    if overall < 25.0:
-        _pm12_add_recommendation_action(action_ids, "retire_persona")
-
-    if not action_ids:
-        _pm12_add_recommendation_action(action_ids, "require_retraining")
-    return [
-        action_id
-        for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
-        if action_id in action_ids
-    ]
-def _pm12_quarterly_recommendation_item(
-    item: Dict[str, Any],
-    *,
-    action_id: str,
-    quarter_window: Dict[str, Any],
-    evidence_refs: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
-    persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
-    score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
-    evidence_sample = list(item.get("evidence_refs") or [])[:5]
-    evidence_ref_ids = [
-        str(ref.get("refId") or ref.get("ref_id") or ref.get("id"))
-        for ref in evidence_sample
-        if ref.get("refId") or ref.get("ref_id") or ref.get("id")
-    ]
-    recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
-    review_id = _promotion_review_revision_id(
-        recommendation_id,
-        item.get("ranking_snapshot_id"),
-    )
-    submission = _promotion_review_submission_projection(review_id)
-    decision = _promotion_review_decision_projection(review_id)
-
-    if decision:
-        review_status = "decision_accepted"
-        decision_status = str((decision or {}).get("decision_status") or "accepted")
-    elif submission:
-        review_status = "pending_human_gate"
-        decision_status = "pending"
-    else:
-        review_status = "recommended_not_submitted"
-        decision_status = "pending"
-
-    human_review_state = {
-        "status": review_status,
-        "decision_status": decision_status,
-        "submitted": bool(submission),
-        "submit_status": (submission or {}).get("submit_status") if submission else "not_submitted",
-        "decision": (decision or {}).get("decision") if decision else None,
-        "decided_at": (decision or {}).get("decided_at") if decision else None,
-        "decided_by": (decision or {}).get("decided_by") if decision else None,
-    }
-
-    governance = {
-        "requires_human_gate_decision": True,
-        "destinations": ["human_inbox", "governance_queue", "human_gate_decision"],
-        "human_inbox_route": "/bff/management/human-inbox",
-        "governance_queue_route": "/api/v1/operator/governance/approval-queue",
-        "decision_type": "HumanGateDecision",
-        "live_capital_mutation": False,
-    }
-    return {
-        "id": recommendation_id,
-        "recommendation_id": recommendation_id,
-        "review_id": review_id,
-        "promotion_review_id": review_id,
-        "quarter": quarter_window["quarter"],
-        "quarter_window": quarter_window,
-        "persona_id": persona_id,
-        "ranking_snapshot_id": item.get("ranking_snapshot_id"),
-        "ranking_evidence_ref": (
-            f"ranking-snapshot:{item.get('ranking_snapshot_id')}"
-            if item.get("ranking_snapshot_id")
-            else f"ranking-evidence:{quarter_window['quarter'].lower()}-{persona_id}"
-        ),
-        "human_review_state": human_review_state,
-        "name": item.get("name"),
-        "owner": item.get("owner"),
-        "archetype": item.get("archetype"),
-        "state": item.get("state"),
-        "stage": item.get("stage"),
-        "deployment_stage": item.get("deployment_stage"),
-        "capital_mode": item.get("capital_mode"),
-        "capital_scope": item.get("capital_scope"),
-        "capital_scope_id": item.get("capital_scope_id"),
-        "capital_pool_id": item.get("capital_pool_id"),
-        "capital_sleeve_id": item.get("capital_sleeve_id"),
-        "paper_ledger_id": item.get("paper_ledger_id"),
-        "current_weight": item.get("current_weight"),
-        "target_weight": item.get("target_weight"),
-        "delta": item.get("delta"),
-        "current_weight_source": item.get("current_weight_source"),
-        "binding_state": item.get("binding_state"),
-        "binding_resolution": item.get("binding_resolution"),
-        "runtime_resolution": item.get("runtime_resolution"),
-        "session_resolution": item.get("session_resolution"),
-        "telemetry_resolution": item.get("telemetry_resolution"),
-        "binding_ids": list(item.get("binding_ids") or []),
-        "strategy_ids": list(item.get("strategy_ids") or []),
-        "runtime_ids": list(item.get("runtime_ids") or []),
-        "capital_pool_ids": list(item.get("capital_pool_ids") or []),
-        "sleeve_ids": list(item.get("sleeve_ids") or []),
-        "artifact_ids": list(item.get("artifact_ids") or []),
-        "broker_ids": list(item.get("broker_ids") or []),
-        "eligible": item.get("eligible"),
-        "exclusion_reason": item.get("exclusion_reason"),
-        "exclusion_reasons": list(item.get("exclusion_reasons") or []),
-        "exclusion_codes": list(item.get("exclusion_codes") or []),
-        "evidence_coverage": item.get("evidence_coverage"),
-        "source_confidence": item.get("source_confidence"),
-        "risk": item.get("risk"),
-        "rank": item.get("rank"),
-        "score": score,
-        "tier": item.get("tier"),
-        "tier_id": item.get("tier_id"),
-        "tier_label": item.get("tier_label"),
-        "allocation_policy_input": json.loads(
-            json.dumps(item.get("allocation_policy_input") or {})
-        ),
-        "formula_version": item.get("formula_version") or _PM12_LEAGUE_FORMULA_VERSION,
-        "action_id": action_id,
-        "action_label": action["label"],
-        "recommendation_type": "governance_advisory",
-        "status": "recommended",
-        "priority": action["priority"],
-        "risk_level": action["risk_level"],
-        "target": {"type": "persona", "id": persona_id},
-        "rationale": f"{action['rationale']} Score={score:.2f}; tier={item.get('tier') or 'unknown'}.",
-        "rationale_codes": [
-            f"tier:{item.get('tier') or 'unknown'}",
-            f"action:{action_id}",
-            "policy:no_direct_live_capital",
-        ],
-        "metrics": item.get("metrics") or {},
-        "components": item.get("components") or {},
-        "evidence_refs": evidence_sample,
-        "evidence_ref_ids": evidence_ref_ids,
-        "governance": governance,
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-        "policy": "read_only_governance_advisory",
-        "links": {
-            "persona": f"/bff/personas/{persona_id}",
-            "human_inbox": "/bff/management/human-inbox",
-            "governance_queue": "/api/v1/operator/governance/approval-queue",
-        },
-    }
 _PROMOTION_REVIEW_ACTION_IDS: Set[str] = set(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)
-_PROMOTION_REVIEW_PROMOTION_ACTION_IDS: Set[str] = {"promote_to_canary_candidate"}
-_PROMOTION_REVIEW_DECISIONS: Set[str] = {"approve", "approve_with_conditions", "reject"}
-_PROMOTION_REVIEW_ID_PREFIX = "promotion-review:"
-_PROMOTION_REVIEW_TARGET_PREFIX = "promotion_review:"
-_PROMOTION_REVIEW_REVISION_MARKER = "--snapshot-"
-_PROMOTION_REVIEW_REVISION_RE = re.compile(
-    r"^(?P<recommendation_id>.+)--snapshot-(?P<digest>[0-9a-f]{32})$"
-)
-_PROMOTION_REVIEW_ID_QUARTER_RE = re.compile(r"pm12-(?P<quarter>\d{4}-q[1-4])-", re.IGNORECASE)
-def _promotion_review_clean_id(review_id: Any) -> str:
-    clean_id = str(review_id or "").strip()
-    if clean_id.startswith(_PROMOTION_REVIEW_ID_PREFIX):
-        clean_id = clean_id[len(_PROMOTION_REVIEW_ID_PREFIX):]
-    if clean_id.startswith(_PROMOTION_REVIEW_TARGET_PREFIX):
-        clean_id = clean_id[len(_PROMOTION_REVIEW_TARGET_PREFIX):]
-    return clean_id
-def _promotion_review_target_id(review_id: Any) -> str:
-    return f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}"
-def _promotion_review_revision_id(
-    recommendation_id: Any,
-    ranking_snapshot_id: Any,
-) -> str:
-    clean_recommendation_id = _promotion_review_clean_id(recommendation_id)
-    clean_snapshot_id = str(ranking_snapshot_id or "").strip()
-    if not clean_recommendation_id or not clean_snapshot_id:
-        return clean_recommendation_id
-    digest = hashlib.sha256(
-        f"{clean_recommendation_id}\x00{clean_snapshot_id}".encode("utf-8")
-    ).hexdigest()[:32]
-    return (
-        f"{clean_recommendation_id}"
-        f"{_PROMOTION_REVIEW_REVISION_MARKER}{digest}"
-    )
-def _promotion_review_revision_recommendation_id(review_id: Any) -> str:
-    clean_id = _promotion_review_clean_id(review_id)
-    match = _PROMOTION_REVIEW_REVISION_RE.fullmatch(clean_id)
-    if match is None:
-        return clean_id
-    return match.group("recommendation_id")
-def _promotion_review_record_revision_id(command: Dict[str, Any]) -> str:
-    params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    recommendation_id = _human_inbox_promotion_recommendation_id(command)
-    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
-    expected_revision_id = _promotion_review_revision_id(
-        recommendation_id,
-        ranking_snapshot_id,
-    )
-    asserted_ids = [
-        str(params.get(key) or "").strip()
-        for key in ("review_id", "promotion_review_id")
-        if str(params.get(key) or "").strip()
-    ]
-    if ranking_snapshot_id:
-        if asserted_ids and any(
-            _promotion_review_clean_id(asserted_id) != expected_revision_id
-            for asserted_id in asserted_ids
-        ):
-            return ""
-        return expected_revision_id
-    # Snapshotless legacy records predate revision identities. They remain
-    # readable under the stable recommendation id but cannot authorize a
-    # snapshot-bound decision or allocation.
-    if asserted_ids and any(
-        _promotion_review_clean_id(asserted_id) != recommendation_id
-        for asserted_id in asserted_ids
-    ):
-        return ""
-    return recommendation_id
-def _promotion_review_quarter_from_id(review_id: Any) -> Optional[str]:
-    match = _PROMOTION_REVIEW_ID_QUARTER_RE.search(_promotion_review_clean_id(review_id))
-    if match is None:
-        return None
-    return match.group("quarter").upper()
-def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, Any]:
-    action_id = str(recommendation.get("action_id") or "").strip()
-    stage = str(
-        recommendation.get("stage") or recommendation.get("state") or ""
-    ).strip().lower()
-    if "canary" in stage:
-        from_stage = "canary"
-    elif "live" in stage:
-        from_stage = "live"
-    else:
-        from_stage = "paper"
 
-    if action_id in _PROMOTION_REVIEW_PROMOTION_ACTION_IDS:
-        if from_stage == "canary":
-            target_stage = "live_candidate"
-            review_kind = "canary_to_live_review"
-        elif from_stage == "live":
-            target_stage = "live_rebalance_review"
-            review_kind = "live_ranking_review"
-        else:
-            target_stage = "canary_candidate"
-            review_kind = "paper_to_canary_review"
-    elif action_id in {"reduce_capital_access", "freeze_persona", "suspend_persona", "retire_persona"}:
-        target_stage = "risk_containment_review"
-        review_kind = "risk_containment_review"
-    elif action_id in {"increase_research_budget", "grant_tool_access"}:
-        target_stage = "resource_change_review"
-        review_kind = "resource_change_review"
-    else:
-        target_stage = "governance_review"
-        review_kind = "ranking_governance_review"
 
-    return {
-        "from_stage": from_stage,
-        "target_stage": target_stage,
-        "review_kind": review_kind,
-        "eventual_live_stage": "live",
-        "live_requires_separate_human_gate": target_stage != "risk_containment_review",
-    }
-def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, Any]]:
-    clean_id = _promotion_review_clean_id(review_id)
-    for record in reversed(command_store._get_all_commands()):
-        if not _human_inbox_trusted_promotion_submission(record):
-            continue
-        if _promotion_review_record_revision_id(record) == clean_id:
-            return record
-    return None
 def _promotion_review_submission_projection(
     review_id: Any,
     *,
     include_source_recommendation: bool = False,
+    command_store: Any = None,
 ) -> Optional[Dict[str, Any]]:
-    record = _latest_promotion_review_submission(review_id)
-    if record is None:
-        return None
-    params = record.get("params") if isinstance(record.get("params"), dict) else {}
-    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    review_revision_id = _promotion_review_record_revision_id(record)
-    projection = {
-        "submitted": True,
-        "submit_status": record.get("status"),
-        "command_id": record.get("command_id"),
-        "commandId": record.get("command_id"),
-        "receipt_id": record.get("command_id"),
-        "submitted_at": record.get("submitted_at"),
-        "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
-        "recommendation_id": params.get("recommendation_id") or params.get("recommendationId"),
-        "review_id": review_revision_id,
-        "promotion_review_id": review_revision_id,
-        "recommendation_action_id": params.get("recommendation_action_id") or params.get("recommendationActionId"),
-        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
-        "quarter": params.get("quarter"),
-        "persona_id": params.get("persona_id"),
-        "stage_from": params.get("stage_from"),
-        "stage_to": params.get("stage_to"),
-        "review_kind": params.get("review_kind"),
-        "human_inbox_id": _promotion_review_target_id(review_revision_id),
-        "live_capital_mutation": False,
-        "requires_human_gate_decision": True,
-    }
-    if include_source_recommendation and isinstance(params.get("source_recommendation"), dict):
-        projection["source_recommendation"] = json.loads(
-            json.dumps(params.get("source_recommendation"))
-        )
-    return projection
-def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
-    clean_id = _promotion_review_clean_id(review_id)
-    for record in reversed(command_store._get_all_commands()):
-        if (
-            _human_inbox_decision_recommendation_id(record) == clean_id
-            and _human_inbox_decision_projection_from_record(record) is not None
-        ):
-            return record
-    return None
-def _promotion_review_decision_projection(review_id: Any) -> Optional[Dict[str, Any]]:
-    record = _latest_promotion_review_command(review_id)
-    if record is None:
-        return None
-    return _human_inbox_decision_projection_from_record(record)
-def _raise_if_promotion_review_direct_mutation_requested(payload: Dict[str, Any]) -> None:
-    mutation_fields = (
-        "live_capital_mutation",
-        "liveCapitalMutation",
-        "liveCapitalSideEffects",
-        "runtime_mutation",
-        "runtimeMutation",
-    )
-    for field in mutation_fields:
-        if bool(payload.get(field)):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Promotion review decisions cannot request direct live/runtime mutation",
-                f"{field} must be false or omitted; promotion requires a human-gated command receipt only.",
-                precondition_failed=field,
-                suggestion="Submit the promotion review decision without live/runtime mutation flags.",
-            )
-def _promotion_review_stored_source(
-    recommendation: Dict[str, Any],
-) -> Dict[str, Any]:
-    stored = json.loads(json.dumps(recommendation))
-    # Command params are visible on governance read surfaces. Persist the
-    # Authoritative immutable ranking tuple, never submitter-supplied evidence.
-    stored["evidence_refs"] = []
-    stored["evidence_ref_ids"] = []
-    return stored
-def _pm12_performance_attribution_response(
-    *,
-    dimensions: List[str],
-    period: str,
-    page_token: Optional[str],
-    page_size: int,
-    data_id: str = "pm12-performance-attribution",
-    surface_key: str = "performance_attribution",
-    # Common filters:
-    persona_id: Optional[str] = None,
-    persona: Optional[str] = None,
-    runtime_id: Optional[str] = None,
-    runtime: Optional[str] = None,
-    strategy_id: Optional[str] = None,
-    strategy: Optional[str] = None,
-    capital_pool_id: Optional[str] = None,
-    pool: Optional[str] = None,
-    sleeve_id: Optional[str] = None,
-    sleeve: Optional[str] = None,
-    artifact_id: Optional[str] = None,
-    artifact: Optional[str] = None,
-    broker_id: Optional[str] = None,
-    broker: Optional[str] = None,
-    stage: Optional[str] = None,
-    as_of: Optional[str] = None,
-    tenant_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    snapshot_at = utc_now()
-    period_key = str(period or "").strip() or "latest"
-    sources = _pm12_performance_attribution_sources(tenant_id)
-    facts = _pm12_performance_attribution_facts(sources, period_key)
-
-    # Apply common filters to facts list
-    facts = _filter_by_common_identifiers(
-        facts,
-        persona_id=persona_id, persona=persona,
-        runtime_id=runtime_id, runtime=runtime,
-        strategy_id=strategy_id, strategy=strategy,
-        capital_pool_id=capital_pool_id, pool=pool,
-        sleeve_id=sleeve_id, sleeve=sleeve,
-        artifact_id=artifact_id, artifact=artifact,
-        broker_id=broker_id, broker=broker,
-        stage=stage, period=period_key, as_of=as_of
+    resolved_store = command_store if command_store is not None else globals().get("command_store")
+    return _domain_promotion_review_submission_projection(
+        review_id,
+        include_source_recommendation=include_source_recommendation,
+        command_store=resolved_store,
     )
 
-    page_entries, total, next_page_token, aggregate_metrics = _pm12_performance_attribution_page_entries(
-        facts,
-        dimensions=dimensions,
-        page_token=page_token,
-        page_size=page_size,
-    )
-    page_items = _pm12_performance_attribution_rows(
-        page_entries,
-        period_key=period_key,
-        sources=sources,
-    )
 
-    source_surfaces = {
-        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
-        "telemetry_summaries": _dataset_surface_status(
-            "telemetry_summaries",
-            snapshot_at=snapshot_at,
-            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
-            missing_message="Telemetry summaries unavailable for performance attribution runtimes.",
-        ),
-        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
-        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
-        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
-        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
-        "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
-    }
-    attribution_surface = _aggregate_group_surface(
-        surface_key,
-        list(source_surfaces.values()),
-        snapshot_at=snapshot_at,
-        unavailable_message="Performance attribution aggregate unavailable.",
-        degraded_message="Performance attribution is degraded because one or more source surfaces are degraded.",
-    )
-    surfaces = {
-        name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
-        for name, surface in {
-            surface_key: attribution_surface,
-            **source_surfaces,
-        }.items()
-    }
-    if surface_key != "performance_attribution":
-        surfaces["performance_attribution"] = _performance_ranking_source_surface(attribution_surface, snapshot_at=snapshot_at)
-    summary = {
-        "period": period_key,
-        "dimensions": dimensions,
-        "supported_dimensions": list(_PM12_ATTRIBUTION_DIMENSIONS),
-        "row_count": total,
-        "returned_row_count": len(page_items),
-        "runtime_count": aggregate_metrics["runtime_count"],
-        "telemetry_runtime_count": aggregate_metrics["telemetry_runtime_count"],
-        "holding_count": aggregate_metrics["holding_count"],
-        "total_pnl": aggregate_metrics["total_pnl"],
-        "total_notional": aggregate_metrics["total_notional"],
-        "total_exposure": aggregate_metrics["total_exposure"],
-        "worst_drawdown": aggregate_metrics["worst_drawdown"],
-        "average_fill_rate": aggregate_metrics["average_fill_rate"],
-        "average_slippage_bps": aggregate_metrics["average_slippage_bps"],
-        "total_trades": aggregate_metrics["total_trades"],
-        "latest_telemetry_at": aggregate_metrics["latest_telemetry_at"],
-        "basis": "latest_runtime_telemetry_snapshot",
-    }
-    data = {
-        "id": data_id,
-        "period": period_key,
-        "dimensions": dimensions,
-        "items": page_items,
-        "summary": summary,
-    }
-    return {
-        "data": data,
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-            "page_size": page_size,
-        },
-        "meta": {
-            **_snapshot_meta(snapshot_at),
-            "surfaces": surfaces,
-            "composition_sources": [
-                "GET /api/v1/runtime-bindings",
-                "GET /api/v1/telemetry/{runtime_id}/summary",
-                "GET /api/v1/deployment-plans",
-                "GET /api/v1/persona-capital-bindings",
-                "GET /bff/capital-pools",
-                "GET /bff/personas",
-                "GET /bff/strategies",
-            ],
-            "period": period_key,
-            "dimensions": dimensions,
-            "policy": "read_only_performance_attribution",
-        },
-    }
+def _latest_promotion_review_command(
+    review_id: Any,
+    command_store: Any = None,
+) -> Optional[Dict[str, Any]]:
+    resolved_store = command_store if command_store is not None else globals().get("command_store")
+    return _domain_latest_promotion_review_command(review_id, command_store=resolved_store)
+
+
+def _promotion_review_decision_projection(
+    review_id: Any,
+    command_store: Any = None,
+) -> Optional[Dict[str, Any]]:
+    resolved_store = command_store if command_store is not None else globals().get("command_store")
+    return _domain_promotion_review_decision_projection(review_id, command_store=resolved_store)
 def _ops_read_model_entry_for_persona(
     persona_id: str,
     *,
@@ -16787,94 +12133,29 @@ _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 # _GOV_BFF_IDEMPOTENCY defined earlier
 _ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
-_INCIDENT_CASE_ALIAS_FIELDS = {
-    "binding_id": ("binding_id", "runtime_binding_id"),
-    "deployment_stage": ("deployment_stage", "deployment_mode"),
-    "deployment_plan_id": ("deployment_plan_id", "plan_id"),
-    "capital_pool_id": ("capital_pool_id", "affected_pool_id"),
-    "persona_capital_binding_id": ("persona_capital_binding_id",),
-    "artifact_id": ("artifact_id",),
-    "artifact_version": ("artifact_version",),
-    "runtime_id": ("runtime_id",),
-    "trace_id": ("trace_id", "correlation_id"),
-}
-def _first_present(payload: Dict[str, Any], keys: tuple[str, ...]) -> Any:
-    for key in keys:
-        value = payload.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-def _project_bff_incident_case(incident: Dict[str, Any]) -> Dict[str, Any]:
-    payload = dict(incident)
-    incident_id = str(payload.get("incident_id") or payload.get("id") or "")
-    if incident_id:
-        payload["id"] = payload.get("id") or incident_id
-        payload["incident_id"] = incident_id
-
-    for field, aliases in _INCIDENT_CASE_ALIAS_FIELDS.items():
-        value = _first_present(payload, aliases)
-        if value is not None:
-            payload[field] = value
-
-    created_at = payload.get("created_at") or payload.get("opened_at")
-    if created_at:
-        payload["created_at"] = created_at
-        payload["opened_at"] = payload.get("opened_at") or created_at
-
-    if not payload.get("lineage_ref") and payload.get("artifact_id") and payload.get("artifact_version"):
-        payload["lineage_ref"] = f"{payload['artifact_id']}@{payload['artifact_version']}"
-
-    return payload
-def _bff_incident_matches_filters(
-    incident: Dict[str, Any],
-    *,
-    status: Optional[str],
-    severity: Optional[str],
-    affected_pool_id: Optional[str],
-) -> bool:
-    if status:
-        requested_statuses = {token.strip().lower() for token in status.split(",") if token.strip()}
-        if str(incident.get("status") or "").lower() not in requested_statuses:
-            return False
-    if severity and str(incident.get("severity") or "").lower() != severity.lower():
-        return False
-    if affected_pool_id and (incident.get("capital_pool_id") or incident.get("affected_pool_id")) != affected_pool_id:
-        return False
-    return True
+from .incidents.service import IncidentService as _IncidentService
+def _current_read_store_for_legacy_incident_seam() -> Any:
+    return read_store
+def _bff_incident_service() -> _IncidentService:
+    """Composition-root binding: incidents/service.py's IncidentService is the
+    sole owner of Incident-case projection and filtering; inject the live
+    ``read_store``/``_ACKNOWLEDGED_ALERTS`` globals rather than duplicating
+    the projection logic here."""
+    return _IncidentService(
+        get_read_store=_current_read_store_for_legacy_incident_seam,
+        acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
+    )
 def _list_bff_incidents(
     *,
     status: Optional[str] = None,
     severity: Optional[str] = None,
     affected_pool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    incidents = [
-        _project_bff_incident_case(incident)
-        for incident in read_store.list_incidents(
-            status=status,
-            severity=severity,
-            affected_pool_id=affected_pool_id,
-        )
-    ]
-    anchor = [
-        incident
-        for incident in incidents
-        if str(incident.get("incident_id") or incident.get("id") or "") == "inc-20260410-001"
-    ]
-    rest = [
-        incident
-        for incident in incidents
-        if str(incident.get("incident_id") or incident.get("id") or "") != "inc-20260410-001"
-    ]
-    return anchor + sorted(
-        rest,
-        key=lambda item: str(item.get("created_at") or item.get("submitted_at") or ""),
-        reverse=True,
+    return _bff_incident_service().list_bff_incidents(
+        status=status, severity=severity, affected_pool_id=affected_pool_id
     )
 def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
-    incident = read_store.get_incident(incident_id)
-    if incident:
-        return _project_bff_incident_case(incident)
-    return None
+    return _bff_incident_service().get_bff_incident(incident_id)
 def _gov_bff_action_command(
     entity_type: ObjectType,
     entity_id: str,
@@ -18490,23 +13771,13 @@ bff_sse_deployment_events_alias = _mounted_router_endpoint(_deployment_router, "
 bff_sse_agora_signals_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/signals")
 bff_sse_agora_session_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/sessions/{sessionId}")
 
-import types as _types
-class _BffMainModule(_types.ModuleType):
-    def __getattr__(self, name: str) -> Any:
-        if name in _RETIRED_PROCESS_OVERLAYS:
-            raise AttributeError(
-                f"{name} has been retired and deleted under OVERLAY-RETIRE-001; "
-                "process-local overlays are forbidden and canonical domain stores must be used directly."
-            )
-        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
+from .shared.module_retirement_guard import (
+    ModuleRetirementGuard as _ModuleRetirementGuard,
+)
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name in _RETIRED_PROCESS_OVERLAYS:
-            raise AttributeError(
-                f"{name} has been retired and deleted under OVERLAY-RETIRE-001; "
-                "process-local overlays are forbidden and cannot be reinstated."
-            )
-        super().__setattr__(name, value)
+
+class _BffMainModule(_ModuleRetirementGuard):
+    def _on_setattr(self, name: str, value: Any) -> None:
         if name == "read_store" and hasattr(self, "app_deps") and hasattr(self.app_deps, "read_surface"):
             if value is not self.app_deps.read_surface:
                 self.app_deps.read_surface._active_delegate = value
