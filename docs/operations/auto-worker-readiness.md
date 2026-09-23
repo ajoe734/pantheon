@@ -216,7 +216,10 @@ dispatch candidate's own ineligible-decision demand
 (`supervisor.py:10697`), `zero_fleet_assignment_refresh_targets`
 (`supervisor.py:10789`), `idle_delivery_health_refresh_targets`
 (`supervisor.py:1891`), and finally the startup/topology/Human/Ops bypass
-`authorized_delivery_health_refresh_targets` (`supervisor.py:2079`).
+`authorized_delivery_health_refresh_targets` (`supervisor.py:2079`). Line
+numbers below are as of this revision; `build_dispatch_plan` currently lives
+at `supervisor.py:16093` and `worker_recovery_assignment_pair` at
+`supervisor.py:13081`.
 
 Before `zero_fleet_assignment_refresh_targets` existed, two demand-driven
 paths left a real self-lock once the fleet reached zero active workers with
@@ -282,6 +285,41 @@ every owner-fallback candidate it discovers, and resolves the pending
 receipt via `_canonical_worker_recovery_receipt` to seed both walks from its
 `previous` owner/reviewer -- reusing the same candidate traversal the real
 planners use instead of a second, narrower copy of it.
+
+That second cut still self-locked a plain *ready-work, no-receipt* case
+(independent review rejection of PR #5959, head
+`f4747870551b4b1dc0a0ea90918104aeaeac57dc`). Two remaining bugs compounded
+each other for an ordinary `todo`/`in_progress` task whose incumbent
+reviewer is also the only configured owner fallback (for example owner
+Codex, reviewer Codex2, `owner_fallbacks: {Codex: [Codex2]}`):
+
+- The owner-candidate scan excluded the incumbent *reviewer*
+  (`owner_exclude = {owner, reviewer, ...}`), so Codex2 was silently dropped
+  as an owner candidate even though `plan_task_assignment_pair` (its
+  docstring, `supervisor.py:5970`) explicitly "never rejects an otherwise
+  viable owner merely because that agent is the incumbent reviewer" --
+  `plan_task_assignment_pair` excludes only the incumbent owner itself.
+- The reviewer-fallback-chain walk that pairs each candidate owner with a
+  viable reviewer ran only when the task's own status fell in
+  `ready_dispatch.review_statuses` (the reviewer-facing scan). An ordinary
+  `todo`/`in_progress` task never does, so even a correctly widened owner
+  scan would never have reached a replacement reviewer for a newly
+  discovered candidate owner.
+
+Together these meant `build_dispatch_plan` kept returning
+`health_refresh_targets=[]` and `plan_task_assignment_pair` kept returning
+`None` forever for this case, even though refreshing only the stale
+fallback candidate's endpoint immediately yields a viable pair. Fixed by:
+excluding only the incumbent owner (plus a receipt's lost agent, when
+present) from the owner-candidate scan, matching `plan_task_assignment_pair`
+exactly; and running the reviewer-fallback-chain walk (`demand_refresh` on
+the incumbent reviewer, then `reviewer_fallback_search_order` for the
+incumbent owner and every discovered owner candidate) whenever the task is
+owner-side eligible at all, not only when it is also reviewer-side eligible.
+`test_zero_fleet_assignment_refresh_targets_covers_ready_work_no_receipt`
+reproduces the review's deterministic isolated repro end to end, including
+confirming `plan_task_assignment_pair` reaches the expected pair once the
+demanded refresh lands.
 
 ### Authority boundary
 

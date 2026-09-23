@@ -10882,7 +10882,15 @@ def zero_fleet_assignment_refresh_targets(
         owner_candidates: list[str] = []
         if owner_side:
             demand_refresh(owner)
-            owner_exclude = {owner, reviewer} | ({lost_agent} if lost_agent else set())
+            # ``plan_task_assignment_pair`` excludes only the incumbent owner
+            # itself (``reassignment_candidate_order(..., exclude={owner})``)
+            # -- it "never rejects an otherwise viable owner merely because
+            # that agent is the incumbent reviewer". Excluding the reviewer
+            # here too silently dropped exactly that candidate (for example
+            # Codex -> [Codex2] with reviewer Codex2) from ever being probed,
+            # so the real planner's viable (Codex2, <new reviewer>) pair
+            # stayed unreachable behind stale evidence forever.
+            owner_exclude = {owner} | ({lost_agent} if lost_agent else set())
             owner_roots = [name for name in (owner, previous_owner) if name]
             for candidate in reassignment_candidate_order(
                 config,
@@ -10893,35 +10901,39 @@ def zero_fleet_assignment_refresh_targets(
                 demand_refresh(candidate)
                 owner_candidates.append(candidate)
 
-        if reviewer_side:
+        # ``plan_task_assignment_pair`` pairs every candidate owner it finds
+        # (including the incumbent) with a reviewer fallback search rooted at
+        # that candidate -- it does this whenever it considers an owner
+        # reassignment at all, not only when the task's own status also
+        # happens to fall in ``review_statuses``. An ordinary ``todo`` /
+        # ``in_progress`` task never enters ``review_statuses``, so gating
+        # this chain behind ``reviewer_side`` left every such task's reviewer
+        # fallback graph undemanded: a stale incumbent or fallback reviewer
+        # then starved every owner-reassignment attempt the real planner
+        # would otherwise have completed.
+        seen_reviewer_candidates: set[str] = set()
+
+        def demand_reviewer_chain(candidate_owner: str) -> None:
+            for reviewer_candidate in reviewer_fallback_search_order(
+                config,
+                settings,
+                reviewer=reviewer,
+                owner=owner,
+                candidate_owner=candidate_owner,
+            ):
+                key = reviewer_candidate.casefold()
+                if key in seen_reviewer_candidates:
+                    continue
+                seen_reviewer_candidates.add(key)
+                demand_refresh(reviewer_candidate)
+
+        if (owner_side or reviewer_side) and not reviewer_is_explicit_human_gate(reviewer):
             demand_refresh(reviewer)
-            # ``plan_task_assignment_pair`` derives its reviewer fallback
-            # order per candidate owner via ``reviewer_fallback_search_order``
-            # (roots: reviewer, owner, candidate_owner) -- a reviewer-fallback
-            # mapping keyed on the *candidate* owner (for example
-            # Codex2 -> [Claude2]) would otherwise never surface here even
-            # though the real planner walks it for every candidate owner it
-            # considers, including ones only ``owner_side`` discovered above.
-            seen_reviewer_candidates: set[str] = set()
-
-            def demand_reviewer_chain(candidate_owner: str) -> None:
-                for reviewer_candidate in reviewer_fallback_search_order(
-                    config,
-                    settings,
-                    reviewer=reviewer,
-                    owner=owner,
-                    candidate_owner=candidate_owner,
-                ):
-                    key = reviewer_candidate.casefold()
-                    if key in seen_reviewer_candidates:
-                        continue
-                    seen_reviewer_candidates.add(key)
-                    demand_refresh(reviewer_candidate)
-
             demand_reviewer_chain(owner)
             for candidate in owner_candidates:
                 demand_reviewer_chain(candidate)
 
+        if reviewer_side:
             # ``worker_recovery_assignment_pair``'s reviewer-role search also
             # seeds reviewer fallbacks from the receipt's previous
             # owner/reviewer roots, excluding the lost agent.

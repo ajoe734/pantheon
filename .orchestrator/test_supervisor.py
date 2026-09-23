@@ -13775,10 +13775,22 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             "state": "expired",
             "valid_until": expired_at,
         }
-        # Only Codex has an active task and is healthy; Codex2 has no tasks/workers/fallback demand
+        # Codex2 must not be reachable through the zero-fleet fallback scan
+        # either, or it would be legitimately (and separately) demanded as
+        # Codex's configured owner fallback the moment the fleet has zero
+        # live workers -- see ``zero_fleet_assignment_refresh_targets`` and
+        # OPS-ZERO-WORKER-HEALTH-REFRESH-SELFLOCK-001. Clearing the fallback
+        # graph here isolates this test to what it actually asserts: idle
+        # refresh probes are restricted to active delivery lanes only.
+        self.config["worker_reassignment"]["owner_fallbacks"] = {}
+        self.config["worker_reassignment"]["reviewer_fallbacks"] = {}
+        # Only Codex has an active task and is healthy; Codex2 has no tasks/workers/fallback demand.
+        # The reviewer is an explicit Human/Ops gate so the zero-fleet scan's
+        # unconditional incumbent-reviewer refresh (needed to pair a real
+        # owner reassignment with a viable reviewer) also stays silent here.
         status_snapshot = {
             "tasks": [
-                task_fixture("TASK-CODEX", owner="Codex", status="todo"),
+                task_fixture("TASK-CODEX", owner="Codex", reviewer="Human/Ops", status="todo"),
             ]
         }
         targets = supervisor.idle_delivery_health_refresh_targets(
@@ -14019,6 +14031,108 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             self.config, self.state, status_snapshot, live_total=1
         )
         self.assertEqual(no_extra, [])
+
+    def test_zero_fleet_assignment_refresh_targets_covers_ready_work_no_receipt(
+        self,
+    ) -> None:
+        """OPS-ZERO-WORKER-HEALTH-REFRESH-SELFLOCK-001 (independent review
+        rejection of PR #5959, head f4747870551b4b1dc0a0ea90918104aeaeac57dc):
+        AC1/AC4 for *ready work with no pending recovery receipt* -- a plain
+        ``todo`` task whose incumbent reviewer is also the only configured
+        owner fallback.
+
+        Deterministic isolated repro from the independent review: zero
+        workers, todo task owner Codex / reviewer Codex2, owner_fallbacks
+        Codex->[Codex2], reviewer_fallbacks Codex2->[Claude], healthy Claude
+        and accounts except ``codex-account`` (``retry_after`` /
+        ``quota_terminal``, so Codex itself is durably not viable) and an
+        expired codex2 endpoint.
+
+        Two compounding bugs previously made this self-lock unrecoverable:
+        excluding the incumbent *reviewer* from the owner-candidate scan
+        (``owner_exclude = {owner, reviewer}``) silently dropped Codex2 --
+        the only configured owner fallback -- even though
+        ``plan_task_assignment_pair`` explicitly permits pairing an
+        incumbent reviewer in as the new owner; and gating the reviewer
+        fallback chain behind ``review_statuses`` skipped it entirely for an
+        ordinary ``todo``/``in_progress`` task, so even a widened owner scan
+        would never have reached Claude as Codex2's replacement reviewer.
+        Both together meant three ``build_dispatch_plan`` calls kept
+        returning ``health_refresh_targets=[]`` and
+        ``plan_task_assignment_pair`` kept returning ``None`` forever, even
+        though refreshing only the codex2 endpoint immediately yields the
+        viable pair (Codex2, Claude).
+        """
+
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-account",
+        }
+        self.config["worker_reassignment"]["owner_fallbacks"] = {"Codex": ["Codex2"]}
+        self.config["worker_reassignment"]["reviewer_fallbacks"] = {"Codex2": ["Claude"]}
+
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        far_future = "2999-01-01T00:00:00Z"
+        self.state["delivery_health"]["endpoints"]["codex2"] = {
+            "state": "expired",
+            "valid_until": expired_at,
+        }
+        self.state["delivery_health"]["accounts"]["codex_account"] = {
+            "state": "retry_after",
+            "reason_kind": "quota_terminal",
+            "retry_at": far_future,
+        }
+
+        status_snapshot = {
+            "tasks": [task_fixture("TASK-READY", status="todo", owner="Codex", reviewer="Codex2")]
+        }
+
+        # Bug 1 + bug 2 together previously self-locked this case: neither
+        # the incumbent owner (durably not viable) nor the incumbent
+        # reviewer (silently excluded as an owner candidate, and never
+        # reviewer-chain-refreshed for an ordinary ``todo`` task) produced
+        # any refresh demand, so the only viable owner fallback (Codex2) and
+        # its replacement reviewer (Claude) both stayed stale forever.
+        targets = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=0
+        )
+        target_ids = {t["id"] for t in targets}
+        self.assertEqual(target_ids, {"codex2"})
+
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            self.state,
+            status_snapshot,
+            queue_snapshot=[],
+            live_total=0,
+        )
+        plan_target_ids = {t["id"] for t in plan.get("health_refresh_targets", [])}
+        self.assertIn("codex2", plan_target_ids)
+
+        # A running fleet must gain no extra probes from this path.
+        no_extra = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=1
+        )
+        self.assertEqual(no_extra, [])
+
+        # Once the demanded refresh lands (codex2 becomes healthy again),
+        # the real planner reaches exactly the viable pair the review
+        # expected -- proving bounded, self-triggered recovery end to end.
+        self.state["delivery_health"]["endpoints"]["codex2"] = {
+            "state": "healthy",
+            "valid_until": far_future,
+        }
+        pair = supervisor.plan_task_assignment_pair(
+            self.config, status_snapshot["tasks"][0], state=self.state
+        )
+        self.assertEqual(pair, ("Codex2", "Claude"))
 
     def test_large_queue_records_reconciliation_is_bounded(self) -> None:
         """Reconciliation and queue scanning remain bounded with 1600+ historic records."""
