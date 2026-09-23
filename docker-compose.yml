@@ -977,7 +977,21 @@ services:
       # to the governance service from this path.
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-runtime-manager:service}
-      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-default}
+      # NOTE (DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001): every other
+      # service in this file chains its tenant default through
+      # ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}; this var
+      # previously skipped that chain and hardcoded 'default'. A real dev
+      # paper baseline reproduction creates every persona/plan/saga under
+      # tenant 'tenant-dev' (the dev-login operator's default allowed
+      # tenant, matching PANTHEON_DEV_BFF_TENANT_ID's own 'tenant-dev'
+      # default), so the outbox consumer's X-Tenant-Id header never matched
+      # any queued event's tenant and it silently claimed zero events
+      # forever -- the saga never advanced past 'runtime.binding.requested'
+      # and the provisioning coordinator's readback eventually timed out.
+      # Chain through the same convention plus the dev-paper tenant so this
+      # only changes behavior for a deploy that actually configured one of
+      # those, never for an environment that left every tenant var unset.
+      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_CAPITAL_API_URL: http://capital:8092
@@ -1883,8 +1897,25 @@ services:
       # CAPITAL_JWT_ISSUER/AUDIENCE comment on the operator-bff service) so the
       # postgres-backed strict-auth guard below has a non-empty expected
       # issuer/audience that actually matches what operator-bff signs.
-      PANTHEON_REGISTRY_JWT_ISSUER: ${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-pantheon-dev-control-plane}}
-      PANTHEON_REGISTRY_JWT_AUDIENCE: ${PANTHEON_REGISTRY_JWT_AUDIENCE:-${CAPITAL_JWT_AUDIENCE:-pantheon-dev-owners}}
+      # NOTE: docker compose interpolation resolves every service's ${VAR:-...}
+      # independently against the top-level shell/.env environment -- it does
+      # NOT read another service's own already-resolved container value. So
+      # chaining only through ${CAPITAL_JWT_ISSUER:-...} is correct when the
+      # deploy environment exports CAPITAL_JWT_ISSUER itself, but silently
+      # breaks whenever only PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE is set
+      # (the dev-paper-principal-issuer profile's actual export contract):
+      # operator-bff's own CAPITAL_JWT_ISSUER line falls through to
+      # PANTHEON_DEV_BFF_JWT_ISSUER and signs with it, but this line's
+      # ${CAPITAL_JWT_ISSUER:-...} reads the same (unset) shell variable and
+      # falls straight to the literal default instead, so registry validates
+      # against a different issuer/audience than operator-bff actually signs.
+      # Reproduced with `docker compose --env-file /dev/null config` setting
+      # only PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE. Add the same
+      # PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE fallback level operator-bff's own
+      # CAPITAL_JWT_ISSUER/AUDIENCE line already has, so both resolve
+      # identically for every combination of which variable is actually set.
+      PANTHEON_REGISTRY_JWT_ISSUER: ${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}}
+      PANTHEON_REGISTRY_JWT_AUDIENCE: ${PANTHEON_REGISTRY_JWT_AUDIENCE:-${CAPITAL_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}}
       PANTHEON_REGISTRY_ROLE_CLAIMS: ${PANTHEON_REGISTRY_ROLE_CLAIMS:-roles,role}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
@@ -2085,7 +2116,21 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-deployment-outbox-consumer:deployment_consumer}
-      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-default}
+      # NOTE (DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001): every other
+      # service in this file chains its tenant default through
+      # ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}; this var
+      # previously skipped that chain and hardcoded 'default'. A real dev
+      # paper baseline reproduction creates every persona/plan/saga under
+      # tenant 'tenant-dev' (the dev-login operator's default allowed
+      # tenant, matching PANTHEON_DEV_BFF_TENANT_ID's own 'tenant-dev'
+      # default), so the outbox consumer's X-Tenant-Id header never matched
+      # any queued event's tenant and it silently claimed zero events
+      # forever -- the saga never advanced past 'runtime.binding.requested'
+      # and the provisioning coordinator's readback eventually timed out.
+      # Chain through the same convention plus the dev-paper tenant so this
+      # only changes behavior for a deploy that actually configured one of
+      # those, never for an environment that left every tenant var unset.
+      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}
       PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_CAPITAL_API_URL: http://capital:8092

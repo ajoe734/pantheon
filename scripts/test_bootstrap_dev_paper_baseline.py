@@ -1053,10 +1053,10 @@ def test_compose_operator_bff_wires_owner_service_jwt_credentials() -> None:
         "${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}"
     )
     assert registry_env["PANTHEON_REGISTRY_JWT_ISSUER"] == (
-        "${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-pantheon-dev-control-plane}}"
+        "${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}}"
     )
     assert registry_env["PANTHEON_REGISTRY_JWT_AUDIENCE"] == (
-        "${PANTHEON_REGISTRY_JWT_AUDIENCE:-${CAPITAL_JWT_AUDIENCE:-pantheon-dev-owners}}"
+        "${PANTHEON_REGISTRY_JWT_AUDIENCE:-${CAPITAL_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}}"
     )
 
     governance_env = services["governance"]["environment"]
@@ -1068,4 +1068,164 @@ def test_compose_operator_bff_wires_owner_service_jwt_credentials() -> None:
     )
     assert governance_env["PANTHEON_GOVERNANCE_JWT_AUDIENCE"] == (
         "${PANTHEON_GOVERNANCE_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}"
+    )
+
+
+def test_compose_resolves_owner_issuer_audience_for_nondefault_dev_values() -> None:
+    """Regression for DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 P2:
+
+    The literal-string assertions above only prove the YAML text of each
+    fallback chain; they do not prove what docker compose actually resolves
+    a chain to. Independent review reproduced a real mismatch that a literal
+    assertion cannot catch: `docker compose --env-file /dev/null config`,
+    with only PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE set to non-default values
+    and CAPITAL_JWT_*/PANTHEON_REGISTRY_JWT_* issuer/audience left unset,
+    resolved operator-bff's signed CAPITAL_JWT_ISSUER/AUDIENCE to the
+    configured non-default values while registry's
+    PANTHEON_REGISTRY_JWT_ISSUER/AUDIENCE fell through to the unrelated
+    literal default -- because compose interpolation resolves every
+    service's ${VAR:-...} independently against the top-level shell/.env
+    environment, never against another service's own already-resolved
+    container value, so chaining only through ${CAPITAL_JWT_ISSUER:-...}
+    silently breaks whenever the deploy environment exports
+    PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE but not CAPITAL_JWT_ISSUER/AUDIENCE
+    itself (the dev-paper-principal-issuer profile's actual export
+    contract). This runs the exact reviewer repro through `docker compose
+    config` and asserts operator-bff, registry, and governance all resolve
+    to the same issuer/audience the owner-agnostic signer actually emits.
+    """
+    import shutil
+    import subprocess
+
+    import yaml
+
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not available in this environment")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    for key in (
+        "CAPITAL_JWT_ISSUER",
+        "CAPITAL_JWT_AUDIENCE",
+        "PANTHEON_REGISTRY_JWT_ISSUER",
+        "PANTHEON_REGISTRY_JWT_AUDIENCE",
+        "PANTHEON_GOVERNANCE_JWT_ISSUER",
+        "PANTHEON_GOVERNANCE_JWT_AUDIENCE",
+    ):
+        env.pop(key, None)
+    env["PANTHEON_DEV_BFF_JWT_ISSUER"] = "review-test-issuer"
+    env["PANTHEON_DEV_BFF_JWT_AUDIENCE"] = "review-test-audience"
+
+    result = subprocess.run(
+        ["docker", "compose", "--env-file", "/dev/null", "config", "--format", "json"],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"docker compose config unavailable: {result.stderr.strip()}")
+
+    compose = yaml.safe_load(result.stdout) if result.stdout.strip().startswith(("{", "[")) else None
+    if compose is None:
+        import json
+
+        compose = json.loads(result.stdout)
+    services = compose["services"]
+
+    bff_env = services["operator-bff"]["environment"]
+    registry_env = services["registry"]["environment"]
+    governance_env = services["governance"]["environment"]
+
+    assert bff_env["CAPITAL_JWT_ISSUER"] == "review-test-issuer"
+    assert bff_env["CAPITAL_JWT_AUDIENCE"] == "review-test-audience"
+    assert registry_env["PANTHEON_REGISTRY_JWT_ISSUER"] == "review-test-issuer"
+    assert registry_env["PANTHEON_REGISTRY_JWT_AUDIENCE"] == "review-test-audience"
+    assert governance_env["PANTHEON_GOVERNANCE_JWT_ISSUER"] == "review-test-issuer"
+    assert governance_env["PANTHEON_GOVERNANCE_JWT_AUDIENCE"] == "review-test-audience"
+
+
+def test_compose_deployment_tenant_id_chains_like_every_other_service() -> None:
+    """Regression for DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 AC5 (new,
+    this delivery):
+
+    A full hosted reproduction against the complete, unmodified real dev
+    paper stack (docs/deployment/evidence/
+    DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001/evidence.json) reached
+    authoritative paper_running and, on the way, found runtime-manager's and
+    deployment-outbox-consumer's PANTHEON_DEPLOYMENT_TENANT_ID hardcoded to
+    the literal default `default`, unlike every other service in this file
+    which chains through `${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-
+    default}}`. The dev-paper bootstrap's persona/plan/saga all live under
+    tenant `tenant-dev` (the dev-login operator's default allowed tenant,
+    matching PANTHEON_DEV_BFF_TENANT_ID's own `tenant-dev` default), so the
+    outbox consumer's `X-Tenant-Id: default` header never matched any queued
+    `tenant-dev` event and silently claimed zero events forever: the
+    deployment saga never advanced past `runtime.binding.requested`, and the
+    provisioning coordinator's readback eventually timed out and compensated
+    -- with no error surfaced anywhere in the wiring, since the consumer's
+    own tenant scoping "worked" for its own (empty) tenant.
+    """
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[1]
+    compose = yaml.safe_load((repo_root / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+
+    expected = (
+        "${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-"
+        "${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}"
+    )
+    assert services["runtime-manager"]["environment"]["PANTHEON_DEPLOYMENT_TENANT_ID"] == expected
+    assert (
+        services["deployment-outbox-consumer"]["environment"]["PANTHEON_DEPLOYMENT_TENANT_ID"]
+        == expected
+    )
+
+
+def test_compose_resolves_deployment_tenant_id_for_dev_paper_tenant() -> None:
+    """Behavioral counterpart to the literal-string assertion above: proves
+    what docker compose actually resolves PANTHEON_DEPLOYMENT_TENANT_ID to
+    when only PANTHEON_DEV_BFF_TENANT_ID (the dev-paper-principal-issuer's
+    own tenant variable) is set, exactly as a real dev-paper-principals
+    activation does. Before this fix both services resolved to the literal
+    `default` here regardless, which is the exact mismatch that silently
+    stalled the deployment saga in the hosted reproduction."""
+    import shutil
+    import subprocess
+
+    import yaml
+
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not available in this environment")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    for key in ("PANTHEON_TENANT_ID", "PANTHEON_BFF_TENANT_ID", "PANTHEON_DEPLOYMENT_TENANT_ID"):
+        env.pop(key, None)
+    env["PANTHEON_DEV_BFF_TENANT_ID"] = "tenant-dev"
+
+    result = subprocess.run(
+        ["docker", "compose", "--env-file", "/dev/null", "config", "--format", "json"],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"docker compose config unavailable: {result.stderr.strip()}")
+
+    compose = yaml.safe_load(result.stdout) if result.stdout.strip().startswith(("{", "[")) else None
+    if compose is None:
+        import json
+
+        compose = json.loads(result.stdout)
+    services = compose["services"]
+
+    assert services["runtime-manager"]["environment"]["PANTHEON_DEPLOYMENT_TENANT_ID"] == "tenant-dev"
+    assert (
+        services["deployment-outbox-consumer"]["environment"]["PANTHEON_DEPLOYMENT_TENANT_ID"]
+        == "tenant-dev"
     )
