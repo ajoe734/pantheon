@@ -14,6 +14,8 @@ import os
 import re
 from typing import Any, Callable, Dict, List, Optional
 
+from fastapi import HTTPException
+
 try:
     from ..auth.policy import bff_error as _default_bff_error
     from ..models import ErrorCode, utc_now as _default_utc_now
@@ -33,9 +35,10 @@ from ..governance.promotion_review import (
 
 _NUMERIC_TYPES = (int, float, Decimal)
 
-_PM12_LEAGUE_FORMULA_VERSION = "pm12_quarterly_ranking_v1"
+_PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 _PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS = 3600
 _PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS = 86400 * 7
+_PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
 
 _PM12_ALLOCATION_LINE_DIGEST_FIELDS = (
     "persona_id",
@@ -49,7 +52,7 @@ _PM12_ALLOCATION_LINE_DIGEST_FIELDS = (
     "paper_ledger_id",
 )
 
-_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = [
+_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (
     "promote_to_canary_candidate",
     "increase_research_budget",
     "grant_tool_access",
@@ -58,39 +61,79 @@ _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = [
     "freeze_persona",
     "suspend_persona",
     "retire_persona",
-]
+)
 
 _PM12_QUARTERLY_RECOMMENDATION_ACTIONS = {
     "promote_to_canary_candidate": {
+        "label": "Promote to canary candidate",
         "title": "Promote to Canary Candidate",
+        "priority": "high",
+        "riskLevel": "medium",
+        "risk_level": "medium",
+        "rationale": "Quarterly score and risk posture support canary-review consideration.",
         "description": "Meets promotion criteria; request canary staging.",
     },
     "increase_research_budget": {
+        "label": "Increase research budget",
         "title": "Increase Research Budget",
+        "priority": "medium",
+        "riskLevel": "low",
+        "risk_level": "low",
+        "rationale": "Quarterly score supports additional research-only budget.",
         "description": "High search efficiency; grant additional budget.",
     },
     "grant_tool_access": {
+        "label": "Grant tool access",
         "title": "Grant Tool Access",
+        "priority": "medium",
+        "riskLevel": "low",
+        "risk_level": "low",
+        "rationale": "Quarterly score and execution posture support expanded tool access review.",
         "description": "Eligible for expanded tooling permissions.",
     },
     "reduce_capital_access": {
+        "label": "Reduce capital access",
         "title": "Reduce Capital Access",
+        "priority": "high",
+        "riskLevel": "high",
+        "risk_level": "high",
+        "rationale": "Risk or overall score calls for capital-access reduction review.",
         "description": "Drawdown or performance degradation detected.",
     },
     "require_retraining": {
+        "label": "Require retraining",
         "title": "Require Retraining",
+        "priority": "medium",
+        "riskLevel": "medium",
+        "risk_level": "medium",
+        "rationale": "Quarterly component scores indicate retraining should be reviewed.",
         "description": "Execution score below threshold; queue fine-tuning.",
     },
     "freeze_persona": {
+        "label": "Freeze persona",
         "title": "Freeze Persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the freeze-review threshold.",
         "description": "Temporary operational pause for audit.",
     },
     "suspend_persona": {
+        "label": "Suspend persona",
         "title": "Suspend Persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the suspension-review threshold.",
         "description": "Persistent poor performance; revoke execution rights.",
     },
     "retire_persona": {
+        "label": "Retire persona",
         "title": "Retire Persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the retirement-review threshold.",
         "description": "Terminal state; initiate formal decommissioning.",
     },
 }
@@ -302,61 +345,81 @@ def _pm12_allocation_evaluation_record(
 # ---------------------------------------------------------------------------
 
 def _pm12_current_quarter_id(snapshot_at: str) -> str:
-    try:
-        dt = datetime.fromisoformat(str(snapshot_at).replace("Z", "+00:00"))
-    except Exception:
-        dt = datetime.now(timezone.utc)
-    q = (dt.month - 1) // 3 + 1
-    return f"{dt.year}-Q{q}"
+    timestamp = _audit_datetime(snapshot_at) or datetime.now(timezone.utc)
+    quarter = ((timestamp.month - 1) // 3) + 1
+    return f"{timestamp.year}-Q{quarter}"
 
 
 def _pm12_iso_z(value: datetime) -> str:
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, Any]:
     raw_quarter = str(quarter or "").strip().upper() or _pm12_current_quarter_id(snapshot_at)
-    match = re.fullmatch(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", raw_quarter)
+    match = _PM12_QUARTER_PATTERN.match(raw_quarter)
     if not match:
-        raw_quarter = _pm12_current_quarter_id(snapshot_at)
-        match = re.fullmatch(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", raw_quarter)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_quarter",
+                "message": "quarter must use YYYY-Qn format, for example 2026-Q2.",
+                "field": "quarter",
+            },
+        )
     year = int(match.group("year"))
-    quarter_index = int(match.group("quarter"))
-    start_month = (quarter_index - 1) * 3 + 1
-    start_at = datetime(year, start_month, 1, 0, 0, 0, tzinfo=timezone.utc)
-    if quarter_index == 4:
-        end_exclusive_at = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    quarter_number = int(match.group("quarter"))
+    start_month = ((quarter_number - 1) * 3) + 1
+    start_at = datetime(year, start_month, 1, tzinfo=timezone.utc)
+    if quarter_number == 4:
+        end_exclusive_at = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
     else:
-        end_exclusive_at = datetime(year, start_month + 3, 1, 0, 0, 0, tzinfo=timezone.utc)
+        end_exclusive_at = datetime(year, start_month + 3, 1, tzinfo=timezone.utc)
+    quarter_id = f"{year}-Q{quarter_number}"
     return {
-        "quarter": raw_quarter,
-        "quarter_id": raw_quarter,
+        "quarter": quarter_id,
+        "quarter_id": quarter_id,
+        "year": year,
+        "quarter_number": quarter_number,
+        "label": f"{year} Q{quarter_number}",
         "start_at": _pm12_iso_z(start_at),
         "end_exclusive_at": _pm12_iso_z(end_exclusive_at),
+        "timezone": "UTC",
     }
 
 
 def _pm12_add_recommendation_action(action_ids: List[str], action_id: str) -> None:
-    if action_id not in action_ids:
+    if action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTIONS and action_id not in action_ids:
         action_ids.append(action_id)
 
 
-def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
-    action_ids: List[str] = []
-    overall = float(item.get("overall_score") or item.get("score") or 0.0)
-    search_score = float(item.get("search_score") or 0.0)
-    execution_score = float(item.get("execution_score") or 0.0) if item.get("execution_score") is not None else None
-    activity_score = float(item.get("activity_score") or 0.0) if item.get("activity_score") is not None else None
+def _management_number(val: Any) -> Optional[float]:
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
 
-    if overall >= 85.0 and bool(item.get("eligible", True)):
+
+def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
+    components = item.get("components") if isinstance(item.get("components"), dict) else {}
+    overall = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
+    risk_score = _management_number(components.get("risk_score"))
+    execution_score = _management_number(components.get("execution_score"))
+    activity_score = _management_number(components.get("activity_score"))
+    action_ids: List[str] = []
+
+    if overall >= 85.0 and (risk_score is None or risk_score >= 70.0) and (
+        execution_score is None or execution_score >= 65.0
+    ):
         _pm12_add_recommendation_action(action_ids, "promote_to_canary_candidate")
         _pm12_add_recommendation_action(action_ids, "increase_research_budget")
         _pm12_add_recommendation_action(action_ids, "grant_tool_access")
-    elif overall >= 70.0:
-        if search_score >= 80.0:
-            _pm12_add_recommendation_action(action_ids, "increase_research_budget")
+    elif overall >= 70.0 and (risk_score is None or risk_score >= 60.0):
+        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
         _pm12_add_recommendation_action(action_ids, "grant_tool_access")
-    elif overall >= 55.0:
+
+    if risk_score is not None and risk_score < 55.0:
         _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
     if (execution_score is not None and execution_score < 55.0) or (
         activity_score is not None and activity_score < 45.0
@@ -390,10 +453,21 @@ def _pm12_quarterly_recommendation_item(
     command_store: Any = None,
 ) -> Dict[str, Any]:
     action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS.get(action_id, {
+        "label": action_id.replace("_", " ").title(),
         "title": action_id.replace("_", " ").title(),
         "description": "Governed recommendation action.",
+        "priority": "medium",
+        "risk_level": "medium",
+        "rationale": "Governed recommendation action.",
     })
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
+    score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
+    evidence_sample = list(item.get("evidence_refs") or evidence_refs or [])[:5]
+    evidence_ref_ids = [
+        str(ref.get("refId") or ref.get("ref_id") or ref.get("id"))
+        for ref in evidence_sample
+        if ref.get("refId") or ref.get("ref_id") or ref.get("id")
+    ]
     recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
     review_id = _promotion_review_revision_id(
         recommendation_id,
@@ -447,21 +521,75 @@ def _pm12_quarterly_recommendation_item(
         "human_review_state": human_review_state,
         "name": item.get("name"),
         "owner": item.get("owner"),
-        "action_id": action_id,
-        "action_label": action["title"],
-        "action_description": action["description"],
-        "rank": item.get("rank"),
-        "score": item.get("score") or item.get("overall_score"),
-        "overall_score": item.get("overall_score") or item.get("score"),
+        "archetype": item.get("archetype"),
+        "state": item.get("state"),
         "stage": item.get("stage"),
+        "deployment_stage": item.get("deployment_stage"),
+        "capital_mode": item.get("capital_mode"),
+        "capital_scope": item.get("capital_scope"),
+        "capital_scope_id": item.get("capital_scope_id"),
+        "capital_pool_id": item.get("capital_pool_id"),
+        "capital_sleeve_id": item.get("capital_sleeve_id"),
+        "paper_ledger_id": item.get("paper_ledger_id"),
         "current_weight": item.get("current_weight"),
         "target_weight": item.get("target_weight"),
         "delta": item.get("delta"),
-        "capital_scope": item.get("capital_scope"),
-        "capital_pool_id": item.get("capital_pool_id"),
-        "capital_sleeve_id": item.get("capital_sleeve_id"),
-        "evidence_refs": evidence_refs,
+        "current_weight_source": item.get("current_weight_source"),
+        "binding_state": item.get("binding_state"),
+        "binding_resolution": item.get("binding_resolution"),
+        "runtime_resolution": item.get("runtime_resolution"),
+        "session_resolution": item.get("session_resolution"),
+        "telemetry_resolution": item.get("telemetry_resolution"),
+        "binding_ids": list(item.get("binding_ids") or []),
+        "strategy_ids": list(item.get("strategy_ids") or []),
+        "runtime_ids": list(item.get("runtime_ids") or []),
+        "capital_pool_ids": list(item.get("capital_pool_ids") or []),
+        "sleeve_ids": list(item.get("sleeve_ids") or []),
+        "artifact_ids": list(item.get("artifact_ids") or []),
+        "broker_ids": list(item.get("broker_ids") or []),
+        "eligible": item.get("eligible"),
+        "exclusion_reason": item.get("exclusion_reason"),
+        "exclusion_reasons": list(item.get("exclusion_reasons") or []),
+        "exclusion_codes": list(item.get("exclusion_codes") or []),
+        "evidence_coverage": item.get("evidence_coverage"),
+        "source_confidence": item.get("source_confidence"),
+        "risk": item.get("risk"),
+        "rank": item.get("rank"),
+        "score": score,
+        "tier": item.get("tier"),
+        "tier_id": item.get("tier_id"),
+        "tier_label": item.get("tier_label"),
+        "allocation_policy_input": json.loads(
+            json.dumps(item.get("allocation_policy_input") or {})
+        ),
+        "formula_version": item.get("formula_version") or _PM12_LEAGUE_FORMULA_VERSION,
+        "action_id": action_id,
+        "action_label": action.get("label") or action.get("title") or action_id,
+        "action_description": action.get("description") or "",
+        "recommendation_type": "governance_advisory",
+        "status": "recommended",
+        "priority": action.get("priority") or "medium",
+        "risk_level": action.get("risk_level") or "medium",
+        "target": {"type": "persona", "id": persona_id},
+        "rationale": f"{action.get('rationale', '')} Score={score:.2f}; tier={item.get('tier') or 'unknown'}.",
+        "rationale_codes": [
+            f"tier:{item.get('tier') or 'unknown'}",
+            f"action:{action_id}",
+            "policy:no_direct_live_capital",
+        ],
+        "metrics": item.get("metrics") or {},
+        "components": item.get("components") or {},
+        "evidence_refs": evidence_sample,
+        "evidence_ref_ids": evidence_ref_ids,
         "governance": governance,
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "policy": "read_only_governance_advisory",
+        "links": {
+            "persona": f"/bff/personas/{persona_id}",
+            "human_inbox": "/bff/management/human-inbox",
+            "governance_queue": "/api/v1/operator/governance/approval-queue",
+        },
     }
 
 

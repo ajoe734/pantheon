@@ -484,3 +484,62 @@ def test_management_ai_service_audit_and_store_isolation():
     assert hasattr(ManagementNlUseCase, "admit")
     assert callable(_management_ai_list_audit_events)
 
+
+# ============================================================================
+# 7. PM12 & Human Inbox Composition Seam Verification (Reviewer Closeout)
+# ============================================================================
+
+def test_pm12_quarter_window_and_action_helpers():
+    import importlib
+    from services.control_plane.bff.pm12.service import (
+        _pm12_add_recommendation_action,
+        _pm12_current_quarter_id,
+        _pm12_quarter_window,
+    )
+    bff_main = importlib.import_module("services.control_plane.bff.main")
+
+    # 1. Format validation and 422 HTTPException on invalid quarter
+    with pytest.raises(HTTPException) as exc_info:
+        _pm12_quarter_window("invalid-quarter", "2026-06-15T00:00:00Z")
+    assert exc_info.value.status_code == 422
+
+    # 2. Valid quarter resolution
+    window = _pm12_quarter_window("2026-Q2", "2026-06-15T00:00:00Z")
+    assert window["quarter"] == "2026-Q2"
+    assert window["year"] == 2026
+    assert window["quarter_number"] == 2
+
+    # 3. Add recommendation action deduplicates and restricts to valid actions
+    actions: List[str] = []
+    _pm12_add_recommendation_action(actions, "promote_to_canary_candidate")
+    _pm12_add_recommendation_action(actions, "promote_to_canary_candidate")
+    assert len(actions) == 1
+    _pm12_add_recommendation_action(actions, "unknown_action_not_in_manifest")
+    assert len(actions) == 1
+
+    # 4. Delegation identity: main re-exports pm12 service implementations
+    assert bff_main._pm12_quarter_window is _pm12_quarter_window
+    assert bff_main._pm12_add_recommendation_action is _pm12_add_recommendation_action
+    assert bff_main._pm12_quarterly_recommendation_item is _pm12_quarterly_recommendation_item
+
+
+def test_human_inbox_governance_seam_delegation():
+    import importlib
+    from services.control_plane.bff.governance.human_inbox import (
+        _human_inbox_payload,
+        _human_inbox_priority,
+        _human_inbox_promotion_review_item,
+    )
+    bff_main = importlib.import_module("services.control_plane.bff.main")
+
+    # 1. Main re-exports human_inbox governance implementations
+    assert bff_main._human_inbox_payload is _human_inbox_payload
+    assert bff_main._human_inbox_priority is _human_inbox_priority
+    assert bff_main._human_inbox_promotion_review_item is _human_inbox_promotion_review_item
+
+    # 2. Priority normalization handles sev/p prefixes
+    assert _human_inbox_priority("sev1") == "critical"
+    assert _human_inbox_priority("p1") == "high"
+    assert _human_inbox_priority("sev3") == "medium"
+    assert _human_inbox_priority("foo", fallback="low") == "low"
+
