@@ -1,0 +1,79 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "DEV-PAPER-FIRST-INGEST-ON-PROVISION-001",
+  "title": "A newly provisioned dev connector never runs its first ingest in time",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "fdd259ce92a320cd4f89b4653c3c5ebcc6b09b3a",
+  "problem": {
+    "observed_on_vm": "Deploy run 35842520262 (ref fdd259ce9, merge of PR #5958) failed at 'Ensure governed dev paper baseline under lease' with: timed out waiting for admissible market snapshot for symbol SPY: market_input_stale (snapshot event_time 2026-09-13T03:59:39Z is stale 884524.6s > 86400s). connector_count moved from 2 to 3 for the first time (PR #5958's ordering fix worked, the dev-paper-us-equity-simulation connector was registered), persona-b52db9473b6e0396f4d9 reached provisioning step schedule_registered, but source_ingest.data_source_instances stayed 0, pantheon-source-ingest-1 never logged an execution attempt for the connector, and connector_schedule.jsonl showed the schedule entry go enabled=true at 09:40:43Z then enabled=false at 09:41:37Z when the failed baseline run's saga compensated.",
+    "root_cause": "scripts/bootstrap_dev_paper_baseline.py's ensure_dev_market_snapshot_ready only actively nudged a fresh ingest pass (POST /api/source-ingest/run-scheduled) when the polled snapshot was entirely missing (HTTP 404). When the polled snapshot already existed but was stale (HTTP 200 with an old event_time -- exactly the 2026-09-13 snapshot the VM observed, left over from an earlier partial provisioning attempt on that host), the wait loop only re-polled the same read-only GET endpoint and never triggered a new pull. A stale snapshot can never become fresh on its own, so the bounded wait could only ever time out with market_input_stale regardless of how long the timeout budget was. This is a distinct bug from DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 (which fixed the connector/schedule *registration* ordering, confirmed working here by connector_count 2->3 and provisioning_step=schedule_registered): that task made the connector exist in time; this task's gap was that once it existed, a pre-existing stale snapshot on the host still blocked its first real pull from ever being triggered.",
+    "why_the_scheduler_container_never_ran_it": "source-ingest-scheduler (pantheon-source-ingest-scheduler-1) runs controller_worker.py, whose SOURCE_INGEST_CONTROLLER_MODE defaults to reconcile_only (docker-compose.yml). reconcile_only mode is deliberately the always-safe half of the source loop: it reconciles Persona.required_data_sources into configured connectors and enabled schedules (explaining the connector_schedule.jsonl entry), but by design never calls run-scheduled or otherwise executes a provider pull (services/source_ingestion/controller_worker.py: reconcile_only mode must not select provider connector execution). Triggering the first real pull for a freshly provisioned connector is therefore the bootstrap script's own responsibility via its bounded ensure_dev_market_snapshot_ready wait, not the scheduler container's -- which is why pantheon-source-ingest-1 (the API/worker process the scheduler's reconcile-only tick and the bootstrap's own nudge both ultimately call into) never logged an execution attempt: nothing had ever asked it to run one for this connector."
+  },
+  "scope": {
+    "owned": [
+      "scripts/bootstrap_dev_paper_baseline.py: ensure_dev_market_snapshot_ready now nudges POST /api/source-ingest/run-scheduled whenever the polled snapshot is not yet admissible for any reason (missing, stale, future-dated, or insufficient closes), not only on HTTP 404. Extracted the nudge into a small _nudge_run_scheduled helper reused by every non-fresh branch. The nudge remains best-effort (wrapped in try/except, matching the pre-existing 404 nudge) and carries the resolved source-ingest controller bearer token exactly as before.",
+      "scripts/test_bootstrap_dev_paper_baseline.py: updated test_replay_with_stale_snapshot_still_raises_market_input_stale to assert the nudge now fires on the one stale observation before the bounded deadline is hit; added test_market_snapshot_wait_nudges_stale_existing_snapshot_then_succeeds (a stale existing snapshot on a host converges to ok once the nudge lands a fresh one, proving AC1/AC5 for the exact failure mode observed on the VM); added a run-scheduled response to _replay_post_queue so the shared replay-path fixture supports the nudge.",
+      "scripts/bootstrap_dev_paper_baseline.py (run_self_tests): Test 4 (insufficient closes) and Test 5 (stale snapshot) now patch _post_json and assert a nudge call happened; Test 6 (future-dated snapshot) now patches _post_json to avoid an unmocked network call now that its branch also nudges."
+    ],
+    "not_changing": [
+      "services/source_ingestion/persona_source_reconciler.py and services/source_ingestion/runtime.py: read for this investigation (they own connector/schedule registration and reconcile-only-mode provider-execution boundary), but the observed failure was not in their code path -- connector registration and schedule creation already worked correctly per the VM evidence (connector_count 2->3, schedule entry written). No change needed.",
+      "services/source_ingestion/controller_worker.py: SOURCE_INGEST_CONTROLLER_MODE=reconcile_only staying the scheduler's default is intentional (services/source_ingestion/controller_worker.py's own comments and config_from_env validation say a provider-executing tick requires explicitly selected exclusive_connector_ids); the fix keeps the scheduler container's safe-by-default posture unchanged and instead fixes the one caller (the bootstrap script) that is already responsible for triggering a bounded first pull.",
+      "the daily schedule cadence itself (interval_seconds=86400, JsonlConnectorScheduleStore): unchanged. The nudge calls the existing run_scheduled_connectors endpoint, which already skips any connector whose watermark is inside its cadence interval (services/source_ingestion/pipeline.py) -- a repeated nudge during steady state is a no-op for an already-fresh connector, so AC3 (cadence unchanged after the first run) holds without any change to the scheduling code."
+    ],
+    "composes_with": [
+      "PR #5958 / DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001's connector/schedule registration ordering fix, which this delivery relies on being already merged (base_sha fdd259ce9 is that merge commit) and does not modify.",
+      "the source-ingest-scheduler container's reconcile_only tick, which keeps running unchanged in parallel and keeps connector/schedule config converged; this delivery only changes what the bootstrap script itself does while waiting.",
+      "the next real redeploy onto the affected dev VM, which Human/Ops owns per this task's brief; this delivery does not run nonprod-deploy or otherwise touch the VM."
+    ],
+    "deliberately_not_attempted": [
+      "A live hosted redeploy/reproduction against the dev VM (34.81.52.222) or a full local docker-compose stack: the task brief explicitly states Human/Ops owns the redeploy and this task must not run nonprod-deploy. Verification here is therefore unit/self-test level against the exact code path the VM's bounded wait executes, reproducing the observed HTTP-200-stale response shape directly."
+    ]
+  },
+  "acceptance_mapping": [
+    {
+      "acceptance": "a connector provisioned for a brand new persona produces its first snapshot without waiting for its cadence interval",
+      "evidence": "Pre-existing coverage (test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_first_run) already proved this for the never-provisioned (HTTP 404) case. This delivery adds the second real-world shape observed on the VM: a host with a pre-existing *stale* snapshot, via the new test_market_snapshot_wait_nudges_stale_existing_snapshot_then_succeeds."
+    },
+    {
+      "acceptance": "that first run is bounded and observable and its failure names the connector and the reason",
+      "evidence": "Unchanged: ensure_dev_market_snapshot_ready still raises BootstrapError naming the symbol and the exact last_reason/last_detail (market_snapshot_not_found / market_input_stale / market_input_invalid / market_input_insufficient) within the caller-supplied bounded timeout."
+    },
+    {
+      "acceptance": "the configured daily cadence is unchanged for every run after the first",
+      "evidence": "The nudge only calls the existing /api/source-ingest/run-scheduled endpoint, whose run_scheduled_connectors (services/source_ingestion/pipeline.py) already skips a connector whose watermark is inside its interval_seconds; no schedule-store code was touched."
+    },
+    {
+      "acceptance": "no snapshot is fabricated or backdated and the freshness rule stays intact",
+      "evidence": "The fix only ever triggers the real scheduled ingest pipeline (run_scheduled_connectors -> the connector's own provider fetch); it does not write, seed, or backdate any snapshot record itself. The freshness comparison in ensure_dev_market_snapshot_ready (event_time age <= 86400s, not in the future) is unchanged."
+    },
+    {
+      "acceptance": "a deploy onto a host with zero data source instances completes the governed paper baseline end to end",
+      "evidence": "Not independently re-proven end-to-end on the VM in this delivery (see deliberately_not_attempted); the fix directly targets the exact failure mode the VM's deploy run reported (market_input_stale against a frozen prior-day snapshot) and is covered at the unit level. End-to-end confirmation is expected from the next Human/Ops-owned redeploy."
+    },
+    {
+      "acceptance": "regression tests cover the first run after provisioning and the steady state cadence",
+      "evidence": "scripts/test_bootstrap_dev_paper_baseline.py: test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_first_run (never-provisioned first run), test_market_snapshot_wait_nudges_stale_existing_snapshot_then_succeeds (new; stale-on-record first run), test_market_snapshot_already_fresh_steady_state_does_not_delay_reconcile and test_replay_with_fresh_snapshot_returns_ok_after_one_get (steady state, no nudge)."
+    }
+  ],
+  "verification": {
+    "passed": [
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/bootstrap_dev_paper_baseline.py --self-test",
+        "result": "8 tests passed (bootstrap_dev_paper_baseline_self_test)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_bootstrap_dev_paper_baseline.py",
+        "result": "40 passed (was 38; +2 new: test_market_snapshot_wait_nudges_stale_existing_snapshot_then_succeeds, plus test_replay_with_stale_snapshot_still_raises_market_input_stale updated in place to assert the nudge)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker.py",
+        "result": "95 passed, unchanged -- confirms the reconcile_only-mode provider-execution boundary and connector/schedule registration paths are unaffected by this delivery"
+      }
+    ],
+    "environment_note": "Test dependencies were provisioned per AI_COLLABORATION_GUIDE.md via scripts/dev/provision_python_distribution.py with PANTHEON_DEPENDENCY_PYTHON pointed at an existing sibling worktree's .venv-pantheon (no system interpreter on this host had pytest); the resulting .venv-pantheon is checkout-scoped and git-ignored, matching the documented provisioning contract."
+  }
+}

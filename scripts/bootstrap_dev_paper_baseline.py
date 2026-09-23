@@ -180,6 +180,36 @@ def _get_json(
         return int(response.status), body if isinstance(body, dict) else {}
 
 
+def _nudge_run_scheduled(
+    *,
+    source_ingest_url: str,
+    controller_token: str,
+    request_timeout_seconds: float,
+) -> None:
+    """Best-effort nudge of a fresh ingest pass for any due connector.
+
+    The nudge is a no-op for a connector whose watermark is already inside
+    its cadence interval (see run_scheduled_connectors in pipeline.py), so
+    calling it repeatedly never disturbs the steady-state daily cadence. It
+    is safe to call whenever the polled snapshot is not yet admissible,
+    regardless of whether that is because it has never been ingested (404)
+    or because the only snapshot on record has gone stale.
+    """
+    try:
+        _post_json(
+            f"{source_ingest_url.rstrip('/')}/api/source-ingest/run-scheduled",
+            {"max_concurrency": 1},
+            headers=(
+                {"Authorization": f"Bearer {controller_token}"}
+                if controller_token
+                else None
+            ),
+            timeout_seconds=request_timeout_seconds,
+        )
+    except Exception:
+        pass
+
+
 def ensure_dev_market_snapshot_ready(
     *,
     source_ingest_url: str,
@@ -195,7 +225,11 @@ def ensure_dev_market_snapshot_ready(
 
     On a fresh host that has never ingested the dev synthetic connector, this
     waits for the snapshot to appear and be admissible before paper baseline
-    creation proceeds.
+    creation proceeds. It also covers the host that already has a *stale*
+    snapshot on record (for example left over from an earlier attempt): a
+    stale snapshot never becomes fresh on its own, so this actively nudges a
+    fresh ingest pass rather than only passively polling an input that can
+    never change without one -- see DEV-PAPER-FIRST-INGEST-ON-PROVISION-001.
     The wait is strictly bounded. If timeout expires, it raises BootstrapError
     explicitly naming the missing market snapshot and reason rather than a
     generic readback failure.
@@ -210,6 +244,7 @@ def ensure_dev_market_snapshot_ready(
 
     while True:
         status, body = _get_json(snapshot_url, timeout_seconds=request_timeout_seconds)
+        needs_nudge = False
         if status == 200 and isinstance(body, dict):
             closes = body.get("closes")
             if closes and isinstance(closes, Sequence) and not isinstance(closes, (str, bytes)) and len(closes) >= 2:
@@ -234,29 +269,26 @@ def ensure_dev_market_snapshot_ready(
                         last_detail = f"invalid event_time {ev_str}: {exc}"
                 if is_fresh:
                     return body
+                needs_nudge = True
             else:
                 last_reason = "market_input_insufficient"
                 count = len(closes) if isinstance(closes, Sequence) and not isinstance(closes, (str, bytes)) else 0
                 last_detail = f"snapshot has {count} closes, requires >= 2"
+                needs_nudge = True
         elif status == 404:
             last_reason = "market_snapshot_not_found"
             last_detail = f"HTTP 404: snapshot for symbol {symbol!r} not found in source-ingest"
-            try:
-                _post_json(
-                    f"{source_ingest_url.rstrip('/')}/api/source-ingest/run-scheduled",
-                    {"max_concurrency": 1},
-                    headers=(
-                        {"Authorization": f"Bearer {controller_token}"}
-                        if controller_token
-                        else None
-                    ),
-                    timeout_seconds=request_timeout_seconds,
-                )
-            except Exception:
-                pass
+            needs_nudge = True
         else:
             last_reason = f"http_{status}"
             last_detail = f"source-ingest responded with HTTP {status}: {body}"
+
+        if needs_nudge:
+            _nudge_run_scheduled(
+                source_ingest_url=source_ingest_url,
+                controller_token=controller_token,
+                request_timeout_seconds=request_timeout_seconds,
+            )
 
         if monotonic() >= deadline:
             raise BootstrapError(
@@ -890,10 +922,14 @@ def run_self_tests() -> int:
             assert "market_snapshot_not_found" in str(exc), f"Expected reason in error: {exc}"
             tests_run += 1
 
-    # Test 4: Insufficient closes rejected (< 2 closes)
+    # Test 4: Insufficient closes rejected (< 2 closes), and a nudge is still
+    # attempted since a producer stuck emitting a partial record also needs a
+    # fresh pass to converge.
     one_close_snapshot = dict(valid_snapshot, closes=[500.0])
     mock_clock = [0.0]
-    with patch.object(this_module, "_get_json", return_value=(200, one_close_snapshot)):
+    nudge_calls_4: list[tuple] = []
+    with patch.object(this_module, "_get_json", return_value=(200, one_close_snapshot)), \
+         patch.object(this_module, "_post_json", side_effect=lambda *a, **k: (nudge_calls_4.append((a, k)), (200, {}))[1]):
         try:
             ensure_dev_market_snapshot_ready(
                 source_ingest_url="http://mock-source:8097",
@@ -907,13 +943,20 @@ def run_self_tests() -> int:
         except BootstrapError as exc:
             assert "symbol 'SPY'" in str(exc)
             assert "market_input_insufficient" in str(exc)
+            assert nudge_calls_4, "expected a run-scheduled nudge on insufficient closes"
             tests_run += 1
 
-    # Test 5: Stale snapshot rejected (event_time > 86400s)
+    # Test 5: Stale snapshot rejected (event_time > 86400s). This is the
+    # DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 regression: a host that already
+    # has a stale snapshot on record must still nudge a fresh ingest pass
+    # instead of only passively polling an input that can never change on
+    # its own.
     stale_iso = "2020-01-01T00:00:00Z"
     stale_snapshot = dict(valid_snapshot, event_time=stale_iso)
     mock_clock = [0.0]
-    with patch.object(this_module, "_get_json", return_value=(200, stale_snapshot)):
+    nudge_calls_5: list[tuple] = []
+    with patch.object(this_module, "_get_json", return_value=(200, stale_snapshot)), \
+         patch.object(this_module, "_post_json", side_effect=lambda *a, **k: (nudge_calls_5.append((a, k)), (200, {}))[1]):
         try:
             ensure_dev_market_snapshot_ready(
                 source_ingest_url="http://mock-source:8097",
@@ -927,13 +970,16 @@ def run_self_tests() -> int:
         except BootstrapError as exc:
             assert "symbol 'SPY'" in str(exc)
             assert "market_input_stale" in str(exc)
+            assert nudge_calls_5, "expected a run-scheduled nudge on a stale snapshot"
+            assert "run-scheduled" in nudge_calls_5[0][0][0]
             tests_run += 1
 
     # Test 6: Future snapshot rejected
     future_iso = "2099-01-01T00:00:00Z"
     future_snapshot = dict(valid_snapshot, event_time=future_iso)
     mock_clock = [0.0]
-    with patch.object(this_module, "_get_json", return_value=(200, future_snapshot)):
+    with patch.object(this_module, "_get_json", return_value=(200, future_snapshot)), \
+         patch.object(this_module, "_post_json", return_value=(200, {})):
         try:
             ensure_dev_market_snapshot_ready(
                 source_ingest_url="http://mock-source:8097",
