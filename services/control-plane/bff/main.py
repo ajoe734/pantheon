@@ -249,7 +249,10 @@ from .personas.service import (
     _register_persona_cron_required,
     _remove_persona_cron_required,
 )
-def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def _list_persona_records(
+    tenant_id: Optional[str] = None,
+    read_store: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
     """Composition-root binding: personas/service.py is the sole owner of this
     projection; explicitly inject the live ``read_store`` global so callers
     outside an active PersonaService request context (composition-root and
@@ -257,7 +260,11 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
     currently holds, matching the injected pattern used by the other main.py
     consumer seams instead of relying on personas/service.py's own module
     fallback."""
-    return _personas_list_persona_records(tenant_id, read_store=read_store)
+    resolved_store = read_store if read_store is not None else globals().get("read_store")
+    try:
+        return _personas_list_persona_records(tenant_id, read_store=resolved_store)
+    except Exception:
+        return []
 try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
@@ -4369,9 +4376,18 @@ def _dataset_surface_status(
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
     source: Optional[str] = None,
+    read_store: Optional[Any] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    source = source or read_store.dataset_source(dataset)
+    resolved_store = read_store if read_store is not None else globals().get("read_store")
+    if source is None:
+        if resolved_store is not None and hasattr(resolved_store, "dataset_source"):
+            try:
+                source = str(resolved_store.dataset_source(dataset) or "missing")
+            except Exception:
+                source = "missing"
+        else:
+            source = "missing"
     return _format_dataset_surface_status(
         dataset,
         snapshot_at=snapshot_at,
@@ -4528,18 +4544,8 @@ def _performance_ranking_source_surface(
     snapshot_at: str,
 ) -> Dict[str, Any]:
     """Add the cross-center confidence vocabulary without changing global envelopes."""
-    normalized = dict(surface)
-    source = str(normalized.get("source") or "unknown")
-    status = str(normalized.get("status") or "unavailable")
-    normalized["observed_time"] = snapshot_at
-    normalized["freshness"] = (
-        normalized.get("staleness", {}).get("served_from")
-        if isinstance(normalized.get("staleness"), dict)
-        else None
-    ) or source
-    normalized["coverage"] = 0.0 if status == "unavailable" or source == "missing" else 1.0
-    normalized["missing_bindings"] = status == "unavailable" or source == "missing"
-    return normalized
+    from services.control_plane.bff.agora.performance.service import canonical_performance_ranking_source_surface
+    return canonical_performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
 from .personas.service import (
     _extract_ids_from_item,
     _filter_by_common_identifiers,
@@ -4951,18 +4957,15 @@ def _aggregate_group_surface(
     unavailable_message: str,
     degraded_message: str,
 ) -> Dict[str, Any]:
-    surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
-    surface["source"] = "bff_composed"
-    statuses = [entry.get("status", "ok") for entry in source_surfaces]
-    if statuses and all(status == "ok" for status in statuses):
-        return surface
-    if statuses and all(status == "unavailable" for status in statuses):
-        surface["status"] = "unavailable"
-        surface["message"] = unavailable_message
-        return surface
-    surface["status"] = "degraded"
-    surface["message"] = degraded_message
-    return surface
+    from services.control_plane.bff.agora.performance.service import canonical_performance_aggregate_group_surface
+    return canonical_performance_aggregate_group_surface(
+        surface_key,
+        source_surfaces,
+        snapshot_at=snapshot_at,
+        unavailable_message=unavailable_message,
+        degraded_message=degraded_message,
+        utc_now=utc_now,
+    )
 def _alert_target_ref(
     *,
     surface_id: str,
@@ -6049,13 +6052,8 @@ _MANAGEMENT_DATA_SOURCES_READ_EXECUTOR = ThreadPoolExecutor(
     thread_name_prefix="bff-management-data-sources",
 )
 def _snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-    }
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-    return meta
+    from services.control_plane.bff.agora.performance.service import canonical_performance_snapshot_meta
+    return canonical_performance_snapshot_meta(snapshot_at, utc_now=utc_now)
 _COMMAND_RECEIPT_STATUS_MAP = {
     CommandStatus.SUBMITTED.value: CommandReceiptStatus.ACCEPTED,
     CommandStatus.PROCESSING.value: CommandReceiptStatus.QUEUED,
@@ -7667,13 +7665,15 @@ def _pm12_performance_attribution_response_impl(*args: Any, **kwargs: Any) -> Di
 
 def _pm12_performance_attribution_sources(
     tenant_id: Optional[str] = None,
+    read_store: Optional[Any] = None,
 ) -> Dict[str, Any]:
     from services.control_plane.bff.agora.performance import service as _agora_perf
+    resolved_store = read_store if read_store is not None else globals().get("read_store")
     return _agora_perf.pm12_performance_attribution_sources(
         tenant_id=tenant_id,
-        read_store=read_store,
-        list_persona_records=_list_persona_records,
-        list_strategy_summaries=_list_strategy_summaries,
+        read_store=resolved_store,
+        list_persona_records=lambda tid: _list_persona_records(tid, read_store=resolved_store),
+        list_strategy_summaries=lambda: list(resolved_store.list_strategy_specs() or []) if (resolved_store is not None and hasattr(resolved_store, "list_strategy_specs")) else [],
     )
 def _persona_fleet_runtime_matches(
     runtime_binding: Dict[str, Any],
@@ -10073,9 +10073,9 @@ from .assistant.management_service import (
     management_ai_session_not_found as _management_ai_session_not_found,
     management_ai_get_visible_session_or_404 as _management_ai_get_visible_session_or_404,
     management_ai_get_session_or_404 as _management_ai_get_session_or_404,
-    management_ai_ensure_session as _management_ai_ensure_session,
-    management_ai_store_attachments as _management_ai_store_attachments,
-    management_ai_append_turn as _management_ai_append_turn,
+    management_ai_ensure_session as _management_ai_ensure_session_impl,
+    management_ai_store_attachments as _management_ai_store_attachments_impl,
+    management_ai_append_turn as _management_ai_append_turn_impl,
     management_ai_server_conversation_context as _management_ai_server_conversation_context_impl,
     management_ai_list_conversations as _management_ai_list_conversations,
     management_ai_get_conversation as _management_ai_get_conversation,
@@ -10087,11 +10087,24 @@ _MGMT_AI_CONVERSATION_STORE: Optional[ManagementAiConversationStore] = None
 
 
 def _management_ai_conversation_store() -> ManagementAiConversationStore:
-    global _MGMT_AI_CONVERSATION_STORE
     if _MGMT_AI_CONVERSATION_STORE is not None:
         return _MGMT_AI_CONVERSATION_STORE
-    _MGMT_AI_CONVERSATION_STORE = get_management_ai_conversation_store()
-    return _MGMT_AI_CONVERSATION_STORE
+    return get_management_ai_conversation_store()
+
+
+def _management_ai_ensure_session(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    kwargs.setdefault("conversation_store", _management_ai_conversation_store())
+    return _management_ai_ensure_session_impl(*args, **kwargs)
+
+
+def _management_ai_store_attachments(*args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+    kwargs.setdefault("conversation_store", _management_ai_conversation_store())
+    return _management_ai_store_attachments_impl(*args, **kwargs)
+
+
+def _management_ai_append_turn(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    kwargs.setdefault("conversation_store", _management_ai_conversation_store())
+    return _management_ai_append_turn_impl(*args, **kwargs)
 
 
 def _management_ai_server_conversation_context(
@@ -10103,6 +10116,7 @@ def _management_ai_server_conversation_context(
         session_id=session_id,
         client_hint=client_hint,
         history_window_fn=_management_ai_provider_history_window,
+        conversation_store=_management_ai_conversation_store(),
     )
 def _management_ai_provider_history_size(turns: List[Dict[str, Any]]) -> int:
     return len(json.dumps(turns, sort_keys=True, ensure_ascii=True))
@@ -13960,6 +13974,7 @@ async def bff_management_ai_conversations(
         limit=limit,
         conversation_href_fn=_management_ai_conversation_href,
         session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
+        conversation_store=_management_ai_conversation_store(),
     )
 async def bff_management_ai_conversation(
     session_id: str,
@@ -13985,6 +14000,7 @@ async def bff_management_ai_conversation(
         limit=limit,
         audit_href_fn=lambda s_id, t_id: _management_ai_audit_href(session_id=s_id, trace_id=t_id),
         session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
+        conversation_store=_management_ai_conversation_store(),
     )
 async def bff_management_ai_attachment(
     attachment_id: str,
@@ -14003,6 +14019,7 @@ async def bff_management_ai_attachment(
         attachment_id=attachment_id,
         identity=identity,
         caller_tenant_id=caller_tenant_id,
+        conversation_store=_management_ai_conversation_store(),
     )
     return Response(
         content=content,
@@ -14568,8 +14585,16 @@ def _pm12_performance_attribution_response(
     stage: Optional[str] = None,
     as_of: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    read_store: Optional[Any] = None,
+    sources_fn: Optional[Callable[..., Any]] = None,
     rows_fn: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
+    resolved_store = read_store if read_store is not None else globals().get("read_store")
+    resolved_sources_fn = (
+        sources_fn
+        if sources_fn is not None
+        else (lambda t: _pm12_performance_attribution_sources(t, read_store=resolved_store))
+    )
     return _pm12_performance_attribution_response_impl(
         dimensions=dimensions,
         period=period,
@@ -14595,9 +14620,9 @@ def _pm12_performance_attribution_response(
         as_of=as_of,
         tenant_id=tenant_id,
         utc_now=utc_now,
-        read_store=read_store,
-        sources_fn=_pm12_performance_attribution_sources,
-        dataset_surface_status_fn=_dataset_surface_status,
+        read_store=resolved_store,
+        sources_fn=resolved_sources_fn,
+        dataset_surface_status_fn=lambda ds, **kw: _dataset_surface_status(ds, read_store=resolved_store, **kw),
         aggregate_group_surface_fn=_aggregate_group_surface,
         performance_ranking_source_surface_fn=_performance_ranking_source_surface,
         snapshot_meta_fn=_snapshot_meta,

@@ -57,15 +57,6 @@ _MGMT_AI_CONVERSATION_STORE: Optional[ManagementAiConversationStore] = None
 
 def get_management_ai_conversation_store() -> ManagementAiConversationStore:
     global _MGMT_AI_CONVERSATION_STORE
-    try:
-        import sys
-        main_mod = sys.modules.get("services.control_plane.bff.main")
-        if main_mod is not None:
-            active_store = getattr(main_mod, "_MGMT_AI_CONVERSATION_STORE", None)
-            if active_store is not None:
-                return active_store
-    except Exception:
-        pass
     if _MGMT_AI_CONVERSATION_STORE is None:
         _MGMT_AI_CONVERSATION_STORE = ManagementAiConversationStore()
     return _MGMT_AI_CONVERSATION_STORE
@@ -74,25 +65,11 @@ def get_management_ai_conversation_store() -> ManagementAiConversationStore:
 def set_management_ai_conversation_store(store: Optional[ManagementAiConversationStore]) -> None:
     global _MGMT_AI_CONVERSATION_STORE
     _MGMT_AI_CONVERSATION_STORE = store
-    try:
-        import sys
-        main_mod = sys.modules.get("services.control_plane.bff.main")
-        if main_mod is not None:
-            main_mod._MGMT_AI_CONVERSATION_STORE = store
-    except Exception:
-        pass
 
 
 def reset_management_ai_conversation_store() -> None:
     global _MGMT_AI_CONVERSATION_STORE
     _MGMT_AI_CONVERSATION_STORE = None
-    try:
-        import sys
-        main_mod = sys.modules.get("services.control_plane.bff.main")
-        if main_mod is not None:
-            main_mod._MGMT_AI_CONVERSATION_STORE = None
-    except Exception:
-        pass
 
 
 def management_ai_conversation_href(session_id: str, *, trace_id: Optional[str] = None) -> str:

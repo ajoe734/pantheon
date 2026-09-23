@@ -16,8 +16,27 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+import importlib
+
+def _get_bff_main() -> Any:
+    return importlib.import_module("services.control_plane.bff.main")
 from services.control_plane.bff.agora.performance.service import (
     pm12_performance_attribution_response,
+    canonical_performance_snapshot_meta,
+    canonical_performance_aggregate_group_surface,
+    canonical_performance_ranking_source_surface,
+)
+from services.control_plane.bff.assistant.management_service import (
+    ManagementAiConversationStore,
+    get_management_ai_conversation_store,
+    set_management_ai_conversation_store,
+    reset_management_ai_conversation_store,
+    management_ai_ensure_session,
+    management_ai_append_turn,
+    management_ai_store_attachments,
+    management_ai_list_conversations,
+    management_ai_get_conversation,
+    management_ai_get_attachment,
 )
 from services.control_plane.bff.capital.router import create_capital_router
 from services.control_plane.bff.capital.service import (
@@ -709,9 +728,55 @@ class TestIncidentsSeam:
 
 
 class TestPerformanceAttributionMountedComposition:
-    """Verifies mounted performance attribution router decoupled from main."""
+    """Verifies mounted performance attribution router and production policy composition parity."""
 
-    def test_performance_attribution_router_mounted_agreement(self) -> None:
+    def test_performance_attribution_router_mounted_agreement_fresh(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BFF_READ_SURFACE_STATE", "fresh")
+        store = _FakePerformanceStore(status="fresh")
+        direct_res = pm12_performance_attribution_response(
+            dimensions=["persona"],
+            period="latest",
+            page_token=None,
+            page_size=50,
+            tenant_id="tenant-alpha",
+            read_store=store,
+        )
+
+        app = FastAPI()
+        app.include_router(
+            create_performance_attribution_router(
+                extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
+                require_read_role=lambda *a, **kw: None,
+                bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
+                pm12_performance_attribution_response=lambda **kw: _get_bff_main()._pm12_performance_attribution_response(read_store=store, **kw),
+                attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+            )
+        )
+        client = TestClient(app)
+        res = client.get("/bff/management/performance-attribution?dimension=persona")
+        assert res.status_code == 200
+        mounted_res = res.json()
+
+        assert mounted_res["data"]["items"] == direct_res["data"]["items"]
+        assert mounted_res["data"]["summary"] == direct_res["data"]["summary"]
+        assert len(mounted_res["data"]["items"]) == 1
+        assert mounted_res["data"]["items"][0]["dimension_key"] == "p-1"
+        assert mounted_res["data"]["summary"]["total_pnl"] == 500.0
+
+        direct_perf = direct_res["meta"]["surfaces"]["performance_attribution"]
+        mounted_perf = mounted_res["meta"]["surfaces"]["performance_attribution"]
+        assert direct_perf["status"] == mounted_perf["status"] == "ok"
+        assert direct_perf["source"] == mounted_perf["source"] == "bff_composed"
+        assert direct_perf["freshness"] == mounted_perf["freshness"] == "bff_composed"
+        assert direct_perf["coverage"] == mounted_perf["coverage"] == 1.0
+        assert direct_perf["missing_bindings"] == mounted_perf["missing_bindings"] is False
+        assert "staleness" not in direct_res["meta"]
+        assert "staleness" not in mounted_res["meta"]
+        assert "staleness" not in direct_perf
+        assert "staleness" not in mounted_perf
+
+    def test_performance_attribution_production_composition_parity_degraded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BFF_READ_SURFACE_STATE", "degraded")
         store = _FakePerformanceStore()
         direct_res = pm12_performance_attribution_response(
             dimensions=["persona"],
@@ -728,67 +793,64 @@ class TestPerformanceAttributionMountedComposition:
                 extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
                 require_read_role=lambda *a, **kw: None,
                 bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
-                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
+                pm12_performance_attribution_response=lambda **kw: _get_bff_main()._pm12_performance_attribution_response(read_store=store, **kw),
                 attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
             )
         )
         client = TestClient(app)
         res = client.get("/bff/management/performance-attribution?dimension=persona")
         assert res.status_code == 200
-        body = res.json()
+        mounted_res = res.json()
 
-        assert body["data"]["items"] == direct_res["data"]["items"]
-        assert body["data"]["summary"] == direct_res["data"]["summary"]
-        assert body["meta"]["surfaces"]["performance_attribution"]["status"] == direct_res["meta"]["surfaces"]["performance_attribution"]["status"] == "ok"
-        assert body["meta"]["surfaces"]["performance_attribution"]["source"] == direct_res["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
-        assert len(body["data"]["items"]) == 1
-        assert body["data"]["items"][0]["dimension_key"] == "p-1"
-        assert body["data"]["summary"]["total_pnl"] == 500.0
+        assert mounted_res["data"]["items"] == direct_res["data"]["items"]
+        assert mounted_res["data"]["summary"] == direct_res["data"]["summary"]
 
-    def test_performance_attribution_fresh_path(self) -> None:
-        store = _FakePerformanceStore(status="fresh")
+        assert direct_res["meta"]["staleness"]["served_from"] == mounted_res["meta"]["staleness"]["served_from"] == "cache"
+        direct_perf = direct_res["meta"]["surfaces"]["performance_attribution"]
+        mounted_perf = mounted_res["meta"]["surfaces"]["performance_attribution"]
+        assert direct_perf["status"] == mounted_perf["status"] == "degraded"
+        assert direct_perf["source"] == mounted_perf["source"] == "bff_composed"
+        assert direct_perf["freshness"] == mounted_perf["freshness"] == "cache"
+        assert direct_perf["staleness"]["served_from"] == mounted_perf["staleness"]["served_from"] == "cache"
+
+    def test_performance_attribution_production_composition_parity_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BFF_READ_SURFACE_STATE", "unavailable")
+        store = _FakePerformanceStore()
+        direct_res = pm12_performance_attribution_response(
+            dimensions=["persona"],
+            period="latest",
+            page_token=None,
+            page_size=50,
+            tenant_id="tenant-alpha",
+            read_store=store,
+        )
+
         app = FastAPI()
         app.include_router(
             create_performance_attribution_router(
                 extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
                 require_read_role=lambda *a, **kw: None,
                 bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
-                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
+                pm12_performance_attribution_response=lambda **kw: _get_bff_main()._pm12_performance_attribution_response(read_store=store, **kw),
                 attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
             )
         )
         client = TestClient(app)
         res = client.get("/bff/management/performance-attribution?dimension=persona")
         assert res.status_code == 200
-        body = res.json()
-        perf = body["meta"]["surfaces"]["performance_attribution"]
-        assert perf["status"] == "ok"
-        assert perf["source"] == "bff_composed"
-        assert perf["coverage"] == 1.0
-        assert perf["missing_bindings"] is False
-        assert len(body["data"]["items"]) == 1
-        assert body["data"]["summary"]["total_pnl"] == 500.0
+        mounted_res = res.json()
 
-    def test_performance_attribution_degraded_path(self) -> None:
-        store = _FakePerformanceStore(status="degraded")
-        app = FastAPI()
-        app.include_router(
-            create_performance_attribution_router(
-                extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
-                require_read_role=lambda *a, **kw: None,
-                bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
-                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
-                attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
-            )
-        )
-        client = TestClient(app)
-        res = client.get("/bff/management/performance-attribution?dimension=persona")
-        assert res.status_code == 200
-        body = res.json()
-        perf = body["meta"]["surfaces"]["performance_attribution"]
-        assert perf["status"] == "degraded"
+        assert mounted_res["data"]["items"] == direct_res["data"]["items"]
 
-    def test_performance_attribution_unavailable_path(self) -> None:
+        assert direct_res["meta"]["staleness"]["served_from"] == mounted_res["meta"]["staleness"]["served_from"] == "cache"
+        direct_perf = direct_res["meta"]["surfaces"]["performance_attribution"]
+        mounted_perf = mounted_res["meta"]["surfaces"]["performance_attribution"]
+        assert direct_perf["status"] == mounted_perf["status"] == "unavailable"
+        assert direct_perf["source"] == mounted_perf["source"] == "bff_composed"
+        assert direct_perf["freshness"] == mounted_perf["freshness"] == "cache"
+        assert direct_perf["staleness"]["served_from"] == mounted_perf["staleness"]["served_from"] == "cache"
+
+    def test_performance_attribution_missing_store_unavailable(self) -> None:
         direct_res = pm12_performance_attribution_response(
             dimensions=["persona"],
             period="latest",
@@ -803,7 +865,7 @@ class TestPerformanceAttributionMountedComposition:
                 extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
                 require_read_role=lambda *a, **kw: None,
                 bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
-                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=object(), **kw),
+                pm12_performance_attribution_response=lambda **kw: _get_bff_main()._pm12_performance_attribution_response(read_store=object(), **kw),
                 attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
             )
         )
@@ -837,7 +899,7 @@ class TestPerformanceAttributionMountedComposition:
                 ),
                 require_read_role=lambda *a, **kw: None,
                 bff_me_tenant_payload=lambda identity, **kw: {"id": identity.claims["tenant_id"], "tenant_id": identity.claims["tenant_id"]},
-                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
+                pm12_performance_attribution_response=lambda **kw: _get_bff_main()._pm12_performance_attribution_response(read_store=store, **kw),
                 attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
             )
         )
@@ -860,3 +922,114 @@ class TestPerformanceAttributionMountedComposition:
         body_beta = res_beta.json()
         assert [it["dimension_key"] for it in body_beta["data"]["items"]] == ["p-2"]
         assert body_beta["data"]["summary"]["total_pnl"] == 250.0
+
+
+class TestAssistantManagementSeamComposition:
+    """Verifies extracted Assistant Management conversation store seams and mounted composition."""
+
+    def test_assistant_management_isolated_owner_persistence_and_restart(self, tmp_path) -> None:
+        store_path = str(tmp_path / "mgmt_store")
+        store = ManagementAiConversationStore(storage_path=store_path)
+        set_management_ai_conversation_store(store)
+        try:
+            identity = OperatorIdentity(operator_id="op-alpha", roles=["operator", "viewer"])
+            now = "2026-09-23T00:00:00Z"
+            sess = management_ai_ensure_session(
+                session_id="session-isolated-01",
+                identity=identity,
+                tenant_id="tenant-alpha",
+                now=now,
+                title="Isolated Session",
+            )
+            assert sess["id"] == "session-isolated-01"
+
+            turn = management_ai_append_turn(
+                turn_id="turn-isolated-01",
+                session_id="session-isolated-01",
+                role="user",
+                text="Test prompt for isolated persistence",
+                created_at=now,
+            )
+            assert turn["turn_id"] == "turn-isolated-01"
+
+            # Verify visibility through owner functions
+            listed = management_ai_list_conversations(
+                identity=identity,
+                caller_tenant_id="tenant-alpha",
+            )
+            assert any(item["session_id"] == "session-isolated-01" for item in listed["data"]["items"])
+
+            conv = management_ai_get_conversation(
+                session_id="session-isolated-01",
+                identity=identity,
+                caller_tenant_id="tenant-alpha",
+            )
+            assert len(conv["data"]["turns"]) == 1
+            assert conv["data"]["turns"][0]["text"] == "Test prompt for isolated persistence"
+
+            # Simulate restart: re-instantiate store from same disk path
+            restarted_store = ManagementAiConversationStore(storage_path=store_path)
+            set_management_ai_conversation_store(restarted_store)
+
+            restarted_conv = management_ai_get_conversation(
+                session_id="session-isolated-01",
+                identity=identity,
+                caller_tenant_id="tenant-alpha",
+            )
+            assert len(restarted_conv["data"]["turns"]) == 1
+            assert restarted_conv["data"]["turns"][0]["text"] == "Test prompt for isolated persistence"
+        finally:
+            reset_management_ai_conversation_store()
+
+    def test_assistant_management_mounted_composition_visibility_and_restart(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+        monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha")
+        store_path = str(tmp_path / "mounted_mgmt_store")
+        store = ManagementAiConversationStore(storage_path=store_path)
+        set_management_ai_conversation_store(store)
+        try:
+            identity = OperatorIdentity(operator_id="op-user", roles=["operator", "viewer"])
+            now = "2026-09-23T00:00:00Z"
+            management_ai_ensure_session(
+                session_id="session-mounted-01",
+                identity=identity,
+                tenant_id="tenant-alpha",
+                now=now,
+                title="Mounted Session",
+            )
+            management_ai_append_turn(
+                turn_id="turn-mounted-01",
+                session_id="session-mounted-01",
+                role="user",
+                text="Mounted test message",
+                created_at=now,
+            )
+
+            client = TestClient(_get_bff_main().app, raise_server_exceptions=False)
+            headers = {"Authorization": "Bearer op-user:operator", "X-Tenant-Id": "tenant-alpha"}
+
+            # Read conversations list via mounted route
+            list_res = client.get("/bff/management/ai/conversations", headers=headers)
+            assert list_res.status_code == 200
+            list_body = list_res.json()
+            assert any(item["session_id"] == "session-mounted-01" for item in list_body["data"]["items"])
+
+            # Read single conversation via mounted route
+            conv_res = client.get("/bff/management/ai/conversations/session-mounted-01", headers=headers)
+            assert conv_res.status_code == 200
+            conv_body = conv_res.json()
+            assert len(conv_body["data"]["turns"]) == 1
+            assert conv_body["data"]["turns"][0]["text"] == "Mounted test message"
+
+            # Restart store: create new instance from same storage_path, inject via owner
+            restarted_store = ManagementAiConversationStore(storage_path=store_path)
+            set_management_ai_conversation_store(restarted_store)
+
+            # Re-query mounted route after restart without main-global patch
+            after_restart_res = client.get("/bff/management/ai/conversations/session-mounted-01", headers=headers)
+            assert after_restart_res.status_code == 200
+            after_restart_body = after_restart_res.json()
+            assert len(after_restart_body["data"]["turns"]) == 1
+            assert after_restart_body["data"]["turns"][0]["text"] == "Mounted test message"
+        finally:
+            reset_management_ai_conversation_store()

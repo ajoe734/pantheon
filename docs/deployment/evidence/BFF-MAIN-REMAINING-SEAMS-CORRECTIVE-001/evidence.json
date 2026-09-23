@@ -26,11 +26,11 @@
     },
     "assistant": {
       "target_file": "services/control-plane/bff/assistant/management_service.py",
-      "summary": "Extracted Management AI conversation store management, persistence, access, projection handlers (get_management_ai_conversation_store, management_ai_list_conversations, management_ai_get_conversation, management_ai_get_attachment, management_ai_server_conversation_context), and idempotency store/lock (get_mgmt_nl_command_idempotency_store) into assistant.management_service; removed duplicate mutable global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE and reset coupling in main.py."
+      "summary": "Extracted Management AI conversation store management, persistence, access, projection handlers (get_management_ai_conversation_store, set_management_ai_conversation_store, reset_management_ai_conversation_store, management_ai_list_conversations, management_ai_get_conversation, management_ai_get_attachment, management_ai_server_conversation_context), and idempotency store/lock (get_mgmt_nl_command_idempotency_store) into assistant.management_service; removed duplicate mutable global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE, eliminated reverse dependency and sys.modules lookup for main._MGMT_AI_CONVERSATION_STORE, and unified store ownership within assistant.management_service with composition injection."
     },
     "agora_performance": {
       "target_file": "services/control-plane/bff/agora/performance/service.py",
-      "summary": "Extracted PM12 performance attribution sources, facts, group/page entries, metrics, data confidence, rows, and response into agora.performance.service; eliminated alternate default readiness policies, removed AppDependencies.create_default fallback, eliminated silent missing-source fallback and catch-all filter bypass, preserving unavailable/degraded semantics (status='unavailable', source='missing', coverage=0.0) and failing closed on filter errors."
+      "summary": "Extracted PM12 performance attribution canonical readiness, staleness, and ranking policies (performance_read_surface_state, performance_meta_staleness, performance_surface_status, performance_composed_surface_status, canonical_performance_snapshot_meta, canonical_performance_aggregate_group_surface, canonical_performance_ranking_source_surface) and sources, facts, group/page entries, metrics, data confidence, rows, and response into agora.performance.service; removed AppDependencies.create_default fallback, eliminated silent missing-source fallback and catch-all filter bypass, preserving full metadata parity (stale, freshness, staleness) and unavailable/degraded semantics across both direct owner and composed production paths."
     },
     "personas": {
       "target_file": "services/control-plane/bff/personas/service.py",
@@ -77,7 +77,7 @@
     },
     "new_composition_seam_suite": {
       "command": "pytest -v services/control-plane/bff/tests/test_remaining_main_seam_composition.py",
-      "passed": 22,
+      "passed": 24,
       "failed": 0,
       "status": "PASS"
     },
@@ -136,7 +136,7 @@
     },
     "bounded_terminal_validation_1": {
       "command": "pytest -q services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/test_architecture_boundaries.py",
-      "passed": 58,
+      "passed": 60,
       "failed": 5,
       "status": "BASELINE_CONFIRMED"
     },

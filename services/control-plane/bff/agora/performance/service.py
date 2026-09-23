@@ -9,6 +9,7 @@ from collections import Counter
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from typing import Any, Callable, Iterable, List, Mapping, Optional
 
 from pydantic import ValidationError
@@ -476,13 +477,126 @@ except (ImportError, ValueError):
     from ...research.routes.common import format_dataset_surface_status
 
 
-def _default_snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
+def performance_read_surface_state() -> str:
+    return os.getenv("BFF_READ_SURFACE_STATE", "fresh")
+
+
+def performance_meta_staleness(utc_now: Optional[Callable[[], str]] = None) -> Optional[Dict[str, Any]]:
+    state = performance_read_surface_state()
+    if state == "fresh":
+        return None
+    now_fn = utc_now or (lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     return {
-        "snapshot_at": snapshot_at,
-        "as_of": snapshot_at,
-        "source": "bff_read_store",
-        "stale": False,
+        "served_from": "cache",
+        "last_known_at": now_fn(),
     }
+
+
+def performance_surface_status(utc_now: Optional[Callable[[], str]] = None) -> Dict[str, Any]:
+    state = performance_read_surface_state()
+    if state == "fresh":
+        return {"status": "ok"}
+    if state in {"degraded", "stale"}:
+        return {
+            "status": "degraded",
+            "staleness": performance_meta_staleness(utc_now),
+        }
+    if state == "unavailable":
+        return {
+            "status": "unavailable",
+            "staleness": performance_meta_staleness(utc_now),
+        }
+    return {"status": "ok"}
+
+
+def performance_composed_surface_status(
+    *,
+    snapshot_at: Optional[str] = None,
+    available: bool = True,
+    missing_message: Optional[str] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    surface = dict(performance_surface_status(utc_now))
+    surface["source"] = "bff_composed"
+    if not available:
+        if surface.get("status") == "ok":
+            surface["status"] = "degraded"
+        if missing_message:
+            surface["message"] = missing_message
+        now_fn = utc_now or (lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or now_fn()},
+        )
+    return surface
+
+
+def canonical_performance_snapshot_meta(
+    snapshot_at: str,
+    *,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+    }
+    staleness = performance_meta_staleness(utc_now)
+    if staleness is not None:
+        meta["staleness"] = staleness
+    return meta
+
+
+def canonical_performance_aggregate_group_surface(
+    surface_key: str,
+    source_surfaces: List[Dict[str, Any]],
+    *,
+    snapshot_at: Optional[str] = None,
+    unavailable_message: Optional[str] = None,
+    degraded_message: Optional[str] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    surface = performance_composed_surface_status(
+        snapshot_at=snapshot_at, available=True, utc_now=utc_now
+    )
+    surface["source"] = "bff_composed"
+    surface["name"] = surface_key
+    surface["surface"] = surface_key
+    if snapshot_at:
+        surface["snapshot_at"] = snapshot_at
+        surface["as_of"] = snapshot_at
+    statuses = [entry.get("status", "ok") for entry in source_surfaces]
+    if statuses and all(status == "ok" for status in statuses):
+        return surface
+    if statuses and all(status == "unavailable" for status in statuses):
+        surface["status"] = "unavailable"
+        if unavailable_message:
+            surface["message"] = unavailable_message
+        return surface
+    surface["status"] = "degraded"
+    if degraded_message:
+        surface["message"] = degraded_message
+    return surface
+
+
+def canonical_performance_ranking_source_surface(
+    surface: Dict[str, Any],
+    *,
+    snapshot_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    normalized = dict(surface)
+    source = str(normalized.get("source") or "unknown")
+    status = str(normalized.get("status") or "unavailable")
+    normalized["observed_time"] = snapshot_at
+    staleness = normalized.get("staleness")
+    served_from = staleness.get("served_from") if isinstance(staleness, dict) else None
+    normalized["freshness"] = served_from or source
+    normalized["coverage"] = 0.0 if status == "unavailable" or source == "missing" else 1.0
+    normalized["missing_bindings"] = status == "unavailable" or source == "missing"
+    return normalized
+
+
+_default_snapshot_meta = canonical_performance_snapshot_meta
+_default_aggregate_group_surface = canonical_performance_aggregate_group_surface
+_default_performance_ranking_source_surface = canonical_performance_ranking_source_surface
 
 
 def _default_dataset_surface_status(
@@ -514,54 +628,6 @@ def _default_dataset_surface_status(
         utc_now=utc_now,
         **kwargs,
     )
-
-
-def _default_aggregate_group_surface(
-    surface_key: str,
-    surfaces: List[Dict[str, Any]],
-    *,
-    snapshot_at: Optional[str] = None,
-    unavailable_message: Optional[str] = None,
-    degraded_message: Optional[str] = None,
-) -> Dict[str, Any]:
-    statuses = [s.get("status") for s in surfaces]
-    if statuses and all(st == "unavailable" for st in statuses):
-        status = "unavailable"
-        msg = unavailable_message or "Aggregate surface unavailable."
-    elif any(st in ("unavailable", "degraded") for st in statuses):
-        status = "degraded"
-        msg = degraded_message or "Aggregate surface degraded."
-    else:
-        status = "ok"
-        msg = None
-    return {
-        "name": surface_key,
-        "surface": surface_key,
-        "status": status,
-        "source": "bff_composed",
-        "snapshot_at": snapshot_at,
-        "as_of": snapshot_at,
-        "message": msg,
-    }
-
-
-def _default_performance_ranking_source_surface(
-    surface: Dict[str, Any],
-    *,
-    snapshot_at: Optional[str] = None,
-) -> Dict[str, Any]:
-    normalized = dict(surface)
-    source = str(normalized.get("source") or "unknown")
-    status = str(normalized.get("status") or "unavailable")
-    normalized["observed_time"] = snapshot_at
-    normalized["freshness"] = (
-        normalized.get("staleness", {}).get("served_from")
-        if isinstance(normalized.get("staleness"), dict)
-        else None
-    ) or source
-    normalized["coverage"] = 0.0 if status == "unavailable" or source == "missing" else 1.0
-    normalized["missing_bindings"] = status == "unavailable" or source == "missing"
-    return normalized
 
 
 def pm12_metric_or_split(
@@ -1269,9 +1335,15 @@ def pm12_performance_attribution_response(
         sources=sources,
     )
 
-    aggregate_fn = aggregate_group_surface_fn or _default_aggregate_group_surface
-    ranking_fn = performance_ranking_source_surface_fn or _default_performance_ranking_source_surface
-    meta_fn = snapshot_meta_fn or _default_snapshot_meta
+    aggregate_fn = aggregate_group_surface_fn or (
+        lambda key, surfs, **kw: canonical_performance_aggregate_group_surface(
+            key, surfs, utc_now=resolved_utc_now, **kw
+        )
+    )
+    ranking_fn = performance_ranking_source_surface_fn or canonical_performance_ranking_source_surface
+    meta_fn = snapshot_meta_fn or (
+        lambda snap: canonical_performance_snapshot_meta(snap, utc_now=resolved_utc_now)
+    )
 
     def _dataset_status(dataset: str, **kwargs: Any) -> Dict[str, Any]:
         if dataset_surface_status_fn is not None:
