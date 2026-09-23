@@ -378,6 +378,13 @@
       "max_parallel": 0,
       "adapter": "copilot_local",
       "wake_template": ".orchestrator/templates/wakeup.txt"
+    },
+    "piastra": {
+      "display_name": "PiAstra",
+      "provider": "pi_astra",
+      "max_parallel": 1,
+      "adapter": "pi",
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     }
   },
   "providers": {
@@ -749,6 +756,17 @@
         ]
       },
       "retry": {}
+    },
+    "pi_astra": {
+      "delivery_mode": "pi",
+      "account": "codex1",
+      "pi": {
+        "cli": "~/.local/bin/pi",
+        "agent_dir": "~/.pi/pantheon-astra",
+        "provider": "openai-codex",
+        "model": "gpt-6-astra",
+        "thinking": "high"
+      }
     }
   },
   "ready_dispatcher": {

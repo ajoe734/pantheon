@@ -401,7 +401,7 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
             )
             fake_process = mock.Mock(pid=1234)
             with (
-                mock.patch.dict(os.environ, {"HOME": str(root)}, clear=False),
+                mock.patch.dict(os.environ, {"HOME": str(root), "XDG_CONFIG_HOME": str(root / ".config")}, clear=False),
                 mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
                 mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
                 mock.patch(
@@ -803,7 +803,7 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
             adapter = AntigravityAdapter(config=config, provider_capabilities={})
             fake_process = mock.Mock(pid=1234)
             with (
-                mock.patch.dict(os.environ, {"HOME": str(root)}, clear=False),
+                mock.patch.dict(os.environ, {"HOME": str(root), "XDG_CONFIG_HOME": str(root / ".config")}, clear=False),
                 mock.patch("adapters.antigravity.command_exists", return_value="agy"),
                 mock.patch("adapters.antigravity._auth_ready", return_value=True),
                 mock.patch("adapters.antigravity.spawn_background_process", return_value=(fake_process, root / "agy2.log")) as spawn,
