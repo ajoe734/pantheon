@@ -4,10 +4,10 @@
   "owner": "Antigravity",
   "reviewer": "Codex",
   "status": "ready_for_review",
-  "generated_at": "2026-09-23T07:05:00Z",
+  "generated_at": "2026-09-23T07:30:00Z",
   "base_commit": "0348826dbb77c32b44f00d30c864de26f2ff36bf",
   "anchor_commit": "eeaf50c92aa76937215fee7bacd4cbeff69f80af",
-  "head_commit": "93e7c2527d5cf4d228434bda1d9dfa42b632c51b",
+  "head_commit": "cb0d08e9f78e0dc745a7960b899f3bda3fa8b9a4",
   "changed_files": [
     "docs/deployment/evidence/BFF-MAIN-REMAINING-SEAMS-CORRECTIVE-001/evidence.json",
     "services/control-plane/bff/agora/performance/service.py",
@@ -30,7 +30,7 @@
     },
     "agora_performance": {
       "target_file": "services/control-plane/bff/agora/performance/service.py",
-      "summary": "Extracted PM12 performance attribution canonical readiness, staleness, and ranking policies (performance_read_surface_state, performance_meta_staleness, performance_surface_status, performance_composed_surface_status, canonical_performance_snapshot_meta, canonical_performance_aggregate_group_surface, canonical_performance_ranking_source_surface) and sources, facts, group/page entries, metrics, data confidence, rows, and response into agora.performance.service; removed AppDependencies.create_default fallback, eliminated silent missing-source fallback and catch-all filter bypass, preserving full metadata parity (stale, freshness, staleness) and unavailable/degraded semantics across both direct owner and composed production paths."
+      "summary": "Extracted PM12 performance attribution canonical readiness, staleness, and ranking policies (performance_read_surface_state, performance_meta_staleness, performance_surface_status, performance_composed_surface_status, canonical_performance_snapshot_meta, canonical_performance_aggregate_group_surface, canonical_performance_ranking_source_surface) and sources, facts, group/page entries, metrics, data confidence, rows, and response into agora.performance.service; removed AppDependencies.create_default fallback, eliminated silent missing-source fallback and catch-all filter bypass, eliminated personas owner catch-all suppression in pm12_performance_attribution_sources, preserving full metadata parity (stale, freshness, staleness) and unavailable/degraded semantics across both direct owner and composed production paths."
     },
     "personas": {
       "target_file": "services/control-plane/bff/personas/service.py",
@@ -77,7 +77,7 @@
     },
     "new_composition_seam_suite": {
       "command": "pytest -v services/control-plane/bff/tests/test_remaining_main_seam_composition.py",
-      "passed": 28,
+      "passed": 32,
       "failed": 0,
       "status": "PASS"
     },
@@ -136,7 +136,7 @@
     },
     "bounded_terminal_validation_1": {
       "command": "pytest -q services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/test_architecture_boundaries.py",
-      "passed": 64,
+      "passed": 68,
       "failed": 5,
       "status": "BASELINE_CONFIRMED"
     },
