@@ -27,6 +27,10 @@ from services.control_plane.bff.incidents.service import IncidentService
 from services.control_plane.bff.jobs.router import create_jobs_router
 from services.control_plane.bff.personas import service as personas_service
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+from services.control_plane.bff.shared.module_retirement_guard import (
+    DEFAULT_RETIRED_PROCESS_OVERLAYS,
+    ModuleRetirementGuard,
+)
 from services.control_plane.bff.strategies.routes.common import (
     StrategyRouteContext,
     default_bff_error,
@@ -39,17 +43,20 @@ from services.control_plane.bff.strategies.routes.common import (
 # ---------------------------------------------------------------------------
 # 1. Mandatory Symbol Retirement and Reinstatement Prevention
 #
-# These assertions are about main.py's *own* module namespace: that it no
-# longer defines the 4 legacy overlay globals as ordinary module attributes,
-# and that it fails closed (via a module-level ``__getattr__``/``__setattr__``
-# guard) on any attempt to read or reinstate them. Importing main.py as a
-# live module purely to inspect this is still an "import of main" for the
-# purposes of the BFF composition-root migration (the architecture scanner
-# in test_bff_test_architecture.py is a live AST import-graph scan, and flags
-# any `import` of main.py regardless of purpose). So this property is proven
-# by statically parsing main.py's source with `ast`, the same technique
-# test_bff_test_architecture.py itself uses to scan test files, without ever
-# importing main.py as a module.
+# main.py no longer defines the 4 legacy overlay globals as ordinary module
+# attributes, and fails closed on any attempt to read or reinstate them by
+# swapping ``sys.modules[__name__].__class__`` for ``ModuleRetirementGuard``.
+# Under BFF-MAIN-COMPOSITION-SEAM-EXTRACTION-002 the actual retired-symbol
+# set and the ``__getattr__``/``__setattr__`` guard bodies were extracted
+# out of main.py into ``shared/module_retirement_guard.py``, an
+# independently importable module with no dependency on main.py; main.py
+# now only wires that extracted guard onto itself. The guard behavior is
+# therefore exercised directly against the real extracted class/constant
+# (not a copy), while main.py's own wiring -- which cannot be imported
+# without tripping the architecture scanner's "import of main" rule in
+# test_bff_test_architecture.py -- is proven by statically parsing its
+# source with `ast`, the same technique test_bff_test_architecture.py
+# itself uses to scan test files, without ever importing main.py.
 # ---------------------------------------------------------------------------
 
 RETIRED_OVERLAY_SYMBOLS = (
@@ -90,12 +97,18 @@ def _module_level_assigned_names(tree: ast.Module) -> set[str]:
     return names
 
 
-def _retired_process_overlays_literal(tree: ast.Module) -> Optional[set[str]]:
-    """Extract the string members of the module-level ``_RETIRED_PROCESS_OVERLAYS`` frozenset literal."""
+def _retired_process_overlays_literal(
+    tree: ast.Module, name: str = "DEFAULT_RETIRED_PROCESS_OVERLAYS"
+) -> Optional[set[str]]:
+    """Extract the string members of the module-level retired-overlays frozenset literal."""
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.target is not None:
+            targets = [node.target]
+        else:
             continue
-        if not any(isinstance(t, ast.Name) and t.id == "_RETIRED_PROCESS_OVERLAYS" for t in node.targets):
+        if not any(isinstance(t, ast.Name) and t.id == name for t in targets):
             continue
         value = node.value
         if isinstance(value, ast.Call) and getattr(value.func, "id", None) == "frozenset" and value.args:
@@ -109,31 +122,6 @@ def _retired_process_overlays_literal(tree: ast.Module) -> Optional[set[str]]:
                 if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
             }
     return None
-
-
-def _guard_class_getattr_setattr_sources(tree: ast.Module, source: str) -> tuple[Optional[str], Optional[str]]:
-    """Find the module-swap guard class's ``__getattr__``/``__setattr__`` method source text.
-
-    main.py fails closed on the retired overlays by rebinding
-    ``sys.modules[__name__].__class__`` to a ``types.ModuleType`` subclass
-    that overrides ``__getattr__``/``__setattr__``. Locate that class body's
-    two guard methods by source text (without executing anything) so the
-    test can confirm they actually raise for the retired names.
-    """
-    getattr_src: Optional[str] = None
-    setattr_src: Optional[str] = None
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        base_names = {getattr(base, "attr", getattr(base, "id", None)) for base in node.bases}
-        if "ModuleType" not in base_names:
-            continue
-        for item in node.body:
-            if isinstance(item, ast.FunctionDef) and item.name == "__getattr__":
-                getattr_src = ast.get_source_segment(source, item)
-            if isinstance(item, ast.FunctionDef) and item.name == "__setattr__":
-                setattr_src = ast.get_source_segment(source, item)
-    return getattr_src, setattr_src
 
 
 def _module_class_swap_applied_at_top_level(tree: ast.Module) -> bool:
@@ -170,37 +158,51 @@ def test_mandatory_overlay_symbols_not_assigned_as_module_globals(symbol: str) -
 
 
 def test_retired_process_overlays_set_declares_all_mandatory_symbols() -> None:
-    """main.py's retirement guard set must cover exactly the 4 mandatory overlay symbols."""
+    """The real extracted guard's retired-overlay set must cover the 4 mandatory overlay symbols."""
+    assert set(RETIRED_OVERLAY_SYMBOLS) <= DEFAULT_RETIRED_PROCESS_OVERLAYS
+
+
+def test_main_wires_shared_retirement_guard_symbols() -> None:
+    """main.py must import the retired-overlay symbol set from the extracted guard seam, not redeclare it."""
     tree = _main_ast()
-    declared = _retired_process_overlays_literal(tree)
-    assert declared is not None, "main.py must declare _RETIRED_PROCESS_OVERLAYS as a literal frozenset/set"
-    assert set(RETIRED_OVERLAY_SYMBOLS) <= declared
+    imported_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.endswith("module_retirement_guard"):
+            for alias in node.names:
+                imported_names.add(alias.asname or alias.name)
+    assert "_RETIRED_PROCESS_OVERLAYS" in imported_names, (
+        "main.py must import DEFAULT_RETIRED_PROCESS_OVERLAYS from "
+        ".shared.module_retirement_guard as _RETIRED_PROCESS_OVERLAYS instead of "
+        "redeclaring the retired-overlay set inline"
+    )
+    assert _retired_process_overlays_literal(tree, name="_RETIRED_PROCESS_OVERLAYS") is None, (
+        "main.py must not also declare a competing literal _RETIRED_PROCESS_OVERLAYS assignment"
+    )
 
 
 @pytest.mark.parametrize("symbol", RETIRED_OVERLAY_SYMBOLS)
 def test_module_getattr_guard_fails_closed_on_read(symbol: str) -> None:
-    """The installed module class's __getattr__ must raise AttributeError('retired and deleted') for each symbol."""
-    tree = _main_ast()
-    declared = _retired_process_overlays_literal(tree)
-    getattr_src, _ = _guard_class_getattr_setattr_sources(tree, _main_source())
-    assert declared is not None and symbol in declared
-    assert getattr_src is not None, "main.py must define a ModuleType subclass with __getattr__"
-    assert "_RETIRED_PROCESS_OVERLAYS" in getattr_src
-    assert "AttributeError" in getattr_src
-    assert "retired and deleted" in getattr_src
+    """The real extracted ``ModuleRetirementGuard.__getattr__`` must fail closed for each symbol.
+
+    This exercises the production guard class directly (it has no
+    dependency on main.py, so importing it is not an "import of main" for
+    the architecture scanner) rather than main.py's inline wiring.
+    """
+    assert symbol in DEFAULT_RETIRED_PROCESS_OVERLAYS
+    guard = ModuleRetirementGuard("bff_overlay_retirement_getattr_probe")
+    with pytest.raises(AttributeError) as exc_info:
+        getattr(guard, symbol)
+    assert "retired and deleted" in str(exc_info.value)
 
 
 @pytest.mark.parametrize("symbol", RETIRED_OVERLAY_SYMBOLS)
 def test_module_setattr_guard_fails_closed_on_reinstatement(symbol: str) -> None:
-    """The installed module class's __setattr__ must raise AttributeError('retired and deleted') for each symbol."""
-    tree = _main_ast()
-    declared = _retired_process_overlays_literal(tree)
-    _, setattr_src = _guard_class_getattr_setattr_sources(tree, _main_source())
-    assert declared is not None and symbol in declared
-    assert setattr_src is not None, "main.py must define a ModuleType subclass with __setattr__"
-    assert "_RETIRED_PROCESS_OVERLAYS" in setattr_src
-    assert "AttributeError" in setattr_src
-    assert "retired and deleted" in setattr_src
+    """The real extracted ``ModuleRetirementGuard.__setattr__`` must fail closed for each symbol."""
+    assert symbol in DEFAULT_RETIRED_PROCESS_OVERLAYS
+    guard = ModuleRetirementGuard("bff_overlay_retirement_setattr_probe")
+    with pytest.raises(AttributeError) as exc_info:
+        setattr(guard, symbol, object())
+    assert "retired and deleted" in str(exc_info.value)
 
 
 def test_module_class_guard_is_installed_at_module_scope() -> None:
