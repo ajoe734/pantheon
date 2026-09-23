@@ -7669,7 +7669,7 @@ def _pm12_performance_attribution_sources(
     return _agora_perf.pm12_performance_attribution_sources(
         tenant_id=tenant_id,
         read_store=resolved_store,
-        list_persona_records=lambda tid: _list_persona_records(tid, read_store=resolved_store),
+        list_persona_records=lambda tid: _list_persona_records(tid, read_store=resolved_store) if (resolved_store is not None and hasattr(resolved_store, "list_personas")) else [],
         list_strategy_summaries=lambda: list(resolved_store.list_strategy_specs() or []) if (resolved_store is not None and hasattr(resolved_store, "list_strategy_specs")) else [],
     )
 def _persona_fleet_runtime_matches(

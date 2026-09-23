@@ -705,12 +705,11 @@ def pm12_performance_attribution_sources(
     clean_tenant = str(tenant_id or "").strip()
     if list_persona_records is not None:
         personas = list_persona_records(clean_tenant or None)
+    elif resolved_read_store is not None and hasattr(resolved_read_store, "list_personas"):
+        from services.control_plane.bff.personas.service import _list_persona_records as personas_list_records
+        personas = personas_list_records(clean_tenant or None, read_store=resolved_read_store)
     else:
-        try:
-            from services.control_plane.bff.personas.service import _list_persona_records as personas_list_records
-            personas = personas_list_records(clean_tenant or None, read_store=resolved_read_store)
-        except Exception:
-            personas = []
+        personas = []
 
     if list_strategy_summaries is not None:
         strategies = list_strategy_summaries()

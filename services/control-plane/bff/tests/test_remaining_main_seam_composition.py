@@ -675,6 +675,18 @@ class _FailingProvisioningStore:
         raise RuntimeError("Provisioning store connection timed out")
 
 
+class _FailingPersonaPerformanceStore(_FakePerformanceStore):
+    """Fake performance store whose list_personas raises HTTPException(503)."""
+
+    def __init__(self, status_code: int = 503, detail: str = "persona owner offline") -> None:
+        super().__init__()
+        self.fail_status_code = status_code
+        self.fail_detail = detail
+
+    def list_personas(self, **_: Any) -> List[Dict[str, Any]]:
+        raise HTTPException(status_code=self.fail_status_code, detail=self.fail_detail)
+
+
 class TestPersonasOwnerFailureCompositionSeam:
     """Verifies that persona owner and provisioning failures propagate truthfully
 
@@ -726,6 +738,109 @@ class TestPersonasOwnerFailureCompositionSeam:
             )
         assert exc_info.value.status_code == 503
         assert "Attribution persona read error" in str(exc_info.value.detail)
+
+    def test_performance_attribution_default_owner_propagates_failing_persona_read_store(self) -> None:
+        store = _FailingPersonaPerformanceStore(status_code=503, detail="persona owner offline")
+        # Default owner path (no list_persona_records callback injected)
+        with pytest.raises(HTTPException) as exc_info_sources:
+            pm12_performance_attribution_sources(
+                tenant_id="tenant-alpha",
+                read_store=store,
+            )
+        assert exc_info_sources.value.status_code == 503
+        assert "persona owner offline" in str(exc_info_sources.value.detail)
+
+        with pytest.raises(HTTPException) as exc_info_resp:
+            pm12_performance_attribution_response(
+                dimensions=["persona"],
+                period="latest",
+                page_token=None,
+                page_size=50,
+                tenant_id="tenant-alpha",
+                read_store=store,
+            )
+        assert exc_info_resp.value.status_code == 503
+        assert "persona owner offline" in str(exc_info_resp.value.detail)
+
+    def test_performance_attribution_default_owner_propagates_failing_provisioning_store(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "services.control_plane.bff.personas.service._persona_provisioning_store",
+            lambda: _FailingProvisioningStore(),
+        )
+        store = _FakePerformanceStore()
+        # Default owner path (no list_persona_records callback injected)
+        with pytest.raises(HTTPException) as exc_info_sources:
+            pm12_performance_attribution_sources(
+                tenant_id="tenant-alpha",
+                read_store=store,
+            )
+        assert exc_info_sources.value.status_code == 503
+        assert "Persona durable readback is unavailable" in str(exc_info_sources.value.detail)
+
+        with pytest.raises(HTTPException) as exc_info_resp:
+            pm12_performance_attribution_response(
+                dimensions=["persona"],
+                period="latest",
+                page_token=None,
+                page_size=50,
+                tenant_id="tenant-alpha",
+                read_store=store,
+            )
+        assert exc_info_resp.value.status_code == 503
+        assert "Persona durable readback is unavailable" in str(exc_info_resp.value.detail)
+
+    def test_performance_attribution_mounted_router_propagates_persona_failures(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 1. Read-store failure through mounted router
+        store = _FailingPersonaPerformanceStore(status_code=503, detail="persona owner offline")
+        app = FastAPI()
+        app.include_router(
+            create_performance_attribution_router(
+                extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
+                require_read_role=lambda *a, **kw: None,
+                bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=store, **kw),
+                attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+            )
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        res = client.get("/bff/management/performance-attribution?dimension=persona")
+        assert res.status_code == 503
+        assert "persona owner offline" in str(res.json().get("detail"))
+
+        # 2. Provisioning-store failure through mounted router
+        monkeypatch.setattr(
+            "services.control_plane.bff.personas.service._persona_provisioning_store",
+            lambda: _FailingProvisioningStore(),
+        )
+        healthy_store = _FakePerformanceStore()
+        app_prov = FastAPI()
+        app_prov.include_router(
+            create_performance_attribution_router(
+                extract_identity=lambda *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator", "viewer"]),
+                require_read_role=lambda *a, **kw: None,
+                bff_me_tenant_payload=lambda *a, **kw: {"id": "tenant-alpha", "tenant_id": "tenant-alpha"},
+                pm12_performance_attribution_response=lambda **kw: pm12_performance_attribution_response(read_store=healthy_store, **kw),
+                attribution_dimensions=("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+            )
+        )
+        client_prov = TestClient(app_prov, raise_server_exceptions=False)
+        res_prov = client_prov.get("/bff/management/performance-attribution?dimension=persona")
+        assert res_prov.status_code == 503
+        detail = str(res_prov.json().get("detail"))
+        assert "Persona durable readback is unavailable" in detail
+        assert "persona_provisioning_store" in detail
+
+    def test_performance_attribution_absent_dependency_returns_empty_personas(self) -> None:
+        direct_sources = pm12_performance_attribution_sources(
+            tenant_id="tenant-alpha",
+            read_store=object(),
+        )
+        assert direct_sources["personas"] == []
+        assert direct_sources["personas_by_id"] == {}
 
 
 # ---------------------------------------------------------------------------

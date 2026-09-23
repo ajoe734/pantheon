@@ -2237,7 +2237,13 @@ def _list_persona_records(
     their own live read-store reference); it takes precedence over both the
     context-bound service and the module-level fallback.
     """
-    items = list(_get_active_read_store(explicit=read_store).list_personas() or [])
+    active_store = _get_active_read_store(explicit=read_store)
+    if active_store is not None and hasattr(active_store, "list_personas"):
+        items = list(active_store.list_personas() or [])
+    elif active_store is not None:
+        items = list(active_store.list_personas() or [])
+    else:
+        items = []
     records_by_id: Dict[str, Dict[str, Any]] = {}
     for item in items:
         if not isinstance(item, dict):
