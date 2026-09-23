@@ -229,7 +229,7 @@ from .personas.service import (
     _checkpoint_persona_provisioning_readback,
     _evaluate_persona_provisioning_status,
     _get_persona_directory_snapshot,
-    _list_persona_records,
+    _list_persona_records as _personas_list_persona_records,
     _normalize_lifecycle_state,
     _normalize_risk_level,
     _openclaw_agent_reconcile_request,
@@ -249,6 +249,19 @@ from .personas.service import (
     _register_persona_cron_required,
     _remove_persona_cron_required,
 )
+def _list_persona_records(
+    tenant_id: Optional[str] = None,
+    read_store: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """Composition-root binding: personas/service.py is the sole owner of this
+    projection; explicitly inject the live ``read_store`` global so callers
+    outside an active PersonaService request context (composition-root and
+    seam-test callers) still resolve against whatever store this module
+    currently holds, matching the injected pattern used by the other main.py
+    consumer seams instead of relying on personas/service.py's own module
+    fallback."""
+    resolved_store = read_store if read_store is not None else globals().get("read_store")
+    return _personas_list_persona_records(tenant_id, read_store=resolved_store)
 try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
@@ -2816,78 +2829,11 @@ def _derive_drawer_execution_params(
         "safe_mode_level": params["safe_mode_level"],
         "target_state": "guarded",
     }
-def _stored_command_params(
-    cmd: OperatorCommand,
-    identity: OperatorIdentity,
-    raw_payload: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    if cmd.command in _DRAWER_RUNTIME_COMMANDS:
-        return dict(cmd.params)
-    params = dict(cmd.params)
-    if cmd.command == CommandType.REMEDIATE_SENTINEL_INTERVENTION and raw_payload:
-        # Normalize any top-level two-man alias from the raw payload into the
-        # canonical params key so the executor always receives two_man_signature_id.
-        if not str(params.get("two_man_signature_id") or "").strip():
-            for alias in _TWO_MAN_EVIDENCE_FIELDS:
-                val = str(raw_payload.get(alias) or "").strip()
-                if val:
-                    params["two_man_signature_id"] = val
-                    break
-    if cmd.command == CommandType.APPROVED_APPLY:
-        params.pop("rebalanceId", None)
-        params["rebalance_id"] = cmd.target.id
-    elif cmd.command == CommandType.EMERGENCY_CONTAINMENT:
-        params.pop("personaId", None)
-        params["persona_id"] = cmd.target.id
-    elif cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
-        target_rt_id = str(cmd.target.id).strip()
-        params["runtime_id"] = target_rt_id
-        params["entity_id"] = target_rt_id
-        params.pop("runtimeId", None)
-        params.pop("entityId", None)
-        params.pop("verified_binding", None)
-        params.pop("verified_binding_id", None)
-        params.pop("verified_runtime_binding_id", None)
-        if raw_payload and "bounded_duration_minutes" in raw_payload and "bounded_duration_minutes" not in params:
-            params["bounded_duration_minutes"] = raw_payload["bounded_duration_minutes"]
-        bdm = params.get("bounded_duration_minutes")
-        if bdm is not None:
-            try:
-                bdm_val = int(bdm)
-                if bdm_val > 0:
-                    params["duration_seconds"] = bdm_val * 60
-            except (ValueError, TypeError):
-                pass
-    canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(
-        cmd.command,
-        cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
-    )
-    if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
-        canonical_action_id = "submit_recommendation"
-    canonical_paper = cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
-    if canonical_paper:
-        canonical_action_id = cmd.command.value
-    # The target/action/actor fields come from the validated command envelope,
-    # never from caller params.  Apart from fixing null adapter receipts, this
-    # prevents a caller from redirecting an admitted command after validation.
-    params.update(
-        {
-            "entity_type": "Runtime" if canonical_paper else (cmd.params.get("entity_type") or cmd.target.type.value),
-            "entity_id": cmd.target.id,
-            "action_id": canonical_action_id,
-            "actionId": canonical_action_id,
-            "actor_id": identity.operator_id,
-            "actor_role": next(
-                (
-                    role
-                    for role in ("admin", "approver", "reviewer", "operator")
-                    if role in identity.roles
-                ),
-                "operator",
-            ),
-        }
-    )
-    return params
+
+
+from .command_adapters.service import stored_command_params as _stored_command_params
+from .governance.service import human_inbox_surface_timeout_seconds as _human_inbox_surface_timeout_seconds
+
 def _assert_duplicate_confirm_token_matches(
     *,
     duplicate: Dict[str, Any],
@@ -4427,9 +4373,18 @@ def _dataset_surface_status(
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
     source: Optional[str] = None,
+    read_store: Optional[Any] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    source = source or read_store.dataset_source(dataset)
+    resolved_store = read_store if read_store is not None else globals().get("read_store")
+    if source is None:
+        if resolved_store is not None and hasattr(resolved_store, "dataset_source"):
+            try:
+                source = str(resolved_store.dataset_source(dataset) or "missing")
+            except Exception:
+                source = "missing"
+        else:
+            source = "missing"
     return _format_dataset_surface_status(
         dataset,
         snapshot_at=snapshot_at,
@@ -4586,148 +4541,12 @@ def _performance_ranking_source_surface(
     snapshot_at: str,
 ) -> Dict[str, Any]:
     """Add the cross-center confidence vocabulary without changing global envelopes."""
-    normalized = dict(surface)
-    source = str(normalized.get("source") or "unknown")
-    status = str(normalized.get("status") or "unavailable")
-    normalized["observed_time"] = snapshot_at
-    normalized["freshness"] = (
-        normalized.get("staleness", {}).get("served_from")
-        if isinstance(normalized.get("staleness"), dict)
-        else None
-    ) or source
-    normalized["coverage"] = 0.0 if status == "unavailable" or source == "missing" else 1.0
-    normalized["missing_bindings"] = status == "unavailable" or source == "missing"
-    return normalized
-def _extract_ids_from_item(item: Dict[str, Any], keys: List[str]) -> List[str]:
-    extracted = []
-    # 檢查 root 級別
-    for key in keys:
-        val = item.get(key)
-        if val:
-            if isinstance(val, list):
-                extracted.extend([str(v).strip() for v in val if v])
-            else:
-                extracted.append(str(val).strip())
-    # 檢查是否含有 id 欄位 (可能正是這個 entity 本身)
-    if "id" in item:
-        entity_id = str(item["id"]).strip()
-        # 看看是否符合特定 prefix 格式，例如 pool-alpha、persona-xxx 等
-        for key in keys:
-            if key == "persona_id" and "persona" in entity_id:
-                extracted.append(entity_id)
-            elif key == "capital_pool_id" and "pool" in entity_id:
-                extracted.append(entity_id)
-    return list(set(extracted))
-def _filter_by_common_identifiers(
-    items: List[Dict[str, Any]],
-    *,
-    persona_id: Optional[str] = None,
-    persona: Optional[str] = None,
-    runtime_id: Optional[str] = None,
-    runtime: Optional[str] = None,
-    strategy_id: Optional[str] = None,
-    strategy: Optional[str] = None,
-    capital_pool_id: Optional[str] = None,
-    pool: Optional[str] = None,
-    sleeve_id: Optional[str] = None,
-    sleeve: Optional[str] = None,
-    artifact_id: Optional[str] = None,
-    artifact: Optional[str] = None,
-    broker_id: Optional[str] = None,
-    broker: Optional[str] = None,
-    stage: Optional[str] = None,
-    period: Optional[str] = None,
-    as_of: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    # 合併 query 參數值
-    persona_id = _resolve_param(persona_id)
-    persona = _resolve_param(persona)
-    runtime_id = _resolve_param(runtime_id)
-    runtime = _resolve_param(runtime)
-    strategy_id = _resolve_param(strategy_id)
-    strategy = _resolve_param(strategy)
-    capital_pool_id = _resolve_param(capital_pool_id)
-    pool = _resolve_param(pool)
-    sleeve_id = _resolve_param(sleeve_id)
-    sleeve = _resolve_param(sleeve)
-    artifact_id = _resolve_param(artifact_id)
-    artifact = _resolve_param(artifact)
-    broker_id = _resolve_param(broker_id)
-    broker = _resolve_param(broker)
-    stage = _resolve_param(stage)
-    period = _resolve_param(period)
-    as_of = _resolve_param(as_of)
-
-    p_id = persona_id or persona
-    r_id = runtime_id or runtime
-    s_id = strategy_id or strategy
-    cp_id = capital_pool_id or pool
-    sl_id = sleeve_id or sleeve
-    art_id = artifact_id or artifact
-    bk_id = broker_id or broker
-
-    filtered = []
-    for item in items:
-        # 取出該項目內可能包含的各種 ID
-        item_persona_ids = _extract_ids_from_item(item, ["persona_id", "personaId", "persona_ids", "persona"])
-        item_runtime_ids = _extract_ids_from_item(item, ["runtime_id", "runtimeId", "runtime_ids", "runtime"])
-        item_strategy_ids = _extract_ids_from_item(item, ["strategy_id", "strategyId", "strategy_ids", "strategy"])
-        item_pool_ids = _extract_ids_from_item(item, ["capital_pool_id", "capitalPoolId", "capital_pool_ids", "pool_id", "pool_ids", "pool"])
-        item_sleeve_ids = _extract_ids_from_item(item, ["sleeve_id", "sleeveId", "sleeve_ids", "sleeve"])
-        item_artifact_ids = _extract_ids_from_item(item, ["artifact_id", "artifactId", "artifact_ids", "artifact"])
-        item_broker_ids = _extract_ids_from_item(item, ["broker_id", "brokerId", "broker_ids", "broker"])
-
-        # 額外支援在 source_refs, target 或 links 中查找
-        source_refs = item.get("source_refs") or {}
-        if isinstance(source_refs, dict):
-            if "persona_ids" in source_refs:
-                item_persona_ids.extend(source_refs["persona_ids"])
-            if "runtime_ids" in source_refs:
-                item_runtime_ids.extend(source_refs["runtime_ids"])
-            if "strategy_ids" in source_refs:
-                item_strategy_ids.extend(source_refs["strategy_ids"])
-            if "capital_pool_ids" in source_refs:
-                item_pool_ids.extend(source_refs["capital_pool_ids"])
-
-        target = item.get("target") or {}
-        if isinstance(target, dict):
-            t_type = target.get("type")
-            t_id = target.get("id")
-            if t_type == "persona" and t_id:
-                item_persona_ids.append(t_id)
-
-        # 進行匹配 (如果 filter parameter 有給，則 item 的 ID 必須符合)
-        if p_id and not any(str(p_id).strip() == str(val).strip() for val in item_persona_ids):
-            continue
-        if r_id and not any(str(r_id).strip() == str(val).strip() for val in item_runtime_ids):
-            continue
-        if s_id and not any(str(s_id).strip() == str(val).strip() for val in item_strategy_ids):
-            continue
-        if cp_id and not any(str(cp_id).strip() == str(val).strip() for val in item_pool_ids):
-            continue
-        if sl_id and not any(str(sl_id).strip() == str(val).strip() for val in item_sleeve_ids):
-            continue
-        if art_id and not any(str(art_id).strip() == str(val).strip() for val in item_artifact_ids):
-            continue
-        if bk_id and not any(str(bk_id).strip() == str(val).strip() for val in item_broker_ids):
-            continue
-
-        # stage, period, as_of 匹配
-        item_stage = item.get("stage") or item.get("lifecycle_state") or item.get("status")
-        if stage and str(item_stage).strip().lower() != str(stage).strip().lower():
-            continue
-
-        item_period = item.get("period")
-        if period and str(item_period).strip().lower() != str(period).strip().lower():
-            continue
-
-        # as_of 可以檢查 meta 或是 item_as_of
-        item_as_of = item.get("as_of") or item.get("observed_at") or item.get("collected_at")
-        if as_of and str(item_as_of).strip() != str(as_of).strip():
-            continue
-
-        filtered.append(item)
-    return filtered
+    from services.control_plane.bff.agora.performance.service import canonical_performance_ranking_source_surface
+    return canonical_performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+from .personas.service import (
+    _extract_ids_from_item,
+    _filter_by_common_identifiers,
+)
 _INCIDENT_SEVERITY_MAP = {
     "critical": "sev1",
     "high": "sev1",
@@ -5135,18 +4954,15 @@ def _aggregate_group_surface(
     unavailable_message: str,
     degraded_message: str,
 ) -> Dict[str, Any]:
-    surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
-    surface["source"] = "bff_composed"
-    statuses = [entry.get("status", "ok") for entry in source_surfaces]
-    if statuses and all(status == "ok" for status in statuses):
-        return surface
-    if statuses and all(status == "unavailable" for status in statuses):
-        surface["status"] = "unavailable"
-        surface["message"] = unavailable_message
-        return surface
-    surface["status"] = "degraded"
-    surface["message"] = degraded_message
-    return surface
+    from services.control_plane.bff.agora.performance.service import canonical_performance_aggregate_group_surface
+    return canonical_performance_aggregate_group_surface(
+        surface_key,
+        source_surfaces,
+        snapshot_at=snapshot_at,
+        unavailable_message=unavailable_message,
+        degraded_message=degraded_message,
+        utc_now=utc_now,
+    )
 def _alert_target_ref(
     *,
     surface_id: str,
@@ -6233,13 +6049,8 @@ _MANAGEMENT_DATA_SOURCES_READ_EXECUTOR = ThreadPoolExecutor(
     thread_name_prefix="bff-management-data-sources",
 )
 def _snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-    }
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-    return meta
+    from services.control_plane.bff.agora.performance.service import canonical_performance_snapshot_meta
+    return canonical_performance_snapshot_meta(snapshot_at, utc_now=utc_now)
 _COMMAND_RECEIPT_STATUS_MAP = {
     CommandStatus.SUBMITTED.value: CommandReceiptStatus.ACCEPTED,
     CommandStatus.PROCESSING.value: CommandReceiptStatus.QUEUED,
@@ -6940,56 +6751,11 @@ def _pm12_allocation_line_digest(line: Dict[str, Any]) -> str:
     basis["cap_reasons"] = list(line.get("cap_reasons") or [])
     basis["evidence_refs"] = list(line.get("evidence_refs") or [])
     return _stable_json_hash(basis)
-def _pm12_semantic_json_value(value: Any) -> Any:
-    """Canonicalize JSON values without treating booleans as numbers."""
-    if value is None:
-        return ["null"]
-    if isinstance(value, bool):
-        return ["boolean", value]
-    if isinstance(value, str):
-        return ["string", value]
-    if isinstance(value, (int, float, Decimal)):
-        try:
-            numeric = (
-                value
-                if isinstance(value, Decimal)
-                else Decimal(str(value))
-            )
-        except (InvalidOperation, TypeError, ValueError) as exc:
-            raise ValueError("allocation line contains an invalid number") from exc
-        if not numeric.is_finite():
-            raise ValueError("allocation line contains a non-finite number")
-        if numeric == 0:
-            numeric = Decimal(0)
-        return ["number", format(numeric.normalize(), "f")]
-    if isinstance(value, list):
-        return ["array", [_pm12_semantic_json_value(item) for item in value]]
-    if isinstance(value, dict):
-        if any(not isinstance(key, str) for key in value):
-            raise ValueError("allocation line contains a non-string object key")
-        return [
-            "object",
-            [
-                [key, _pm12_semantic_json_value(value[key])]
-                for key in sorted(value)
-            ],
-        ]
-    raise ValueError(
-        f"allocation line contains unsupported JSON value {type(value).__name__}"
-    )
-def _pm12_semantic_values_match(asserted: Any, authoritative: Any) -> bool:
-    """Compare an asserted value against its admitted authoritative value using the
-    numeric/bool/order-safe semantic canonical form so benign browser JSON
-    round-trips (for example 1.0 -> 1, or object key reordering) do not read as an
-    assertion mismatch. Values that cannot be canonicalized stay fail-closed by
-    returning False, preserving the strict-by-default posture for malformed input."""
-    try:
-        return (
-            _pm12_semantic_json_value(asserted)
-            == _pm12_semantic_json_value(authoritative)
-        )
-    except ValueError:
-        return False
+from .capital.service import (
+    _pm12_semantic_json_value,
+    _pm12_semantic_values_match,
+    _pm12_allocation_line_assertion_hash,
+)
 def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
     snapshot = read_store.get_ranking_snapshot(snapshot_id)
     if not isinstance(snapshot, dict):
@@ -7853,627 +7619,59 @@ def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
-def _management_first_non_empty(*values: Any) -> Any:
-    for value in values:
-        if value not in (None, ""):
-            return value
-    return None
-def _management_dict_value(record: Dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        value = record.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-def _management_nested_dict(record: Dict[str, Any], *keys: str) -> Dict[str, Any]:
-    for key in keys:
-        value = record.get(key)
-        if isinstance(value, dict):
-            return value
-    return {}
-def _management_position_records(telemetry: Dict[str, Any]) -> List[Dict[str, Any]]:
-    for key in ("positions", "holdings", "position_snapshots"):
-        raw_items = telemetry.get(key)
-        if isinstance(raw_items, list):
-            items = [item for item in raw_items if isinstance(item, dict)]
-            if items:
-                return items
-    for key in ("position", "holding"):
-        raw_item = telemetry.get(key)
-        if isinstance(raw_item, dict):
-            return [raw_item]
-    return []
-def _management_latest_timestamp(items: List[Dict[str, Any]], *fields: str) -> Optional[str]:
-    latest: Optional[str] = None
-    for item in items:
-        for field in fields:
-            value = str(item.get(field) or "").strip()
-            if value and (latest is None or value > latest):
-                latest = value
-    return latest
-def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
-    if not record_id:
-        return None
-    return f"{path}/{record_id}"
-_PM12_ATTRIBUTION_DIMENSIONS = ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime")
-def _pm12_metric_or_split(
-    value: Any,
-    fallback: Optional[float],
-    split_count: int,
-) -> Optional[float]:
-    metric = _management_as_float(value)
-    if metric is not None:
-        return metric
-    if fallback is None:
-        return None
-    return round(fallback / max(split_count, 1), 6)
-def _pm12_dimension_key(value: Any) -> str:
-    key = str(value or "").strip()
-    return key if key else "unassigned"
-def _pm12_attribution_dimension_label(
-    dimension: str,
-    key: str,
-    *,
-    personas_by_id: Dict[str, Dict[str, Any]],
-    strategies_by_id: Dict[str, Dict[str, Any]],
-    pools_by_id: Dict[str, Dict[str, Any]],
-) -> str:
-    if key == "unassigned":
-        return "Unassigned"
-    if dimension == "persona":
-        persona = personas_by_id.get(key, {})
-        return str(persona.get("name") or persona.get("display_name") or key)
-    if dimension == "strategy":
-        strategy = strategies_by_id.get(key, {})
-        return str(strategy.get("title") or strategy.get("name") or key)
-    if dimension == "pool":
-        pool = pools_by_id.get(key, {})
-        return str(pool.get("name") or key)
-    return key
-def _pm12_performance_attribution_sources(
-    tenant_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    runtime_bindings = read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
-    deployment_plans = read_store.list_deployment_plans() or []
-    bindings = read_store.list_bindings(include_market_persona_defaults=True) or []
-    capital_pools = read_store.list_capital_pools(include_market_persona_defaults=True) or []
-    clean_tenant = str(tenant_id or "").strip()
-    personas = _list_persona_records(clean_tenant or None)
-    strategies = _list_strategy_summaries()
 
-    plans_by_id = {
-        _management_record_id(plan, "plan_id", "id"): plan
-        for plan in deployment_plans
-        if _management_record_id(plan, "plan_id", "id")
-    }
-    bindings_by_id = {
-        _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id"): binding
-        for binding in bindings
-        if _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id")
-    }
-    pools_by_id = {
-        _management_record_id(pool, "pool_id", "id"): pool
-        for pool in capital_pools
-        if _management_record_id(pool, "pool_id", "id")
-    }
-    personas_by_id = {
-        _management_record_id(persona, "persona_id", "id"): persona
-        for persona in personas
-        if _management_record_id(persona, "persona_id", "id")
-    }
-    strategies_by_id = {
-        _management_record_id(strategy, "strategy_id", "id"): strategy
-        for strategy in strategies
-        if _management_record_id(strategy, "strategy_id", "id")
-    }
 
-    # A single telemetry-list projection is the canonical bounded source for
-    # this aggregate.  Do not issue one record read per runtime when that
-    # projection supplied rows.  The record lookup fallback is retained for
-    # older stores that expose no telemetry-list rows at all (including
-    # isolated legacy fixtures that only expose the historical record lookup).
-    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
-    try:
-        telemetry_summaries = list(read_store.list_telemetry_summaries() or [])
-    except Exception:
-        telemetry_summaries = []
-    has_bulk_telemetry_projection = bool(telemetry_summaries)
-    for telemetry in telemetry_summaries:
-        if not isinstance(telemetry, dict):
-            continue
-        runtime_id = _management_record_id(
-            telemetry,
-            "runtime_id",
-            "runtimeId",
-            "execution_runtime_id",
-            "id",
-        )
-        if runtime_id:
-            telemetry_by_runtime_id[runtime_id] = telemetry
+from .agora.performance.service import (
+    PM12_ATTRIBUTION_DIMENSIONS as _PM12_ATTRIBUTION_DIMENSIONS,
+    pm12_attribution_metrics,
+    pm12_performance_attribution_facts,
+    pm12_performance_attribution_response,
+    pm12_performance_attribution_rows,
+    pm12_performance_attribution_sources,
+)
 
-    for runtime in runtime_bindings:
-        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
-        if not runtime_id:
-            continue
-        telemetry = telemetry_by_runtime_id.get(runtime_id)
-        if telemetry is None and not has_bulk_telemetry_projection:
-            telemetry = read_store.get_telemetry_summary(runtime_id)
-        if telemetry is not None:
-            telemetry_by_runtime_id[runtime_id] = telemetry
 
-    return {
-        "tenant_id": clean_tenant or None,
-        "runtime_bindings": runtime_bindings,
-        "deployment_plans": deployment_plans,
-        "bindings": bindings,
-        "capital_pools": capital_pools,
-        "personas": personas,
-        "strategies": strategies,
-        "plans_by_id": plans_by_id,
-        "bindings_by_id": bindings_by_id,
-        "pools_by_id": pools_by_id,
-        "personas_by_id": personas_by_id,
-        "strategies_by_id": strategies_by_id,
-        "telemetry_by_runtime_id": telemetry_by_runtime_id,
-    }
+def _pm12_attribution_metrics(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_attribution_metrics(entries)
+
+
 def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str) -> List[Dict[str, Any]]:
-    facts: List[Dict[str, Any]] = []
-    plans_by_id = sources["plans_by_id"]
-    bindings_by_id = sources["bindings_by_id"]
-    pools_by_id = sources["pools_by_id"]
-    telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
-    scoped_tenant = str(sources.get("tenant_id") or "").strip()
-    personas_by_id = sources["personas_by_id"]
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_performance_attribution_facts(sources, period_key)
 
-    for runtime in sources["runtime_bindings"]:
-        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
-        runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
-        plan_id = _management_record_id(runtime, "plan_id", "deployment_plan_id")
-        plan = plans_by_id.get(plan_id, {})
-        plan_binding_ids = [
-            str(value).strip()
-            for value in (plan.get("binding_ids") or [])
-            if str(value).strip()
-        ]
-        persona_binding_id = (
-            _management_record_id(runtime, "persona_capital_binding_id")
-            or (plan_binding_ids[0] if plan_binding_ids else "")
-        )
-        persona_binding = bindings_by_id.get(persona_binding_id, {})
-        telemetry = telemetry_by_runtime_id.get(runtime_id, {})
-        summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
-        positions = _management_position_records(telemetry) or [{}]
-        split_count = len(positions)
 
-        runtime_pnl = _management_as_float(
-            _management_first_non_empty(telemetry.get("pnl"), summary.get("total_pnl"))
-        )
-        runtime_unrealized_pnl = _management_as_float(
-            _management_first_non_empty(telemetry.get("unrealized_pnl"), summary.get("unrealized_pnl"))
-        )
-        runtime_realized_pnl = _management_as_float(
-            _management_first_non_empty(telemetry.get("realized_pnl"), summary.get("realized_pnl"))
-        )
-        runtime_trades = _management_as_float(
-            _management_first_non_empty(telemetry.get("total_trades"), summary.get("total_trades"))
-        )
-
-        for index, position in enumerate(positions):
-            instrument = _management_nested_dict(position, "instrument", "asset", "contract")
-            mark = _management_nested_dict(position, "mark", "mark_price", "market_price")
-            capital_pool_id = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "capital_pool_id", "pool_id"),
-                    _management_dict_value(runtime, "capital_pool_id", "pool_id"),
-                    _management_dict_value(plan, "capital_pool_id", "target_pool_id", "pool_id"),
-                    _management_dict_value(persona_binding, "capital_pool_id", "pool_id"),
-                )
-                or ""
-            )
-            capital_pool = pools_by_id.get(capital_pool_id, {})
-            canonical_persona_id = str(persona_binding.get("persona_id") or "").strip()
-            if canonical_persona_id:
-                persona_id = canonical_persona_id
-            else:
-                persona_id = str(runtime.get("persona_id") or "").strip()
-            if scoped_tenant and persona_id and persona_id not in personas_by_id:
-                # A request-scoped attribution response may only disclose
-                # runtime facts whose Persona has an explicit matching tenant
-                # admission in the durable directory.
-                continue
-            strategy_id = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "strategy_id", "strategy_ref"),
-                    _management_dict_value(runtime, "strategy_id", "strategy_ref"),
-                    _management_dict_value(plan, "strategy_id", "strategy_ref"),
-                    _management_dict_value(persona_binding, "strategy_id"),
-                )
-                or ""
-            )
-            symbol = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "symbol", "instrument_id", "asset_id", "contract_id"),
-                    _management_dict_value(instrument, "symbol", "instrument_id", "asset_id", "contract_id"),
-                    _management_dict_value(telemetry, "symbol", "instrument_id", "asset_id", "contract_id"),
-                )
-                or ""
-            )
-            broker_id = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "broker_id", "broker", "broker_ref"),
-                    _management_dict_value(telemetry, "broker_id", "broker", "broker_ref"),
-                    _management_dict_value(runtime, "broker_id", "broker", "broker_ref"),
-                    _management_dict_value(plan, "broker_id", "broker", "broker_ref"),
-                )
-                or ""
-            )
-            regime = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "regime", "market_regime", "risk_regime"),
-                    _management_dict_value(telemetry, "regime", "market_regime", "risk_regime"),
-                    _management_dict_value(runtime, "regime", "market_regime", "risk_regime"),
-                    _management_dict_value(plan, "regime", "market_regime", "risk_regime"),
-                )
-                or ""
-            )
-            quantity = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "quantity", "qty", "net_quantity", "position_quantity"),
-                    _management_dict_value(telemetry, "quantity", "position_quantity"),
-                    _management_dict_value(summary, "quantity", "position_quantity"),
-                )
-            )
-            mark_price = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "mark_price", "market_price", "last_price"),
-                    _management_dict_value(mark, "price", "mark_price", "market_price", "last_price"),
-                    _management_dict_value(telemetry, "mark_price", "market_price", "last_price"),
-                    _management_dict_value(summary, "mark_price", "market_price", "last_price"),
-                )
-            )
-            market_value = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "market_value", "value"),
-                    _management_dict_value(telemetry, "market_value"),
-                    _management_dict_value(summary, "market_value"),
-                )
-            )
-            if market_value is None and quantity is not None and mark_price is not None:
-                market_value = round(quantity * mark_price, 6)
-            notional = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "notional", "gross_notional"),
-                    _management_dict_value(telemetry, "notional", "gross_notional"),
-                    _management_dict_value(summary, "notional", "gross_notional"),
-                    market_value,
-                )
-            )
-            if notional is not None:
-                notional = abs(notional)
-            exposure = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "exposure", "gross_exposure"),
-                    _management_dict_value(telemetry, "exposure", "gross_exposure"),
-                    _management_dict_value(summary, "exposure", "gross_exposure"),
-                    notional,
-                )
-            )
-            total_pnl = _pm12_metric_or_split(
-                _management_first_non_empty(
-                    _management_dict_value(position, "total_pnl", "pnl"),
-                    _management_dict_value(position, "realized_plus_unrealized_pnl"),
-                ),
-                runtime_pnl,
-                split_count,
-            )
-            unrealized_pnl = _pm12_metric_or_split(
-                _management_dict_value(position, "unrealized_pnl", "unrealized"),
-                runtime_unrealized_pnl,
-                split_count,
-            )
-            realized_pnl = _pm12_metric_or_split(
-                _management_dict_value(position, "realized_pnl", "realized"),
-                runtime_realized_pnl,
-                split_count,
-            )
-            drawdown = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "drawdown", "max_drawdown"),
-                    _management_dict_value(telemetry, "drawdown"),
-                    _management_dict_value(summary, "max_drawdown"),
-                )
-            )
-            value_at_risk = _management_as_float(
-                _management_first_non_empty(
-                    _management_first_float(
-                        position,
-                        "value_at_risk",
-                        "valueAtRisk",
-                        "var",
-                        "VaR",
-                        "risk.value_at_risk",
-                        "risk.valueAtRisk",
-                        "risk.var",
-                    ),
-                    _management_first_float(
-                        telemetry,
-                        "value_at_risk",
-                        "valueAtRisk",
-                        "var",
-                        "VaR",
-                        "risk.value_at_risk",
-                        "risk.valueAtRisk",
-                        "risk.var",
-                        "summary.value_at_risk",
-                        "summary.valueAtRisk",
-                        "summary.var",
-                    ),
-                )
-            )
-            fill_rate = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "fill_rate"),
-                    _management_dict_value(telemetry, "fill_rate"),
-                    _management_dict_value(summary, "fill_rate"),
-                )
-            )
-            avg_slippage_bps = _management_as_float(
-                _management_first_non_empty(
-                    _management_dict_value(position, "avg_slippage_bps", "slippage_bps"),
-                    _management_dict_value(telemetry, "avg_slippage_bps", "slippage_bps"),
-                    _management_dict_value(summary, "avg_slippage_bps", "slippage_bps"),
-                )
-            )
-            total_trades = _pm12_metric_or_split(
-                _management_dict_value(position, "total_trades", "trade_count", "trades"),
-                runtime_trades,
-                split_count,
-            )
-            collected_at = str(
-                _management_first_non_empty(
-                    _management_dict_value(position, "collected_at", "marked_at", "updated_at"),
-                    _management_dict_value(telemetry, "collected_at", "updated_at"),
-                    _management_dict_value(summary, "collected_at", "updated_at"),
-                )
-                or ""
-            )
-
-            facts.append({
-                "id": f"{runtime_id or runtime_binding_id or 'runtime'}:{index}",
-                "period": period_key,
-                "runtime_id": runtime_id,
-                "runtime_binding_id": runtime_binding_id,
-                "deployment_plan_id": plan_id or _management_record_id(plan, "plan_id", "id"),
-                "persona_capital_binding_id": persona_binding_id,
-                "capital_pool_id": capital_pool_id,
-                "capital_pool_name": capital_pool.get("name") or capital_pool_id,
-                "persona_id": persona_id,
-                "strategy_id": strategy_id,
-                "symbol": symbol,
-                "broker_id": broker_id,
-                "regime": regime,
-                "deployment_stage": str(
-                    runtime.get("deployment_stage") or runtime.get("deployment_mode") or plan.get("target_stage") or ""
-                ),
-                "status": str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown")),
-                "total_pnl": total_pnl,
-                "unrealized_pnl": unrealized_pnl,
-                "realized_pnl": realized_pnl,
-                "notional": notional,
-                "market_value": market_value,
-                "exposure": exposure,
-                "drawdown": drawdown,
-                "value_at_risk": value_at_risk,
-                "fill_rate": fill_rate,
-                "avg_slippage_bps": avg_slippage_bps,
-                "total_trades": total_trades,
-                "collected_at": collected_at or None,
-                "telemetry_available": runtime_id in telemetry_by_runtime_id if runtime_id else False,
-                "dimensions": {
-                    "persona": _pm12_dimension_key(persona_id),
-                    "strategy": _pm12_dimension_key(strategy_id),
-                    "pool": _pm12_dimension_key(capital_pool_id),
-                    "asset": _pm12_dimension_key(symbol),
-                    "broker": _pm12_dimension_key(broker_id),
-                    "runtime": _pm12_dimension_key(runtime_id or runtime_binding_id),
-                    "regime": _pm12_dimension_key(regime),
-                },
-            })
-
-    return facts
-def _pm12_metric_sum(facts: List[Dict[str, Any]], field: str) -> Optional[float]:
-    values = [
-        value
-        for value in (_management_as_float(fact.get(field)) for fact in facts)
-        if value is not None
-    ]
-    return round(sum(values), 6) if values else None
-def _pm12_metric_avg(facts: List[Dict[str, Any]], field: str) -> Optional[float]:
-    values = [
-        value
-        for value in (_management_as_float(fact.get(field)) for fact in facts)
-        if value is not None
-    ]
-    return _management_avg(values)
-def _pm12_attribution_metrics(facts: List[Dict[str, Any]]) -> Dict[str, Any]:
-    drawdown_values = [
-        value
-        for value in (_management_as_float(fact.get("drawdown")) for fact in facts)
-        if value is not None
-    ]
-    trade_total = _pm12_metric_sum(facts, "total_trades")
-    runtime_ids = sorted({
-        str(fact.get("runtime_id") or "")
-        for fact in facts
-        if str(fact.get("runtime_id") or "")
-    })
-    telemetry_runtime_ids = sorted({
-        str(fact.get("runtime_id") or "")
-        for fact in facts
-        if str(fact.get("runtime_id") or "") and fact.get("telemetry_available")
-    })
-    return {
-        "runtime_count": len(runtime_ids),
-        "telemetry_runtime_count": len(telemetry_runtime_ids),
-        "holding_count": len(facts),
-        "total_pnl": _pm12_metric_sum(facts, "total_pnl"),
-        "unrealized_pnl": _pm12_metric_sum(facts, "unrealized_pnl"),
-        "realized_pnl": _pm12_metric_sum(facts, "realized_pnl"),
-        "total_notional": _pm12_metric_sum(facts, "notional"),
-        "total_market_value": _pm12_metric_sum(facts, "market_value"),
-        "total_exposure": _pm12_metric_sum(facts, "exposure"),
-        "worst_drawdown": max(drawdown_values) if drawdown_values else None,
-        "average_fill_rate": _pm12_metric_avg(facts, "fill_rate"),
-        "average_slippage_bps": _pm12_metric_avg(facts, "avg_slippage_bps"),
-        "total_trades": int(trade_total) if trade_total is not None else 0,
-        "latest_telemetry_at": _management_latest_timestamp(facts, "collected_at"),
-    }
-def _pm12_performance_attribution_group_entries(
-    facts: List[Dict[str, Any]],
-    *,
-    dimensions: List[str],
-) -> List[Dict[str, Any]]:
-    total_metrics = _pm12_attribution_metrics(facts)
-    portfolio_pnl = _management_as_float(total_metrics.get("total_pnl"))
-    portfolio_notional = _management_as_float(total_metrics.get("total_notional"))
-    entries: List[Dict[str, Any]] = []
-
-    for dimension in dimensions:
-        grouped: Dict[str, List[Dict[str, Any]]] = {}
-        for fact in facts:
-            dims = fact.get("dimensions") if isinstance(fact.get("dimensions"), dict) else {}
-            key = _pm12_dimension_key(dims.get(dimension))
-            grouped.setdefault(key, []).append(fact)
-
-        ranked_groups: List[tuple[str, List[Dict[str, Any]], Dict[str, Any]]] = []
-        for key, group_facts in grouped.items():
-            ranked_groups.append((key, group_facts, _pm12_attribution_metrics(group_facts)))
-        ranked_groups.sort(
-            key=lambda item: (
-                _management_as_float(item[2].get("total_pnl")) is None,
-                -(_management_as_float(item[2].get("total_pnl")) or 0.0),
-                item[0],
-            )
-        )
-
-        for rank, (key, group_facts, metrics) in enumerate(ranked_groups, start=1):
-            pnl = _management_as_float(metrics.get("total_pnl"))
-            notional = _management_as_float(metrics.get("total_notional"))
-            pnl_contribution = None
-            if pnl is not None and portfolio_pnl not in (None, 0):
-                pnl_contribution = round(pnl / portfolio_pnl, 6)
-            notional_weight = None
-            if notional is not None and portfolio_notional not in (None, 0):
-                notional_weight = round(notional / portfolio_notional, 6)
-            entries.append({
-                "dimension": dimension,
-                "dimension_key": key,
-                "group_facts": group_facts,
-                "metrics": metrics,
-                "notional_weight": notional_weight,
-                "pnl_contribution_pct": pnl_contribution,
-                "rank": rank,
-            })
-
-    return entries
-def _pm12_performance_attribution_page_entries(
-    facts: List[Dict[str, Any]],
-    *,
-    dimensions: List[str],
-    page_token: Optional[str],
-    page_size: int,
-) -> tuple[List[Dict[str, Any]], int, Optional[str], Dict[str, Any]]:
-    entries = _pm12_performance_attribution_group_entries(facts, dimensions=dimensions)
-    page_entries, next_page_token = _page_slice(entries, page_token, page_size)
-    return page_entries, len(entries), next_page_token, _pm12_attribution_metrics(facts)
-def _pm12_attribution_data_confidence(metrics: Dict[str, Any]) -> str:
-    holding_count = int(metrics.get("holding_count") or 0)
-    runtime_count = int(metrics.get("runtime_count") or 0)
-    telemetry_runtime_count = int(metrics.get("telemetry_runtime_count") or 0)
-    if holding_count <= 0:
-        return "unavailable"
-    if telemetry_runtime_count <= 0:
-        return "partial"
-    if runtime_count and telemetry_runtime_count < runtime_count:
-        return "degraded"
-    if _management_as_float(metrics.get("total_pnl")) is None:
-        return "partial"
-    return "formal"
 def _pm12_performance_attribution_rows(
     entries: List[Dict[str, Any]],
     *,
     period_key: str,
     sources: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_performance_attribution_rows(
+        entries,
+        period_key=period_key,
+        sources=sources,
+    )
 
-    for entry in entries:
-        dimension = str(entry.get("dimension") or "")
-        key = str(entry.get("dimension_key") or "")
-        group_facts = entry.get("group_facts") if isinstance(entry.get("group_facts"), list) else []
-        metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
-        runtime_ids = sorted({
-            str(fact.get("runtime_id") or "")
-            for fact in group_facts
-            if str(fact.get("runtime_id") or "")
-        })
-        pool_ids = sorted({
-            str(fact.get("capital_pool_id") or "")
-            for fact in group_facts
-            if str(fact.get("capital_pool_id") or "")
-        })
-        persona_ids = sorted({
-            str(fact.get("persona_id") or "")
-            for fact in group_facts
-            if str(fact.get("persona_id") or "")
-        })
-        strategy_ids = sorted({
-            str(fact.get("strategy_id") or "")
-            for fact in group_facts
-            if str(fact.get("strategy_id") or "")
-        })
-        label = _pm12_attribution_dimension_label(
-            dimension,
-            key,
-            personas_by_id=sources["personas_by_id"],
-            strategies_by_id=sources["strategies_by_id"],
-            pools_by_id=sources["pools_by_id"],
-        )
-        data_confidence = _pm12_attribution_data_confidence(metrics)
-        rows.append({
-            "id": f"pm12-performance-attribution-{dimension}-{key}",
-            "dimension": dimension,
-            "dimension_key": key,
-            "label": label,
-            "period": period_key,
-            "data_confidence": data_confidence,
-            "source_status": "ok" if data_confidence == "formal" else data_confidence,
-            "rank": entry.get("rank"),
-            "metrics": {
-                **metrics,
-                "data_confidence": data_confidence,
-                "pnl_contribution_pct": entry.get("pnl_contribution_pct"),
-                "notional_weight": entry.get("notional_weight"),
-            },
-            "total_pnl": metrics["total_pnl"],
-            "pnl_contribution_pct": entry.get("pnl_contribution_pct"),
-            "notional_weight": entry.get("notional_weight"),
-            "runtime_count": metrics["runtime_count"],
-            "holding_count": metrics["holding_count"],
-            "source_refs": {
-                "runtime_ids": runtime_ids,
-                "capital_pool_ids": pool_ids,
-                "persona_ids": persona_ids,
-                "strategy_ids": strategy_ids,
-            },
-            "links": {
-                "runtime": _management_link("/bff/runtimes", key) if dimension == "runtime" else None,
-                "capital_pool": _management_link("/bff/capital-pools", key) if dimension == "pool" else None,
-                "persona": _management_link("/bff/personas", key) if dimension == "persona" else None,
-                "strategy": _management_link("/bff/strategies", key) if dimension == "strategy" else None,
-            },
-        })
 
-    return rows
+def _pm12_performance_attribution_response_impl(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    return _agora_perf.pm12_performance_attribution_response(*args, **kwargs)
+
+
+def _pm12_performance_attribution_sources(
+    tenant_id: Optional[str] = None,
+    read_store: Optional[Any] = None,
+) -> Dict[str, Any]:
+    from services.control_plane.bff.agora.performance import service as _agora_perf
+    resolved_store = read_store if read_store is not None else globals().get("read_store")
+    return _agora_perf.pm12_performance_attribution_sources(
+        tenant_id=tenant_id,
+        read_store=resolved_store,
+        list_persona_records=lambda tid: _list_persona_records(tid, read_store=resolved_store) if (resolved_store is not None and hasattr(resolved_store, "list_personas")) else [],
+        list_strategy_summaries=lambda: list(resolved_store.list_strategy_specs() or []) if (resolved_store is not None and hasattr(resolved_store, "list_strategy_specs")) else [],
+    )
 def _persona_fleet_runtime_matches(
     runtime_binding: Dict[str, Any],
     *,
@@ -9212,77 +8410,9 @@ def _human_inbox_promotion_recommendation_id(command: Dict[str, Any]) -> str:
         or target.get("id")
         or ""
     ).strip()
-def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
-    if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
-        return False
-    if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
-        return False
-    params = command.get("params") if isinstance(command.get("params"), dict) else {}
-    target = command.get("target") if isinstance(command.get("target"), dict) else {}
-    recommendation_id = _human_inbox_promotion_recommendation_id(command)
-    review_revision_id = _promotion_review_record_revision_id(command)
-    target_id = str(target.get("id") or "").strip()
-    if (
-        not recommendation_id
-        or target.get("type") != ObjectType.RANKING.value
-        or not review_revision_id
-        or target_id not in {recommendation_id, review_revision_id}
-    ):
-        return False
-    expected_quarter = _promotion_review_quarter_from_id(recommendation_id)
-    quarter = str(params.get("quarter") or "").strip().upper()
-    persona_id = str(params.get("persona_id") or "").strip()
-    action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    if not expected_quarter or quarter != expected_quarter or not persona_id:
-        return False
-    if action_id not in _PROMOTION_REVIEW_ACTION_IDS:
-        return False
-    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
-    if ranking_snapshot_id and review_revision_id != _promotion_review_revision_id(
-        recommendation_id,
-        ranking_snapshot_id,
-    ):
-        return False
-    for flag in (
-        "direct_live_capital_mutation",
-        "liveCapitalMutation",
-        "live_capital_mutation",
-        "runtime_mutation",
-    ):
-        if params.get(flag) not in (None, False):
-            return False
-
-    foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
-    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
-    audit_foundation = audit.get("foundation") if isinstance(audit.get("foundation"), dict) else {}
-    trusted_producer = (
-        foundation.get("trusted_evidence_producer")
-        or audit.get("trusted_evidence_producer")
-        or audit_foundation.get("trusted_evidence_producer")
-    )
-    if trusted_producer == _HUMAN_INBOX_PROMOTION_PRODUCER:
-        return True
-    # Legacy submissions from the dedicated semantic route predate the
-    # producer marker. Generic /bff/v1 command admission always persists an
-    # admission_route and must not manufacture viewer-visible inbox rows.
-    if foundation.get("admission_route"):
-        return False
-    if not foundation:
-        # Pre-foundation command-store rows were written by the dedicated
-        # semantic submit route. API-admitted generic commands always carry an
-        # admission_route, so this compatibility path cannot be reached by a
-        # current generic command request.
-        return True
-    return (
-        params.get("source_type") == "quarterly_ranking_recommendation"
-        and params.get("source_record_id") == recommendation_id
-        and params.get("audit_event") == "quarterly_ranking.recommendation_submitted"
-        and params.get("policy") == "promotion_governance_human_gate_no_direct_live_capital"
-    )
+from .personas.service import (
+    _human_inbox_trusted_promotion_submission,
+)
 def _human_inbox_sanitize_promotion_snapshot(
     command: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
@@ -10214,8 +9344,6 @@ def _human_inbox_payload(
         page_token=page_token,
         page_size=page_size,
     )
-_MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
-_MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG: Optional[Tuple[str, float]] = None
 _MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
     Optional[ManagementNlCommandReservation]
 ] = ContextVar("management_nl_command_reservation", default=None)
@@ -10930,285 +10058,63 @@ def _management_ai_audit_href(
         message_id=message_id,
         event_type=event_type,
     )
-def _management_ai_conversation_href(session_id: str, *, trace_id: Optional[str] = None) -> str:
-    route = f"/bff/management/ai/conversations/{quote(str(session_id or ''), safe='')}"
-    return route
+from .assistant.management_service import (
+    get_management_ai_conversation_store,
+    set_management_ai_conversation_store,
+    reset_management_ai_conversation_store,
+    management_ai_conversation_href as _management_ai_conversation_href,
+    management_ai_attachment_url as _management_ai_attachment_url,
+    management_ai_attachment_api_payload as _management_ai_attachment_api_payload,
+    management_ai_turn_api_payload as _management_ai_turn_api_payload,
+    management_ai_require_session_access as _management_ai_require_session_access,
+    management_ai_session_not_found as _management_ai_session_not_found,
+    management_ai_get_visible_session_or_404 as _management_ai_get_visible_session_or_404,
+    management_ai_get_session_or_404 as _management_ai_get_session_or_404,
+    management_ai_ensure_session as _management_ai_ensure_session_impl,
+    management_ai_store_attachments as _management_ai_store_attachments_impl,
+    management_ai_append_turn as _management_ai_append_turn_impl,
+    management_ai_server_conversation_context as _management_ai_server_conversation_context_impl,
+    management_ai_list_conversations as _management_ai_list_conversations,
+    management_ai_get_conversation as _management_ai_get_conversation,
+    management_ai_get_attachment as _management_ai_get_attachment,
+)
+
+
 _MGMT_AI_CONVERSATION_STORE: Optional[ManagementAiConversationStore] = None
 
 
 def _management_ai_conversation_store() -> ManagementAiConversationStore:
-    global _MGMT_AI_CONVERSATION_STORE
-    if _MGMT_AI_CONVERSATION_STORE is None:
-        _MGMT_AI_CONVERSATION_STORE = ManagementAiConversationStore()
-    return _MGMT_AI_CONVERSATION_STORE
-def _management_ai_attachment_url(attachment_id: str) -> str:
-    return f"/bff/management/ai/attachments/{quote(str(attachment_id or ''), safe='')}"
-def _management_ai_attachment_api_payload(attachment: Dict[str, Any]) -> Dict[str, Any]:
-    attachment_id = str(
-        attachment.get("id")
-        or attachment.get("attachmentId")
-        or attachment.get("attachment_id")
-        or ""
-    ).strip()
-    mime_type = str(attachment.get("mimeType") or attachment.get("mime_type") or "application/octet-stream")
-    size_bytes = int(attachment.get("sizeBytes") or attachment.get("size_bytes") or 0)
-    return {
-        "id": attachment_id,
-        "attachment_id": attachment_id,
-        "kind": str(attachment.get("kind") or "file"),
-        "mime_type": mime_type,
-        "filename": str(attachment.get("filename") or attachment_id or "attachment"),
-        "size_bytes": size_bytes,
-        "url": _management_ai_attachment_url(attachment_id) if attachment_id else "",
-    }
-def _management_ai_turn_api_payload(turn: Dict[str, Any]) -> Dict[str, Any]:
-    attachments = [
-        _management_ai_attachment_api_payload(item)
-        for item in (turn.get("attachments") or [])
-        if isinstance(item, dict)
-    ]
-    provider_status = (
-        turn.get("provider_status")
-        if isinstance(turn.get("provider_status"), dict)
-        else turn.get("providerStatus")
-        if isinstance(turn.get("providerStatus"), dict)
-        else None
-    )
-    ui_actions = (
-        turn.get("ui_actions")
-        if isinstance(turn.get("ui_actions"), list)
-        else turn.get("uiActions")
-        if isinstance(turn.get("uiActions"), list)
-        else []
-    )
-    payload = {
-        "id": turn.get("id"),
-        "turn_id": turn.get("turn_id") or turn.get("turnId") or turn.get("id"),
-        "message_id": turn.get("message_id") or turn.get("id"),
-        "session_id": turn.get("session_id") or turn.get("sessionId"),
-        "trace_id": turn.get("trace_id") or turn.get("traceId"),
-        "role": turn.get("role"),
-        "text": turn.get("text") or "",
-        "content": turn.get("text") or "",
-        "created_at": turn.get("created_at") or turn.get("createdAt"),
-        "provider_status": provider_status,
-        "attachments": attachments,
-        "ui_actions": ui_actions,
-        "actions": ui_actions,
-    }
-    ui_snapshot = (
-        turn.get("ui_snapshot")
-        if isinstance(turn.get("ui_snapshot"), dict)
-        else turn.get("uiSnapshot")
-        if isinstance(turn.get("uiSnapshot"), dict)
-        else None
-    )
-    if ui_snapshot is not None:
-        payload["ui_snapshot"] = ui_snapshot
-    return payload
-def _management_ai_require_session_access(
-    session: Dict[str, Any],
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str],
-) -> None:
-    owner_id = str(session.get("ownerId") or session.get("owner_id") or "").strip()
-    session_tenant_id = str(session.get("tenantId") or session.get("tenant_id") or "").strip()
-    clean_tenant_id = str(tenant_id or "").strip()
-    if owner_id and owner_id == identity.operator_id:
-        return
-    if clean_tenant_id and session_tenant_id and clean_tenant_id == session_tenant_id:
-        return
-    raise _bff_error(
-        403,
-        ErrorCode.FORBIDDEN,
-        "Management AI session is not visible to this operator",
-        "management_ai_session_not_visible",
-        precondition_failed="management_ai_session_visibility",
-    )
-def _management_ai_session_not_found(session_id: str) -> HTTPException:
-    clean_session_id = str(session_id or "").strip()
-    return _bff_error(
-        404,
-        ErrorCode.RESOURCE_NOT_FOUND,
-        f"Management AI session not found: {clean_session_id!r}",
-        "management_ai_session_not_found",
-        precondition_failed="management_ai_session",
-    )
-def _management_ai_get_visible_session_or_404(
-    session_id: str,
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str],
-) -> Dict[str, Any]:
-    clean_session_id = str(session_id or "").strip()
-    session = _management_ai_conversation_store().get_session(clean_session_id)
-    if session is None:
-        raise _management_ai_session_not_found(clean_session_id)
-    try:
-        _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
-    except HTTPException as exc:
-        if exc.status_code == 403:
-            raise _management_ai_session_not_found(clean_session_id) from exc
-        raise
-    return session
-def _management_ai_get_session_or_404(
-    session_id: str,
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str],
-) -> Dict[str, Any]:
-    clean_session_id = str(session_id or "").strip()
-    session = _management_ai_conversation_store().get_session(clean_session_id)
-    if session is None:
-        raise _management_ai_session_not_found(clean_session_id)
-    _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
-    return session
-def _management_ai_ensure_session(
-    *,
-    session_id: str,
-    identity: OperatorIdentity,
-    tenant_id: Optional[str],
-    now: str,
-    title: str,
-) -> Dict[str, Any]:
-    store = _management_ai_conversation_store()
-    existing = store.get_session(session_id)
-    if existing is not None:
-        _management_ai_require_session_access(existing, identity, tenant_id=tenant_id)
-    try:
-        return store.upsert_session(
-            session_id=session_id,
-            owner_id=identity.operator_id,
-            tenant_id=tenant_id,
-            now=now,
-            title=title,
-        )
-    except Exception as exc:
-        log.warning("Failed to persist Management AI session", exc_info=True)
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Management AI session store write failed",
-            str(exc),
-            precondition_failed="management_ai_session_store",
-        )
-def _management_ai_store_attachments(
-    *,
-    attachments: Any,
-    session_id: str,
-    turn_id: str,
-) -> List[Dict[str, Any]]:
-    try:
-        return _management_ai_conversation_store().store_attachments(
-            attachments,
-            session_id=session_id,
-            turn_id=turn_id,
-        )
-    except ManagementAiAttachmentError as exc:
-        status_code = int(getattr(exc, "status_code", 422) or 422)
-        code = ErrorCode.REQUEST_TOO_LARGE if status_code == 413 else ErrorCode.VALIDATION_FAILED
-        raise _bff_error(
-            status_code,
-            code,
-            (
-                "Management AI attachment payload is too large"
-                if status_code == 413
-                else "Management AI attachment payload is invalid"
-            ),
-            str(exc),
-            precondition_failed=getattr(exc, "precondition_failed", "management_ai_attachment"),
-            details_extra=getattr(exc, "details", {}),
-        )
-    except ValueError as exc:
-        raise _bff_error(
-            400,
-            ErrorCode.VALIDATION_FAILED,
-            "Management AI attachment payload is invalid",
-            str(exc),
-            precondition_failed="management_ai_attachment",
-        )
-    except Exception as exc:
-        log.warning("Failed to persist Management AI attachment", exc_info=True)
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Management AI attachment store write failed",
-            str(exc),
-            precondition_failed="management_ai_attachment_store",
-        )
-def _management_ai_append_turn(
-    *,
-    turn_id: str,
-    session_id: str,
-    role: str,
-    text: str,
-    created_at: str,
-    trace_id: Optional[str] = None,
-    attachments: Optional[List[Dict[str, Any]]] = None,
-    provider_status: Optional[Dict[str, Any]] = None,
-    ui_snapshot: Optional[Dict[str, Any]] = None,
-    ui_actions: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    try:
-        return _management_ai_conversation_store().append_turn(
-            turn_id=turn_id,
-            session_id=session_id,
-            role=role,
-            text=text,
-            created_at=created_at,
-            trace_id=trace_id,
-            attachments=attachments,
-            provider_status=provider_status,
-            ui_snapshot=ui_snapshot,
-            ui_actions=ui_actions,
-        )
-    except Exception as exc:
-        log.warning("Failed to persist Management AI turn", exc_info=True)
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Management AI turn store write failed",
-            str(exc),
-            precondition_failed="management_ai_turn_store",
-        )
+    if _MGMT_AI_CONVERSATION_STORE is not None:
+        return _MGMT_AI_CONVERSATION_STORE
+    return get_management_ai_conversation_store()
+
+
+def _management_ai_ensure_session(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    kwargs.setdefault("conversation_store", _management_ai_conversation_store())
+    return _management_ai_ensure_session_impl(*args, **kwargs)
+
+
+def _management_ai_store_attachments(*args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+    kwargs.setdefault("conversation_store", _management_ai_conversation_store())
+    return _management_ai_store_attachments_impl(*args, **kwargs)
+
+
+def _management_ai_append_turn(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    kwargs.setdefault("conversation_store", _management_ai_conversation_store())
+    return _management_ai_append_turn_impl(*args, **kwargs)
+
+
 def _management_ai_server_conversation_context(
     *,
     session_id: str,
     client_hint: Dict[str, Any],
 ) -> Dict[str, Any]:
-    stored_turns = _management_ai_conversation_store().list_turns(session_id)
-    turns = []
-    for turn in stored_turns:
-        api_turn = _management_ai_turn_api_payload(turn)
-        turns.append(
-            {
-                "id": api_turn.get("id"),
-                "role": api_turn.get("role"),
-                "content": api_turn.get("text") or "",
-                "text": api_turn.get("text") or "",
-                "created_at": api_turn.get("created_at"),
-                "attachments": api_turn.get("attachments") or [],
-                "provider_status": api_turn.get("provider_status"),
-                "trace_id": api_turn.get("trace_id"),
-            }
-        )
-    provider_turns, history_budget = _management_ai_provider_history_window(turns)
-    return {
-        "recent_turns": provider_turns,
-        "all_turns": provider_turns,
-        "turn_count": len(provider_turns),
-        "stored_turn_count": len(turns),
-        "source": "server",
-        "history_source": "management_ai_store",
-        "history_char_budget": history_budget["history_char_budget"],
-        "history_estimated_chars": history_budget["history_estimated_chars"],
-        "history_truncated": history_budget["history_truncated"],
-        "history_omitted_turn_count": history_budget["history_omitted_turn_count"],
-        "summary": client_hint.get("summary") or "",
-        "client_hint": client_hint,
-        "max_recent_turns": None,
-    }
+    return _management_ai_server_conversation_context_impl(
+        session_id=session_id,
+        client_hint=client_hint,
+        history_window_fn=_management_ai_provider_history_window,
+        conversation_store=_management_ai_conversation_store(),
+    )
 def _management_ai_provider_history_size(turns: List[Dict[str, Any]]) -> int:
     return len(json.dumps(turns, sort_keys=True, ensure_ascii=True))
 def _management_ai_provider_history_window(
@@ -12153,30 +11059,15 @@ def _mgmt_nl_idempotency_storage_key(
         ]
     )
     return f"management-nl-v2:{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
-def _mgmt_nl_command_recovery_seconds() -> float:
-    raw = os.getenv(
-        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS",
-        "300",
-    ).strip()
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        value = 300.0
-    return max(value, 0.001)
+from .assistant.management_service import (
+    get_mgmt_nl_command_recovery_seconds as _mgmt_nl_command_recovery_seconds,
+    get_mgmt_nl_command_idempotency_store,
+    reset_mgmt_nl_command_idempotency_store,
+)
+
+
 def _mgmt_nl_command_idempotency_store() -> ManagementNlCommandIdempotencyStore:
-    global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE, _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG
-    storage_path = os.getenv(
-        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
-        DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
-    ).strip()
-    config = (storage_path, _mgmt_nl_command_recovery_seconds())
-    if _MGMT_NL_COMMAND_IDEMPOTENCY_STORE is None or _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG != config:
-        _MGMT_NL_COMMAND_IDEMPOTENCY_STORE = ManagementNlCommandIdempotencyStore(
-            storage_path,
-            recovery_seconds=config[1],
-        )
-        _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = config
-    return _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
+    return get_mgmt_nl_command_idempotency_store()
 # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: ask and ask/stream are one durable
 # use case with two transports. They share this single canonical scope
 # route name (not the literal per-transport HTTP path) so a client can
@@ -15074,60 +13965,14 @@ async def bff_management_ai_conversations(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    sessions = _management_ai_conversation_store().list_sessions(
-        owner_id=identity.operator_id,
-        tenant_id=caller_tenant_id,
+    return _management_ai_list_conversations(
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
         limit=limit,
+        conversation_href_fn=_management_ai_conversation_href,
+        session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
+        conversation_store=_management_ai_conversation_store(),
     )
-    items: List[Dict[str, Any]] = []
-    for session in sessions:
-        session_id = str(session.get("sessionId") or session.get("session_id") or session.get("id") or "").strip()
-        if not session_id:
-            continue
-        try:
-            _management_ai_require_session_access(session, identity, tenant_id=caller_tenant_id)
-        except HTTPException:
-            continue
-        turn_count = len(_management_ai_conversation_store().list_turns(session_id))
-        items.append(
-            {
-                "id": session_id,
-                "session_id": session_id,
-                "title": session.get("title") or "",
-                "owner_id": session.get("owner_id") or session.get("ownerId"),
-                "tenant_id": session.get("tenant_id") or session.get("tenantId"),
-                "created_at": session.get("created_at") or session.get("createdAt"),
-                "updated_at": session.get("updated_at") or session.get("updatedAt"),
-                "turn_count": turn_count,
-                "href": _management_ai_conversation_href(session_id),
-            }
-        )
-    return {
-        "data": {
-            "id": "management_ai_conversations",
-            "items": items,
-            "summary": {
-                "total_sessions": len(items),
-                "returned_items": len(items),
-            },
-        },
-        "page_info": {
-            "next_page_token": None,
-            "total": len(items),
-            "page_size": limit,
-        },
-        "meta": {
-            "count": len(items),
-            "limit": limit,
-            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "surfaces": {
-                "management_ai_conversation_list": {
-                    "status": "ok",
-                    "source": "management_ai_store",
-                }
-            },
-        },
-    }
 async def bff_management_ai_conversation(
     session_id: str,
     trace_id: Optional[str] = None,
@@ -15144,54 +13989,16 @@ async def bff_management_ai_conversation(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    session = _management_ai_get_visible_session_or_404(
-        clean_session_id,
-        identity,
-        tenant_id=caller_tenant_id,
+    return _management_ai_get_conversation(
+        session_id=clean_session_id,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        trace_id=trace_id,
+        limit=limit,
+        audit_href_fn=lambda s_id, t_id: _management_ai_audit_href(session_id=s_id, trace_id=t_id),
+        session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
+        conversation_store=_management_ai_conversation_store(),
     )
-    turns = [
-        _management_ai_turn_api_payload(turn)
-        for turn in _management_ai_conversation_store().list_turns(clean_session_id)
-    ][:limit]
-    audit_log = {
-        "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
-        "trace_id": trace_id,
-    }
-    return {
-        "data": {
-            "session_id": clean_session_id,
-            "trace_id": trace_id,
-            "turns": turns,
-            "local_only": False,
-            "missing_in_store": False,
-            "owner_id": session.get("owner_id") or session.get("ownerId"),
-            "tenant_id": session.get("tenant_id") or session.get("tenantId"),
-            "created_at": session.get("created_at") or session.get("createdAt"),
-            "updated_at": session.get("updated_at") or session.get("updatedAt"),
-            "audit_log": audit_log,
-            "session": {
-                "session_id": clean_session_id,
-                "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            },
-        },
-        "meta": {
-            "count": len(turns),
-            "turn_cap": limit,
-            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "filters": {
-                "session_id": clean_session_id,
-                "trace_id": trace_id,
-                "trace_id_ignored": trace_id is not None,
-            },
-            "surfaces": {
-                "management_ai_conversation": {
-                    "status": "ok",
-                    "source": "management_ai_store",
-                    "reason": None,
-                }
-            },
-        },
-    }
 async def bff_management_ai_attachment(
     attachment_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -15201,35 +14008,16 @@ async def bff_management_ai_attachment(
     """Return a BFF-proxied Management AI attachment object for visible sessions."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    found = _management_ai_conversation_store().find_attachment(attachment_id)
-    if found is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            f"Management AI attachment not found: {attachment_id!r}",
-            "management_ai_attachment_not_found",
-            precondition_failed="management_ai_attachment",
-        )
-    metadata, turn = found
     caller_tenant_id = _mgmt_nl_caller_tenant(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    _management_ai_get_session_or_404(
-        str(turn.get("sessionId") or turn.get("session_id") or ""),
-        identity,
-        tenant_id=caller_tenant_id,
+    content, mime_type, filename = _management_ai_get_attachment(
+        attachment_id=attachment_id,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        conversation_store=_management_ai_conversation_store(),
     )
-    try:
-        content, mime_type, filename = _management_ai_conversation_store().read_attachment(attachment_id, metadata)
-    except FileNotFoundError:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            f"Management AI attachment object not found: {attachment_id!r}",
-            "management_ai_attachment_object_not_found",
-            precondition_failed="management_ai_attachment_object",
-        )
     return Response(
         content=content,
         media_type=mime_type,
@@ -15712,52 +14500,21 @@ def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, An
         "eventual_live_stage": "live",
         "live_requires_separate_human_gate": target_stage != "risk_containment_review",
     }
-def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, Any]]:
-    clean_id = _promotion_review_clean_id(review_id)
-    for record in reversed(command_store._get_all_commands()):
-        if not _human_inbox_trusted_promotion_submission(record):
-            continue
-        if _promotion_review_record_revision_id(record) == clean_id:
-            return record
-    return None
+from .personas.service import (
+    _promotion_review_submission_projection as _personas_promotion_review_submission_projection,
+)
+
+
 def _promotion_review_submission_projection(
     review_id: Any,
     *,
     include_source_recommendation: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    record = _latest_promotion_review_submission(review_id)
-    if record is None:
-        return None
-    params = record.get("params") if isinstance(record.get("params"), dict) else {}
-    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    review_revision_id = _promotion_review_record_revision_id(record)
-    projection = {
-        "submitted": True,
-        "submit_status": record.get("status"),
-        "command_id": record.get("command_id"),
-        "commandId": record.get("command_id"),
-        "receipt_id": record.get("command_id"),
-        "submitted_at": record.get("submitted_at"),
-        "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
-        "recommendation_id": params.get("recommendation_id") or params.get("recommendationId"),
-        "review_id": review_revision_id,
-        "promotion_review_id": review_revision_id,
-        "recommendation_action_id": params.get("recommendation_action_id") or params.get("recommendationActionId"),
-        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
-        "quarter": params.get("quarter"),
-        "persona_id": params.get("persona_id"),
-        "stage_from": params.get("stage_from"),
-        "stage_to": params.get("stage_to"),
-        "review_kind": params.get("review_kind"),
-        "human_inbox_id": _promotion_review_target_id(review_revision_id),
-        "live_capital_mutation": False,
-        "requires_human_gate_decision": True,
-    }
-    if include_source_recommendation and isinstance(params.get("source_recommendation"), dict):
-        projection["source_recommendation"] = json.loads(
-            json.dumps(params.get("source_recommendation"))
-        )
-    return projection
+    return _personas_promotion_review_submission_projection(
+        review_id,
+        include_source_recommendation=include_source_recommendation,
+        command_store=command_store,
+    )
 def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
     clean_id = _promotion_review_clean_id(review_id)
     for record in reversed(command_store._get_all_commands()):
@@ -15825,117 +14582,49 @@ def _pm12_performance_attribution_response(
     stage: Optional[str] = None,
     as_of: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    read_store: Optional[Any] = None,
+    sources_fn: Optional[Callable[..., Any]] = None,
+    rows_fn: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
-    snapshot_at = utc_now()
-    period_key = str(period or "").strip() or "latest"
-    sources = _pm12_performance_attribution_sources(tenant_id)
-    facts = _pm12_performance_attribution_facts(sources, period_key)
-
-    # Apply common filters to facts list
-    facts = _filter_by_common_identifiers(
-        facts,
-        persona_id=persona_id, persona=persona,
-        runtime_id=runtime_id, runtime=runtime,
-        strategy_id=strategy_id, strategy=strategy,
-        capital_pool_id=capital_pool_id, pool=pool,
-        sleeve_id=sleeve_id, sleeve=sleeve,
-        artifact_id=artifact_id, artifact=artifact,
-        broker_id=broker_id, broker=broker,
-        stage=stage, period=period_key, as_of=as_of
+    resolved_store = read_store if read_store is not None else globals().get("read_store")
+    resolved_sources_fn = (
+        sources_fn
+        if sources_fn is not None
+        else (lambda t: _pm12_performance_attribution_sources(t, read_store=resolved_store))
     )
-
-    page_entries, total, next_page_token, aggregate_metrics = _pm12_performance_attribution_page_entries(
-        facts,
+    return _pm12_performance_attribution_response_impl(
         dimensions=dimensions,
+        period=period,
         page_token=page_token,
         page_size=page_size,
+        data_id=data_id,
+        surface_key=surface_key,
+        persona_id=persona_id,
+        persona=persona,
+        runtime_id=runtime_id,
+        runtime=runtime,
+        strategy_id=strategy_id,
+        strategy=strategy,
+        capital_pool_id=capital_pool_id,
+        pool=pool,
+        sleeve_id=sleeve_id,
+        sleeve=sleeve,
+        artifact_id=artifact_id,
+        artifact=artifact,
+        broker_id=broker_id,
+        broker=broker,
+        stage=stage,
+        as_of=as_of,
+        tenant_id=tenant_id,
+        utc_now=utc_now,
+        read_store=resolved_store,
+        sources_fn=resolved_sources_fn,
+        dataset_surface_status_fn=lambda ds, **kw: _dataset_surface_status(ds, read_store=resolved_store, **kw),
+        aggregate_group_surface_fn=_aggregate_group_surface,
+        performance_ranking_source_surface_fn=_performance_ranking_source_surface,
+        snapshot_meta_fn=_snapshot_meta,
+        rows_fn=rows_fn or _pm12_performance_attribution_rows,
     )
-    page_items = _pm12_performance_attribution_rows(
-        page_entries,
-        period_key=period_key,
-        sources=sources,
-    )
-
-    source_surfaces = {
-        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
-        "telemetry_summaries": _dataset_surface_status(
-            "telemetry_summaries",
-            snapshot_at=snapshot_at,
-            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
-            missing_message="Telemetry summaries unavailable for performance attribution runtimes.",
-        ),
-        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
-        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
-        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
-        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
-        "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
-    }
-    attribution_surface = _aggregate_group_surface(
-        surface_key,
-        list(source_surfaces.values()),
-        snapshot_at=snapshot_at,
-        unavailable_message="Performance attribution aggregate unavailable.",
-        degraded_message="Performance attribution is degraded because one or more source surfaces are degraded.",
-    )
-    surfaces = {
-        name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
-        for name, surface in {
-            surface_key: attribution_surface,
-            **source_surfaces,
-        }.items()
-    }
-    if surface_key != "performance_attribution":
-        surfaces["performance_attribution"] = _performance_ranking_source_surface(attribution_surface, snapshot_at=snapshot_at)
-    summary = {
-        "period": period_key,
-        "dimensions": dimensions,
-        "supported_dimensions": list(_PM12_ATTRIBUTION_DIMENSIONS),
-        "row_count": total,
-        "returned_row_count": len(page_items),
-        "runtime_count": aggregate_metrics["runtime_count"],
-        "telemetry_runtime_count": aggregate_metrics["telemetry_runtime_count"],
-        "holding_count": aggregate_metrics["holding_count"],
-        "total_pnl": aggregate_metrics["total_pnl"],
-        "total_notional": aggregate_metrics["total_notional"],
-        "total_exposure": aggregate_metrics["total_exposure"],
-        "worst_drawdown": aggregate_metrics["worst_drawdown"],
-        "average_fill_rate": aggregate_metrics["average_fill_rate"],
-        "average_slippage_bps": aggregate_metrics["average_slippage_bps"],
-        "total_trades": aggregate_metrics["total_trades"],
-        "latest_telemetry_at": aggregate_metrics["latest_telemetry_at"],
-        "basis": "latest_runtime_telemetry_snapshot",
-    }
-    data = {
-        "id": data_id,
-        "period": period_key,
-        "dimensions": dimensions,
-        "items": page_items,
-        "summary": summary,
-    }
-    return {
-        "data": data,
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-            "page_size": page_size,
-        },
-        "meta": {
-            **_snapshot_meta(snapshot_at),
-            "surfaces": surfaces,
-            "composition_sources": [
-                "GET /api/v1/runtime-bindings",
-                "GET /api/v1/telemetry/{runtime_id}/summary",
-                "GET /api/v1/deployment-plans",
-                "GET /api/v1/persona-capital-bindings",
-                "GET /bff/capital-pools",
-                "GET /bff/personas",
-                "GET /bff/strategies",
-            ],
-            "period": period_key,
-            "dimensions": dimensions,
-            "policy": "read_only_performance_attribution",
-        },
-    }
 def _ops_read_model_entry_for_persona(
     persona_id: str,
     *,
@@ -16787,94 +15476,29 @@ _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 # _GOV_BFF_IDEMPOTENCY defined earlier
 _ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
-_INCIDENT_CASE_ALIAS_FIELDS = {
-    "binding_id": ("binding_id", "runtime_binding_id"),
-    "deployment_stage": ("deployment_stage", "deployment_mode"),
-    "deployment_plan_id": ("deployment_plan_id", "plan_id"),
-    "capital_pool_id": ("capital_pool_id", "affected_pool_id"),
-    "persona_capital_binding_id": ("persona_capital_binding_id",),
-    "artifact_id": ("artifact_id",),
-    "artifact_version": ("artifact_version",),
-    "runtime_id": ("runtime_id",),
-    "trace_id": ("trace_id", "correlation_id"),
-}
-def _first_present(payload: Dict[str, Any], keys: tuple[str, ...]) -> Any:
-    for key in keys:
-        value = payload.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-def _project_bff_incident_case(incident: Dict[str, Any]) -> Dict[str, Any]:
-    payload = dict(incident)
-    incident_id = str(payload.get("incident_id") or payload.get("id") or "")
-    if incident_id:
-        payload["id"] = payload.get("id") or incident_id
-        payload["incident_id"] = incident_id
-
-    for field, aliases in _INCIDENT_CASE_ALIAS_FIELDS.items():
-        value = _first_present(payload, aliases)
-        if value is not None:
-            payload[field] = value
-
-    created_at = payload.get("created_at") or payload.get("opened_at")
-    if created_at:
-        payload["created_at"] = created_at
-        payload["opened_at"] = payload.get("opened_at") or created_at
-
-    if not payload.get("lineage_ref") and payload.get("artifact_id") and payload.get("artifact_version"):
-        payload["lineage_ref"] = f"{payload['artifact_id']}@{payload['artifact_version']}"
-
-    return payload
-def _bff_incident_matches_filters(
-    incident: Dict[str, Any],
-    *,
-    status: Optional[str],
-    severity: Optional[str],
-    affected_pool_id: Optional[str],
-) -> bool:
-    if status:
-        requested_statuses = {token.strip().lower() for token in status.split(",") if token.strip()}
-        if str(incident.get("status") or "").lower() not in requested_statuses:
-            return False
-    if severity and str(incident.get("severity") or "").lower() != severity.lower():
-        return False
-    if affected_pool_id and (incident.get("capital_pool_id") or incident.get("affected_pool_id")) != affected_pool_id:
-        return False
-    return True
+from .incidents.service import IncidentService as _IncidentService
+def _current_read_store_for_legacy_incident_seam() -> Any:
+    return read_store
+def _bff_incident_service() -> _IncidentService:
+    """Composition-root binding: incidents/service.py's IncidentService is the
+    sole owner of Incident-case projection and filtering; inject the live
+    ``read_store``/``_ACKNOWLEDGED_ALERTS`` globals rather than duplicating
+    the projection logic here."""
+    return _IncidentService(
+        get_read_store=_current_read_store_for_legacy_incident_seam,
+        acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
+    )
 def _list_bff_incidents(
     *,
     status: Optional[str] = None,
     severity: Optional[str] = None,
     affected_pool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    incidents = [
-        _project_bff_incident_case(incident)
-        for incident in read_store.list_incidents(
-            status=status,
-            severity=severity,
-            affected_pool_id=affected_pool_id,
-        )
-    ]
-    anchor = [
-        incident
-        for incident in incidents
-        if str(incident.get("incident_id") or incident.get("id") or "") == "inc-20260410-001"
-    ]
-    rest = [
-        incident
-        for incident in incidents
-        if str(incident.get("incident_id") or incident.get("id") or "") != "inc-20260410-001"
-    ]
-    return anchor + sorted(
-        rest,
-        key=lambda item: str(item.get("created_at") or item.get("submitted_at") or ""),
-        reverse=True,
+    return _bff_incident_service().list_bff_incidents(
+        status=status, severity=severity, affected_pool_id=affected_pool_id
     )
 def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
-    incident = read_store.get_incident(incident_id)
-    if incident:
-        return _project_bff_incident_case(incident)
-    return None
+    return _bff_incident_service().get_bff_incident(incident_id)
 def _gov_bff_action_command(
     entity_type: ObjectType,
     entity_id: str,
