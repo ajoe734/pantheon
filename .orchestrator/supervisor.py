@@ -10650,6 +10650,50 @@ def assignment_transiently_blocked_recoverable(
     return None
 
 
+def _demand_endpoint_health_refresh(
+    config: dict[str, Any],
+    agent_name: str,
+    *,
+    endpoint_health: Mapping[str, rewrite_dispatch_admission.HealthRecord],
+    account_health: Mapping[str, rewrite_dispatch_admission.HealthRecord],
+    now: datetime,
+    targets: list[dict[str, str]],
+) -> None:
+    """Append a due refresh target for ``agent_name``'s endpoint(s), if any.
+
+    Shared by every fallback-candidate refresh scan so a candidate's
+    viability is judged by exactly one rule (``health_gate_for_endpoint``)
+    instead of independently-maintained copies that can silently disagree --
+    as they did until 2026-08-17 (OPS-HEALTH-GATE-ACCOUNT-PRECEDENCE-20260817
+    / OPS-HEALTH-GATE-UNIFY-20260817).
+    """
+
+    if not agent_name:
+        return
+    lane = delivery_lane_for_agent(config, normalize_agent_id(agent_name))
+    for endpoint in lane.endpoints:
+        if (
+            not endpoint.endpoint_id
+            or not endpoint.provider_id
+            or not endpoint.account_id
+            or not endpoint.enabled
+            or not endpoint.can_auto_deliver
+        ):
+            continue
+        _reason, refresh_target = rewrite_dispatch_admission.health_gate_for_endpoint(
+            endpoint_id=endpoint.endpoint_id,
+            account_id=endpoint.account_id,
+            endpoint_health=endpoint_health,
+            account_health=account_health,
+            now=now,
+        )
+        if refresh_target is None:
+            continue
+        target = {"scope": refresh_target.scope.value, "id": refresh_target.identifier}
+        if target not in targets:
+            targets.append(target)
+
+
 def unavailable_assignment_fallback_refresh_targets(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -10671,40 +10715,20 @@ def unavailable_assignment_fallback_refresh_targets(
     )
     eligible_owner_statuses = {"todo", "in_progress", "review_approved", "blocked"}
     health = runtime_delivery_health(state)
-    # Computed once: health_gate_for_endpoint is the same predicate plan/
-    # delivery admission uses (rewrite_dispatch_admission), so a fallback
-    # candidate's viability is judged by one rule instead of a second,
-    # independently-maintained copy that can silently disagree (it did,
-    # until OPS-HEALTH-GATE-ACCOUNT-PRECEDENCE-20260817 /
-    # OPS-HEALTH-GATE-UNIFY-20260817).
     endpoint_records = _admission_health_records(health, "endpoints")
     account_records = _admission_health_records(health, "accounts")
     now = datetime.now(timezone.utc)
     targets: list[dict[str, str]] = []
 
     def demand_refresh(agent_name: str) -> None:
-        lane = delivery_lane_for_agent(config, normalize_agent_id(agent_name))
-        for endpoint in lane.endpoints:
-            if (
-                not endpoint.endpoint_id
-                or not endpoint.provider_id
-                or not endpoint.account_id
-                or not endpoint.enabled
-                or not endpoint.can_auto_deliver
-            ):
-                continue
-            _reason, refresh_target = rewrite_dispatch_admission.health_gate_for_endpoint(
-                endpoint_id=endpoint.endpoint_id,
-                account_id=endpoint.account_id,
-                endpoint_health=endpoint_records,
-                account_health=account_records,
-                now=now,
-            )
-            if refresh_target is None:
-                continue
-            target = {"scope": refresh_target.scope.value, "id": refresh_target.identifier}
-            if target not in targets:
-                targets.append(target)
+        _demand_endpoint_health_refresh(
+            config,
+            agent_name,
+            endpoint_health=endpoint_records,
+            account_health=account_records,
+            now=now,
+            targets=targets,
+        )
 
     for task in status.get("tasks", []) or []:
         if not isinstance(task, dict):
@@ -10759,6 +10783,176 @@ def unavailable_assignment_fallback_refresh_targets(
                 if reviewer_candidate.casefold() == candidate.casefold():
                     continue
                 demand_refresh(reviewer_candidate)
+    return targets
+
+
+def zero_fleet_assignment_refresh_targets(
+    config: dict[str, Any],
+    state: Mapping[str, Any],
+    status: Mapping[str, Any],
+    *,
+    live_total: int,
+) -> list[dict[str, str]]:
+    """Demand fallback-candidate health refresh while the fleet is at zero.
+
+    ``unavailable_assignment_fallback_refresh_targets`` only widens its scan
+    past the incumbent once that incumbent is durably (terminally)
+    unavailable -- correct restraint while a worker is still running,
+    because a live worker keeps touching its own lane and a merely stale
+    probe self-heals within one more dispatch/recovery cycle anyway. Once
+    the fleet reaches zero active workers nothing does that anymore: the
+    incumbent's evidence goes ``unknown`` on the ordinary
+    ``delivery_health.evidence_ttl_seconds`` clock, which is not "terminal",
+    so the terminal-only scan stays silent, and
+    ``idle_delivery_health_refresh_targets`` only refreshes the exact
+    incumbent recorded on the canonical task row -- never the configured
+    fallback candidates that ``plan_task_assignment_pair`` /
+    ``worker_recovery_assignment_pair`` actually need probed to place ready
+    work or replace a lost worker. With zero workers left to ever touch
+    those fallback lanes again, this is a self-lock: dispatch and recovery
+    both retry every cycle, but every retry reads the same stale evidence
+    because nothing ever asked to refresh it. This closes that gap by
+    demanding the same configured owner/reviewer fallback graph
+    ``unavailable_assignment_fallback_refresh_targets`` would eventually
+    demand -- same probe budget, same health gate -- for every dispatch-ready
+    task and every task fenced behind a pending worker-recovery receipt, but
+    only while ``live_total == 0``. A running fleet must gain no extra probes
+    from this path; its own dispatch/recovery cycles already regenerate this
+    demand as they touch each lane.
+    """
+
+    if live_total > 0:
+        return []
+    settings = worker_reassignment_settings(config)
+    review_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("review_statuses"), ["review"]
+    )
+    eligible_owner_statuses = {"todo", "in_progress", "review_approved", "blocked"}
+    health = runtime_delivery_health(state)
+    endpoint_records = _admission_health_records(health, "endpoints")
+    account_records = _admission_health_records(health, "accounts")
+    now = datetime.now(timezone.utc)
+    targets: list[dict[str, str]] = []
+
+    def demand_refresh(agent_name: str) -> None:
+        _demand_endpoint_health_refresh(
+            config,
+            agent_name,
+            endpoint_health=endpoint_records,
+            account_health=account_records,
+            now=now,
+            targets=targets,
+        )
+
+    for task in status.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        task_status = str(task.get("status") or "").strip().lower()
+        owner = canonical_agent_name(config, str(task.get("owner") or ""))
+        reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+        pending_recovery = task_has_pending_worker_recovery(task)
+        owner_side = pending_recovery or task_status in eligible_owner_statuses
+        reviewer_side = (
+            pending_recovery or task_status in review_statuses
+        ) and not reviewer_is_explicit_human_gate(reviewer)
+        if not owner_side and not reviewer_side:
+            continue
+
+        # ``plan_task_assignment_pair`` and ``worker_recovery_assignment_pair``
+        # do not only walk the fallback graph from the current canonical
+        # owner/reviewer -- a pending recovery receipt also seeds its search
+        # from the pre-loss "previous" owner/reviewer and excludes the lost
+        # agent itself. Mirror that here so this demand scan discovers every
+        # root the real planners can actually use, not just the ones the
+        # unavailable-fallback scan already widens to once an incumbent is
+        # terminally unavailable.
+        receipt = _canonical_worker_recovery_receipt(status, task) if pending_recovery else None
+        previous = receipt.get("previous") if isinstance(receipt, Mapping) else None
+        previous = previous if isinstance(previous, Mapping) else {}
+        previous_owner = canonical_agent_name(config, str(previous.get("owner") or ""))
+        previous_reviewer = canonical_agent_name(config, str(previous.get("reviewer") or ""))
+        lost_agent = (
+            canonical_agent_name(
+                config, str((receipt.get("worker") or {}).get("agent") or "")
+            )
+            if isinstance(receipt, Mapping)
+            else ""
+        )
+
+        owner_candidates: list[str] = []
+        if owner_side:
+            demand_refresh(owner)
+            # ``plan_task_assignment_pair`` excludes only the incumbent owner
+            # itself (``reassignment_candidate_order(..., exclude={owner})``)
+            # -- it "never rejects an otherwise viable owner merely because
+            # that agent is the incumbent reviewer". Excluding the reviewer
+            # here too silently dropped exactly that candidate (for example
+            # Codex -> [Codex2] with reviewer Codex2) from ever being probed,
+            # so the real planner's viable (Codex2, <new reviewer>) pair
+            # stayed unreachable behind stale evidence forever.
+            owner_exclude = {owner} | ({lost_agent} if lost_agent else set())
+            owner_roots = [name for name in (owner, previous_owner) if name]
+            for candidate in reassignment_candidate_order(
+                config,
+                settings.get("owner_fallbacks", {}) or {},
+                roots=owner_roots,
+                exclude=owner_exclude,
+            ):
+                demand_refresh(candidate)
+                owner_candidates.append(candidate)
+
+        # ``plan_task_assignment_pair`` pairs every candidate owner it finds
+        # (including the incumbent) with a reviewer fallback search rooted at
+        # that candidate -- it does this whenever it considers an owner
+        # reassignment at all, not only when the task's own status also
+        # happens to fall in ``review_statuses``. An ordinary ``todo`` /
+        # ``in_progress`` task never enters ``review_statuses``, so gating
+        # this chain behind ``reviewer_side`` left every such task's reviewer
+        # fallback graph undemanded: a stale incumbent or fallback reviewer
+        # then starved every owner-reassignment attempt the real planner
+        # would otherwise have completed.
+        seen_reviewer_candidates: set[str] = set()
+
+        def demand_reviewer_chain(candidate_owner: str) -> None:
+            for reviewer_candidate in reviewer_fallback_search_order(
+                config,
+                settings,
+                reviewer=reviewer,
+                owner=owner,
+                candidate_owner=candidate_owner,
+            ):
+                key = reviewer_candidate.casefold()
+                if key in seen_reviewer_candidates:
+                    continue
+                seen_reviewer_candidates.add(key)
+                demand_refresh(reviewer_candidate)
+
+        if (owner_side or reviewer_side) and not reviewer_is_explicit_human_gate(reviewer):
+            demand_refresh(reviewer)
+            demand_reviewer_chain(owner)
+            for candidate in owner_candidates:
+                demand_reviewer_chain(candidate)
+
+        if reviewer_side:
+            # ``worker_recovery_assignment_pair``'s reviewer-role search also
+            # seeds reviewer fallbacks from the receipt's previous
+            # owner/reviewer roots, excluding the lost agent.
+            reviewer_recovery_roots = [
+                name for name in (reviewer, owner, previous_reviewer, previous_owner) if name
+            ]
+            if previous_reviewer or previous_owner:
+                reviewer_exclude = {reviewer, owner} | ({lost_agent} if lost_agent else set())
+                for candidate in reassignment_candidate_order(
+                    config,
+                    settings.get("reviewer_fallbacks", {}) or {},
+                    roots=reviewer_recovery_roots,
+                    exclude=reviewer_exclude,
+                ):
+                    key = candidate.casefold()
+                    if key in seen_reviewer_candidates:
+                        continue
+                    seen_reviewer_candidates.add(key)
+                    demand_refresh(candidate)
     return targets
 
 
@@ -15927,6 +16121,15 @@ def build_dispatch_plan(
     refresh_targets = list(scratch.get("delivery_health_refresh_demands") or [])
     for target in unavailable_assignment_fallback_refresh_targets(
         config, scratch, status_snapshot
+    ):
+        if target not in refresh_targets:
+            refresh_targets.append(target)
+    # With zero active workers, nothing else will ever touch a fallback
+    # candidate's lane again on its own -- see
+    # ``zero_fleet_assignment_refresh_targets`` for the self-lock this
+    # closes. A running fleet (live_total > 0) gets nothing extra here.
+    for target in zero_fleet_assignment_refresh_targets(
+        config, scratch, status_snapshot, live_total=live_total
     ):
         if target not in refresh_targets:
             refresh_targets.append(target)
