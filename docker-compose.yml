@@ -195,6 +195,7 @@ services:
     restart: unless-stopped
     environment:
       PORT: "8097"
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       SOURCE_INGEST_DATA_DIR: /data/source-ingest
       SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
@@ -976,7 +977,21 @@ services:
       # to the governance service from this path.
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-runtime-manager:service}
-      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-default}
+      # NOTE (DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001): every other
+      # service in this file chains its tenant default through
+      # ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}; this var
+      # previously skipped that chain and hardcoded 'default'. A real dev
+      # paper baseline reproduction creates every persona/plan/saga under
+      # tenant 'tenant-dev' (the dev-login operator's default allowed
+      # tenant, matching PANTHEON_DEV_BFF_TENANT_ID's own 'tenant-dev'
+      # default), so the outbox consumer's X-Tenant-Id header never matched
+      # any queued event's tenant and it silently claimed zero events
+      # forever -- the saga never advanced past 'runtime.binding.requested'
+      # and the provisioning coordinator's readback eventually timed out.
+      # Chain through the same convention plus the dev-paper tenant so this
+      # only changes behavior for a deploy that actually configured one of
+      # those, never for an environment that left every tenant var unset.
+      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_CAPITAL_API_URL: http://capital:8092
@@ -1032,9 +1047,21 @@ services:
       GOVERNANCE_AUDIT_BACKEND: ${GOVERNANCE_AUDIT_BACKEND:-postgres}
       GOVERNANCE_AUDIT_DSN: ${GOVERNANCE_AUDIT_DSN:-}
       PANTHEON_GOVERNANCE_AUTH_MODE: ${PANTHEON_GOVERNANCE_AUTH_MODE:-strict}
-      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-}
-      PANTHEON_GOVERNANCE_JWT_ISSUER: ${PANTHEON_GOVERNANCE_JWT_ISSUER:-}
-      PANTHEON_GOVERNANCE_JWT_AUDIENCE: ${PANTHEON_GOVERNANCE_JWT_AUDIENCE:-}
+      # Every strict call governance ever receives from operator-bff's persona
+      # provisioning coordinator is the dedicated dev-paper-provisioner grant
+      # (_PersonaOwnerHttpTransport._service_jwt's owner == "governance"
+      # branch in services/control-plane/bff/personas/service.py never falls
+      # through to a generic self-signed token for governance). That grant is
+      # minted by scripts/issue_dev_paper_principals.py using
+      # PANTHEON_DEV_BFF_JWT_SECRET/ISSUER/AUDIENCE (see the
+      # dev-paper-principal-issuer service above), so governance's own
+      # strict-mode verifier must expect that same secret/issuer/audience, not
+      # an unrelated default -- otherwise every dev-paper approval proposal
+      # fails closed with 401 before paper_approval_scope.py's dev-paper grant
+      # check ever runs.
+      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-governance-jwt-secret}}
+      PANTHEON_GOVERNANCE_JWT_ISSUER: ${PANTHEON_GOVERNANCE_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}
+      PANTHEON_GOVERNANCE_JWT_AUDIENCE: ${PANTHEON_GOVERNANCE_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}
       PANTHEON_GOVERNANCE_ROLE_CLAIMS: ${PANTHEON_GOVERNANCE_ROLE_CLAIMS:-roles,role}
       PANTHEON_GOVERNANCE_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor}
       PANTHEON_GOVERNANCE_MFA_VALUES: ${PANTHEON_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}
@@ -1392,6 +1419,43 @@ services:
       PANTHEON_PROMOTION_API_URL: http://promotion:8089
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_CAPITAL_API_URL: http://capital:8092
+      # Persona provisioning's owner transport (_PersonaOwnerHttpTransport in
+      # services/control-plane/bff/main.py) signs Capital's strict service JWT
+      # from PANTHEON_CAPITAL_JWT_SECRET, falling back to PANTHEON_BFF_JWT_SECRET
+      # only when unset -- never to capital's own CAPITAL_JWT_SECRET. Capital's
+      # verifier (services/capital/inbound_authority.py) only accepts
+      # CAPITAL_JWT_SECRET. Without this line the two never agreed on a value
+      # (operator-bff fell back to PANTHEON_BFF_JWT_SECRET's default, capital
+      # verified against CAPITAL_JWT_SECRET's different default), so every
+      # persona-provisioning capital-pool creation returned 401 regardless of
+      # the source-provisioning/snapshot fix above -- reproduced end-to-end
+      # while proving DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 AC5.
+      PANTHEON_CAPITAL_JWT_SECRET: ${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}}
+      # _PersonaOwnerHttpTransport._service_jwt (services/control-plane/bff/main.py)
+      # signs iss/aud for EVERY strict owner call (capital, registry, governance)
+      # from these two owner-agnostic names, never from a per-owner
+      # PANTHEON_<OWNER>_JWT_ISSUER/AUDIENCE. Registry and governance's own
+      # postgres-backed strict-auth guards (services/registry/service.py
+      # _require_production_auth_configuration, services/governance/main.py)
+      # fail closed with a 500 unless their own PANTHEON_<OWNER>_JWT_ISSUER and
+      # _AUDIENCE are BOTH explicitly configured. Left unset (as before), the
+      # signed token carried no iss/aud, so persona provisioning could never
+      # reach either service. Registry's and governance's own settings below
+      # chain from these same two values so all three agree without a second
+      # unprovisioned credential.
+      # Chained from PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE first: when the
+      # dev-paper-principal-issuer profile is active (see that service above),
+      # governance's dedicated dev-paper-provisioner grant is signed with
+      # those values, and registry's postgres-backed strict guard must expect
+      # the exact same issuer/audience this signer emits for every owner.
+      CAPITAL_JWT_ISSUER: ${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}
+      CAPITAL_JWT_AUDIENCE: ${CAPITAL_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}
+      # Owner-specific secrets _service_jwt signs with for the registry and
+      # governance owner calls (see the CAPITAL_JWT_SECRET comment above for
+      # the same pattern against capital). Chained to the exact same default
+      # each owner's own service block below expects.
+      PANTHEON_REGISTRY_JWT_SECRET: ${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}
+      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-pantheon-local-governance-jwt-secret}
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
       PANTHEON_POSTMORTEMS_API_URL: http://postmortems:8091
@@ -1403,6 +1467,18 @@ services:
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
+      # DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001: the dev paper bootstrap
+      # (scripts/bootstrap_dev_paper_baseline.py) runs inside this container
+      # and must explicitly provision a newly created Persona's declared
+      # source connector via source-ingest's own governed
+      # persona-source-provisioning/reconcile endpoint -- the async BFF
+      # provisioning reconciler never does this, and the source-ingest
+      # scheduler's own tick only reads a static desired-state file that has
+      # no knowledge of Personas created after deployment. Read-only access
+      # to the token source-ingest already creates at startup lets this
+      # container call that mutation endpoint without minting a second,
+      # separately governed credential.
+      SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099
       PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
@@ -1426,6 +1502,7 @@ services:
       - governance-data:/data/governance:ro
       - runtime-data:/data/runtime:ro
       - incident-data:/data/incidents:ro
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       registry:
         condition: service_healthy
@@ -1815,9 +1892,30 @@ services:
       REGISTRY_STORE_BACKEND: ${REGISTRY_STORE_BACKEND:-postgres}
       REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
       PANTHEON_REGISTRY_AUTH_MODE: ${PANTHEON_REGISTRY_AUTH_MODE:-strict}
-      PANTHEON_REGISTRY_JWT_SECRET: ${PANTHEON_REGISTRY_JWT_SECRET:-}
-      PANTHEON_REGISTRY_JWT_ISSUER: ${PANTHEON_REGISTRY_JWT_ISSUER:-}
-      PANTHEON_REGISTRY_JWT_AUDIENCE: ${PANTHEON_REGISTRY_JWT_AUDIENCE:-}
+      PANTHEON_REGISTRY_JWT_SECRET: ${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}
+      # Chained from operator-bff's owner-agnostic signer values (see the
+      # CAPITAL_JWT_ISSUER/AUDIENCE comment on the operator-bff service) so the
+      # postgres-backed strict-auth guard below has a non-empty expected
+      # issuer/audience that actually matches what operator-bff signs.
+      # NOTE: docker compose interpolation resolves every service's ${VAR:-...}
+      # independently against the top-level shell/.env environment -- it does
+      # NOT read another service's own already-resolved container value. So
+      # chaining only through ${CAPITAL_JWT_ISSUER:-...} is correct when the
+      # deploy environment exports CAPITAL_JWT_ISSUER itself, but silently
+      # breaks whenever only PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE is set
+      # (the dev-paper-principal-issuer profile's actual export contract):
+      # operator-bff's own CAPITAL_JWT_ISSUER line falls through to
+      # PANTHEON_DEV_BFF_JWT_ISSUER and signs with it, but this line's
+      # ${CAPITAL_JWT_ISSUER:-...} reads the same (unset) shell variable and
+      # falls straight to the literal default instead, so registry validates
+      # against a different issuer/audience than operator-bff actually signs.
+      # Reproduced with `docker compose --env-file /dev/null config` setting
+      # only PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE. Add the same
+      # PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE fallback level operator-bff's own
+      # CAPITAL_JWT_ISSUER/AUDIENCE line already has, so both resolve
+      # identically for every combination of which variable is actually set.
+      PANTHEON_REGISTRY_JWT_ISSUER: ${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}}
+      PANTHEON_REGISTRY_JWT_AUDIENCE: ${PANTHEON_REGISTRY_JWT_AUDIENCE:-${CAPITAL_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}}
       PANTHEON_REGISTRY_ROLE_CLAIMS: ${PANTHEON_REGISTRY_ROLE_CLAIMS:-roles,role}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
@@ -2018,7 +2116,21 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-deployment-outbox-consumer:deployment_consumer}
-      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-default}
+      # NOTE (DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001): every other
+      # service in this file chains its tenant default through
+      # ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}; this var
+      # previously skipped that chain and hardcoded 'default'. A real dev
+      # paper baseline reproduction creates every persona/plan/saga under
+      # tenant 'tenant-dev' (the dev-login operator's default allowed
+      # tenant, matching PANTHEON_DEV_BFF_TENANT_ID's own 'tenant-dev'
+      # default), so the outbox consumer's X-Tenant-Id header never matched
+      # any queued event's tenant and it silently claimed zero events
+      # forever -- the saga never advanced past 'runtime.binding.requested'
+      # and the provisioning coordinator's readback eventually timed out.
+      # Chain through the same convention plus the dev-paper tenant so this
+      # only changes behavior for a deploy that actually configured one of
+      # those, never for an environment that left every tenant var unset.
+      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}
       PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_CAPITAL_API_URL: http://capital:8092
@@ -2216,6 +2328,7 @@ services:
     command: ["python", "services/paper_fleet_reconciler/paper_fleet_reconciler.py"]
     environment:
       PORT: "8011"
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}

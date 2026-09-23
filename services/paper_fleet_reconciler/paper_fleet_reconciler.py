@@ -864,11 +864,13 @@ class PaperFleetReconciler:
                         binding_id = str(eb.get("binding_id") or "")
                         metadata = eb.get("metadata") if isinstance(eb.get("metadata"), dict) else {}
                         session_adm = metadata.get("session_admission")
-                        # Only auto-resume if paused due to stale input — never auto-resume operator pauses
-                        if (
-                            isinstance(session_adm, dict)
-                            and session_adm.get("reason_code") == "market_input_stale"
-                        ):
+                        # Auto-resume any reconciler-driven admission pause (market_input_* —
+                        # covers both an existing snapshot going stale and no snapshot ever
+                        # having been admitted, e.g. market_input_missing on a never-provisioned
+                        # connector) — never auto-resume operator pauses, which use a distinct
+                        # non-"market_input_" reason_code (operator_requested_pause).
+                        pause_reason = str(session_adm.get("reason_code") or "") if isinstance(session_adm, dict) else ""
+                        if isinstance(session_adm, dict) and pause_reason.startswith("market_input_"):
                             paused_snap_id = session_adm.get("source_snapshot_id")
                             paused_time_str = session_adm.get("source_event_time")
                             decision = self._check_market_admission(eb)
@@ -876,7 +878,11 @@ class PaperFleetReconciler:
                                 paused_dt, _ = _admission_parse_rfc3339(paused_time_str, field_name="paused_event_time")
                                 new_dt, _ = _admission_parse_rfc3339(decision.event_time, field_name="new_event_time")
                                 is_different_snap = (decision.snapshot_id != paused_snap_id) if (decision.snapshot_id and paused_snap_id) else True
-                                is_later_time = (new_dt > paused_dt) if (new_dt and paused_dt) else False
+                                # No prior admitted event_time (e.g. paused for
+                                # market_input_missing, which never recorded one) means
+                                # there is nothing stale to compare against — any freshly
+                                # admitted snapshot is unambiguously newer than "no data".
+                                is_later_time = (new_dt > paused_dt) if new_dt and paused_dt else bool(new_dt) and paused_dt is None
 
                                 if is_different_snap and is_later_time:
                                     log.info(
