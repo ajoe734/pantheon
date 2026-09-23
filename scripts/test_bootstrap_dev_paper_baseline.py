@@ -770,6 +770,9 @@ def _replay_post_queue(reconcile_response=None) -> dict[str, list]:
             ),
         ],
         "persona-source-provisioning/reconcile": [reconcile_response or RECONCILE_OK_RESPONSE],
+        "run-scheduled": [
+            (200, {"status": "ok"}),
+        ],
     }
 
 
@@ -779,7 +782,13 @@ def test_replay_with_stale_snapshot_still_raises_market_input_stale() -> None:
     bypass the post-create freshness gate. Reproduces the independent
     base/head finding for DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001: with
     a stale SPY snapshot and a terminal successful create response, this must
-    still raise market_input_stale rather than returning ok."""
+    still raise market_input_stale rather than returning ok.
+
+    DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 regression: a stale snapshot
+    already on record can never become fresh on its own, so this must also
+    actively nudge run-scheduled rather than only passively polling -- the
+    root cause of the observed deploy failure where a frozen prior-day
+    snapshot was polled forever without ever triggering a new pull."""
 
     stale_snapshot = {
         "schema_version": 1,
@@ -819,6 +828,302 @@ def test_replay_with_stale_snapshot_still_raises_market_input_stale() -> None:
     # but also must not re-poll past the very first stale observation before
     # the bounded deadline is (already) exceeded.
     assert len([c for c in call_order if c.startswith("get:")]) == 1
+    # ...but it must still actively nudge a fresh ingest pass on that one
+    # stale observation instead of only ever waiting passively.
+    assert any("run-scheduled" in c for c in call_order)
+
+
+def test_market_snapshot_wait_nudges_stale_existing_snapshot_then_succeeds() -> None:
+    """DEV-PAPER-FIRST-INGEST-ON-PROVISION-001: a host that already has a
+    stale snapshot on record (for example left over from an earlier partial
+    deploy attempt) must have its first poll actively trigger a fresh ingest
+    pass, and converge once that pass lands a fresh snapshot -- rather than
+    waiting out the full poll budget on an input that can never change on
+    its own."""
+
+    call_order: list[str] = []
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    stale_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-stale",
+        "symbol": "SPY",
+        "event_time": "2020-01-01T00:00:00Z",
+        "observed_at": "2020-01-01T00:00:00Z",
+        "closes": [500.0, 501.5],
+    }
+    fresh_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-fresh",
+        "symbol": "SPY",
+        "event_time": now_iso,
+        "observed_at": now_iso,
+        "closes": [500.0, 501.5],
+    }
+
+    post_queue = _replay_post_queue()
+    post_headers: dict[str, object] = {}
+
+    def fake_post_json(url, payload=None, **kwargs):
+        call_order.append(f"post:{url}")
+        if "run-scheduled" in url:
+            post_headers["run-scheduled"] = kwargs.get("headers")
+        for key, responses in post_queue.items():
+            if key in url:
+                return responses.pop(0)
+        raise AssertionError(f"unexpected POST {url}")
+
+    get_queue = [(200, stale_snapshot), (200, fresh_snapshot)]
+
+    def fake_get_json(url, **kwargs):
+        call_order.append(f"get:{url}")
+        return get_queue.pop(0)
+
+    with patch.dict(os.environ, SOURCE_INGEST_DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), patch.object(bootstrap, "_get_json", side_effect=fake_get_json):
+        result = _run(source_ingest_url="http://mock-source:8097")
+
+    assert result["status"] == "ok"
+    assert result["persona_id"] == "persona-1"
+    assert len([c for c in call_order if c.startswith("get:")]) == 2
+    assert any("run-scheduled" in c for c in call_order)
+    assert post_headers["run-scheduled"] == {"Authorization": "Bearer controller-token-test"}
+
+
+def test_market_snapshot_wait_surfaces_nudge_authorization_denial() -> None:
+    """DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 AC2 regression: an
+    independently reproduced HTTP 403 authorization denial on the
+    run-scheduled nudge must surface in the timeout error, not disappear
+    behind the caller's own generic market_input_stale reason."""
+
+    stale_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-stale",
+        "symbol": "SPY",
+        "event_time": "2020-01-01T00:00:00Z",
+        "observed_at": "2020-01-01T00:00:00Z",
+        "closes": [500.0, 501.5],
+    }
+
+    def fake_post_json(url, payload=None, **kwargs):
+        assert "run-scheduled" in url
+        return (
+            403,
+            {"detail": "controller service authorization is invalid for controller-owned scheduled source execution"},
+        )
+
+    times = [0.0, 100.0]
+    with patch.object(bootstrap, "_get_json", return_value=(200, stale_snapshot)), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), pytest.raises(bootstrap.BootstrapError) as exc_info:
+        bootstrap.ensure_dev_market_snapshot_ready(
+            source_ingest_url="http://mock-source:8097",
+            symbol="SPY",
+            timeout_seconds=5.0,
+            poll_seconds=0.01,
+            controller_token="stale-or-rotated-token",
+            connector_candidates=["dev-paper-us-equity-simulation"],
+            monotonic=lambda: times.pop(0) if times else 999.0,
+            sleep=lambda _seconds: None,
+        )
+
+    message = str(exc_info.value)
+    assert "symbol 'SPY'" in message
+    assert "ingest_nudge_failed" in message
+    assert "run-scheduled nudge HTTP 403" in message
+    assert "authorization is invalid" in message
+    assert "dev-paper-us-equity-simulation" in message
+
+
+def test_market_snapshot_wait_surfaces_nudge_transport_error() -> None:
+    """DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 AC2 regression: a reproduced
+    transport failure (connection refused / timeout) on the run-scheduled
+    nudge must also name the requested connector, not just the transport
+    reason, in the bounded timeout error."""
+
+    stale_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-stale",
+        "symbol": "SPY",
+        "event_time": "2020-01-01T00:00:00Z",
+        "observed_at": "2020-01-01T00:00:00Z",
+        "closes": [500.0, 501.5],
+    }
+
+    def fake_post_json(url, payload=None, **kwargs):
+        assert "run-scheduled" in url
+        raise OSError("[Errno 111] Connection refused")
+
+    times = [0.0, 100.0]
+    with patch.object(bootstrap, "_get_json", return_value=(200, stale_snapshot)), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), pytest.raises(bootstrap.BootstrapError) as exc_info:
+        bootstrap.ensure_dev_market_snapshot_ready(
+            source_ingest_url="http://mock-source:8097",
+            symbol="SPY",
+            timeout_seconds=5.0,
+            poll_seconds=0.01,
+            controller_token="controller-token-test",
+            connector_candidates=["dev-paper-us-equity-simulation"],
+            monotonic=lambda: times.pop(0) if times else 999.0,
+            sleep=lambda _seconds: None,
+        )
+
+    message = str(exc_info.value)
+    assert "symbol 'SPY'" in message
+    assert "ingest_nudge_failed" in message
+    assert "run-scheduled nudge transport error" in message
+    assert "Connection refused" in message
+    assert "dev-paper-us-equity-simulation" in message
+
+
+def test_market_snapshot_wait_surfaces_nudge_connector_provider_failure() -> None:
+    """DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 AC2 regression: a run-scheduled
+    HTTP 200 response whose ``failed`` list names the connector and its
+    provider fetch error must surface that connector identity and reason in
+    the bounded timeout error rather than only the polling-side
+    market_input_stale label."""
+
+    stale_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-stale",
+        "symbol": "SPY",
+        "event_time": "2020-01-01T00:00:00Z",
+        "observed_at": "2020-01-01T00:00:00Z",
+        "closes": [500.0, 501.5],
+    }
+
+    def fake_post_json(url, payload=None, **kwargs):
+        assert "run-scheduled" in url
+        return (
+            200,
+            {
+                "failed": [
+                    {
+                        "connector_id": "dev-paper-us-equity-simulation",
+                        "error": "source ingest run ended with status=failed",
+                    }
+                ],
+                "ran": [],
+                "skipped": [],
+            },
+        )
+
+    times = [0.0, 100.0]
+    with patch.object(bootstrap, "_get_json", return_value=(200, stale_snapshot)), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), pytest.raises(bootstrap.BootstrapError) as exc_info:
+        bootstrap.ensure_dev_market_snapshot_ready(
+            source_ingest_url="http://mock-source:8097",
+            symbol="SPY",
+            timeout_seconds=5.0,
+            poll_seconds=0.01,
+            controller_token="controller-token-test",
+            connector_candidates=["dev-paper-us-equity-simulation"],
+            monotonic=lambda: times.pop(0) if times else 999.0,
+            sleep=lambda _seconds: None,
+        )
+
+    message = str(exc_info.value)
+    assert "symbol 'SPY'" in message
+    assert "ingest_nudge_failed" in message
+    assert "dev-paper-us-equity-simulation" in message
+    assert "source ingest run ended with status=failed" in message
+
+
+def test_market_snapshot_wait_preserves_nudge_failure_across_skipped_poll() -> None:
+    """DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 AC2 regression: once a
+    connector's provider failure has been reported by run-scheduled, a later
+    poll where the connector is skipped (already mid-run from the earlier
+    nudge, per run_scheduled_connectors' frontier-lock behaviour) must not
+    discard that failure. Reproduced shape: first poll's nudge reports
+    HTTP 200 failed=[{connector_id, error}], the second poll's nudge reports
+    HTTP 200 failed=[] ran=[] skipped=[connector_id] -- the timeout error
+    must still surface the first poll's connector and reason, not just
+    market_input_stale."""
+
+    stale_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-stale",
+        "symbol": "SPY",
+        "event_time": "2020-01-01T00:00:00Z",
+        "observed_at": "2020-01-01T00:00:00Z",
+        "closes": [500.0, 501.5],
+    }
+
+    post_queue = [
+        (
+            200,
+            {
+                "failed": [
+                    {
+                        "connector_id": "dev-paper-us-equity-simulation",
+                        "error": "provider unavailable",
+                    }
+                ],
+                "ran": [],
+                "skipped": [],
+            },
+        ),
+        (
+            200,
+            {"failed": [], "ran": [], "skipped": ["dev-paper-us-equity-simulation"]},
+        ),
+    ]
+
+    def fake_post_json(url, payload=None, **kwargs):
+        assert "run-scheduled" in url
+        return post_queue.pop(0)
+
+    times = [0.0, 1.0, 100.0]
+    with patch.object(bootstrap, "_get_json", return_value=(200, stale_snapshot)), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), pytest.raises(bootstrap.BootstrapError) as exc_info:
+        bootstrap.ensure_dev_market_snapshot_ready(
+            source_ingest_url="http://mock-source:8097",
+            symbol="SPY",
+            timeout_seconds=5.0,
+            poll_seconds=0.01,
+            controller_token="controller-token-test",
+            connector_candidates=["dev-paper-us-equity-simulation"],
+            monotonic=lambda: times.pop(0) if times else 999.0,
+            sleep=lambda _seconds: None,
+        )
+
+    message = str(exc_info.value)
+    assert "symbol 'SPY'" in message
+    assert "ingest_nudge_failed" in message
+    assert "dev-paper-us-equity-simulation" in message
+    assert "provider unavailable" in message
+    assert len(post_queue) == 0
+
+
+def test_nudge_diagnostic_summary_ignores_clean_200_with_no_failures() -> None:
+    """A successful nudge (HTTP 200, no per-connector failures) must not
+    override the caller's own market-snapshot-derived reason -- this is the
+    steady-state/no-op nudge shape covered by the pre-existing tests above."""
+
+    assert bootstrap._nudge_diagnostic_summary(
+        {"attempted": True, "http_status": 200, "body": {"ran": []}, "failed": [], "transport_error": None}
+    ) is None
+
+
+def test_nudge_diagnostic_summary_surfaces_transport_error() -> None:
+    result = {
+        "attempted": True,
+        "http_status": None,
+        "body": None,
+        "failed": [],
+        "transport_error": "URLError: [Errno 111] Connection refused",
+    }
+    summary = bootstrap._nudge_diagnostic_summary(result)
+    assert summary == "run-scheduled nudge transport error: URLError: [Errno 111] Connection refused"
+
+    summary_with_connector = bootstrap._nudge_diagnostic_summary(
+        result, connector_candidates=["dev-paper-us-equity-simulation"]
+    )
+    assert "dev-paper-us-equity-simulation" in summary_with_connector
+    assert "URLError: [Errno 111] Connection refused" in summary_with_connector
 
 
 def test_replay_with_missing_snapshot_still_raises_market_snapshot_not_found() -> None:
