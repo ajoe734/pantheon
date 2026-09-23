@@ -333,8 +333,44 @@ def _pm12_allocation_evaluation_record(
         raise err(
             422,
             ErrorCode.VALIDATION_FAILED,
-            "allocation evaluation has no lines",
-            "The referenced evaluation record does not contain evaluated allocation lines.",
+            "allocation evaluation integrity check failed",
+            "The durable allocation evaluation has no admitted lines.",
+            precondition_failed="allocation_evaluation_id",
+        )
+    for index, line in enumerate(lines):
+        if not isinstance(line, dict):
+            raise err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "allocation evaluation integrity check failed",
+                f"The durable allocation line at index {index} is invalid.",
+                precondition_failed="allocation_line_digest",
+            )
+        supplied_digest = str(line.get("allocation_line_digest") or "").strip()
+        if not supplied_digest or _pm12_allocation_line_digest(line) != supplied_digest:
+            raise err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "allocation evaluation integrity check failed",
+                f"The durable allocation line at index {index} no longer matches its digest.",
+                precondition_failed="allocation_line_digest",
+            )
+    content_basis = {
+        "ranking_snapshot_id": evaluation.get("ranking_snapshot_id"),
+        "allocation_evaluation_id": evaluation.get("allocation_evaluation_id"),
+        "allocation_policy_version": evaluation.get("allocation_policy_version"),
+        "lines": lines,
+    }
+    for optional_field in ("authority_mode", "promotion_review_id"):
+        if evaluation.get(optional_field) not in (None, ""):
+            content_basis[optional_field] = evaluation.get(optional_field)
+    expected_content_digest = _stable_json_hash(content_basis)
+    if str(evaluation.get("content_digest") or "") != expected_content_digest:
+        raise err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "allocation evaluation integrity check failed",
+            "The durable allocation evaluation no longer matches its admitted digest.",
             precondition_failed="allocation_evaluation_id",
         )
     return evaluation
