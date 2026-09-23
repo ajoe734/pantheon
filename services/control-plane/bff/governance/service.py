@@ -10,6 +10,7 @@ import copy
 import hashlib
 import inspect
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import (
@@ -78,6 +79,17 @@ def page_slice(
         start = 0
     end = start + page_size
     return list(items[start:end]), str(end) if end < len(items) else None
+
+
+def human_inbox_surface_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "1.0")
+    try:
+        val = float(raw)
+        if val <= 0.0:
+            return 1.0
+        return min(val, 1.0)
+    except (TypeError, ValueError):
+        return 1.0
 
 
 def split_csv(value: Optional[str]) -> Optional[List[str]]:
