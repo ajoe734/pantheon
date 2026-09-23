@@ -1403,6 +1403,18 @@ services:
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
+      # DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001: the dev paper bootstrap
+      # (scripts/bootstrap_dev_paper_baseline.py) runs inside this container
+      # and must explicitly provision a newly created Persona's declared
+      # source connector via source-ingest's own governed
+      # persona-source-provisioning/reconcile endpoint -- the async BFF
+      # provisioning reconciler never does this, and the source-ingest
+      # scheduler's own tick only reads a static desired-state file that has
+      # no knowledge of Personas created after deployment. Read-only access
+      # to the token source-ingest already creates at startup lets this
+      # container call that mutation endpoint without minting a second,
+      # separately governed credential.
+      SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099
       PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
@@ -1426,6 +1438,7 @@ services:
       - governance-data:/data/governance:ro
       - runtime-data:/data/runtime:ro
       - incident-data:/data/incidents:ro
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       registry:
         condition: service_healthy
