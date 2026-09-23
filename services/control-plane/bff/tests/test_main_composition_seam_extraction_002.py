@@ -319,27 +319,24 @@ def test_raise_if_promotion_review_direct_mutation_requested():
 # 4. Bounded Management Read Isolation (AC3)
 # ============================================================================
 
-@pytest.mark.asyncio
-async def test_run_management_read_fresh_success():
+def test_run_management_read_fresh_success():
     def compute(val: int) -> int:
         return val * 2
 
-    res = await run_management_read(compute, 21, timeout_seconds=1.0)
+    res = asyncio.run(run_management_read(compute, 21, timeout_seconds=1.0))
     assert res == 42
 
 
-@pytest.mark.asyncio
-async def test_run_management_read_timeout_budget():
+def test_run_management_read_timeout_budget():
     def slow_compute():
         time.sleep(0.3)
         return "late_data"
 
     with pytest.raises(ManagementReadTimeout):
-        await run_management_read(slow_compute, timeout_seconds=0.05)
+        asyncio.run(run_management_read(slow_compute, timeout_seconds=0.05))
 
 
-@pytest.mark.asyncio
-async def test_run_management_read_saturated_semaphore():
+def test_run_management_read_saturated_semaphore():
     sem = threading.BoundedSemaphore(1)
     # Fully saturate semaphore
     assert sem.acquire(blocking=False) is True
@@ -347,12 +344,12 @@ async def test_run_management_read_saturated_semaphore():
     executor = ThreadPoolExecutor(max_workers=1)
     try:
         with pytest.raises(ManagementReadSaturated):
-            await run_management_read(
+            asyncio.run(run_management_read(
                 lambda: "ok",
                 capacity=sem,
                 executor=executor,
                 timeout_seconds=0.5,
-            )
+            ))
     finally:
         sem.release()
         executor.shutdown(wait=False)

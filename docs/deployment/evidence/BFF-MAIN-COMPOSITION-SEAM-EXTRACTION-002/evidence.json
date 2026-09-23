@@ -9,11 +9,9 @@
   "changed_files": [
     "docs/deployment/evidence/BFF-MAIN-COMPOSITION-SEAM-EXTRACTION-002/evidence.json",
     "services/control-plane/bff/assistant/management_service.py",
-    "services/control-plane/bff/assistant_conversation_store.py",
     "services/control-plane/bff/capital/service.py",
     "services/control-plane/bff/command_adapters/preconditions.py",
     "services/control-plane/bff/command_adapters/service.py",
-    "services/control-plane/bff/command_queue.py",
     "services/control-plane/bff/governance/human_inbox.py",
     "services/control-plane/bff/governance/promotion_review.py",
     "services/control-plane/bff/governance/router.py",

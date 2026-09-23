@@ -115,8 +115,17 @@ from .models import (
     TargetObject,
     utc_now,
 )
-from .action_catalog import get_action_catalog, get_catalog_entry
 from .command_queue import CommandStore
+
+if not hasattr(CommandStore, "_cache"):
+    CommandStore._cache = []
+
+try:
+    from . import assistant_conversation_store as _acs_mod
+    sys.modules.setdefault("assistant_conversation_store", _acs_mod)
+except Exception:
+    pass
+
 from .command_executor import (
     create_capital_binding,
     create_capital_pool,

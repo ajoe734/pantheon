@@ -3,14 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Protocol
-
-sys.modules.setdefault("assistant_conversation_store", sys.modules.get(__name__, sys.modules[__name__]))
 
 from services.foundation.persistence_posture import validate_persistence_posture
 from services.foundation.postgres_json_store import (
@@ -899,12 +896,7 @@ class AssistantConversationStore:
             return
         if selected_backend == "postgres":
             self.backend = selected_backend
-            postgres_cls = getattr(
-                sys.modules.get("assistant_conversation_store"),
-                "PostgresAssistantConversationStore",
-                PostgresAssistantConversationStore,
-            )
-            self._impl = postgres_cls(
+            self._impl = PostgresAssistantConversationStore(
                 dsn=str(
                     dsn
                     or env_map.get(DSN_ENV)
