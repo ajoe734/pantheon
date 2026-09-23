@@ -192,7 +192,7 @@ def test_alerts_timeout_returns_degraded_envelope_without_hanging(monkeypatch) -
 
 
 def test_approvals_timeout_returns_degraded_envelope_without_hanging(monkeypatch) -> None:
-    def slow_list_approval_queue_items():
+    def slow_list_approval_queue_items(**_kwargs):
         time.sleep(0.3)
         return [{"decision_id": "should-not-appear", "decision_state": "pending"}]
 

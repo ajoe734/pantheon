@@ -11,36 +11,67 @@ from typing import Iterator
 from contextlib import contextmanager
 
 import pytest
+from fastapi import Request, Response
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.assistant_conversation_store import (
     AssistantConversationStore,
     PostgresAssistantConversationStore,
 )
+from services.control_plane.bff.assistant.management_service import (
+    ManagementAiConversationStore,
+    get_management_ai_conversation_store,
+    set_management_ai_conversation_store,
+    reset_management_ai_conversation_store,
+    management_ai_get_conversation,
+    management_ai_get_attachment,
+)
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.core.app_factory import (
+    build_bff_app,
+    create_assistant_management_router,
+)
 from services.control_plane.bff.management_ai_store import ManagementAiAttachmentStore
 from services.control_plane.bff.ports import ReadSurfacePorts
 
-# RETAINED_COMPOSITION (see task BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001):
-# The route handlers this file drives through the live app --
-# `bff_management_ai_conversations`/`bff_management_ai_conversation`/
-# `bff_management_ai_attachment` (mounted via
-# `create_assistant_management_router(_core_handlers)`) and
-# `bff_management_nl_ask` -- are `async def` functions defined directly in
-# main.py (see `def bff_management_ai_conversation` / `def bff_management_nl_ask`
-# in main.py), not extracted into a router/service module. The module-level
-# state they read/write (`_MGMT_AI_CONVERSATION_STORE`, `_MGMT_AI_AUDIT_EVENTS`,
-# `_sse_buffers`, `_mgmt_nl_command_idempotency_store`) is likewise only
-# reachable through main.py's composition graph. There is no
-# `management_ai/router.py` or `management_ai/service.py` to mount a
-# standalone app against without re-implementing that business logic here
-# (forbidden by the migration's rule against copying production logic into
-# tests), so this file keeps a package-qualified
-# `from services.control_plane.bff import main as bff_main` import rather than
-# a `sys.path` hack. The store classes themselves (`ManagementAiConversationStore`,
-# `ManagementAiAttachmentStore`) already live in the standalone
-# `management_ai_store.py` module and are imported directly above/below where
-# a test does not need the live app.
-from services.control_plane.bff import main as bff_main
+# RETAINED_COMPOSITION (see task BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001):
+# `POST /bff/management/nl/ask` (`bff_management_nl_ask`) is a large
+# `async def` handler defined directly in main.py that is genuinely NOT
+# extracted into any owner module: it composes prompt assembly, provider
+# invocation, durable idempotency admission (via
+# `ManagementNlUseCase`/`_mgmt_nl_command_idempotency_store`), attachment
+# storage, and the composition-root-only Management AI audit trail
+# (`_MGMT_AI_AUDIT_EVENTS`, `_management_ai_record_event`,
+# `_management_ai_audit_path`) -- all defined and used only in main.py. A
+# repo-wide grep for an extracted equivalent (`assistant/management_service.py`,
+# `assistant/context_composer.py`, `governance/command_audit.py`,
+# `agora_audit_store.py`, and every other non-main, non-test module) found no
+# standalone owner of this handler or of `_MGMT_AI_AUDIT_EVENTS`. Reimplementing
+# that flow in this test file would violate the migration's rule against
+# copying production logic into tests, and fabricating a fake response would
+# stop exercising the real behavior these tests are meant to cover. The four
+# tests below that POST to `/bff/management/nl/ask`
+# (`test_attachment_storage_base64_proxy_url_and_size_rejections`,
+# `test_multimodal_image_attachment_is_forwarded_to_codex_provider`,
+# `test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider`,
+# `test_persist_turns`) therefore keep a narrowly-scoped, lazily-imported
+# `from services.control_plane.bff import main as bff_main` reference (see
+# `_persist_client` below) instead of a `sys.path` hack.
+#
+# Every other test in this file -- the store-only unit tests and the
+# `GET /bff/management/ai/conversations/{session_id}` /
+# `GET /bff/management/ai/attachments/{attachment_id}` read-path tests -- is
+# migrated onto the real, already-extracted production owners instead: the
+# handler bodies for those GET routes are thin wrappers in main.py around
+# `assistant/management_service.py`'s `management_ai_get_conversation` /
+# `management_ai_get_attachment` (see `def bff_management_ai_conversation` /
+# `def bff_management_ai_attachment` in main.py), which this file now imports
+# and mounts directly via `create_assistant_management_router`, the same
+# production router-shell factory used by
+# `tests/test_remaining_main_seam_composition.py`. The store classes
+# themselves (`ManagementAiConversationStore`, `ManagementAiAttachmentStore`)
+# already live in the standalone `management_ai_store.py` module and are
+# imported directly.
 
 
 @pytest.fixture(autouse=True)
@@ -59,16 +90,63 @@ def _management_nl_command_idempotency_default_path(monkeypatch, tmp_path):
 OPERATOR_HEADERS = {"Authorization": "Bearer operator-alpha:operator"}
 
 
+def _caller_tenant_id(identity, request: Request) -> str:
+    requested = request.headers.get("X-Tenant-Id") or request.headers.get("X-Pantheon-Tenant")
+    tenant = auth_policy.bff_me_tenant_payload(identity, requested_tenant=requested)
+    return str(tenant.get("id") or "pantheon-dev")
+
+
+def _handle_management_ai_conversation(session_id: str, request: Request):
+    identity = auth_policy.extract_identity(request.headers.get("Authorization"))
+    auth_policy.require_read_role(identity)
+    return management_ai_get_conversation(
+        session_id=session_id,
+        identity=identity,
+        caller_tenant_id=_caller_tenant_id(identity, request),
+        trace_id=request.query_params.get("trace_id"),
+    )
+
+
+def _handle_management_ai_attachment(attachment_id: str, request: Request):
+    identity = auth_policy.extract_identity(request.headers.get("Authorization"))
+    auth_policy.require_read_role(identity)
+    content, mime_type, filename = management_ai_get_attachment(
+        attachment_id=attachment_id,
+        identity=identity,
+        caller_tenant_id=_caller_tenant_id(identity, request),
+    )
+    return Response(
+        content=content,
+        media_type=mime_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 def _management_ai_route_client(monkeypatch) -> TestClient:
+    """Mount the real, already-extracted assistant-management read routes
+    (`GET /bff/management/ai/conversations/{session_id}` and
+    `GET /bff/management/ai/attachments/{attachment_id}`) via the real
+    `create_assistant_management_router` factory, wired to the real
+    `assistant.management_service` owner functions -- the same composition
+    pattern as `tests/test_remaining_main_seam_composition.py`."""
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
-    bff_main._MGMT_AI_AUDIT_EVENTS.clear()
-    bff_main._sse_buffers["ask"].clear()
-    bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
-        storage_path="off",
-        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+    set_management_ai_conversation_store(
+        ManagementAiConversationStore(
+            storage_path="off",
+            attachment_store=ManagementAiAttachmentStore(storage_path="off"),
+        )
     )
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    app = build_bff_app()
+    app.include_router(
+        create_assistant_management_router(
+            {
+                "bff_management_ai_conversation": _handle_management_ai_conversation,
+                "bff_management_ai_attachment": _handle_management_ai_attachment,
+            }
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def test_management_ai_attachment_store_uses_gcs_bucket_metadata(monkeypatch) -> None:
@@ -276,7 +354,7 @@ def test_postgres_assistant_conversation_bootstrap_uses_unqualified_index_name(m
 
 def test_bff_management_ai_read_conversations_store_backed_404_scope_and_full_turns(monkeypatch) -> None:
     client = _management_ai_route_client(monkeypatch)
-    store = bff_main._MGMT_AI_CONVERSATION_STORE
+    store = get_management_ai_conversation_store()
     store.upsert_session(
         session_id="mgmt-store-backed-session",
         owner_id="operator-alpha",
@@ -691,6 +769,8 @@ def test_multimodal_image_attachment_is_forwarded_to_codex_provider(
     object store, provider invocation resolves those bytes into a multimodal
     image_url payload instead of forwarding DB metadata only.
     """
+    from services.control_plane.bff import main as bff_main
+
     fake = _FakeProviderClient()
     monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
     monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
@@ -743,6 +823,8 @@ def test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    from services.control_plane.bff import main as bff_main
+
     fake = _FakeProviderClient(
         result={
             "provider": "claude",

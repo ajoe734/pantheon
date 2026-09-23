@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 import threading
 import time
@@ -13,12 +12,14 @@ from typing import Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from command_queue import CommandStore
-from models import CommandStatus, CommandType, ObjectType, TargetObject
-from ports import ReadSurfacePorts
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import CommandStatus, CommandType, ObjectType, TargetObject
+from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.personas.service import _human_inbox_trusted_promotion_submission
+from services.control_plane.bff.governance.service import (
+    human_inbox_surface_timeout_seconds as _human_inbox_surface_timeout_seconds,
+)
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-promo:operator"}
@@ -711,8 +712,8 @@ def test_generic_command_does_not_block_trusted_semantic_submission() -> None:
         assert semantic.status_code == 202, semantic.text
         records = bff_main.command_store._get_all_commands()
         assert len(records) == 2
-        assert not bff_main._human_inbox_trusted_promotion_submission(records[0])
-        assert bff_main._human_inbox_trusted_promotion_submission(records[1])
+        assert not _human_inbox_trusted_promotion_submission(records[0])
+        assert _human_inbox_trusted_promotion_submission(records[1])
 
         after_detail = client.get(
             f"/bff/management/promotion-reviews/{review['review_id']}",
@@ -850,13 +851,13 @@ def test_human_inbox_timeout_keeps_durable_promotion_review_visible(monkeypatch)
 
 def test_human_inbox_surface_timeout_has_a_hard_one_second_ceiling(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "9.5")
-    assert bff_main._human_inbox_surface_timeout_seconds() == 1.0
+    assert _human_inbox_surface_timeout_seconds() == 1.0
 
     monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.17")
-    assert bff_main._human_inbox_surface_timeout_seconds() == 0.17
+    assert _human_inbox_surface_timeout_seconds() == 0.17
 
     monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "invalid")
-    assert bff_main._human_inbox_surface_timeout_seconds() == 1.0
+    assert _human_inbox_surface_timeout_seconds() == 1.0
 
 
 def test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one(monkeypatch) -> None:

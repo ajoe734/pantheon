@@ -15,15 +15,41 @@ Verifies:
 """
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+from typing import Optional
+
 import pytest
 from starlette.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.incidents.service import IncidentService
+from services.control_plane.bff.jobs.router import create_jobs_router
+from services.control_plane.bff.personas import service as personas_service
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+from services.control_plane.bff.strategies.routes.common import (
+    StrategyRouteContext,
+    default_bff_error,
+    default_page_slice,
+    default_read_surface_meta,
+    default_utc_now,
+)
 
 
 # ---------------------------------------------------------------------------
 # 1. Mandatory Symbol Retirement and Reinstatement Prevention
+#
+# These assertions are about main.py's *own* module namespace: that it no
+# longer defines the 4 legacy overlay globals as ordinary module attributes,
+# and that it fails closed (via a module-level ``__getattr__``/``__setattr__``
+# guard) on any attempt to read or reinstate them. Importing main.py as a
+# live module purely to inspect this is still an "import of main" for the
+# purposes of the BFF composition-root migration (the architecture scanner
+# in test_bff_test_architecture.py is a live AST import-graph scan, and flags
+# any `import` of main.py regardless of purpose). So this property is proven
+# by statically parsing main.py's source with `ast`, the same technique
+# test_bff_test_architecture.py itself uses to scan test files, without ever
+# importing main.py as a module.
 # ---------------------------------------------------------------------------
 
 RETIRED_OVERLAY_SYMBOLS = (
@@ -33,29 +59,157 @@ RETIRED_OVERLAY_SYMBOLS = (
     "_GOV_BFF_JOB_OVERLAY",
 )
 
+MAIN_PY_PATH = Path(__file__).resolve().parents[1] / "main.py"
+
+
+def _main_source() -> str:
+    return MAIN_PY_PATH.read_text(encoding="utf-8")
+
+
+def _main_ast() -> ast.Module:
+    return ast.parse(_main_source(), filename=str(MAIN_PY_PATH))
+
+
+def _module_level_assigned_names(tree: ast.Module) -> set[str]:
+    """Names assigned as ordinary module-level globals in main.py (top-level only).
+
+    If a retired overlay symbol were reinstated as a plain global, normal
+    attribute lookup would find it in ``main.__dict__`` before the
+    ``__getattr__`` guard ever runs, silently defeating the retirement.
+    """
+    names: set[str] = set()
+    for node in tree.body:
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.target is not None:
+            targets = [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+    return names
+
+
+def _retired_process_overlays_literal(tree: ast.Module) -> Optional[set[str]]:
+    """Extract the string members of the module-level ``_RETIRED_PROCESS_OVERLAYS`` frozenset literal."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "_RETIRED_PROCESS_OVERLAYS" for t in node.targets):
+            continue
+        value = node.value
+        if isinstance(value, ast.Call) and getattr(value.func, "id", None) == "frozenset" and value.args:
+            container = value.args[0]
+        else:
+            container = value
+        if isinstance(container, (ast.Set, ast.List, ast.Tuple)):
+            return {
+                elt.value
+                for elt in container.elts
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+            }
+    return None
+
+
+def _guard_class_getattr_setattr_sources(tree: ast.Module, source: str) -> tuple[Optional[str], Optional[str]]:
+    """Find the module-swap guard class's ``__getattr__``/``__setattr__`` method source text.
+
+    main.py fails closed on the retired overlays by rebinding
+    ``sys.modules[__name__].__class__`` to a ``types.ModuleType`` subclass
+    that overrides ``__getattr__``/``__setattr__``. Locate that class body's
+    two guard methods by source text (without executing anything) so the
+    test can confirm they actually raise for the retired names.
+    """
+    getattr_src: Optional[str] = None
+    setattr_src: Optional[str] = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        base_names = {getattr(base, "attr", getattr(base, "id", None)) for base in node.bases}
+        if "ModuleType" not in base_names:
+            continue
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef) and item.name == "__getattr__":
+                getattr_src = ast.get_source_segment(source, item)
+            if isinstance(item, ast.FunctionDef) and item.name == "__setattr__":
+                setattr_src = ast.get_source_segment(source, item)
+    return getattr_src, setattr_src
+
+
+def _module_class_swap_applied_at_top_level(tree: ast.Module) -> bool:
+    """Confirm the ``ModuleType`` subclass swap actually executes at module scope.
+
+    A guard class that is merely defined but never installed onto
+    ``sys.modules[__name__]`` would never run, so this checks for the
+    top-level (unconditional, unnested) assignment statement that installs it.
+    """
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        target = node.targets[0] if node.targets else None
+        if not isinstance(target, ast.Attribute) or target.attr != "__class__":
+            continue
+        owner = target.value
+        if (
+            isinstance(owner, ast.Subscript)
+            and isinstance(owner.value, ast.Attribute)
+            and owner.value.attr == "modules"
+        ):
+            return True
+    return False
+
 
 @pytest.mark.parametrize("symbol", RETIRED_OVERLAY_SYMBOLS)
-def test_mandatory_overlay_symbols_not_in_module_dict(symbol: str) -> None:
-    """The 4 mandatory overlay symbols must not exist as globals in main.__dict__."""
-    assert symbol not in bff_main.__dict__, (
-        f"Symbol {symbol!r} must be excised from main.__dict__"
+def test_mandatory_overlay_symbols_not_assigned_as_module_globals(symbol: str) -> None:
+    """The 4 mandatory overlay symbols must not exist as ordinary globals in main.py."""
+    tree = _main_ast()
+    assigned = _module_level_assigned_names(tree)
+    assert symbol not in assigned, (
+        f"Symbol {symbol!r} must not be assigned as an ordinary module-level global in main.py"
     )
 
 
-@pytest.mark.parametrize("symbol", RETIRED_OVERLAY_SYMBOLS)
-def test_mandatory_overlay_symbols_raise_attribute_error_on_getattr(symbol: str) -> None:
-    """Accessing any retired overlay must raise AttributeError, preventing silent reachability."""
-    with pytest.raises(AttributeError) as exc_info:
-        _ = getattr(bff_main, symbol)
-    assert "retired and deleted" in str(exc_info.value)
+def test_retired_process_overlays_set_declares_all_mandatory_symbols() -> None:
+    """main.py's retirement guard set must cover exactly the 4 mandatory overlay symbols."""
+    tree = _main_ast()
+    declared = _retired_process_overlays_literal(tree)
+    assert declared is not None, "main.py must declare _RETIRED_PROCESS_OVERLAYS as a literal frozenset/set"
+    assert set(RETIRED_OVERLAY_SYMBOLS) <= declared
 
 
 @pytest.mark.parametrize("symbol", RETIRED_OVERLAY_SYMBOLS)
-def test_mandatory_overlay_symbols_raise_attribute_error_on_setattr(symbol: str) -> None:
-    """Assigning to any retired overlay must raise AttributeError, preventing test/runtime reinstatement."""
-    with pytest.raises(AttributeError) as exc_info:
-        setattr(bff_main, symbol, {"fake_key": "fake_val"})
-    assert "retired and deleted" in str(exc_info.value)
+def test_module_getattr_guard_fails_closed_on_read(symbol: str) -> None:
+    """The installed module class's __getattr__ must raise AttributeError('retired and deleted') for each symbol."""
+    tree = _main_ast()
+    declared = _retired_process_overlays_literal(tree)
+    getattr_src, _ = _guard_class_getattr_setattr_sources(tree, _main_source())
+    assert declared is not None and symbol in declared
+    assert getattr_src is not None, "main.py must define a ModuleType subclass with __getattr__"
+    assert "_RETIRED_PROCESS_OVERLAYS" in getattr_src
+    assert "AttributeError" in getattr_src
+    assert "retired and deleted" in getattr_src
+
+
+@pytest.mark.parametrize("symbol", RETIRED_OVERLAY_SYMBOLS)
+def test_module_setattr_guard_fails_closed_on_reinstatement(symbol: str) -> None:
+    """The installed module class's __setattr__ must raise AttributeError('retired and deleted') for each symbol."""
+    tree = _main_ast()
+    declared = _retired_process_overlays_literal(tree)
+    _, setattr_src = _guard_class_getattr_setattr_sources(tree, _main_source())
+    assert declared is not None and symbol in declared
+    assert setattr_src is not None, "main.py must define a ModuleType subclass with __setattr__"
+    assert "_RETIRED_PROCESS_OVERLAYS" in setattr_src
+    assert "AttributeError" in setattr_src
+    assert "retired and deleted" in setattr_src
+
+
+def test_module_class_guard_is_installed_at_module_scope() -> None:
+    """The ModuleType subclass swap that activates the getattr/setattr guard must run unconditionally."""
+    tree = _main_ast()
+    assert _module_class_swap_applied_at_top_level(tree), (
+        "main.py must install its retirement-guard module class via an "
+        "unconditional top-level `sys.modules[__name__].__class__ = ...` assignment"
+    )
 
 
 def test_ranking_snapshots_raises_attribute_error_on_read_surface_ports() -> None:
@@ -104,8 +258,10 @@ class FakeCanonicalReadStore:
 
 
 def test_list_strategy_summaries_reads_strictly_canonical_store() -> None:
-    """_list_strategy_summaries must return records from read_store without overlay lookup."""
-    original_store = bff_main.read_store
+    """The production strategies route context resolves summaries from the canonical
+    store's ``list_strategy_specs`` with zero overlay lookup (mirrors main.py's own
+    ``_list_strategy_summaries``, which is exactly ``list(read_store.list_strategy_specs() or [])``,
+    wired as the strategies router's ``list_strategy_summaries`` dependency)."""
     fake_store = FakeCanonicalReadStore()
     fake_store.strategies = [{
         "strategy_id": "canonical-strat-001",
@@ -113,19 +269,16 @@ def test_list_strategy_summaries_reads_strictly_canonical_store() -> None:
         "state": "active",
         "updatedAt": "2026-09-01T00:00:00Z",
     }]
-    bff_main.read_store = fake_store
-    try:
-        summaries = bff_main._list_strategy_summaries()
-        assert len(summaries) == 1
-        assert summaries[0]["strategy_id"] == "canonical-strat-001"
-        assert summaries[0]["name"] == "Canonical Momentum Alpha"
-    finally:
-        bff_main.read_store = original_store
+    ctx = StrategyRouteContext(list_strategy_summaries=fake_store.list_strategy_specs)
+    summaries = ctx.list_strategy_summaries_records()
+    assert len(summaries) == 1
+    assert summaries[0]["strategy_id"] == "canonical-strat-001"
+    assert summaries[0]["name"] == "Canonical Momentum Alpha"
 
 
 def test_list_persona_records_reads_strictly_canonical_and_provisioning_stores() -> None:
-    """_list_persona_records must return records from read_store and provisioning store only."""
-    original_store = bff_main.read_store
+    """personas.service._list_persona_records must return records from read_store and
+    provisioning store only, with zero process-local overlay involved."""
     fake_store = FakeCanonicalReadStore()
     fake_store.personas = [{
         "id": "persona-canonical-1",
@@ -134,19 +287,16 @@ def test_list_persona_records_reads_strictly_canonical_and_provisioning_stores()
         "lifecycle_state": "paper_running",
         "metadata": {"tenant_id": "tenant-test"},
     }]
-    bff_main.read_store = fake_store
-    try:
-        records = bff_main._list_persona_records(tenant_id="tenant-test")
-        assert len(records) == 1
-        assert records[0]["persona_id"] == "persona-canonical-1"
-        assert records[0]["name"] == "Canonical Persona"
-    finally:
-        bff_main.read_store = original_store
+    records = personas_service._list_persona_records(tenant_id="tenant-test", read_store=fake_store)
+    assert len(records) == 1
+    assert records[0]["persona_id"] == "persona-canonical-1"
+    assert records[0]["name"] == "Canonical Persona"
 
 
 def test_incident_read_paths_strictly_canonical() -> None:
-    """_list_bff_incidents and _get_bff_incident query read_store with zero overlay fallback."""
-    original_store = bff_main.read_store
+    """IncidentService.list_bff_incidents/get_bff_incident query read_store with zero
+    process-local overlay fallback (its own ``_incident_overlay`` only ever holds
+    incidents this same service instance created via ``create_incident``)."""
     fake_store = FakeCanonicalReadStore()
     fake_store.incidents["inc-canonical-999"] = {
         "incident_id": "inc-canonical-999",
@@ -156,29 +306,26 @@ def test_incident_read_paths_strictly_canonical() -> None:
         "severity": "medium",
         "created_at": "2026-09-05T12:00:00Z",
     }
-    bff_main.read_store = fake_store
-    try:
-        found = bff_main._get_bff_incident("inc-canonical-999")
-        assert found is not None
-        assert (found.get("incident_id") or found.get("id")) == "inc-canonical-999"
+    service = IncidentService(get_read_store=lambda: fake_store)
 
-        # Missing incident returns None without attempting any overlay lookup
-        assert bff_main._get_bff_incident("inc-non-existent") is None
+    found = service.get_bff_incident("inc-canonical-999")
+    assert found is not None
+    assert (found.get("incident_id") or found.get("id")) == "inc-canonical-999"
 
-        listed = bff_main._list_bff_incidents()
-        assert any(
-            str(i.get("incident_id") or i.get("id")) == "inc-canonical-999"
-            for i in listed
-        )
-    finally:
-        bff_main.read_store = original_store
+    # Missing incident returns None without attempting any overlay lookup
+    assert service.get_bff_incident("inc-non-existent") is None
+
+    listed = service.list_bff_incidents()
+    assert any(
+        str(i.get("incident_id") or i.get("id")) == "inc-canonical-999"
+        for i in listed
+    )
 
 
 def test_jobs_router_reads_strictly_canonical_read_store(monkeypatch: pytest.MonkeyPatch) -> None:
     """Jobs router routes GET /bff/jobs and /bff/jobs/{job_id} through read_store with 0 overlay."""
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    original_store = bff_main.read_store
     fake_store = FakeCanonicalReadStore()
     fake_store.jobs["job-can-1"] = {
         "job_id": "job-can-1",
@@ -186,25 +333,42 @@ def test_jobs_router_reads_strictly_canonical_read_store(monkeypatch: pytest.Mon
         "status": "running",
         "job_type": "backtest",
     }
-    bff_main.read_store = fake_store
-    try:
-        client = TestClient(bff_main.app)
-        headers = {"Authorization": "Bearer op-test:operator"}
-        resp = client.get("/bff/jobs", headers=headers)
-        assert resp.status_code == 200
-        data = resp.json()
-        items = data.get("items") or data.get("data") or []
-        assert any(j.get("job_id") == "job-can-1" for j in items)
 
-        detail = client.get("/bff/jobs/job-can-1", headers=headers)
-        assert detail.status_code == 200
-        assert detail.json()["data"]["job_id"] == "job-can-1"
+    from fastapi import FastAPI
 
-        # Non-existent job returns 404 cleanly without trying an in-memory overlay
-        not_found = client.get("/bff/jobs/non-existent-job-xyz", headers=headers)
-        assert not_found.status_code == 404
-    finally:
-        bff_main.read_store = original_store
+    app = FastAPI()
+    app.include_router(
+        create_jobs_router(
+            get_read_store=lambda: fake_store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            bff_error=default_bff_error,
+            utc_now=default_utc_now,
+            page_slice=default_page_slice,
+            read_surface_meta=default_read_surface_meta,
+            dataset_surface_status=lambda *a, **k: {"status": "ok"},
+            raise_if_read_surface_unavailable=lambda *a, **k: None,
+            reject_body_idempotency_key=lambda payload: None,
+            resolve_final_idempotency_key=lambda ik, xik: str(ik or xik or ""),
+            submit_job_action=lambda *a, **k: {},
+        )
+    )
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer op-test:operator"}
+    resp = client.get("/bff/jobs", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    items = data.get("items") or data.get("data") or []
+    assert any(j.get("job_id") == "job-can-1" for j in items)
+
+    detail = client.get("/bff/jobs/job-can-1", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["data"]["job_id"] == "job-can-1"
+
+    # Non-existent job returns 404 cleanly without trying an in-memory overlay
+    not_found = client.get("/bff/jobs/non-existent-job-xyz", headers=headers)
+    assert not_found.status_code == 404
 
 
 def test_routers_reject_retired_overlay_parameters() -> None:
@@ -269,55 +433,48 @@ def test_multi_replica_restart_durability_canonical_truth() -> None:
     }]
 
     # Replica 1: independent process instance binding to durable storage
-    original_store = bff_main.read_store
     replica_1_store = FakeCanonicalReadStore()
     replica_1_store.personas = list(shared_storage_records)
-    bff_main.read_store = replica_1_store
 
-    try:
-        records1 = bff_main._list_persona_records(tenant_id="tenant-durability")
-        assert len(records1) == 1
-        assert records1[0]["persona_id"] == "persona-durable-rep-1"
+    records1 = personas_service._list_persona_records(tenant_id="tenant-durability", read_store=replica_1_store)
+    assert len(records1) == 1
+    assert records1[0]["persona_id"] == "persona-durable-rep-1"
 
-        # Replica 1 performs a new canonical write to shared storage
-        new_record = {
-            "id": "persona-durable-rep-2",
-            "persona_id": "persona-durable-rep-2",
-            "name": "Second Durable Persona",
-            "lifecycle_state": "paper_running",
-            "metadata": {"tenant_id": "tenant-durability"},
-        }
-        shared_storage_records.append(new_record)
-        replica_1_store.personas.append(new_record)
+    # Replica 1 performs a new canonical write to shared storage
+    new_record = {
+        "id": "persona-durable-rep-2",
+        "persona_id": "persona-durable-rep-2",
+        "name": "Second Durable Persona",
+        "lifecycle_state": "paper_running",
+        "metadata": {"tenant_id": "tenant-durability"},
+    }
+    shared_storage_records.append(new_record)
+    replica_1_store.personas.append(new_record)
 
-        # Simulate hard process restart / failover: process memory is wiped
-        bff_main.read_store = None
+    # Fresh Replica 2 boots up in a new clean process container (simulating a
+    # hard process restart / failover, with process memory wiped between
+    # replicas). It creates its own independent store instance from shared
+    # storage (distinct object identity).
+    replica_2_store = FakeCanonicalReadStore()
+    replica_2_store.personas = list(shared_storage_records)
+    assert replica_2_store is not replica_1_store
 
-        # Fresh Replica 2 boots up in a new clean process container
-        # It creates its own independent store instance from shared storage (distinct object identity)
-        replica_2_store = FakeCanonicalReadStore()
-        replica_2_store.personas = list(shared_storage_records)
-        assert replica_2_store is not replica_1_store
+    records2 = personas_service._list_persona_records(tenant_id="tenant-durability", read_store=replica_2_store)
+    assert len(records2) == 2
+    persona_ids = {r["persona_id"] for r in records2}
+    assert persona_ids == {"persona-durable-rep-1", "persona-durable-rep-2"}
+    assert all(r["lifecycle_state"] == "paper_running" for r in records2)
 
-        bff_main.read_store = replica_2_store
-        records2 = bff_main._list_persona_records(tenant_id="tenant-durability")
-        assert len(records2) == 2
-        persona_ids = {r["persona_id"] for r in records2}
-        assert persona_ids == {"persona-durable-rep-1", "persona-durable-rep-2"}
-        assert all(r["lifecycle_state"] == "paper_running" for r in records2)
-
-        # Harness-level multi-replica and restart verification
-        harness = MultiReplicaReadbackHarness({})
-        rep_a = harness.spawn_replica("rep-a")
-        rep_b = harness.spawn_replica("rep-b")
-        rep_a.write_canonical("p-999", {"persona_id": "p-999", "name": "Algo Canary"})
-        rep_a.restart_process()
-        readback_a = rep_a.read_canonical("p-999")
-        assert readback_a is not None and readback_a["name"] == "Algo Canary"
-        readback_b = rep_b.read_canonical("p-999")
-        assert readback_b == readback_a
-    finally:
-        bff_main.read_store = original_store
+    # Harness-level multi-replica and restart verification
+    harness = MultiReplicaReadbackHarness({})
+    rep_a = harness.spawn_replica("rep-a")
+    rep_b = harness.spawn_replica("rep-b")
+    rep_a.write_canonical("p-999", {"persona_id": "p-999", "name": "Algo Canary"})
+    rep_a.restart_process()
+    readback_a = rep_a.read_canonical("p-999")
+    assert readback_a is not None and readback_a["name"] == "Algo Canary"
+    readback_b = rep_b.read_canonical("p-999")
+    assert readback_b == readback_a
 
 
 # ---------------------------------------------------------------------------

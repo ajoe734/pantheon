@@ -156,11 +156,15 @@ def _client_with_store(store: MgmtOps006TestReadPorts) -> Iterator[TestClient]:
     bff_main.read_store = store
     try:
         with tempfile.TemporaryDirectory(prefix="paper-action-contract-") as command_dir, patch.dict(os.environ, {"PANTHEON_BFF_TENANT_ID": "tenant-default"}):
-            # Router factories retain this same injected owner instance.
-            commands = bff_main.app_deps.command_store
+            # Router factories retain this same injected owner instance. A
+            # fresh, isolated CommandStore backed by a private tmp file is
+            # substituted directly (CommandStore is a durable file-backed
+            # store with no in-memory `_cache`/mutable `file_path` to patch).
+            from services.control_plane.bff.command_queue import CommandStore
+
+            commands = CommandStore(os.path.join(command_dir, "commands.jsonl"))
             bff_main.command_store = commands
-            with patch.object(commands, "file_path", os.path.join(command_dir, "commands.jsonl")), patch.object(commands, "_cache", []):
-                yield TestClient(_mounted_app(), raise_server_exceptions=False)
+            yield TestClient(_mounted_app(), raise_server_exceptions=False)
     finally:
         bff_main.read_store = original_store
         bff_main.command_store = original_commands

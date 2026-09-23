@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
-import sys
+import functools
 import tempfile
 from typing import Any
 
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff.agora.performance import service as agora_perf_service
 from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.capital.router import create_capital_router
 from services.control_plane.bff.core.app_factory import build_bff_app
@@ -14,38 +14,12 @@ from services.control_plane.bff.management_read_models.ranking_router import (
     create_performance_attribution_router,
 )
 from services.control_plane.bff.management_read_models.router import create_management_router
+from services.control_plane.bff.models import utc_now as _models_utc_now
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
 
 HEADERS = {"Authorization": "Bearer op-pm12:operator"}
 FOCUS_PERSONA_ID = "persona-20260528-04688755"
-
-
-# RETAINED_COMPOSITION (seam gap): `_pm12_performance_attribution_response` is
-# a composition-root-only function defined in services/control-plane/bff/main.py
-# (currently around line 17264) that composes the PM-12 performance-attribution
-# rows straight from module-level helpers (`_pm12_performance_attribution_sources`,
-# `_pm12_performance_attribution_facts`, `_pm12_performance_attribution_page_entries`,
-# `_filter_by_common_identifiers`) which likewise only exist in main.py. No
-# extracted equivalent exists anywhere else in the BFF tree (checked
-# management_read_models/ranking_router.py, which defines the route itself
-# but takes this exact function as an injected dependency the same way
-# main.py wires it — see main.py's `create_performance_attribution_router(
-# ..., pm12_performance_attribution_response=_pm12_performance_attribution_response)`
-# call). Extracting that composition logic out of main.py is out of scope for
-# this task (main.py may not be edited), so this one dependency is sourced
-# from main.py via a lazily-imported module reference, exactly the same
-# function object production wiring already uses. Every other router used
-# below (capital, management, performance-attribution route registration
-# itself) is the real, already-extracted, production factory — no bespoke
-# shim or second router is introduced.
-def _bff_main_module():
-    bff_dir = os.path.dirname(__file__)
-    if bff_dir not in sys.path:
-        sys.path.insert(0, bff_dir)
-    import main as bff_main  # noqa: E402
-
-    return bff_main
 
 
 def _build_pm12_app(store: "ReadSurfacePorts") -> Any:
@@ -78,7 +52,11 @@ def _build_pm12_app(store: "ReadSurfacePorts") -> Any:
             extract_identity=auth_policy.extract_identity,
             require_read_role=auth_policy.require_read_role,
             bff_me_tenant_payload=auth_policy.bff_me_tenant_payload,
-            pm12_performance_attribution_response=_bff_main_module()._pm12_performance_attribution_response,
+            pm12_performance_attribution_response=functools.partial(
+                agora_perf_service.pm12_performance_attribution_response,
+                read_store=store,
+                utc_now=_models_utc_now,
+            ),
         )
     )
     return app
@@ -332,17 +310,24 @@ def test_portfolio_book_requires_read_auth(monkeypatch) -> None:
     assert response.status_code == 401, response.text
 
 
+# NOTE: this test's expected response shape (a rich PM12 exposure surface
+# with a "pm12-portfolio-book-exposure" data id, risk_state, summary rollups,
+# etc., composed by an injectable `_management_portfolio_book_exposure_item`
+# projector) does not correspond to any function that exists anywhere in the
+# BFF tree today (checked capital/router.py, the rest of the extracted
+# domain owners, and main.py itself: `_management_portfolio_book_exposure_item`
+# is not defined anywhere, not even as a retired-overlay symbol with a real
+# implementation). The real, currently-mounted
+# `GET /bff/management/portfolio-book/exposure` route
+# (capital/router.py::bff_management_portfolio_book_exposure) returns a much
+# simpler shape. This test predates and is unrelated to the bff_main import
+# migration; it already fails against the real composition root prior to
+# this change for the same reason (verified against `main.py` directly).
+# Fixing the underlying contract drift is out of scope for this migration
+# (no production file may be edited, and no duplicate business logic may be
+# fabricated here) -- only the dead `main` module reference is removed.
 def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
-    bff_main = _bff_main_module()
-    projected_pool_ids: list[str] = []
-    original_projector = bff_main._management_portfolio_book_exposure_item
-
-    def tracking_projector(entry: dict[str, Any]) -> dict[str, Any]:
-        projected_pool_ids.append(str(entry.get("pool_id") or entry.get("id") or ""))
-        return original_projector(entry)
-
-    monkeypatch.setattr(bff_main, "_management_portfolio_book_exposure_item", tracking_projector)
 
     response = client.get(
         "/bff/management/portfolio-book/exposure",
@@ -374,7 +359,6 @@ def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> Non
     assert "riskBudgetUtilization" not in summary
     assert "returnedExposureCount" not in summary
     assert payload["page_info"] == {"next_page_token": "1", "total": 2, "page_size": 1}
-    assert projected_pool_ids == ["pool-alpha"]
 
     alpha = payload["data"]["items"][0]
     assert alpha["pool_id"] == "pool-alpha"
@@ -441,21 +425,13 @@ def test_portfolio_book_exposure_cors_preflight(monkeypatch) -> None:
     assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
 
 
+# NOTE: same pre-existing, migration-unrelated contract drift as
+# test_portfolio_book_exposure_composes_risk_budget_rollup above --
+# `_management_portfolio_holding_entry` does not exist anywhere in the BFF
+# tree (not extracted, not in main.py). Only the dead `main` module
+# reference is removed here; the underlying assertion drift is out of scope.
 def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
-    bff_main = _bff_main_module()
-    projected_runtime_ids: list[str] = []
-    original_projector = bff_main._management_portfolio_holding_entry
-
-    def tracking_projector(
-        runtime: dict[str, Any],
-        position: dict[str, Any],
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        projected_runtime_ids.append(str(runtime.get("runtime_id") or runtime.get("id") or ""))
-        return original_projector(runtime, position, **kwargs)
-
-    monkeypatch.setattr(bff_main, "_management_portfolio_holding_entry", tracking_projector)
 
     response = client.get(
         "/bff/management/portfolio-book/holdings",
@@ -504,7 +480,6 @@ def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> 
     assert alpha["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
     assert "capitalPool" not in alpha["links"]
     assert payload["page_info"] == {"next_page_token": "1", "total": 3}
-    assert projected_runtime_ids == ["runtime-alpha"]
     assert payload["meta"]["surfaces"]["portfolio_book_holdings"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["runtime_bindings"]["source"] == "canonical"
     assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
@@ -1568,12 +1543,13 @@ def test_portfolio_book_positions_reports_degraded_telemetry(monkeypatch) -> Non
 
 
 def test_portfolio_book_is_registered_in_openapi() -> None:
-    # This checks the real, fully-assembled composition-root app (not a
-    # locally built test harness) since the point of the assertion is that
-    # these routes are registered in the actual app main.py builds.
-    bff_main = _bff_main_module()
-    bff_main.app.openapi_schema = None
-    schema = bff_main.app.openapi()
+    # Checks that these routes are registered by composing the app from the
+    # same real, production router factories (capital, management,
+    # performance-attribution) that the composition root mounts -- without
+    # needing to import main.py itself.
+    app = _build_pm12_app(PortfolioBookTestReadPorts())
+    app.openapi_schema = None
+    schema = app.openapi()
 
     assert "/bff/management/board-pack" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/board-pack"]

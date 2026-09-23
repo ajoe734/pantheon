@@ -31,7 +31,9 @@
     "test_bff_consol_010_fixture_pack_c.py",
     "test_bff_consol_016_detail_smoke_a.py",
     "test_bff_consol_017_detail_smoke_b.py",
+    "test_bff_mgmt_common_filters.py",
     "test_bff_performance_ranking_read_model_contract.py",
+    "test_bff_pm12_portfolio_book_contract.py",
     "test_bff_v5_loop_sentinel_contract.py",
     "test_cw01_consult_request_contract.py",
     "test_cw02_debate_transcript_contract.py",
@@ -75,9 +77,12 @@
     "tests/test_management_nl_single_owner.py",
     "tests/test_management_read_budget.py",
     "tests/test_operations_consultation_ports.py",
+    "tests/test_overlay_retirement.py",
     "tests/test_pint_003_durable_opinions.py",
     "tests/test_pint_013_durable_interactions.py",
-    "tests/test_pint_016_strict_browser_readiness.py"
+    "tests/test_pint_016_strict_browser_readiness.py",
+    "tests/test_ppl_alloc_009_assertion_semantics.py",
+    "tests/test_ppl_alloc_012_ranking_projection.py"
   ],
   "layer_summary": {
     "adapter": 55,
@@ -87,17 +92,17 @@
     "router": 116
   },
   "main_by_layer": {
-    "adapter": 1,
-    "application": 12,
+    "adapter": 0,
+    "application": 9,
     "composition": 9,
     "hosted": 1,
-    "router": 9
+    "router": 8
   },
   "disposition_summary": {
     "ALLOWLIST": 15,
     "DECOUPLED": 316,
-    "MIGRATED": 32,
-    "PLANNED": 21
+    "MIGRATED": 37,
+    "PLANNED": 16
   },
   "tests": [
     {
@@ -588,14 +593,14 @@
       "layer": "application",
       "imports_main": true,
       "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "rationale": "Retained (composition gap): 4 of this suite's tests exercise POST /bff/management/nl/ask, whose handler plus _MGMT_AI_AUDIT_EVENTS/_management_ai_record_event/_mgmt_nl_command_idempotency_store exist only in main.py with no extracted owner module; the remaining tests in this file no longer import main."
     },
     {
       "file": "test_bff_mgmt_common_filters.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated: composes real capital/performance-attribution routers (capital/router.py, management_read_models/ranking_router.py) and the real agora.performance.service functions directly; no main.py import remains."
     },
     {
       "file": "test_bff_mgmt_ops_001_operations_read_model_contract.py",
@@ -609,7 +614,7 @@
       "layer": "router",
       "imports_main": true,
       "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "rationale": "Retained (composition gap): main.py's module-level command_adapter_service instance (built from _VALIDATORS and the ops-console precondition graph: _enforce_ops_console_preconditions, _ops_read_model_entry_for_persona) has no extracted owner module; reproducing it would require duplicating that validator/precondition logic, which is forbidden."
     },
     {
       "file": "test_bff_oidc_staging_env_contract.py",
@@ -628,16 +633,16 @@
     {
       "file": "test_bff_pm12_portfolio_book_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated: composes real capital/management/performance-attribution routers via core.app_factory.build_bff_app() plus the real agora.performance.service.pm12_performance_attribution_response (bound via functools.partial), replacing the prior lazily-imported main.py reference; no main.py import remains."
     },
     {
       "file": "test_bff_promotion_review_governance.py",
       "layer": "application",
       "imports_main": true,
       "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "rationale": "Retained (composition gap): the promotion-review/human-inbox surfaces require a real ranking_write_owner and human-inbox decision-projection helpers (_human_inbox_decision_recommendation_id, _human_inbox_decision_projection_from_record) that exist only in main.py; personas.router.create_personas_router exists but the ranking-write-owner wiring needed to compose it correctly is not yet extracted."
     },
     {
       "file": "test_bff_read_cutoff_wave4_contract.py",
@@ -987,7 +992,7 @@
       "layer": "application",
       "imports_main": true,
       "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "rationale": "Retained (composition gap): the bounded-executor read-isolation timeout wrapper (_run_management_read/_management_read_timeout_seconds) exists only in main.py and, in the current composition, is wired into only one of the five routes this suite exercises (incidents/router.py's /bff/alerts); the other four routes have no extracted timeout-wrapped equivalent."
     },
     {
       "file": "test_mgmt_ooda_004_bff_routes.py",
@@ -2079,7 +2084,7 @@
       "layer": "application",
       "imports_main": true,
       "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "rationale": "Retained (composition gap): this suite asserts the fully-assembled production app (all ~30 mounted routers) has zero duplicate/shadowed routes; main.py is the only module in the tree that assembles the complete route table (core.app_factory.build_bff_app() intentionally mounts zero routers per its own docstring), so there is no extracted full-composition entrypoint to test against instead."
     },
     {
       "file": "tests/test_bff_persona_allocation_policy.py",
@@ -2114,7 +2119,7 @@
       "layer": "application",
       "imports_main": true,
       "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "rationale": "Retained (composition gap, pre-existing and unchanged by this task): 2 of ~35 tests need main.py's own _process_command_stub (startup command-replay orchestration, coupled to main.py's module globals) and the /bff/version route's real payload computation (sem_bff_version's route shell is extracted into core/app_factory.py, but the computation itself is not); neither has an extracted owner."
     },
     {
       "file": "tests/test_bff_test_architecture.py",
@@ -2448,9 +2453,9 @@
     {
       "file": "tests/test_overlay_retirement.py",
       "layer": "adapter",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: adapter)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated: overlay-symbol-absence checks use a pure ast-based static scan of main.py's source text (no import); read-store/persona/incident/strategy assertions call the real personas.service, incidents.service, and strategies.routes.common owners directly; no main.py import remains."
     },
     {
       "file": "tests/test_persona_capital_runtime_ports.py",
@@ -2602,9 +2607,9 @@
     {
       "file": "tests/test_ppl_alloc_009_assertion_semantics.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated: calls the real services.control_plane.bff.capital.service._pm12_semantic_values_match directly; no main.py import remains."
     },
     {
       "file": "tests/test_ppl_alloc_009_paper_eligibility_proof.py",
@@ -2616,9 +2621,9 @@
     {
       "file": "tests/test_ppl_alloc_012_ranking_projection.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated: calls the real services.control_plane.bff.capital.service._pm12_allocation_line_assertion_hash directly; no main.py import remains."
     },
     {
       "file": "tests/test_project_approvals_regression.py",
@@ -2789,18 +2794,13 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 11,
+  "live_scan_non_whitelisted_main_importer_ceiling": 6,
   "live_scan_non_whitelisted_main_importers": [
     "test_bff_mgmt_ai_persistence_2026_06_03.py",
-    "test_bff_mgmt_common_filters.py",
     "test_bff_mgmt_ops_006_operator_actions_contract.py",
-    "test_bff_pm12_portfolio_book_contract.py",
     "test_bff_promotion_review_governance.py",
     "test_mgmt_load_005_read_concurrency.py",
     "tests/test_bff_path_dedupe.py",
-    "tests/test_bff_rebalance_proposals.py",
-    "tests/test_overlay_retirement.py",
-    "tests/test_ppl_alloc_009_assertion_semantics.py",
-    "tests/test_ppl_alloc_012_ranking_projection.py"
+    "tests/test_bff_rebalance_proposals.py"
   ]
 }

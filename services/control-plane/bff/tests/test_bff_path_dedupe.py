@@ -7,6 +7,36 @@ from typing import Iterable
 
 from fastapi.testclient import TestClient
 
+# RETAINED_COMPOSITION (architecture gap, not a seam-boundary gap): every test
+# in this file exists to prove the *fully assembled* Operator BFF app has no
+# duplicate/shadowed route registrations across its entire route table. That
+# is inherently a whole-app property, not a single router's.
+#
+# `core.app_factory.build_bff_app()` is documented in its own module
+# docstring as "Prepared BFF core composition for the 30-route core
+# assignment... The later main-assembly task will inject the existing domain
+# handlers", and indeed only wires FastAPI + middleware/CORS/security; it
+# mounts zero routers on its own. main.py is still the *only* place in this
+# tree that assembles the full app: it calls `app.include_router(...)` ~30
+# times (personas, capital, incidents, strategies, jobs, governance,
+# deployments, runtimes, skills, tools, mcp-servers, ranking-formulas, agora,
+# trade journal/journeys, events, alpha-factory, auth, assistant-management,
+# core, settings, ...) after building the base app via `build_bff_app()`.
+# No other module in services/control-plane/bff assembles anywhere near the
+# full route surface (grepped for `create_app`/`build_app`/`FastAPI(` across
+# the whole BFF tree; only main.py and core/app_factory.py construct a
+# `FastAPI()` at all, and app_factory's is the partial 30-route core only).
+#
+# Building a second, parallel "full app assembler" here, outside main.py,
+# would either (a) duplicate main.py's ~30-router composition logic in a
+# test file (exactly the kind of business-logic duplication this migration
+# is meant to avoid), or (b) silently narrow this test's scope to whatever
+# subset of routers a test-local composer happens to wire up, which would
+# defeat the test's actual purpose: proving the real production app that
+# actually serves traffic has zero duplicate paths. Until a real
+# `create_app()`/`build_app()` composition root exists outside main.py that
+# assembles every router main.py mounts, this file is retained pointed at
+# the real composed app via the least-bad remaining import.
 from services.control_plane.bff import main as bff_main
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-path-dedupe:operator,admin"}
