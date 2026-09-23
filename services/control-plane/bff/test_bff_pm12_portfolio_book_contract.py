@@ -360,6 +360,13 @@ def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> Non
     assert "returnedExposureCount" not in summary
     assert payload["page_info"] == {"next_page_token": "1", "total": 2, "page_size": 1}
 
+    # Restored projection-identity coverage (against the real, unmocked HTTP
+    # response -- no monkeypatched projector function exists to hook into
+    # anymore): with page_size=1 the exposure page must contain exactly the
+    # first-ranked pool (pool-alpha), never pool-beta.
+    projected_pool_ids = [item.get("pool_id") for item in payload["data"]["items"]]
+    assert projected_pool_ids == ["pool-alpha"]
+
     alpha = payload["data"]["items"][0]
     assert alpha["pool_id"] == "pool-alpha"
     assert alpha["capital_pool_id"] == "pool-alpha"
@@ -480,6 +487,13 @@ def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> 
     assert alpha["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
     assert "capitalPool" not in alpha["links"]
     assert payload["page_info"] == {"next_page_token": "1", "total": 3}
+
+    # Restored projection-identity coverage (against the real, unmocked HTTP
+    # response -- no monkeypatched projector function exists to hook into
+    # anymore): with page_size=1 the holdings page must contain exactly the
+    # first-ranked runtime (runtime-alpha).
+    projected_runtime_ids = [item.get("runtime_id") for item in payload["data"]["items"]]
+    assert projected_runtime_ids == ["runtime-alpha"]
     assert payload["meta"]["surfaces"]["portfolio_book_holdings"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["runtime_bindings"]["source"] == "canonical"
     assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
