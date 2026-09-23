@@ -4,10 +4,10 @@
   "owner": "Antigravity",
   "reviewer": "Codex",
   "status": "ready_for_review",
-  "generated_at": "2026-09-23T04:42:00Z",
+  "generated_at": "2026-09-23T05:45:00Z",
   "base_commit": "0348826dbb77c32b44f00d30c864de26f2ff36bf",
   "anchor_commit": "eeaf50c92aa76937215fee7bacd4cbeff69f80af",
-  "head_commit": "336de22e02540250c27bae793c33cd4266eee1b0",
+  "head_commit": "276aeb183ba8d7cbe0c4b1c7668160df3eaa0ed1",
   "changed_files": [
     "docs/deployment/evidence/BFF-MAIN-REMAINING-SEAMS-CORRECTIVE-001/evidence.json",
     "services/control-plane/bff/agora/performance/service.py",
@@ -26,11 +26,11 @@
     },
     "assistant": {
       "target_file": "services/control-plane/bff/assistant/management_service.py",
-      "summary": "Extracted management command idempotency store, lock, and accessor get_mgmt_nl_command_idempotency_store into assistant.management_service; main.py now delegates directly."
+      "summary": "Extracted Management AI conversation store management, persistence, access, projection handlers (get_management_ai_conversation_store, management_ai_list_conversations, management_ai_get_conversation, management_ai_get_attachment, management_ai_server_conversation_context), and idempotency store/lock (get_mgmt_nl_command_idempotency_store) into assistant.management_service; removed duplicate mutable global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE and reset coupling in main.py."
     },
     "agora_performance": {
       "target_file": "services/control-plane/bff/agora/performance/service.py",
-      "summary": "Extracted PM12 performance attribution sources, facts, group/page entries, metrics, data confidence, rows, and response into agora.performance.service; main.py now imports and re-exports these without tenant-dropping TypeError retry fallbacks."
+      "summary": "Extracted PM12 performance attribution sources, facts, group/page entries, metrics, data confidence, rows, and response into agora.performance.service; eliminated alternate default readiness policies, removed AppDependencies.create_default fallback, eliminated silent missing-source fallback and catch-all filter bypass, preserving unavailable/degraded semantics (status='unavailable', source='missing', coverage=0.0) and failing closed on filter errors."
     },
     "personas": {
       "target_file": "services/control-plane/bff/personas/service.py",
@@ -44,6 +44,12 @@
       "target_file": "services/control-plane/bff/governance/service.py",
       "summary": "Moved human_inbox_surface_timeout_seconds into governance.service with 1.0s hard ceiling and safe environment parsing; main.py re-exports as _human_inbox_surface_timeout_seconds."
     }
+  },
+  "dead_functions_gate": {
+    "baseline_count": 36,
+    "actual_count": 34,
+    "status": "PASS",
+    "summary": "Removed 15 orphaned wrappers in main.py, bringing the dead function count to 34 (below base commit baseline of 36)."
   },
   "live_importer_readback": {
     "ceiling": 11,
@@ -71,7 +77,7 @@
     },
     "new_composition_seam_suite": {
       "command": "pytest -v services/control-plane/bff/tests/test_remaining_main_seam_composition.py",
-      "passed": 18,
+      "passed": 22,
       "failed": 0,
       "status": "PASS"
     },
@@ -118,9 +124,19 @@
       "failed": 0,
       "status": "PASS"
     },
+    "management_nl_assistant_suite": {
+      "command": "pytest services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_management_nl_single_owner.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+      "passed": 79,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "performance_probe_unavailable": {
+      "command": "python3 -c 'from services.control_plane.bff.agora.performance.service import pm12_performance_attribution_response; res = pm12_performance_attribution_response(dimensions=[\"persona\"], period=\"latest\", page_token=None, page_size=50, read_store=object()); assert res[\"meta\"][\"surfaces\"][\"performance_attribution\"][\"status\"] == \"unavailable\" and res[\"meta\"][\"surfaces\"][\"performance_attribution\"][\"coverage\"] == 0.0 and res[\"meta\"][\"surfaces\"][\"performance_attribution\"][\"missing_bindings\"] is True'",
+      "status": "PASS"
+    },
     "bounded_terminal_validation_1": {
       "command": "pytest -q services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/test_architecture_boundaries.py",
-      "passed": 54,
+      "passed": 58,
       "failed": 5,
       "status": "BASELINE_CONFIRMED"
     },
