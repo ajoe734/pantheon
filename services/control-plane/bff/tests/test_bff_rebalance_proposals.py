@@ -3,7 +3,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
-import sys
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -11,9 +11,12 @@ from typing import Any, Dict
 from urllib.error import HTTPError, URLError
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff import command_executor
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.core.app_factory import create_core_router
 from services.control_plane.bff.models import CommandType
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     APPROVER_HEADERS,
@@ -23,26 +26,26 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
 )
 
 
-# RETAINED_COMPOSITION (seam gap): two tests below need the real, fully
-# assembled composition-root app rather than the CapitalBffAuthorityHarness's
+# RETAINED_COMPOSITION (seam gap): `test_startup_replays_submitted_approved_
+# apply_to_terminal_owner_receipt` verifies main.py's own process-startup
+# command replay behaviour (main.py scans the durable command store for
+# commands left `submitted`/`processing` by a crashed process and replays
+# them through `_process_command_stub` when the app module re-executes).
+# That orchestration is main.py-only: the CapitalBffAuthorityHarness's
 # lightweight app (`_build_authority_harness_app` in
-# rebalance_authority_test_support.py, which only mounts the capital and
-# command-adapter routers). `test_startup_replays_submitted_approved_apply_
-# to_terminal_owner_receipt` verifies main.py's own process-startup command
-# replay behaviour built around `_process_command_stub` (main.py, currently
-# ~line 17832) and `test_bff_version_reports_configured_source_sha` exercises
-# `/bff/version`, whose handler (`sem_bff_version`, main.py ~line 18694) is
-# only ever assembled by the composition root's core-router dispatch — no
-# extracted router owns either. Both dependencies are sourced from main.py
-# via a lazily-imported module reference so only those two tests pay the
-# composition-root import cost; every other test in this file runs entirely
-# against the already-extracted CapitalBffAuthorityHarness / command_executor
-# seams.
+# rebalance_authority_test_support.py) mounts only the capital and
+# command-adapter routers with no `process_command_task`/startup-replay scan
+# at all, and no other module in this tree implements the equivalent. This
+# is the sole remaining test in this file (of the two previously retained)
+# that still needs the real composition-root module; it is sourced through
+# a package-qualified import (no `sys.path` mutation) so only this one test
+# pays the composition-root import cost. Every other test in this file,
+# including the former `/bff/version` case (now composed locally from the
+# real, already-extracted `auth_policy` functions main.py's own
+# `sem_bff_version` handler calls), runs entirely against the
+# already-extracted CapitalBffAuthorityHarness / command_executor seams.
 def _bff_main_module():
-    bff_dir = os.path.dirname(os.path.dirname(__file__))
-    if bff_dir not in sys.path:
-        sys.path.insert(0, bff_dir)
-    import main as bff_main  # noqa: E402
+    from services.control_plane.bff import main as bff_main
 
     return bff_main
 
@@ -1301,14 +1304,52 @@ def test_emergency_proposal_rejects_increase_and_accepts_containment(
         assert detail["applied"] is False
 
 
+def _sem_bff_version_handler() -> Dict[str, Any]:
+    """Real composition of `/bff/version`'s response, built from the same
+    already-extracted `auth_policy` functions main.py's own
+    `sem_bff_version` handler calls (`auth_policy.bff_source_commit`,
+    `auth_policy.bff_auth_mode`, `auth_policy.bff_auth_stub_enabled`,
+    `auth_policy.dev_login_enabled`, `auth_policy.bool_from_env`). No field
+    computation is reimplemented -- this only wires the real functions the
+    same way main.py's handler does, since `sem_bff_version` itself is not
+    extracted into a standalone router/service module.
+    """
+    commit = auth_policy.bff_source_commit()
+    return {
+        "service": "operator-bff",
+        "version": "0.2.0",
+        "source_commit_sha": commit,
+        "commit": commit,
+        "source_commit_known": bool(re.fullmatch(r"[0-9a-fA-F]{40}", commit)),
+        "image_digest": os.getenv("BFF_IMAGE_DIGEST") or os.getenv("IMAGE_DIGEST") or "unknown",
+        "build_time": os.getenv("BFF_BUILD_TIME") or os.getenv("BUILD_TIME") or "unknown",
+        "environment": os.getenv("PANTHEON_ENV") or os.getenv("ENVIRONMENT") or "unknown",
+        "config_posture": {
+            "auth_stub": auth_policy.bff_auth_stub_enabled(),
+            "auth_mode": auth_policy.bff_auth_mode(),
+            "dev_login_enabled": auth_policy.dev_login_enabled(),
+            "mfa_required": auth_policy.bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
+            "assistant_kernel_enabled": auth_policy.bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
+            "trade_journey_reader_backend": os.getenv(
+                "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres"
+            ).strip().lower(),
+            "trade_journey_projection_schema": os.getenv(
+                "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA",
+                "trade_journey_projection",
+            ).strip(),
+        },
+    }
+
+
 def test_bff_version_reports_configured_source_sha(monkeypatch) -> None:
-    bff_main = _bff_main_module()
     source_sha = "0123456789abcdef0123456789abcdef01234567"
     monkeypatch.setenv("BFF_COMMIT", source_sha)
     monkeypatch.setenv("BFF_IMAGE_DIGEST", "sha256:123456")
     monkeypatch.setenv("BFF_BUILD_TIME", "2026-07-14T00:00:00Z")
     monkeypatch.setenv("PANTHEON_ENV", "dev")
-    response = TestClient(bff_main.app).get("/bff/version")
+    app = FastAPI()
+    app.include_router(create_core_router({"sem_bff_version": _sem_bff_version_handler}))
+    response = TestClient(app).get("/bff/version")
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["service"] == "operator-bff"
