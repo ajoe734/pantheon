@@ -367,16 +367,6 @@ def ensure_paper_baseline(
         or env.get("SOURCE_MANAGEMENT_API_URL")
         or env.get("PANTHEON_SOURCE_INGEST_URL")
     )
-    if effective_source_url:
-        ensure_dev_market_snapshot_ready(
-            source_ingest_url=effective_source_url,
-            symbol=market_symbol,
-            timeout_seconds=market_input_timeout_seconds,
-            poll_seconds=poll_seconds,
-            request_timeout_seconds=request_timeout_seconds,
-            monotonic=monotonic,
-            sleep=sleep,
-        )
     token = _login(base_url, request_timeout_seconds=request_timeout_seconds)
     payload = {
         "name": name,
@@ -386,8 +376,6 @@ def ensure_paper_baseline(
         "market": "US",
         "strategy_family": "dev_paper_baseline",
     }
-    effective_timeout_seconds = effective_poll_timeout_seconds(timeout_seconds, environ=environ)
-    deadline = monotonic() + effective_timeout_seconds
     attempts = 1
     last_reconcile_meta: dict[str, Any] = {}
 
@@ -454,6 +442,31 @@ def ensure_paper_baseline(
                 sort_keys=True,
             )
         )
+
+    # The dev synthetic market connector (dev-paper-us-equity-simulation) is
+    # only provisioned by persona_source_reconciler once a Persona has
+    # declared it under required_data_sources, which happens above as part
+    # of create-paper-bundle. Waiting for the snapshot before the Persona
+    # exists would wait on a producer that can never be provisioned -- see
+    # DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001. This wait therefore runs
+    # only once the Persona (and its required_data_sources declaration)
+    # already exists, so a fresh host with zero prior data source instances
+    # still converges: it gives the async reconciler loop
+    # (PANTHEON_PERSONA_PROVISIONING_RECONCILE_SECONDS, default 5s) time to
+    # configure the connector and schedule before this polls run-scheduled.
+    if effective_source_url:
+        ensure_dev_market_snapshot_ready(
+            source_ingest_url=effective_source_url,
+            symbol=market_symbol,
+            timeout_seconds=market_input_timeout_seconds,
+            poll_seconds=poll_seconds,
+            request_timeout_seconds=request_timeout_seconds,
+            monotonic=monotonic,
+            sleep=sleep,
+        )
+
+    effective_timeout_seconds = effective_poll_timeout_seconds(timeout_seconds, environ=environ)
+    deadline = monotonic() + effective_timeout_seconds
 
     if provisioning_state not in {"reserved", "provisioning"}:
         raise BootstrapError(

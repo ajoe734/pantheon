@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -144,6 +145,202 @@ def test_replays_one_idempotent_request_until_authoritative_readback() -> None:
     assert second_create.args[0] == "http://127.0.0.1:8001/bff/management/personas/create-paper-bundle"
     assert second_create.kwargs["headers"]["Idempotency-Key"] == bootstrap.DEFAULT_IDEMPOTENCY_KEY
     assert second_create.kwargs["headers"]["Authorization"] == "Bearer short-lived"
+
+
+def test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_first_run() -> None:
+    """On a fresh host the dev synthetic connector (dev-paper-us-equity-
+    simulation) is only provisioned once a Persona has declared it under
+    required_data_sources, which happens as part of create-paper-bundle.
+    A snapshot wait that ran before that Persona existed would wait forever
+    on a producer that can never be provisioned
+    (DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001). This proves the wait now
+    runs only after persona creation, and that the first-run 404-then-appears
+    cycle -- with an active run-scheduled nudge -- still converges."""
+
+    call_order: list[str] = []
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    valid_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-1",
+        "symbol": "SPY",
+        "event_time": now_iso,
+        "observed_at": now_iso,
+        "closes": [500.0, 501.5],
+    }
+
+    post_queue = {
+        "/bff/auth/dev-login": [
+            (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        ],
+        "create-paper-bundle": [
+            (
+                201,
+                {
+                    "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                    "meta": {
+                        "provisioning_state": "provisioning",
+                        "provisioning_step": "schedule_registered",
+                        "live_capital_side_effects": False,
+                    },
+                },
+            ),
+            (
+                201,
+                {
+                    "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "paper"},
+                    "meta": {
+                        "provisioning_state": "succeeded",
+                        "provisioning_step": "authoritative_readback_complete",
+                        "runtime_id": "rt-1",
+                        "runtime_binding_id": "rb-1",
+                        "deployment_plan_id": "plan-1",
+                        "live_capital_side_effects": False,
+                    },
+                },
+            ),
+        ],
+        "provisioning/reconcile": [
+            (
+                200,
+                {
+                    "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "paper"},
+                    "meta": {"lifecycle_state": "paper_running", "status": "ok"},
+                },
+            ),
+        ],
+        "run-scheduled": [
+            (200, {"status": "ok"}),
+        ],
+    }
+
+    def fake_post_json(url, payload=None, **kwargs):
+        call_order.append(f"post:{url}")
+        for key, responses in post_queue.items():
+            if key in url:
+                return responses.pop(0)
+        raise AssertionError(f"unexpected POST {url}")
+
+    get_queue = [
+        (404, {"detail": {"code": "market_snapshot_not_found", "symbol": "SPY"}}),
+        (200, valid_snapshot),
+    ]
+
+    def fake_get_json(url, **kwargs):
+        call_order.append(f"get:{url}")
+        return get_queue.pop(0)
+
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), patch.object(bootstrap, "_get_json", side_effect=fake_get_json):
+        result = _run(source_ingest_url="http://mock-source:8097")
+
+    assert result["status"] == "ok"
+    assert result["persona_id"] == "persona-1"
+
+    # The Persona create call is the second call overall (after login) --
+    # the market snapshot poll never runs before required_data_sources
+    # exists on a Persona.
+    create_index = next(
+        i for i, c in enumerate(call_order) if "create-paper-bundle" in c
+    )
+    first_get_index = next(i for i, c in enumerate(call_order) if c.startswith("get:"))
+    assert create_index < first_get_index, (
+        "market snapshot wait must run after persona creation, not before "
+        f"(call_order={call_order})"
+    )
+
+    # The 404 branch actively nudges the reconciler via run-scheduled instead
+    # of only passively polling.
+    assert any("run-scheduled" in c for c in call_order)
+
+
+def test_market_snapshot_already_fresh_steady_state_does_not_delay_reconcile() -> None:
+    """Once the connector is steady-state (schedule already configured, the
+    latest snapshot already fresh), the wait must resolve on the very first
+    poll and never call run-scheduled, so an already-healthy host is not
+    slowed down by the ordering fix."""
+
+    call_order: list[str] = []
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    valid_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-steady",
+        "symbol": "SPY",
+        "event_time": now_iso,
+        "observed_at": now_iso,
+        "closes": [500.0, 501.5],
+    }
+
+    post_queue = {
+        "/bff/auth/dev-login": [
+            (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        ],
+        "create-paper-bundle": [
+            (
+                201,
+                {
+                    "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                    "meta": {
+                        "provisioning_state": "provisioning",
+                        "provisioning_step": "schedule_registered",
+                        "live_capital_side_effects": False,
+                    },
+                },
+            ),
+            (
+                201,
+                {
+                    "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "paper"},
+                    "meta": {
+                        "provisioning_state": "succeeded",
+                        "provisioning_step": "authoritative_readback_complete",
+                        "runtime_id": "rt-1",
+                        "runtime_binding_id": "rb-1",
+                        "deployment_plan_id": "plan-1",
+                        "live_capital_side_effects": False,
+                    },
+                },
+            ),
+        ],
+        "provisioning/reconcile": [
+            (
+                200,
+                {
+                    "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "paper"},
+                    "meta": {"lifecycle_state": "paper_running", "status": "ok"},
+                },
+            ),
+        ],
+    }
+
+    def fake_post_json(url, payload=None, **kwargs):
+        call_order.append(f"post:{url}")
+        for key, responses in post_queue.items():
+            if key in url:
+                return responses.pop(0)
+        raise AssertionError(f"unexpected POST {url}")
+
+    def fake_get_json(url, **kwargs):
+        call_order.append(f"get:{url}")
+        return (200, valid_snapshot)
+
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=fake_post_json
+    ), patch.object(bootstrap, "_get_json", side_effect=fake_get_json):
+        result = _run(source_ingest_url="http://mock-source:8097")
+
+    assert result["status"] == "ok"
+    get_calls = [c for c in call_order if c.startswith("get:")]
+    # The snapshot is already fresh, so the wait resolves on its very first
+    # poll -- no run-scheduled nudge is needed on the steady-state path.
+    assert len(get_calls) == 1
+    assert not any("run-scheduled" in c for c in call_order)
+    # It still only polls after the Persona (and its required_data_sources
+    # declaration) already exists.
+    create_index = next(
+        i for i, c in enumerate(call_order) if "create-paper-bundle" in c
+    )
+    assert create_index < call_order.index(get_calls[0])
 
 
 def test_reconcile_mismatched_persona_id_raises() -> None:

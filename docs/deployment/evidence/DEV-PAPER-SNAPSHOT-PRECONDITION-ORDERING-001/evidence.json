@@ -1,0 +1,69 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001",
+  "title": "Paper baseline waits for a snapshot that only its own persona can trigger",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "ce8e6ab8bc01d3e5e659df8abcf61032da2ae21c",
+  "scope": {
+    "owned": [
+      "scripts/bootstrap_dev_paper_baseline.py ensure_paper_baseline call ordering",
+      "regression coverage for the never-provisioned first-run and already-fresh steady-state paths"
+    ],
+    "not_changing": [
+      "services/source_ingestion/persona_source_reconciler.py connector/schedule provisioning logic",
+      "services/control-plane/bff/personas/service.py required_data_sources declaration and reconcile lifecycle",
+      "ensure_dev_market_snapshot_ready's freshness/admissibility rules"
+    ],
+    "composes_with": [
+      "the async persona provisioning reconciler loop (_persona_provisioning_reconciler_loop, default 5s interval)"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "bootstrap_dev_paper_baseline.py called ensure_dev_market_snapshot_ready() before creating the Persona. The dev synthetic connector (dev-paper-us-equity-simulation) is only provisioned by persona_source_reconciler once a Persona has declared it under required_data_sources -- which only happens inside create-paper-bundle, later in the same function. On a host that has never provisioned that connector, the wait wanted a snapshot whose only producer could not yet exist, and the wait could never observe anything but 404 until its own bounded timeout.",
+    "prior_outcome": "run 35688428543: persona_provisioning never even created a row; VM data_source_instances stayed at 0 and the scheduler recognized only 2 connectors.",
+    "regression": "test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_first_run proves the create-paper-bundle POST happens before the first snapshot GET, and that a 404-then-appears cycle (with an active run-scheduled nudge on 404) still converges to paper_running. test_market_snapshot_already_fresh_steady_state_does_not_delay_reconcile proves an already-fresh snapshot resolves on the very first poll with no run-scheduled call, so the reorder does not slow down an already-healthy host."
+  },
+  "implementation": {
+    "call_ordering": "ensure_dev_market_snapshot_ready() no longer runs before the create-paper-bundle POST. It now runs after the Persona is created and confirmed not already terminal (paper_running/succeeded or failed), so required_data_sources has already been declared and the async reconciler loop has a chance to provision the connector and schedule before the wait's first poll.",
+    "deadline_accounting": "effective_timeout_seconds/deadline computation for the provisioning reconcile loop was moved to after the market snapshot wait, so the snapshot wait's own bounded timeout is additive rather than eating into the reconcile loop's budget.",
+    "bounded_wait_preserved": "ensure_dev_market_snapshot_ready itself is unchanged: it still bounds its wait, still names the symbol and last-seen reason on timeout, still refuses stale/future/insufficient snapshots, and still nudges run-scheduled on 404.",
+    "no_freshness_relaxation": "No snapshot admissibility, staleness, or fabrication rule was touched; only the point in ensure_paper_baseline where the wait is invoked changed.",
+    "no_new_endpoints": "No new BFF, source-ingest, or reconciler endpoints or schemas were added."
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_bootstrap_dev_paper_baseline.py",
+        "result": "22 passed"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 scripts/bootstrap_dev_paper_baseline.py --self-test",
+        "result": "7 tests passed (bootstrap_dev_paper_baseline_self_test)"
+      }
+    ],
+    "broader_nonpassing_observations": [
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_dev_paper_simulation.py",
+        "result": "collection error, pre-existing environment issue",
+        "detail": "ImportError: cannot import name 'Sentinel' from 'typing_extensions' inside a stale sibling .venv discovered by fastapi/pydantic_core import chain; unrelated to this task's scope (scripts/bootstrap_dev_paper_baseline.py only), and neither persona_source_reconciler.py nor personas/service.py was modified."
+      }
+    ],
+    "runner": {
+      "python": "3.12",
+      "pytest": "9.1.1"
+    },
+    "checksums": {
+      "scripts/bootstrap_dev_paper_baseline.py": "68db0797272b044c395a5da10af058c63e8812c46433bcbc5572797b98d9d267",
+      "scripts/test_bootstrap_dev_paper_baseline.py": "9db042fdb25e3529f70bbe2824c34da05175ca0391e4bc2ca3f2a5e485c94dc2"
+    }
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "note": "Independently verify: create-paper-bundle now precedes the market snapshot wait; the never-provisioned first-run and already-fresh steady-state regressions; that no freshness/admissibility rule was relaxed; and that the reconcile-loop deadline still gets the full effective_timeout_seconds budget after the snapshot wait resolves."
+  }
+}
