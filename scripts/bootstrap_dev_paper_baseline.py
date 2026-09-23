@@ -187,6 +187,7 @@ def ensure_dev_market_snapshot_ready(
     timeout_seconds: float = 60.0,
     poll_seconds: float = 2.0,
     request_timeout_seconds: float = 10.0,
+    controller_token: str = "",
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
@@ -244,6 +245,11 @@ def ensure_dev_market_snapshot_ready(
                 _post_json(
                     f"{source_ingest_url.rstrip('/')}/api/source-ingest/run-scheduled",
                     {"max_concurrency": 1},
+                    headers=(
+                        {"Authorization": f"Bearer {controller_token}"}
+                        if controller_token
+                        else None
+                    ),
                     timeout_seconds=request_timeout_seconds,
                 )
             except Exception:
@@ -540,11 +546,12 @@ def ensure_paper_baseline(
             or data.get("required_data_sources")
             or (list(DEV_US_REQUIRED_DATA_SOURCES) if str(data.get("market") or "US").strip().upper() == "US" else [])
         )
+        provisioning_controller_token = source_ingest_controller_token(env)
         ensure_source_provisioning(
             source_ingest_url=effective_source_url,
             persona_id=persona_id,
             required_data_sources=required_data_sources,
-            controller_token=source_ingest_controller_token(env),
+            controller_token=provisioning_controller_token,
             request_timeout_seconds=request_timeout_seconds,
         )
         ensure_dev_market_snapshot_ready(
@@ -553,6 +560,7 @@ def ensure_paper_baseline(
             timeout_seconds=market_input_timeout_seconds,
             poll_seconds=poll_seconds,
             request_timeout_seconds=request_timeout_seconds,
+            controller_token=provisioning_controller_token,
             monotonic=monotonic,
             sleep=sleep,
         )
@@ -792,7 +800,11 @@ def run_self_tests() -> int:
         assert len(res["closes"]) == 2
         tests_run += 1
 
-    # Test 2: Never-ingested first-run path (404 initially, then appears)
+    # Test 2: Never-ingested first-run path (404 initially, then appears).
+    # The real runtime guard rejects an unauthenticated run-scheduled nudge
+    # for a controller-owned connector with 401
+    # (_require_controller_authorization); this proves the nudge carries the
+    # controller bearer token rather than an unconditional mocked 200.
     responses_first_run = [
         (404, {"detail": {"code": "market_snapshot_not_found", "symbol": "SPY"}}),
         (200, valid_snapshot),
@@ -800,7 +812,10 @@ def run_self_tests() -> int:
     post_calls = []
 
     def fake_post_json(url, payload=None, **kwargs):
-        post_calls.append((url, payload))
+        post_calls.append((url, payload, kwargs))
+        headers = kwargs.get("headers") or {}
+        if headers.get("Authorization") != "Bearer controller-token-test":
+            return 401, {"detail": "controller authorization required"}
         return 200, {"status": "ok"}
 
     with patch.object(this_module, "_get_json", side_effect=responses_first_run), \
@@ -810,10 +825,45 @@ def run_self_tests() -> int:
             symbol="SPY",
             timeout_seconds=5.0,
             poll_seconds=0.01,
+            controller_token="controller-token-test",
         )
         assert res["snapshot_id"] == "snap-test-001"
         assert len(post_calls) >= 1
         assert "run-scheduled" in post_calls[0][0]
+        assert post_calls[0][2].get("headers") == {"Authorization": "Bearer controller-token-test"}
+        tests_run += 1
+
+    # Test 2b: without a controller token, the nudge is sent unauthenticated
+    # and the real guard's 401 is swallowed (best-effort nudge), so the wait
+    # still times out naming the missing snapshot rather than crashing.
+    post_calls_unauth = []
+
+    def fake_post_json_unauth(url, payload=None, **kwargs):
+        post_calls_unauth.append((url, payload, kwargs))
+        return 401, {"detail": "controller authorization required"}
+
+    mock_clock_2b = [0.0]
+
+    def fake_mono_2b():
+        mock_clock_2b[0] += 10.0
+        return mock_clock_2b[0]
+
+    with patch.object(this_module, "_get_json", return_value=(404, {})), \
+         patch.object(this_module, "_post_json", side_effect=fake_post_json_unauth):
+        try:
+            ensure_dev_market_snapshot_ready(
+                source_ingest_url="http://mock-source:8097",
+                symbol="SPY",
+                timeout_seconds=5.0,
+                poll_seconds=0.01,
+                monotonic=fake_mono_2b,
+                sleep=lambda _: None,
+            )
+            raise AssertionError("Expected BootstrapError on missing snapshot timeout")
+        except BootstrapError as exc:
+            assert "symbol 'SPY'" in str(exc)
+        assert post_calls_unauth
+        assert post_calls_unauth[0][2].get("headers") is None
         tests_run += 1
 
     # Test 3: Missing snapshot timeout names symbol and reason

@@ -195,6 +195,7 @@ services:
     restart: unless-stopped
     environment:
       PORT: "8097"
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       SOURCE_INGEST_DATA_DIR: /data/source-ingest
       SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
