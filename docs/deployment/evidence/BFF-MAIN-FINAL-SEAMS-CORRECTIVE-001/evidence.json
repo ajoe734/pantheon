@@ -1,0 +1,126 @@
+{
+  "task_id": "BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001",
+  "title": "Extract the last three main.py seams and wire the shared bounded read helper",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "status": "ready_for_review",
+  "generated_at": "2026-09-24T03:33:00Z",
+  "base_commit": "13818b8b1ac91b42d36bd1e0295fca38cdb96a9a",
+  "changed_files": [
+    "docs/deployment/evidence/BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001/evidence.json",
+    "services/control-plane/bff/assistant/management_service.py",
+    "services/control-plane/bff/core/app_factory.py",
+    "services/control-plane/bff/core/lifespan.py",
+    "services/control-plane/bff/governance/router.py",
+    "services/control-plane/bff/incidents/router.py",
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/management_read_models/router.py",
+    "services/control-plane/bff/personas/routes/common.py",
+    "services/control-plane/bff/tests/test_main_composition_seam_extraction_003.py"
+  ],
+  "seams_extracted": {
+    "management_nl": {
+      "target_file": "services/control-plane/bff/assistant/management_service.py",
+      "summary": "Extracted POST /bff/management/nl/ask and /stream request handlers (bff_management_nl_ask, bff_management_nl_ask_stream) out of main.py into assistant/management_service.py. main.py retains only imports/aliases. Zero duplicate definitions verified via AST readback."
+    },
+    "app_composition": {
+      "target_file": "services/control-plane/bff/core/app_factory.py",
+      "summary": "Implemented compose_bff_app and mount_bff_routers in core/app_factory.py, making full application composition callable without importing main.py. Tested standalone: mounts all domain routers producing identical route set (548 non-HEAD routes, 0 differences) as main.py."
+    },
+    "lifespan_command_replay": {
+      "target_file": "services/control-plane/bff/core/lifespan.py",
+      "summary": "Extracted process-startup command replay (replay_submitted_commands, recoverable_capital_command, retryable_terminal_capital_command) into core/lifespan.py. create_lifespan coordinates replay at startup with preserved ordering and error semantics."
+    },
+    "bounded_read_helper": {
+      "target_file": "services/control-plane/bff/personas/routes/common.py",
+      "summary": "Wired shared run_management_read helper from personas/routes/common.py across the 4 read model paths (evidence and cockpit in management_read_models/router.py; human-inbox and approvals in governance/router.py). Retired main.py's private _run_management_read copy in favour of the shared helper with preserved timeout and degraded-envelope fallback."
+    }
+  },
+  "duplicate_definitions_grep_readback": {
+    "bff_management_nl_ask": 0,
+    "bff_management_nl_ask_stream": 0,
+    "replay_submitted_commands": 0,
+    "recoverable_capital_command": 0,
+    "retryable_terminal_capital_command": 0,
+    "compose_bff_app": 0,
+    "mount_bff_routers": 0,
+    "run_management_read": 0,
+    "_run_management_read": 0
+  },
+  "route_set_equality": {
+    "main_app_route_count": 548,
+    "standalone_composer_route_count": 548,
+    "routes_only_in_main": 0,
+    "routes_only_in_standalone": 0,
+    "match": true
+  },
+  "live_importer_readback": {
+    "ceiling": 11,
+    "actual_count": 11,
+    "matches_recorded": true,
+    "non_whitelisted_importers": [
+      "test_bff_mgmt_ai_persistence_2026_06_03.py",
+      "test_bff_mgmt_common_filters.py",
+      "test_bff_mgmt_ops_006_operator_actions_contract.py",
+      "test_bff_pm12_portfolio_book_contract.py",
+      "test_bff_promotion_review_governance.py",
+      "test_mgmt_load_005_read_concurrency.py",
+      "tests/test_bff_path_dedupe.py",
+      "tests/test_bff_rebalance_proposals.py",
+      "tests/test_overlay_retirement.py",
+      "tests/test_ppl_alloc_009_assertion_semantics.py",
+      "tests/test_ppl_alloc_012_ranking_projection.py"
+    ]
+  },
+  "test_results": {
+    "new_composition_seam_suite_003": {
+      "command": "pytest services/control-plane/bff/tests/test_main_composition_seam_extraction_003.py",
+      "passed": 11,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "architecture_gate": {
+      "command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "passed": 8,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "management_nl_single_owner": {
+      "command": "pytest services/control-plane/bff/tests/test_management_nl_single_owner.py",
+      "passed": 10,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "mgmt_load_005_read_concurrency": {
+      "command": "pytest services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+      "passed": 9,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "smoke_test": {
+      "command": "python3 -m services.control_plane.bff.smoke_test",
+      "passed": 26,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "overlay_retirement": {
+      "command": "pytest services/control-plane/bff/tests/test_overlay_retirement.py",
+      "passed": 22,
+      "skipped": 1,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "operator_actions_contract": {
+      "command": "pytest services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py",
+      "passed": 13,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "composition_seam_suite_002": {
+      "command": "pytest services/control-plane/bff/tests/test_main_composition_seam_extraction_002.py",
+      "passed": 22,
+      "failed": 0,
+      "status": "PASS"
+    }
+  }
+}

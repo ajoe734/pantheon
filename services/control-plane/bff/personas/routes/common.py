@@ -26,6 +26,15 @@ class ManagementReadSaturated(Exception):
 def _management_read_timeout_seconds() -> float:
     """Bound for offloaded management read aggregation (MGMT-LOAD-005)."""
     try:
+        import sys
+        main_mod = sys.modules.get("services.control_plane.bff.main")
+        if main_mod is not None:
+            fn = getattr(main_mod, "_management_read_timeout_seconds", None)
+            if fn is not None and fn is not _management_read_timeout_seconds:
+                return float(fn())
+    except Exception:
+        pass
+    try:
         return max(0.05, float(os.getenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.6")))
     except (TypeError, ValueError):
         return 0.6
@@ -75,10 +84,28 @@ async def run_management_read(
     raise ManagementReadTimeout()
 
 
+def management_read_timeout_surface(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    message: str,
+) -> Dict[str, Any]:
+    """Explicit degraded surface for a management read that hit its timeout budget."""
+    return {
+        "status": "degraded",
+        "dataset": dataset,
+        "source": "management_read_timeout",
+        "reason": "read_timeout",
+        "message": message,
+        "staleness": {"served_from": "timeout_degraded", "last_known_at": snapshot_at},
+    }
+
+
 _run_management_read = run_management_read
 _ManagementReadTimeout = ManagementReadTimeout
 _ManagementReadSaturated = ManagementReadSaturated
 _discard_late_management_read_result = discard_late_management_read_result
+_management_read_timeout_surface = management_read_timeout_surface
 
 
 @dataclass(frozen=True)
