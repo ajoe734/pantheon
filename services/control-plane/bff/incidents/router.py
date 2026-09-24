@@ -835,7 +835,12 @@ def create_incident_router(
             try:
                 return await run_management_read(_build_alerts_payload, snapshot_at)
             except Exception:
-                return _service.management_alerts_degraded_payload(snapshot_at)
+                payload = _service.management_alerts_degraded_payload(snapshot_at)
+                if isinstance(payload, dict) and "meta" in payload and isinstance(payload["meta"], dict):
+                    surfaces = payload["meta"].get("surfaces")
+                    if isinstance(surfaces, dict) and "alerts" in surfaces and isinstance(surfaces["alerts"], dict):
+                        surfaces["alerts"].setdefault("reason", "read_timeout")
+                return payload
         return _build_alerts_payload(snapshot_at)
 
     # -------------------------------------------------------------------------
