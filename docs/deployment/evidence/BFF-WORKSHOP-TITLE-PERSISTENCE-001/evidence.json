@@ -1,0 +1,98 @@
+{
+  "task_id": "BFF-WORKSHOP-TITLE-PERSISTENCE-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "status": "ready_for_independent_review",
+  "scope": "Source-only workshop title persistence; no deployment or hosted writes.",
+  "reproduction": {
+    "source_commit": "6aa8193501abe578bbde7a7e7986a633ad3f3195",
+    "command": "python -m pytest -q services/control-plane/bff/tests/test_workshop_title_persistence.py -k \"roundtrip and <memory|postgres>\" --maxfail=1 --tb=short",
+    "result": "Both backends failed with KeyError: title at created[\"title\"] on unchanged product code. Postgres executed against an isolated local PostgreSQL 16.15 container.",
+    "prior_diagnostic": "/tmp/pantheon-focus-diagnosis-20260924/workshop-title-diagnosis.json"
+  },
+  "implementation": {
+    "storage": "Memory nullable title; runtime Postgres title TEXT with ADD COLUMN IF NOT EXISTS, parameterized INSERT and explicit get/list SELECT. No title backfill.",
+    "response": "POST create, GET detail, user-scoped GET list retain title and project supplied non-null values into metadata.title.",
+    "frontend_contract": {
+      "repository": "ajoe734/execute-plans",
+      "inspected_commit": "21d9b178d75a96bbabc00fe19611b109c0333c87",
+      "readers": [
+        "src/agora/pages/strategy-workshop/WorkshopListView.tsx:27",
+        "src/agora/pages/strategy-workshop/WorkshopSessionView.tsx:160"
+      ],
+      "result": "Both existing workshopTitle functions read metadata.title."
+    },
+    "unchanged_boundaries": [
+      "general metadata persistence",
+      "private-content encryption",
+      "tenant and user authorization",
+      "idempotency enforcement",
+      "failed-create compensation",
+      "ETags",
+      "frontend source",
+      "task journals",
+      "deployment"
+    ]
+  },
+  "validation": [
+    {
+      "command": "WORKSHOP_TITLE_TEST_DSN=<temporary-local-postgres> timeout 120 /tmp/venv-bff-test/bin/python -m pytest -q services/control-plane/bff/tests/test_workshop_title_persistence.py --tb=short",
+      "exit_code": 0,
+      "result": "11 passed, 1 skipped (SQL-only migration case on Memory parameter)",
+      "covers": [
+        "Unicode, quote and whitespace preservation",
+        "omitted/null/empty titles",
+        "create then new client/store connection detail and list",
+        "existing nullable row and repeated bootstrap",
+        "cross-user and cross-tenant isolation",
+        "encrypted initial content owner readback",
+        "no private message in public title/session/event",
+        "missing/duplicate idempotency key",
+        "private-store failure rollback and same-key retry",
+        "unchanged ETag"
+      ]
+    },
+    {
+      "command": "WORKSHOP_TITLE_TEST_DSN=<temporary-local-postgres> timeout 240 /tmp/venv-bff-test/bin/python -m pytest -q services/control-plane/bff/tests/test_workshop_title_persistence.py services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_strategy_workshop_store_bootstrap.py services/control-plane/bff/tests/test_strategy_workshop_command_store.py services/control-plane/bff/tests/test_workshop_request_authorization.py --tb=short",
+      "exit_code": 0,
+      "result": "107 passed, 2 skipped; Memory SQL migration not applicable; preexisting event SQL test requires separate TEST_DATABASE_URL (run below)."
+    },
+    {
+      "command": "TEST_DATABASE_URL=<temporary-local-postgres> timeout 60 /tmp/venv-bff-test/bin/python -m pytest -q services/control-plane/bff/tests/test_agora_strategy_workshop.py::TestWorkshopStoreFactory::test_postgres_create_event_replays_equivalent_and_rejects_collision --tb=short",
+      "exit_code": 0,
+      "result": "1 passed"
+    },
+    {
+      "command": "PATH=/tmp/venv-workshop-title-smoke/bin:$PATH PYTHON=/tmp/venv-workshop-title-smoke/bin/python timeout 600 ./scripts/run-acceptance.sh smoke",
+      "exit_code": 0,
+      "result": "Complete smoke passed on rebased implementation: stage0 validation/baseline plus diagnostics failure-path 20 passed. Baseline includes BFF smoke 26 tests, deployment tests 42 passed/2 skipped, release/auth/trailer contracts 73 passed."
+    },
+    {
+      "command": "WORKSHOP_TITLE_TEST_DSN=<temporary-local-postgres> TEST_DATABASE_URL=<temporary-local-postgres> timeout 300 /tmp/venv-bff-test/bin/python -m pytest -q services/control-plane/bff/tests/test_workshop_title_persistence.py services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_strategy_workshop_store_bootstrap.py services/control-plane/bff/tests/test_strategy_workshop_command_store.py services/control-plane/bff/tests/test_workshop_request_authorization.py --tb=short",
+      "exit_code": 0,
+      "result": "108 passed, 1 skipped in 132.72s on rebased implementation; only skipped case is SQL-only migration on Memory parameter. Real SQL title and preexisting event test both executed."
+    }
+  ],
+  "local_test_environment": {
+    "postgres": "PostgreSQL 16.15, disposable postgres:16-alpine container; loopback-only published port; unique per-test schemas dropped after each test",
+    "test_dependencies": "pytest/BFF dependencies in /tmp virtual environments; installed psycopg[binary] and cryptography for SQL and real private-content encryption",
+    "smoke_setup_notes": [
+      "First smoke attempt failed because baseline invokes system python3 pip; resolved by putting an isolated venv first in PATH.",
+      "Second attempt reached an unrelated deploy transport test but checkout helper files were group-writable (0664/0775). Removed group/other write permission from local scripts/dev_vm_ssh.sh and scripts/dev_remote_watchdog.py; no tracked source changes. Targeted failure then passed.",
+      "An earlier 180-second full smoke batch timed out (exit 124) during diagnostics; not counted as passed. Rebased implementation reran the entire smoke successfully with a bounded 600-second limit."
+    ]
+  },
+  "hosted_validation": {
+    "performed": false,
+    "reason": "Explicitly excluded from this source task. Coordinator owns single accepted FE/BFF pair deployment and fresh-login hosted readback after all source merges."
+  },
+  "review": {
+    "decision": "pending",
+    "required_reviewer": "Claude",
+    "merge_authority": "supervisor integration runner",
+    "auto_merge": false
+  },
+  "base_commit": "9905da4f9764aff2330365a044c1b8eee6b0cbc4",
+  "implementation_commit": "b1f67ccb9e2df6240f8faca01a9b335de86440b4",
+  "generated_at": "2026-09-24T18:11:02.632434+00:00"
+}

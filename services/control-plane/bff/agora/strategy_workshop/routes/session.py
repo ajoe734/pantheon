@@ -32,6 +32,13 @@ from ..schemas import (
 )
 
 
+def _session_response(session: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose the saved title through the frontend's existing metadata contract."""
+    if session.get("title") is None:
+        return dict(session)
+    return {**session, "metadata": {"title": session["title"]}}
+
+
 def build_session_router(
     *,
     store: Any,
@@ -77,7 +84,7 @@ def build_session_router(
             limit=limit,
         )
         return {
-            "data": sessions,
+            "data": [_session_response(session) for session in sessions],
             "meta": {
                 "snapshot_at": utc_now(),
                 "capability": "agora.workshop.v1",
@@ -164,6 +171,7 @@ def build_session_router(
             "workshop_id": workshop_id,
             "tenant_id": scope.tenant_id,
             "user_id": scope.user_id,
+            "title": body.title,
             "strategy_id": initial_strategy_id,
             "active_strategy_spec_registry_id": initial_registry_id or None,
             "status": "open",
@@ -200,7 +208,7 @@ def build_session_router(
             )
             raise
         return {
-            "data": session,
+            "data": _session_response(session),
             "meta": {
                 "snapshot_at": utc_now(),
                 "capability": "agora.workshop.v1",
@@ -235,7 +243,7 @@ def build_session_router(
         etag = f'W/"workshop:{workshop_id}:v{lock_version}"'
         response.headers["ETag"] = etag
         return {
-            "data": session,
+            "data": _session_response(session),
             "meta": {
                 "snapshot_at": utc_now(),
                 "capability": "agora.workshop.v1",
