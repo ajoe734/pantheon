@@ -5370,148 +5370,19 @@ _PM12_ALLOCATION_LINE_DIGEST_FIELDS = (
     "cap_reasons",
     "evidence_refs",
 )
-def _pm12_allocation_line_digest(line: Dict[str, Any]) -> str:
-    basis = {
-        field: line.get(field)
-        for field in _PM12_ALLOCATION_LINE_DIGEST_FIELDS
-    }
-    basis["capital_scope"] = line.get("capital_scope") or "pool"
-    basis["cap_reasons"] = list(line.get("cap_reasons") or [])
-    basis["evidence_refs"] = list(line.get("evidence_refs") or [])
-    return _stable_json_hash(basis)
+from .pm12.service import (
+    _pm12_allocation_evaluation_record,
+    _pm12_allocation_line_digest,
+    _pm12_allocation_snapshot_record,
+    _pm12_ranking_snapshot_ttl_seconds,
+    _pm12_recommendation_snapshot_record,
+)
 from .capital.service import (
     _pm12_semantic_json_value,
     _pm12_semantic_values_match,
     _pm12_allocation_line_assertion_hash,
 )
-def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
-    snapshot = read_store.get_ranking_snapshot(snapshot_id)
-    if not isinstance(snapshot, dict):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "unknown ranking snapshot",
-            "Allocation evaluation requires a BFF-admitted quarterly ranking snapshot.",
-            precondition_failed="ranking_snapshot_id",
-        )
-    expected_content_digest = _stable_json_hash({
-        "surface": snapshot.get("surface"),
-        "period": snapshot.get("period"),
-        "formula_version": snapshot.get("formula_version"),
-        "items": snapshot.get("items") or [],
-    })
-    if str(snapshot.get("content_digest") or "") != expected_content_digest:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "ranking snapshot integrity check failed",
-            "The durable snapshot content no longer matches its admitted digest.",
-            precondition_failed="ranking_snapshot_id",
-        )
-    if (
-        str(snapshot.get("surface") or "") != "quarterly"
-        or str(snapshot.get("formula_version") or "")
-        != _PM12_LEAGUE_FORMULA_VERSION
-    ):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "ranking snapshot is not allocation eligible",
-            "Only admitted PM-12 quarterly snapshots can feed allocation evaluation.",
-            precondition_failed="ranking_snapshot_id",
-        )
-    return snapshot
-def _pm12_ranking_snapshot_ttl_seconds() -> int:
-    raw = os.getenv(
-        "PANTHEON_PM12_RANKING_SNAPSHOT_TTL_SECONDS",
-        str(_PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS),
-    ).strip()
-    try:
-        configured = int(raw)
-    except (TypeError, ValueError):
-        return 0
-    if configured <= 0 or configured > _PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS:
-        return 0
-    return configured
-def _pm12_recommendation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
-    snapshot = _pm12_allocation_snapshot_record(snapshot_id)
-    created_at = _audit_datetime(snapshot.get("created_at"))
-    now = _audit_datetime(utc_now())
-    ttl_seconds = _pm12_ranking_snapshot_ttl_seconds()
-    if created_at is None or now is None or ttl_seconds <= 0:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "ranking snapshot admission window is invalid",
-            "Recommendation submission requires a timestamped snapshot and a valid bounded TTL.",
-            precondition_failed="ranking_snapshot_id",
-        )
-    age_seconds = (now - created_at).total_seconds()
-    if age_seconds < -300 or age_seconds > ttl_seconds:
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "ranking snapshot admission window expired",
-            "Fetch a current recommendation and submit its immutable admitted snapshot.",
-            precondition_failed="ranking_snapshot_id",
-        )
-    return snapshot
-def _pm12_allocation_evaluation_record(evaluation_id: str) -> Dict[str, Any]:
-    evaluation = read_store.get_allocation_evaluation(evaluation_id)
-    if not isinstance(evaluation, dict):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "unknown allocation evaluation",
-            "The proposal must join to a durable server-side allocation evaluation.",
-            precondition_failed="allocation_evaluation_id",
-        )
-    lines = evaluation.get("lines")
-    if not isinstance(lines, list) or not lines:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "allocation evaluation integrity check failed",
-            "The durable allocation evaluation has no admitted lines.",
-            precondition_failed="allocation_evaluation_id",
-        )
-    for index, line in enumerate(lines):
-        if not isinstance(line, dict):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "allocation evaluation integrity check failed",
-                f"The durable allocation line at index {index} is invalid.",
-                precondition_failed="allocation_line_digest",
-            )
-        supplied_digest = str(line.get("allocation_line_digest") or "").strip()
-        if not supplied_digest or _pm12_allocation_line_digest(line) != supplied_digest:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "allocation evaluation integrity check failed",
-                f"The durable allocation line at index {index} no longer matches its digest.",
-                precondition_failed="allocation_line_digest",
-            )
-    content_basis = {
-        "ranking_snapshot_id": evaluation.get("ranking_snapshot_id"),
-        "allocation_evaluation_id": evaluation.get("allocation_evaluation_id"),
-        "allocation_policy_version": evaluation.get("allocation_policy_version"),
-        "lines": lines,
-    }
-    for optional_field in ("authority_mode", "promotion_review_id"):
-        if evaluation.get(optional_field) not in (None, ""):
-            content_basis[optional_field] = evaluation.get(optional_field)
-    expected_content_digest = _stable_json_hash(content_basis)
-    if str(evaluation.get("content_digest") or "") != expected_content_digest:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "allocation evaluation integrity check failed",
-            "The durable allocation evaluation no longer matches its admitted digest.",
-            precondition_failed="allocation_evaluation_id",
-        )
-    return evaluation
+
 def _ppl_alloc_009_paper_rebalance_authority(
     cmd: OperatorCommand,
 ) -> bool:
