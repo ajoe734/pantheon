@@ -348,7 +348,7 @@ provider_readiness_cache = ProviderReadinessCache(
 _bff_lifespan = create_lifespan(
     provider_readiness_cache,
     command_store=lambda: command_store,
-    process_command=lambda cmd_id: _process_command_stub(cmd_id),
+    process_command=lambda cmd_id, **kw: _process_command_stub(cmd_id, **kw),
 )
 
 app = build_bff_app(
@@ -10200,14 +10200,19 @@ def _v5_intervention_records(
             records_by_id[record_id] = dict(record)
 
     return list(records_by_id.values())
-async def _process_command(command_id: str):
+async def _process_command(command_id: str, *, command_store: Optional[Any] = None):
     """
     Async command processor that dispatches to the Protected Internal API.
     Records authoritative status, result, and audit data for every execution.
     """
     import asyncio
 
-    record = command_store.get_command(command_id)
+    store = command_store if command_store is not None else globals().get("command_store")
+    if store is None:
+        log.error("Worker: command store unavailable for command %s", command_id)
+        return
+
+    record = store.get_command(command_id)
     if not record:
         log.error("Worker: command %s not found in store", command_id)
         return
@@ -10223,7 +10228,7 @@ async def _process_command(command_id: str):
 
     # Mark processing
     await asyncio.sleep(0.05)  # brief yield to event loop
-    command_store.update_status(command_id, CommandStatus.PROCESSING)
+    store.update_status(command_id, CommandStatus.PROCESSING)
 
     try:
         execution_params = _resolve_execution_params_for_record(record)
@@ -10243,7 +10248,7 @@ async def _process_command(command_id: str):
         audit["executor"] = "command_executor"
         audit["failure_reason"] = error["message"]
         audit["failure_suggestion"] = error["suggestion"]
-        command_store.update_status(
+        store.update_status(
             command_id,
             CommandStatus.FAILED,
             error=error,
@@ -10279,7 +10284,7 @@ async def _process_command(command_id: str):
             audit["execution_completed_at"] = result["execution_completed_at"]
             audit["executor"] = "bff_read_store"
             audit["downstream_verified"] = True
-            command_store.update_status(
+            store.update_status(
                 command_id,
                 CommandStatus.EXECUTED,
                 result=result,
@@ -10300,7 +10305,7 @@ async def _process_command(command_id: str):
             audit["executor"] = "bff_read_store"
             audit["failure_reason"] = error["message"]
             audit["failure_suggestion"] = error["suggestion"]
-            command_store.update_status(
+            store.update_status(
                 command_id,
                 CommandStatus.FAILED,
                 error=error,
@@ -10329,7 +10334,7 @@ async def _process_command(command_id: str):
         audit["failure_suggestion"] = error.get("suggestion", "")
 
     # Persist both result and enriched audit data
-    command_store.update_status(
+    store.update_status(
         command_id,
         status,
         result=result,
@@ -11122,38 +11127,16 @@ def _confirm_token_lifecycle_payload(token_id: str) -> Dict[str, Any]:
         payload["command_id"] = latest_record.get("command_id")
     return payload
 _bff_source_commit = auth_policy.bff_source_commit
-async def sem_bff_version():
-    commit = _bff_source_commit()
-    image_digest = os.getenv("BFF_IMAGE_DIGEST") or os.getenv("IMAGE_DIGEST") or "unknown"
-    build_time = os.getenv("BFF_BUILD_TIME") or os.getenv("BUILD_TIME") or "unknown"
-    environment = os.getenv("PANTHEON_ENV") or os.getenv("ENVIRONMENT") or "unknown"
-
-    config_posture = {
-        "auth_stub": _bff_auth_stub_enabled(),
-        "auth_mode": _bff_auth_mode(),
-        "dev_login_enabled": _dev_login_enabled(),
-        "mfa_required": auth_policy.bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
-        "assistant_kernel_enabled": auth_policy.bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
-        "trade_journey_reader_backend": os.getenv(
-            "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres"
-        ).strip().lower(),
-        "trade_journey_projection_schema": os.getenv(
-            "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA",
-            "trade_journey_projection",
-        ).strip(),
-    }
-
-    return {
-        "service": "operator-bff",
-        "version": "0.2.0",
-        "source_commit_sha": commit,
-        "commit": commit,
-        "source_commit_known": bool(re.fullmatch(r"[0-9a-fA-F]{40}", commit)),
-        "image_digest": image_digest,
-        "build_time": build_time,
-        "environment": environment,
-        "config_posture": config_posture,
-    }
+from .core.app_factory import (
+    create_version_handler as _create_version_handler,
+    sem_bff_version as _sem_bff_version_default,
+)
+sem_bff_version = _create_version_handler(
+    source_commit_fn=_bff_source_commit,
+    auth_stub_fn=_bff_auth_stub_enabled,
+    auth_mode_fn=_bff_auth_mode,
+    dev_login_fn=_dev_login_enabled,
+)
 def _sem_bff_health_payload() -> Dict[str, Any]:
     commit = _bff_source_commit()
     payload = health_payload(
@@ -11781,11 +11764,40 @@ from .shared.module_retirement_guard import (
 
 class _BffMainModule(_ModuleRetirementGuard):
     def _on_setattr(self, name: str, value: Any) -> None:
-        if name == "read_store" and hasattr(self, "app_deps") and hasattr(self.app_deps, "read_surface"):
-            if value is not self.app_deps.read_surface:
-                self.app_deps.read_surface._active_delegate = value
-            else:
-                self.app_deps.read_surface._active_delegate = None
+        if name == "read_store":
+            if hasattr(self, "app_deps") and hasattr(self.app_deps, "read_surface"):
+                if value is not self.app_deps.read_surface:
+                    self.app_deps.read_surface._active_delegate = value
+                else:
+                    self.app_deps.read_surface._active_delegate = None
+            try:
+                from .assistant.management_service import set_read_store
+                if hasattr(self, "app_deps") and value is getattr(self.app_deps, "read_store", None):
+                    set_read_store(None)
+                else:
+                    set_read_store(value)
+            except Exception:
+                pass
+        elif name == "OpenClawOpsClient":
+            try:
+                from .assistant.management_service import set_openclaw_ops_client
+                from .openclaw_ops_client import OpenClawOpsClient as _OrigClient
+                if value is not _OrigClient:
+                    set_openclaw_ops_client(value)
+                else:
+                    set_openclaw_ops_client(None)
+            except Exception:
+                pass
+        elif name == "OpenClawOpsClientError":
+            try:
+                from .assistant.management_service import set_openclaw_ops_client_error
+                from .openclaw_ops_client import OpenClawOpsClientError as _OrigErr
+                if value is not _OrigErr:
+                    set_openclaw_ops_client_error(value)
+                else:
+                    set_openclaw_ops_client_error(None)
+            except Exception:
+                pass
 
 import sys as _sys
 _sys.modules[__name__].__class__ = _BffMainModule
