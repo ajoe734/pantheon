@@ -1064,57 +1064,178 @@ _management_ai_ensure_session = management_ai_ensure_session
 _management_ai_server_conversation_context = management_ai_server_conversation_context
 _management_ai_store_attachments = management_ai_store_attachments
 
-def _resolve_main() -> Any:
-    return sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+from ..openclaw_ops_client import (
+    OpenClawOpsClient as _DefaultOpenClawOpsClient,
+    OpenClawOpsClientError as _DefaultOpenClawOpsClientError,
+)
+
+_extract_identity = auth_policy.extract_identity
+_require_read_role = auth_policy.require_read_role
+_bff_error = auth_policy.bff_error
+_first_nonblank = auth_policy.first_nonblank
+_capabilities_for_identity = auth_policy.capabilities_for_identity
+from ..models import redact_evidence_refs
 
 
-class _DynamicProxy:
+def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
+    for key in ("idempotency_key", "idempotencyKey"):
+        if payload and key in payload and payload[key] is not None:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_HEADER,
+                "Idempotency-Key must be supplied via HTTP header, not request body",
+                precondition_failed="idempotency_header_required",
+            )
+
+
+def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
+    for field in fields:
+        clean = str(payload.get(field) or "").strip()
+        if clean:
+            return clean
+    label = fields[0] if fields else "value"
+    raise _bff_error(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        f"{label} is required",
+        f"Agora request requires a non-empty {label}",
+        precondition_failed=label,
+    )
+
+
+_MGMT_AI_SESSION_TTL_SECONDS = DEFAULT_MANAGEMENT_AI_SESSION_TTL_SECONDS
+_MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS = [
+    "Review recent incidents via /bff/incidents",
+    "View active alerts via /bff/sse/alerts",
+    "Inspect governance review queue via /bff/management/reviews",
+]
+
+_sse_buffers: Dict[str, deque] = {"ask": deque(maxlen=500), "approval": deque(maxlen=500)}
+_sse_subscribers: Dict[str, list[asyncio.Queue]] = {"ask": [], "approval": []}
+
+# ---------------------------------------------------------------------------
+# DI Seams: read_store, OpenClawOpsClient, OpenClawOpsClientError
+# Pattern follows set_management_ai_conversation_store at line 92.
+# ---------------------------------------------------------------------------
+
+_READ_STORE: Optional[Any] = None
+
+
+def get_read_store() -> Any:
+    global _READ_STORE
+    if _READ_STORE is None:
+        try:
+            from ..ports import create_in_memory_read_surface_ports
+            _READ_STORE = create_in_memory_read_surface_ports()
+        except Exception:
+            pass
+    return _READ_STORE
+
+
+def set_read_store(store: Optional[Any]) -> None:
+    global _READ_STORE
+    _READ_STORE = store
+
+
+def reset_read_store() -> None:
+    global _READ_STORE
+    _READ_STORE = None
+
+
+class _ReadStoreProxy:
+    """Proxy object so direct module-level references to `read_store` resolve to `get_read_store()`."""
+
+    def __getattr__(self, name: str) -> Any:
+        target = get_read_store()
+        if target is None:
+            raise RuntimeError("read_store is not configured in management_service")
+        return getattr(target, name)
+
+
+read_store = _ReadStoreProxy()
+
+_OPENCLAW_OPS_CLIENT: Optional[Any] = None
+
+
+def get_openclaw_ops_client() -> Any:
+    global _OPENCLAW_OPS_CLIENT
+    if _OPENCLAW_OPS_CLIENT is not None:
+        return _OPENCLAW_OPS_CLIENT
+    return _DefaultOpenClawOpsClient
+
+
+def set_openclaw_ops_client(client_or_cls: Optional[Any]) -> None:
+    global _OPENCLAW_OPS_CLIENT
+    _OPENCLAW_OPS_CLIENT = client_or_cls
+
+
+def reset_openclaw_ops_client() -> None:
+    global _OPENCLAW_OPS_CLIENT
+    _OPENCLAW_OPS_CLIENT = None
+
+
+class _OpenClawOpsClientProxy:
+    """Proxy callable so direct `OpenClawOpsClient(...)` calls instantiate via `get_openclaw_ops_client()`."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        target = get_openclaw_ops_client()
+        if callable(target):
+            return target(*args, **kwargs)
+        return target
+
+    def __getattr__(self, name: str) -> Any:
+        target = get_openclaw_ops_client()
+        return getattr(target, name)
+
+
+OpenClawOpsClient = _OpenClawOpsClientProxy()
+
+_OPENCLAW_OPS_CLIENT_ERROR: type[Exception] = _DefaultOpenClawOpsClientError
+
+
+def get_openclaw_ops_client_error() -> type[Exception]:
+    global _OPENCLAW_OPS_CLIENT_ERROR
+    return _OPENCLAW_OPS_CLIENT_ERROR
+
+
+def set_openclaw_ops_client_error(err_cls: Optional[type[Exception]]) -> None:
+    global _OPENCLAW_OPS_CLIENT_ERROR
+    _OPENCLAW_OPS_CLIENT_ERROR = err_cls if err_cls is not None else _DefaultOpenClawOpsClientError
+
+
+def reset_openclaw_ops_client_error() -> None:
+    global _OPENCLAW_OPS_CLIENT_ERROR
+    _OPENCLAW_OPS_CLIENT_ERROR = _DefaultOpenClawOpsClientError
+
+
+OpenClawOpsClientError = _DefaultOpenClawOpsClientError
+
+
+class _MainCallable:
+    """Forwarder for remaining main-composed helpers to preserve existing behavior."""
+
     def __init__(self, name: str) -> None:
         self._name = name
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        m = _resolve_main()
+        m = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
         if m is not None and hasattr(m, self._name):
             return getattr(m, self._name)(*args, **kwargs)
-        raise RuntimeError(f"Unresolved dynamic dependency: {self._name}")
+        raise RuntimeError(f"Unresolved management NL helper: {self._name}")
 
     def __getattr__(self, item: str) -> Any:
-        m = _resolve_main()
+        m = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
         if m is not None and hasattr(m, self._name):
-            target = getattr(m, self._name)
-            return getattr(target, item)
+            return getattr(getattr(m, self._name), item)
         raise AttributeError(f"{self._name} has no attribute {item}")
 
-    def __iter__(self) -> Any:
-        m = _resolve_main()
-        if m is not None and hasattr(m, self._name):
-            return iter(getattr(m, self._name))
-        return iter([])
 
-    def __getitem__(self, key: Any) -> Any:
-        m = _resolve_main()
-        if m is not None and hasattr(m, self._name):
-            return getattr(m, self._name)[key]
-        raise KeyError(key)
-
-    def __bool__(self) -> bool:
-        m = _resolve_main()
-        if m is not None and hasattr(m, self._name):
-            return bool(getattr(m, self._name))
-        return False
-
-
-_DYNAMIC_NAMES = [
-    "_extract_identity",
-    "_require_read_role",
-    "_reject_body_idempotency_key",
-    "_agora_required_text",
+_REMAINING_MAIN_HELPERS = [
     "_mgmt_nl_validate_question_size",
     "_mgmt_nl_parse_control_command",
     "_mgmt_nl_high_risk_classify",
     "_mgmt_nl_record_high_risk_refusal",
     "_mgmt_nl_caller_tenant",
-    "_first_nonblank",
     "_mgmt_nl_trim_text",
     "_mgmt_nl_normalize_focus",
     "_mgmt_nl_normalize_conversation_context",
@@ -1135,8 +1256,6 @@ _DYNAMIC_NAMES = [
     "_management_nl_publish_completed_events",
     "_publish_event",
     "_record_agora_audit_event",
-    "_bff_error",
-    "_capabilities_for_identity",
     "_assistant_control_mode_for_identity",
     "_management_ai_audit_href",
     "_mgmt_nl_synthesize_answer",
@@ -1147,20 +1266,12 @@ _DYNAMIC_NAMES = [
     "_mgmt_nl_build_context_pack",
     "_mgmt_nl_jsonish",
     "_mgmt_nl_maybe_provider_answer",
-    "redact_evidence_refs",
-    "read_store",
-    "_sse_buffers",
-    "_sse_subscribers",
-    "_MGMT_AI_SESSION_TTL_SECONDS",
-    "_MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS",
     "_mgmt_nl_provider_prompt",
     "_mgmt_nl_surface_confidence",
-    "OpenClawOpsClient",
-    "OpenClawOpsClientError",
 ]
-for _n in _DYNAMIC_NAMES:
+for _n in _REMAINING_MAIN_HELPERS:
     if _n not in globals():
-        globals()[_n] = _DynamicProxy(_n)
+        globals()[_n] = _MainCallable(_n)
 
 
 _MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
@@ -2299,7 +2410,7 @@ async def _bff_management_nl_ask_stream_impl(
                         "error_message": _management_ai_summary_value(evt.get("message")),
                     }
                 yield _mgmt_nl_sse_frame(evt)
-        except OpenClawOpsClientError as exc:
+        except (OpenClawOpsClientError, get_openclaw_ops_client_error()) as exc:
             had_error = True
             failure_event = {
                 "event_type": "management_ai.provider.failed",

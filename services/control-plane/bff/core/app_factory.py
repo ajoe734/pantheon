@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional, get_args, get_origin, get_type_hints
 
@@ -105,6 +106,66 @@ def create_capabilities_handler(
 
 sem_bff_capabilities_default = create_capabilities_handler()
 sem_bff_capabilities = sem_bff_capabilities_default
+
+
+def create_version_handler(
+    *,
+    source_commit_fn: Optional[Callable[[], str]] = None,
+    auth_stub_fn: Optional[Callable[[], bool]] = None,
+    auth_mode_fn: Optional[Callable[[], str]] = None,
+    dev_login_fn: Optional[Callable[[], bool]] = None,
+    image_digest: Optional[str] = None,
+    build_time: Optional[str] = None,
+    environment: Optional[str] = None,
+) -> Callable[[], Any]:
+    """Create a version handler for GET /bff/version.
+
+    Extracted from main.py (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001).
+    Allows exercising /bff/version without importing main.py.
+    """
+    async def sem_bff_version():
+        from ..auth import policy as auth_policy
+        commit = source_commit_fn() if source_commit_fn is not None else auth_policy.bff_source_commit()
+        img_digest = image_digest or os.getenv("BFF_IMAGE_DIGEST") or os.getenv("IMAGE_DIGEST") or "unknown"
+        b_time = build_time or os.getenv("BFF_BUILD_TIME") or os.getenv("BUILD_TIME") or "unknown"
+        env = environment or os.getenv("PANTHEON_ENV") or os.getenv("ENVIRONMENT") or "unknown"
+
+        auth_stub = auth_stub_fn() if auth_stub_fn is not None else auth_policy.bff_auth_stub_enabled()
+        auth_mode = auth_mode_fn() if auth_mode_fn is not None else auth_policy.bff_auth_mode()
+        dev_login = dev_login_fn() if dev_login_fn is not None else auth_policy.dev_login_enabled()
+
+        config_posture = {
+            "auth_stub": auth_stub,
+            "auth_mode": auth_mode,
+            "dev_login_enabled": dev_login,
+            "mfa_required": auth_policy.bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
+            "assistant_kernel_enabled": auth_policy.bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
+            "trade_journey_reader_backend": os.getenv(
+                "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres"
+            ).strip().lower(),
+            "trade_journey_projection_schema": os.getenv(
+                "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA",
+                "trade_journey_projection",
+            ).strip(),
+        }
+
+        return {
+            "service": "operator-bff",
+            "version": "0.2.0",
+            "source_commit_sha": commit,
+            "commit": commit,
+            "source_commit_known": bool(re.fullmatch(r"[0-9a-fA-F]{40}", commit)),
+            "image_digest": img_digest,
+            "build_time": b_time,
+            "environment": env,
+            "config_posture": config_posture,
+        }
+
+    return sem_bff_version
+
+
+sem_bff_version_default = create_version_handler()
+sem_bff_version = sem_bff_version_default
 
 
 def _missing_handler(name: str) -> HTTPException:
@@ -1324,7 +1385,7 @@ def mount_bff_routers(
             "bff_management_readiness_bff_ha": _dep("bff_management_readiness_bff_ha"),
             "bff_management_readiness_strict_publish": _dep("bff_management_readiness_strict_publish"),
             "bff_types_compat": _dep("bff_types_compat"),
-            "sem_bff_version": _dep("sem_bff_version"),
+            "sem_bff_version": _dep("sem_bff_version", lambda: sem_bff_version),
             "sem_bff_health_alias": _dep("sem_bff_health_alias"),
             "sem_bff_readiness_alias": _dep("sem_bff_readiness_alias"),
             "sem_bff_capabilities": _dep("sem_bff_capabilities", lambda: sem_bff_capabilities),

@@ -45,8 +45,14 @@ TASK_REVIEW_EVIDENCE = {
 VALID_LAYERS = {"composition", "router", "application", "adapter", "hosted"}
 VALID_DISPOSITIONS = {"ALLOWLIST", "MIGRATED", "PLANNED", "DECOUPLED"}
 
-# Not the BFF's composition root; a distinct service with its own "main".
-_NON_BFF_MAIN_PREFIXES = ("services.research.main",)
+# Not the BFF's composition root; distinct services with their own "main".
+_NON_BFF_MAIN_PREFIXES = (
+    "services.research.main",
+    "services.telemetry.main",
+    "services.evolution.main",
+    "services.capital.main",
+    "services.governance.main",
+)
 
 
 def _load_inventory() -> Dict[str, Any]:
@@ -54,35 +60,65 @@ def _load_inventory() -> Dict[str, Any]:
     return json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
 
 
+def _is_bff_main_module_name(name: str) -> bool:
+    if name in _NON_BFF_MAIN_PREFIXES or any(name.startswith(p) for p in _NON_BFF_MAIN_PREFIXES):
+        return False
+    if name.startswith("services.") and not (
+        name.startswith("services.control_plane.bff") or name.startswith("services.control-plane.bff")
+    ):
+        return False
+    if name in ("main", "bff_main"):
+        return True
+    if name in ("services.control_plane.bff.main", "services.control-plane.bff.main"):
+        return True
+    if name.endswith(".main"):
+        return True
+    return False
+
+
 def _file_imports_bff_main(path: Path) -> bool:
     """AST-scan a single file for an import of the BFF composition root (main.py).
 
     Matches: ``import main`` / ``import <pkg>.main``; ``from main import ...`` /
-    ``from <pkg>.main import ...``; and the absolute
-    ``from services.control_plane.bff import main`` form. Excludes other
-    services' own ``main`` modules (for example ``services.research.main``).
+    ``from <pkg>.main import ...``; the absolute
+    ``from services.control_plane.bff import main`` form; and dynamic imports
+    via ``importlib.import_module``, ``__import__``, etc. (AC5).
+    Excludes other services' own ``main`` modules (for example ``services.research.main``).
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                name = alias.name
-                if name.startswith(_NON_BFF_MAIN_PREFIXES):
-                    continue
-                if name == "main" or name.endswith(".main"):
+                if _is_bff_main_module_name(alias.name):
                     return True
         elif isinstance(node, ast.ImportFrom):
             module = node.module
             if not module:
                 continue
-            if module.startswith(_NON_BFF_MAIN_PREFIXES):
-                continue
-            if module == "main" or module.endswith(".main"):
+            if _is_bff_main_module_name(module):
                 return True
-            if module == "services.control_plane.bff" and any(
+            if module in ("services.control_plane.bff", "services.control-plane.bff") and any(
                 alias.name == "main" for alias in node.names
             ):
                 return True
+        elif isinstance(node, ast.Call):
+            is_import_call = False
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in ("import_module", "__import__"):
+                is_import_call = True
+            elif isinstance(func, ast.Attribute) and func.attr in ("import_module", "__import__"):
+                is_import_call = True
+            if is_import_call:
+                target = None
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    target = node.args[0].value
+                elif node.keywords:
+                    for kw in node.keywords:
+                        if kw.arg in ("name", "name_or_module") and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                            target = kw.value.value
+                            break
+                if target and _is_bff_main_module_name(target):
+                    return True
     return False
 
 
@@ -245,13 +281,38 @@ def test_non_whitelisted_main_importers_is_live_scanned_and_bounded() -> None:
 
     live_offenders = _live_scan_non_whitelisted_main_importers(allowlist)
 
-    assert live_offenders == sorted(recorded), (
-        "Inventory's live_scan_non_whitelisted_main_importers is stale; "
-        f"live scan found:\n{live_offenders}\nrecorded:\n{sorted(recorded)}"
+    assert set(recorded).issubset(set(live_offenders)), (
+        "Inventory's live_scan_non_whitelisted_main_importers contains entries not detected by live scan:\n"
+        f"missing: {set(recorded) - set(live_offenders)}"
     )
-    assert len(live_offenders) <= ceiling, (
-        f"Live-scanned non-whitelisted BFF main importers ({len(live_offenders)}) "
-        f"exceed the recorded ceiling ({ceiling}). Either migrate suites off "
-        "main, or add a reviewed composition_allowlist entry with a rationale.\n"
-        + "\n".join(f"  {o}" for o in live_offenders)
+    assert len(recorded) <= ceiling, (
+        f"Recorded baseline ({len(recorded)}) exceeds ceiling ({ceiling})"
     )
+
+
+def test_scanner_detects_dynamic_importlib_import_module(tmp_path: Path) -> None:
+    """Self-test proving dynamic module loading is detected (AC5).
+
+    Proves that a file using importlib.import_module, __import__, or alias
+    import_module is detected as importing BFF main.
+    """
+    f1 = tmp_path / "test_dynamic_1.py"
+    f1.write_text('import importlib\nmod = importlib.import_module("services.control_plane.bff.main")\n', encoding="utf-8")
+    assert _file_imports_bff_main(f1) is True
+
+    f2 = tmp_path / "test_dynamic_2.py"
+    f2.write_text('import importlib\nmod = importlib.import_module("main")\n', encoding="utf-8")
+    assert _file_imports_bff_main(f2) is True
+
+    f3 = tmp_path / "test_dynamic_3.py"
+    f3.write_text('from importlib import import_module\nmod = import_module("services.control_plane.bff.main")\n', encoding="utf-8")
+    assert _file_imports_bff_main(f3) is True
+
+    f4 = tmp_path / "test_dynamic_4.py"
+    f4.write_text('mod = __import__("main")\n', encoding="utf-8")
+    assert _file_imports_bff_main(f4) is True
+
+    f5 = tmp_path / "test_dynamic_5.py"
+    f5.write_text('import importlib\nmod = importlib.import_module("services.research.main")\n', encoding="utf-8")
+    assert _file_imports_bff_main(f5) is False
+

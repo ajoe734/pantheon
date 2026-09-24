@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
+import inspect
 import logging
 import os
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
@@ -91,7 +92,21 @@ def replay_submitted_commands(
                     CommandStatus.SUBMITTED,
                 )
             if callable(process_command):
-                res = process_command(command_id)
+                try:
+                    sig = inspect.signature(process_command)
+                    params = sig.parameters
+                    accepts_store = "command_store" in params or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+                    )
+                    if accepts_store:
+                        res = process_command(command_id, command_store=command_store)
+                    else:
+                        res = process_command(command_id)
+                except (ValueError, TypeError):
+                    try:
+                        res = process_command(command_id, command_store=command_store)
+                    except TypeError:
+                        res = process_command(command_id)
                 if asyncio.iscoroutine(res):
                     task = task_factory(res, name=f"replay-command-{command_id}")
                     tasks.append(task)
