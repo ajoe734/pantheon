@@ -298,8 +298,13 @@ from .core.http_security import _cors_origin_allowed
 from .core.errors import _pack_d_direct_error_response
 from .core.lifespan import (
     create_lifespan,
+    recoverable_capital_command,
     refresh_provider_readiness,
+    replay_submitted_commands,
+    retryable_terminal_capital_command,
 )
+_recoverable_capital_command = recoverable_capital_command
+_retryable_terminal_capital_command = retryable_terminal_capital_command
 from .auth.service import ProviderReadinessCache
 from .core.app_factory import build_bff_app
 
@@ -340,7 +345,11 @@ provider_readiness_cache = ProviderReadinessCache(
     probe=_default_openclaw_provider_probe,
     provider="openclaw",
 )
-_bff_lifespan = create_lifespan(provider_readiness_cache)
+_bff_lifespan = create_lifespan(
+    provider_readiness_cache,
+    command_store=lambda: command_store,
+    process_command=lambda cmd_id, **kw: _process_command_stub(cmd_id, **kw),
+)
 
 app = build_bff_app(
     lifespan=_bff_lifespan,
@@ -4934,26 +4943,14 @@ from .personas.routes.common import (
     ManagementReadTimeout as _ManagementReadTimeout,
     ManagementReadSaturated as _ManagementReadSaturated,
     discard_late_management_read_result as _discard_late_management_read_result,
-    run_management_read as _domain_run_management_read,
+    run_management_read,
 )
+_run_management_read = run_management_read
 
-async def _run_management_read(
-    func: Callable[..., Any],
-    *args: Any,
-    timeout_seconds: Optional[float] = None,
-    capacity: Optional[threading.BoundedSemaphore] = None,
-    executor: Optional[Executor] = None,
-    **kwargs: Any,
-) -> Any:
-    budget = _management_read_timeout_seconds() if timeout_seconds is None else timeout_seconds
-    return await _domain_run_management_read(
-        func,
-        *args,
-        timeout_seconds=budget,
-        capacity=capacity,
-        executor=executor,
-        **kwargs,
-    )
+def _build_management_evidence_payload(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    from .management_read_models.service import ManagementService
+    svc = ManagementService(read_store=lambda: read_store, utc_now=utc_now)
+    return svc.get_evidence(*args, **kwargs)
 async def _read_management_source_connector_registry(
     store: Any,
 ) -> Dict[str, Any]:
@@ -6472,9 +6469,10 @@ from .governance.human_inbox import (
     _submitted_promotion_review_records,
     human_inbox_surface_timeout_seconds,
 )
-_MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
-    Optional[ManagementNlCommandReservation]
-] = ContextVar("management_nl_command_reservation", default=None)
+from .assistant.management_service import (
+    _MGMT_NL_COMMAND_RESERVATION_CONTEXT,
+    MGMT_NL_COMMAND_RESERVATION_CONTEXT,
+)
 _MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
 _MGMT_NL_FOCUS_ALIASES = {
     "persona": "persona_fleet",
@@ -8062,139 +8060,20 @@ def _mgmt_nl_command_idempotency_store() -> ManagementNlCommandIdempotencyStore:
 # route name (not the literal per-transport HTTP path) so a client can
 # switch between the JSON and SSE transports with the same Idempotency-Key
 # and still get exactly-once command admission/replay.
-_MGMT_NL_COMMAND_ROUTE = "POST /bff/management/nl/ask"
-def _mgmt_nl_command_scope(
-    *,
-    actor_id: str,
-    tenant_id: str,
-    resolved_key: str,
-) -> ManagementNlCommandScope:
-    return ManagementNlUseCase.scope(
-        actor_id=actor_id,
-        tenant_id=tenant_id,
-        route=_MGMT_NL_COMMAND_ROUTE,
-        resolved_key=resolved_key,
-    )
-def _mgmt_nl_result_is_terminal(result: Optional[Mapping[str, Any]]) -> bool:
-    if not isinstance(result, Mapping):
-        return False
-    data = result.get("data") if isinstance(result.get("data"), Mapping) else {}
-    meta = result.get("meta") if isinstance(result.get("meta"), Mapping) else {}
-    states = {
-        str(value or "").strip().lower()
-        for value in (
-            data.get("lifecycle_status"),
-            data.get("lifecycleStatus"),
-            data.get("status"),
-            meta.get("lifecycle_status"),
-            meta.get("lifecycleStatus"),
-            meta.get("status"),
-        )
-        if str(value or "").strip()
-    }
-    return not states.intersection({"accepted", "processing", "pending", "queued", "in_progress"})
-def _mgmt_nl_raise_command_idempotency_error(exc: Exception, *, display_key: str) -> None:
-    if isinstance(exc, ManagementNlCommandPayloadConflict):
-        raise _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Idempotency key was already used with a different payload",
-            f"Key {display_key!r} is bound to a different Management NL command",
-            precondition_failed="idempotency_conflict",
-            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-        ) from exc
-    if isinstance(exc, ManagementNlCommandRecoveryRequired):
-        raise _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Management NL command outcome is uncertain",
-            "The command will not be executed again until its prior outcome is reconciled.",
-            precondition_failed="idempotency_recovery_required",
-            suggestion="Inspect the durable conversation/provider audit and reconcile this key explicitly",
-        ) from exc
-    raise _bff_error(
-        503,
-        ErrorCode.DEPENDENCY_UNAVAILABLE,
-        "Management NL command admission store is unavailable",
-        str(exc),
-        precondition_failed="management_nl_command_idempotency_store",
-        suggestion="Restore the durable command idempotency volume before retrying",
-    ) from exc
-def _mgmt_nl_command_wait_seconds() -> float:
-    raw = os.getenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_WAIT_SECONDS", "").strip()
-    if raw:
-        try:
-            return max(float(raw), 0.01)
-        except (TypeError, ValueError):
-            pass
-    provider_raw = os.getenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "180").strip()
-    try:
-        provider_seconds = max(float(provider_raw), 0.1)
-    except (TypeError, ValueError):
-        provider_seconds = 180.0
-    return provider_seconds + 10.0
-def _mgmt_nl_command_poll_seconds() -> float:
-    raw = os.getenv(
-        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_POLL_SECONDS",
-        "0.05",
-    ).strip()
-    try:
-        return min(max(float(raw), 0.005), 1.0)
-    except (TypeError, ValueError):
-        return 0.05
-def _mgmt_nl_raise_command_wait_timeout() -> NoReturn:
-    raise _bff_error(
-        409,
-        ErrorCode.IDEMPOTENCY_CONFLICT,
-        "Management NL command is still in progress",
-        "An exact concurrent request owns this idempotency key and has not reached a terminal result.",
-        precondition_failed="idempotency_in_progress",
-        suggestion="Retry the same payload and key after the current provider turn completes",
-    )
-def _mgmt_nl_use_case_admission_error(exc: Exception, display_key: str) -> NoReturn:
-    _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
-    raise AssertionError("unreachable")  # pragma: no cover - _raise always raises
-# BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: the sole owner of Management NL
-# durable command admission/replay/completion decision logic. Both
-# bff_management_nl_ask and bff_management_nl_ask_stream call this single
-# instance -- see services/control-plane/bff/assistant/management_service.py.
-_MANAGEMENT_NL_USE_CASE = ManagementNlUseCase(
-    ManagementNlUseCaseDeps(
-        command_store=_mgmt_nl_command_idempotency_store,
-        wait_seconds=_mgmt_nl_command_wait_seconds,
-        poll_seconds=_mgmt_nl_command_poll_seconds,
-        raise_admission_error=_mgmt_nl_use_case_admission_error,
-        raise_wait_timeout=_mgmt_nl_raise_command_wait_timeout,
-    )
+from .assistant.management_service import (
+    MANAGEMENT_NL_COMMAND_ROUTE as _MGMT_NL_COMMAND_ROUTE,
+    MANAGEMENT_NL_USE_CASE as _MANAGEMENT_NL_USE_CASE,
+    _mgmt_nl_command_scope,
+    _mgmt_nl_command_admit,
+    _mgmt_nl_command_complete,
+    _mgmt_nl_command_mark_uncertain,
+    _mgmt_nl_raise_command_idempotency_error,
+    _mgmt_nl_command_wait_seconds,
+    _mgmt_nl_command_poll_seconds,
+    _mgmt_nl_raise_command_wait_timeout,
+    _mgmt_nl_use_case_admission_error,
+    _mgmt_nl_result_is_terminal,
 )
-async def _mgmt_nl_command_admit(
-    *,
-    scope: ManagementNlCommandScope,
-    request_hash: str,
-    display_key: str,
-) -> tuple[Optional[ManagementNlCommandReservation], Optional[Dict[str, Any]]]:
-    return await _MANAGEMENT_NL_USE_CASE.admit(
-        scope=scope,
-        request_hash=request_hash,
-        display_key=display_key,
-    )
-async def _mgmt_nl_command_complete(
-    reservation: Optional[ManagementNlCommandReservation],
-    result: Dict[str, Any],
-    *,
-    display_key: str,
-) -> None:
-    await _MANAGEMENT_NL_USE_CASE.complete(reservation, result, display_key=display_key)
-async def _mgmt_nl_command_mark_uncertain(
-    reservation: Optional[ManagementNlCommandReservation],
-    *,
-    reason: str,
-) -> None:
-    await _MANAGEMENT_NL_USE_CASE.mark_uncertain(
-        reservation,
-        reason=reason,
-        on_failure=lambda: log.exception("Failed to mark Management NL command reservation uncertain"),
-    )
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
     statuses = [v.get("status", "unavailable") for v in surfaces.values() if isinstance(v, dict)]
     if not statuses:
@@ -9743,1147 +9622,25 @@ def _mgmt_nl_attempt_provider_answer(
     if isinstance(data, dict) and data.get("redaction") is not None:
         status["redaction"] = data.get("redaction")
     return answer, status, actions
-_MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS = 3.0
-_MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS = 30.0
-_MGMT_NL_PROVIDER_FINALIZE_TASKS: Set["asyncio.Task[Any]"] = set()
-def _mgmt_nl_provider_inline_grace_seconds() -> float:
-    """Seconds POST /bff/management/nl/ask waits inline for the assistant provider
-    before returning 202 with the deterministic answer and finishing the provider
-    turn in the background. Override with
-    PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS."""
-    raw = os.getenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS")
-    if raw is None or not str(raw).strip():
-        return _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
-    return value if value > 0 else _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
-def _mgmt_nl_provider_inline_wait_seconds(_control_mode: Dict[str, Any]) -> float:
-    """Product assistant turns never hold a development worktree lease."""
-
-    return _mgmt_nl_provider_inline_grace_seconds()
-def _mgmt_nl_stream_read_timeout_seconds() -> float:
-    raw = os.getenv("PANTHEON_MANAGEMENT_NL_STREAM_READ_TIMEOUT_SECONDS")
-    if raw is None or not str(raw).strip():
-        return _MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return _MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS
-    return value if value > 0 else _MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS
-def _mgmt_nl_sse_frame(payload: Any) -> str:
-    if payload == "[DONE]":
-        return "data: [DONE]\n\n"
-    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
-def _mgmt_nl_json_response_payload(response: JSONResponse) -> Dict[str, Any]:
-    raw = getattr(response, "body", b"") or b""
-    if isinstance(raw, str):
-        raw_text = raw
-    else:
-        raw_text = raw.decode("utf-8", errors="replace")
-    try:
-        parsed = json.loads(raw_text) if raw_text else {}
-    except (TypeError, ValueError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-def _mgmt_nl_cached_result_sse_frames(
-    cached: Optional[Dict[str, Any]],
-    *,
-    session_id: str,
-    trace_id: str,
-    message_id: str,
-) -> Iterator[str]:
-    """Render a durably-stored terminal Management NL result as the same
-    meta/delta/done/[DONE] SSE frame shape a fresh provider turn would
-    produce, for both control-command and provider-answer replays.
-
-    BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: the SSE transport must not call
-    the provider a second time for an exact-duplicate idempotency key -- a
-    durable terminal result (found via ``_mgmt_nl_command_admit``) is
-    replayed from here instead.
-    """
-    cached_data = cached.get("data") if isinstance(cached, dict) else {}
-    cached_data = cached_data if isinstance(cached_data, dict) else {}
-    answer = str(cached_data.get("answer") or "")
-    provider_status = cached_data.get("provider_status") or cached_data.get("providerStatus") or {}
-    ui_actions = cached_data.get("ui_actions") or cached_data.get("uiActions") or []
-    command_kind = cached_data.get("control_command") or cached_data.get("controlCommand")
-    audit_log = cached_data.get("audit_log") or cached_data.get("auditLog")
-    conversation = cached_data.get("conversation")
-    yield _mgmt_nl_sse_frame(
-        {
-            "type": "meta",
-            "session_id": cached_data.get("session_id") or session_id,
-            "trace_id": cached_data.get("trace_id") or trace_id,
-            "message_id": cached_data.get("message_id") or message_id,
-            "control_command": command_kind,
-            "replayed": True,
-        }
-    )
-    if answer:
-        yield _mgmt_nl_sse_frame({"type": "delta", "text": answer})
-    done_frame: Dict[str, Any] = {
-        "type": "done",
-        "text": answer,
-        "provider_status": provider_status,
-        "ui_actions": ui_actions,
-        "control_command": command_kind,
-        "replayed": True,
-    }
-    if command_kind:
-        done_frame["audit_log"] = audit_log
-        done_frame["conversation"] = conversation
-    yield _mgmt_nl_sse_frame(done_frame)
-    yield _mgmt_nl_sse_frame("[DONE]")
-def _mgmt_nl_finalize_result(
-    base_result: Dict[str, Any],
-    *,
-    answer: str,
-    provider_status: Dict[str, Any],
-    actions: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Rewrite a processing nl/ask result into a completed one for the
-    idempotency record once the provider answer is available."""
-    completed_data = {
-        **base_result.get("data", {}),
-        "status": "completed",
-        "lifecycle_status": "completed",
-        "answer": answer,
-        "provider_status": provider_status,
-        "ui_actions": actions,
-        "actions": actions,
-    }
-    completed_meta = {
-        **base_result.get("meta", {}),
-        "status": "completed",
-        "lifecycle_status": "completed",
-        "provider_status": provider_status,
-    }
-    return {**base_result, "data": completed_data, "meta": completed_meta}
-async def _mgmt_nl_finalize_provider_turn(
-    *,
-    provider_task: "asyncio.Future[Any]",
-    deterministic_answer: str,
-    session_id: str,
-    message_id: str,
-    assistant_turn_id: str,
-    trace_id: str,
-    focus: str,
-    resolved_key: str,
-    audit_log_href: str,
-    conversation_href: str,
-    base_result: Dict[str, Any],
-    command_reservation: Optional[ManagementNlCommandReservation] = None,
-) -> None:
-    """Finish a nl/ask exchange whose provider call exceeded the inline grace
-    window: await the in-flight agent run, then append the assistant turn exactly
-    once and rewrite the idempotency record from processing -> completed."""
-    try:
-        provider_answer, provider_status, actions = await provider_task
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        log.warning("Management NL async provider turn failed", exc_info=True)
-        provider_answer, actions = None, []
-        provider_status = _mgmt_nl_provider_status(
-            provider=_mgmt_nl_provider_name(),
-            enabled=True,
-            status="degraded",
-            reason="provider_async_failed",
-            run_id=trace_id,
-        )
-    answer = provider_answer or deterministic_answer
-    try:
-        _management_ai_record_event(
-            {
-                "event_type": "management_ai.exchange.completed",
-                "session_id": session_id,
-                "message_id": message_id,
-                "assistant_turn_id": assistant_turn_id,
-                "trace_id": trace_id,
-                "route": "POST /bff/management/nl/ask",
-                "answer": _management_ai_summary_value(answer),
-                "provider_status": provider_status,
-                "actions": actions,
-                "action_count": len(actions),
-                "async_finalized": True,
-            }
-        )
-        _management_ai_append_turn(
-            turn_id=assistant_turn_id,
-            session_id=session_id,
-            role="assistant",
-            text=answer,
-            created_at=utc_now(),
-            trace_id=trace_id,
-            provider_status=provider_status,
-            ui_actions=actions,
-        )
-        _management_nl_publish_completed_events(
-            session_id=session_id,
-            message_id=message_id,
-            assistant_turn_id=assistant_turn_id,
-            trace_id=trace_id,
-            focus=focus,
-            provider_status=provider_status,
-            action_count=len(actions),
-            audit_log_href=audit_log_href,
-            conversation_href=conversation_href,
-        )
-        final_result = _mgmt_nl_finalize_result(
-            base_result,
-            answer=answer,
-            provider_status=provider_status,
-            actions=actions,
-        )
-        await _mgmt_nl_command_complete(
-            command_reservation,
-            final_result,
-            display_key=resolved_key,
-        )
-    except Exception:
-        log.warning("Failed to persist async-finalised Management NL turn", exc_info=True)
-        await _mgmt_nl_command_mark_uncertain(
-            command_reservation,
-            reason="async_provider_finalization_failed",
-        )
-def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
-    task = asyncio.create_task(_mgmt_nl_finalize_provider_turn(**kwargs))
-    _MGMT_NL_PROVIDER_FINALIZE_TASKS.add(task)
-    task.add_done_callback(_MGMT_NL_PROVIDER_FINALIZE_TASKS.discard)
-async def bff_management_nl_ask(
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
-):
-    """Thin fail-closed wrapper: mark a held reservation uncertain exactly
-    once if anything raises after admission granted ownership but before a
-    terminal result was committed, so the key becomes retryable again only
-    after the durable store's recovery window elapses instead of being
-    silently dropped in a dangling ``in_progress`` state forever."""
-    try:
-        return await _bff_management_nl_ask_impl(
-            payload=payload,
-            authorization=authorization,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            x_tenant_id=x_tenant_id,
-            x_pantheon_tenant=x_pantheon_tenant,
-            x_dry_run=x_dry_run,
-        )
-    except Exception:
-        reservation = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.get()
-        if reservation is not None:
-            await _mgmt_nl_command_mark_uncertain(
-                reservation,
-                reason="request_failed_before_terminal_commit",
-            )
-        raise
-async def _bff_management_nl_ask_impl(
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
-):
-    """BFF-B6-001/BFF-B6-003: POST /bff/management/nl/ask — Management NL query endpoint."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-
-    question = _agora_required_text(payload, "question")
-    _mgmt_nl_validate_question_size(question)
-    control_command = _mgmt_nl_parse_control_command(question)
-
-    # BFF-B6-003: high-risk refusal policy — must run before idempotency, surface
-    # collection, session creation, or SSE emission.
-    risk = None if control_command is not None else _mgmt_nl_high_risk_classify(question)
-    if risk is not None:
-        audit_id = _mgmt_nl_record_high_risk_refusal(
-            identity=identity,
-            question=question,
-            risk=risk,
-            recorded_at=utc_now(),
-        )
-        raise _bff_error(
-            403,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "NL query matches high-risk action pattern and was refused by policy",
-            (
-                f"The question contains the pattern {risk['matched_pattern']!r} "
-                f"which falls under the high-risk category '{risk['matched_category']}'. "
-                "This endpoint is read-only and cannot execute management mutations."
-            ),
-            precondition_failed="high_risk_nl_policy",
-            suggestion=risk["safe_alternatives"],
-            details_extra={
-                "refused": True,
-                "matched_category": risk["matched_category"],
-                "matched_pattern": risk["matched_pattern"],
-                "safe_alternatives": risk["safe_alternatives"],
-                "followups": _MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS,
-                "audit_id": audit_id,
-            },
-        )
-
-    # BFF-B6-001-SEC-FIX: resolve caller tenant scope before any retrieval.
-    caller_tenant_id = _mgmt_nl_caller_tenant(
-        identity,
-        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
-    )
-
-    operator_context = _mgmt_nl_trim_text(payload.get("context"), max_len=4000)
-    focus = _mgmt_nl_normalize_focus(payload.get("focus"))
-    client_conversation_hint = _mgmt_nl_normalize_conversation_context(payload.get("conversation"))
-    ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
-    allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
-
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
-    if _request_dry_run_requested(x_dry_run):
-        return _dry_run_success_response(
-            {
-                "status": "accepted",
-                "lifecycle_status": "accepted",
-                "session_id": str(payload.get("session_id") or payload.get("sessionId") or ""),
-                "message_id": "",
-                "trace_id": str(payload.get("trace_id") or payload.get("traceId") or ""),
-                "question": question,
-                "focus": focus,
-                "sources": [],
-                "confidence": "dry_run",
-            },
-            status_code=202,
-            idempotency_key=resolved_key,
-            evidence_kind="ManagementNLQuery",
-            extra_meta={
-                "status": "accepted",
-                "route": "POST /bff/management/nl/ask",
-                "dry_run_mode": "compact_receipt",
-            },
-        )
-
-    command_scope = _mgmt_nl_command_scope(
-        actor_id=identity.operator_id,
-        tenant_id=caller_tenant_id,
-        resolved_key=resolved_key,
-    )
-    command_reservation, cached = await _mgmt_nl_command_admit(
-        scope=command_scope,
-        request_hash=request_hash,
-        display_key=resolved_key,
-    )
-    _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(command_reservation)
-    if cached is not None:
-        cached_data = cached.get("data") if isinstance(cached, dict) else {}
-        _management_ai_record_event(
-            {
-                "event_type": "management_ai.exchange.replayed",
-                "session_id": str((cached_data or {}).get("session_id") or payload.get("session_id") or payload.get("sessionId") or ""),
-                "message_id": str((cached_data or {}).get("message_id") or ""),
-                "trace_id": str((cached_data or {}).get("trace_id") or (cached_data or {}).get("traceId") or ""),
-                "actor_id": identity.operator_id,
-                "focus": focus,
-                "route": "POST /bff/management/nl/ask",
-                "idempotency_key": resolved_key,
-            }
-        )
-        return JSONResponse(status_code=202, content=_management_json_clone(cached))
-
-    now = utc_now()
-    session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
-    message_id = f"mnl-{uuid.uuid4().hex[:16]}"
-    trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
-    if control_command is not None:
-        control_response = _mgmt_nl_handle_control_command(
-            control_command=control_command,
-            payload=payload,
-            identity=identity,
-            caller_tenant_id=caller_tenant_id,
-            focus=focus,
-            ui_snapshot=ui_snapshot,
-            resolved_key=resolved_key,
-            session_id=session_id,
-            message_id=message_id,
-            trace_id=trace_id,
-            now=now,
-        )
-        control_result = json.loads(control_response.body)
-        await _mgmt_nl_command_complete(
-            command_reservation,
-            control_result,
-            display_key=resolved_key,
-        )
-        return control_response
-
-    control_mode = _assistant_control_mode_for_identity(
-        identity,
-        management_session_id=session_id,
-        touch=True,
-    )
-    _mgmt_nl_reject_development_payload(
-        payload,
-        identity=identity,
-        caller_tenant_id=caller_tenant_id,
-        control_mode=control_mode,
-    )
-    _management_ai_ensure_session(
-        session_id=session_id,
-        identity=identity,
-        tenant_id=caller_tenant_id,
-        now=now,
-        title=question,
-    )
-    user_attachments = _management_ai_store_attachments(
-        attachments=payload.get("attachments"),
-        session_id=session_id,
-        turn_id=message_id,
-    )
-    _management_ai_append_turn(
-        turn_id=message_id,
-        session_id=session_id,
-        role="user",
-        text=question,
-        created_at=now,
-        trace_id=trace_id,
-        attachments=user_attachments,
-        ui_snapshot=ui_snapshot,
-    )
-    conversation_context = _management_ai_server_conversation_context(
-        session_id=session_id,
-        client_hint=client_conversation_hint,
-    )
-    current_user_attachments = [
-        _management_ai_attachment_api_payload(item)
-        for item in user_attachments
-    ]
-
-    # BFF-B6-001-SEC-FIX: pass tenant scope to context collection.
-    # _mgmt_nl_collect_context fans out to several read surface port list_* calls,
-    # each a blocking urllib HTTP request to runtime-manager (timeout 2s each). On
-    # the single-worker BFF that blocks the event loop for seconds per request;
-    # run it in a worker thread so concurrent requests (and the FE-BFF gate's
-    # nl/ask burst) are not starved.
-    context_bundle = await asyncio.to_thread(
-        _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
-    )
-    snippets = context_bundle["snippets"]
-    surfaces = context_bundle["surfaces"]
-    evidence_entities = context_bundle.get("evidence_entities") or set()
-    evidence_source_types = context_bundle.get("evidence_source_types") or set()
-
-    deterministic_answer = _mgmt_nl_synthesize_answer(question, snippets, focus)
-    confidence = _mgmt_nl_surface_confidence(surfaces)
-    source_keys = list(snippets.keys())
-    context_pack = _mgmt_nl_build_context_pack(
-        session_id=session_id,
-        question=question,
-        focus=focus,
-        identity=identity,
-        caller_tenant_id=caller_tenant_id,
-        snippets=snippets,
-        surfaces=surfaces,
-        source_keys=source_keys,
-        confidence=confidence,
-        evidence_entities=evidence_entities,
-        evidence_source_types=evidence_source_types,
-        operator_context=operator_context,
-        conversation_context=conversation_context,
-        ui_snapshot=ui_snapshot,
-        control_mode=control_mode,
-    )
-
-    try:
-        nl_capabilities = _capabilities_for_identity(identity)
-    except Exception:
-        nl_capabilities = None
-    raw_evidence_refs = list(
-        await asyncio.to_thread(
-            read_store.list_evidence_refs,
-            tenant_id=caller_tenant_id,
-            linked_entities=evidence_entities,
-            source_types=evidence_source_types,
-        )
-        or []
-    )
-    for _eref in raw_evidence_refs:
-        if isinstance(_eref, dict):
-            _eid = str(_eref.get("ref_id") or _eref.get("id") or "").strip()
-            if _eid:
-                _eref.setdefault("href", f"/api/v1/knowledge/evidence/{_eid}")
-    processed_evidence_refs, redacted_evidence_count = redact_evidence_refs(
-        identity, raw_evidence_refs, capabilities=nl_capabilities
-    )
-
-    audit_ref = {
-        "target_type": "ManagementNLExchange",
-        "target_id": message_id,
-        "href": f"/bff/audit/entities/ManagementNLExchange/{message_id}",
-    }
-
-    try:
-        accepted_audit = await asyncio.to_thread(
-            _record_agora_audit_event,
-            {
-                "action": "management.nl.ask.accepted",
-                "targetType": "ManagementNLExchange",
-                "targetId": message_id,
-                "actorId": identity.operator_id,
-                "recordedAt": now,
-                "sessionId": session_id,
-                "focus": focus,
-                "tenantId": caller_tenant_id,
-                "confidence": confidence,
-                "sourceSurfaces": source_keys,
-            },
-        )
-    except Exception:
-        log.warning("Failed to record management NL happy-path audit event", exc_info=True)
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Management NL audit write failed",
-            "happy_path_audit_write_failed",
-            precondition_failed="audit_write",
-            suggestion="Retry after the Agora audit store is available",
-        )
-
-    audit_ref["audit_id"] = accepted_audit.get("auditId") or accepted_audit.get("eventId")
-
-    _management_ai_record_event(
-        {
-            "event_type": "management_ai.exchange.accepted",
-            "session_id": session_id,
-            "message_id": message_id,
-            "trace_id": trace_id,
-            "actor_id": identity.operator_id,
-            "route": "POST /bff/management/nl/ask",
-            "question": _management_ai_summary_value(question),
-            "focus": focus,
-            "tenant_id": caller_tenant_id,
-            "confidence": confidence,
-            "source_keys": source_keys,
-            "context_pack_id": context_pack.get("context_pack_id"),
-            "conversation_recent_turn_count": len(conversation_context.get("recent_turns") or []),
-            "client_conversation_recent_turn_count": len(client_conversation_hint.get("recent_turns") or []),
-            "conversation_summary_present": bool(conversation_context.get("summary")),
-            "ui": ui_snapshot,
-            "attachment_count": len(user_attachments),
-            "available_ui_action_kinds": sorted(allowed_action_kinds),
-            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "control_mode": {
-                "state": control_mode.get("state"),
-                "active": control_mode.get("active"),
-                "mode": control_mode.get("mode"),
-                "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
-            },
-            "surfaces": _management_ai_surface_summary(surfaces),
-            "audit_ref": audit_ref,
-        }
-    )
-    # _mgmt_nl_maybe_provider_answer issues a synchronous, blocking HTTP call to
-    # the OpenClaw adapter (OpenClawOpsClient.invoke_assistant_provider), which
-    # drives the Claude/Codex CLI agent and can take 30s+. The BFF runs a single
-    # uvicorn worker, so calling it inline would block the event loop and freeze
-    # every other request (reads, writes, SSE) for the whole agent turn. Offload
-    # it to a worker thread so the event loop stays free to serve concurrently.
-    assistant_turn_id = f"{message_id}-assistant"
-    audit_log_href = _management_ai_audit_href(session_id=session_id, trace_id=trace_id)
-    conversation_href = _management_ai_conversation_href(session_id)
-
-    # The assistant-provider call (OpenClawOpsClient.invoke_assistant_provider via
-    # _mgmt_nl_maybe_provider_answer) is a synchronous, blocking HTTP call that
-    # drives a CLI agent and routinely takes 30s+. Run it in a worker thread and
-    # wait only up to a short inline grace window. If it finishes in time we answer
-    # synchronously as before; otherwise we return 202 immediately with the
-    # deterministic answer and providerStatus=processing, and a background task
-    # finalises the assistant turn + idempotency record once the agent completes.
-    # asyncio.wait (unlike wait_for) does NOT cancel on timeout, so the in-flight
-    # agent run is preserved and handed to the finaliser.
-    provider_task = asyncio.create_task(
-        asyncio.to_thread(
-            _mgmt_nl_maybe_provider_answer,
-            provider=_mgmt_nl_provider_name(),
-            question=question,
-            focus=focus,
-            identity=identity,
-            caller_tenant_id=caller_tenant_id,
-            session_id=session_id,
-            message_id=message_id,
-            trace_id=trace_id,
-            context_pack=context_pack,
-            audit_id=audit_ref.get("audit_id"),
-            allowed_action_kinds=allowed_action_kinds,
-            current_user_attachments=current_user_attachments,
-        )
-    )
-    done, _ = await asyncio.wait(
-        {provider_task}, timeout=_mgmt_nl_provider_inline_wait_seconds(control_mode)
-    )
-    provider_pending = provider_task not in done
-    if provider_pending:
-        provider_answer, actions = None, []
-        provider_status = _mgmt_nl_provider_status(
-            provider=_mgmt_nl_provider_name(),
-            enabled=True,
-            status="processing",
-            reason="provider_async_pending",
-            run_id=trace_id,
-        )
-    else:
-        # Preserve the previous inline-await exception behaviour.
-        provider_answer, provider_status, actions = provider_task.result()
-    answer = provider_answer or deterministic_answer
-
-    _publish_event(
-        _sse_buffers["ask"],
-        _sse_subscribers["ask"],
-        "management.nl.ask.accepted",
-        {"session_id": session_id, "message_id": message_id, "trace_id": trace_id, "focus": focus},
-    )
-
-    exchange_status = "processing" if provider_pending else "completed"
-    result = {
-        "status": "accepted",
-        "data": {
-            "status": exchange_status,
-            "lifecycle_status": exchange_status,
-            "answer": answer,
-            "session_id": session_id,
-            "message_id": message_id,
-            "trace_id": trace_id,
-            "question": question,
-            "focus": focus,
-            "sources": source_keys,
-            "confidence": confidence,
-            "summary_context": snippets,
-            "context_pack": context_pack,
-            "provider_status": provider_status,
-            "control_mode": control_mode,
-            "ui_actions": actions,
-            "actions": actions,
-            "audit_ref": audit_ref,
-            "audit_log": {
-                "href": audit_log_href,
-                "trace_id": trace_id,
-            },
-            "conversation": {
-                "href": conversation_href,
-                "session_id": session_id,
-                "trace_id": trace_id,
-            },
-            "session": {
-                "session_id": session_id,
-                "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            },
-            "evidence_refs": processed_evidence_refs,
-        },
-        "meta": {
-            "status": exchange_status,
-            "lifecycle_status": exchange_status,
-            "snapshot_at": now,
-            "surfaces": surfaces,
-            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
-            "provider_status": provider_status,
-            "trace_id": trace_id,
-            "context_pack_id": context_pack.get("context_pack_id"),
-            "redacted_evidence_count": redacted_evidence_count,
-            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "control_mode": control_mode,
-        },
-    }
-    _management_ai_record_event(
-        {
-            "event_type": "management_ai.exchange.completed",
-            "session_id": session_id,
-            "message_id": message_id,
-            "assistant_turn_id": assistant_turn_id,
-            "trace_id": trace_id,
-            "actor_id": identity.operator_id,
-            "route": "POST /bff/management/nl/ask",
-            "answer": _management_ai_summary_value(answer),
-            "provider_status": provider_status,
-            "actions": actions,
-            "action_count": len(actions),
-            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
-            "control_mode": {
-                "state": control_mode.get("state"),
-                "active": control_mode.get("active"),
-                "mode": control_mode.get("mode"),
-                "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
-            },
-            "fallback": provider_status.get("fallback"),
-        }
-    )
-    if not provider_pending:
-        _management_ai_append_turn(
-            turn_id=assistant_turn_id,
-            session_id=session_id,
-            role="assistant",
-            text=answer,
-            created_at=utc_now(),
-            trace_id=trace_id,
-            provider_status=provider_status,
-            ui_actions=actions,
-        )
-    _management_nl_publish_completed_events(
-        session_id=session_id,
-        message_id=message_id,
-        assistant_turn_id=assistant_turn_id,
-        trace_id=trace_id,
-        focus=focus,
-        provider_status=provider_status,
-        action_count=len(actions),
-        audit_log_href=audit_log_href,
-        conversation_href=conversation_href,
-    )
-    if not provider_pending:
-        await _mgmt_nl_command_complete(
-            command_reservation,
-            result,
-            display_key=resolved_key,
-        )
-    if provider_pending:
-        # The assistant turn was intentionally NOT persisted above: the store's
-        # append_turn is not an upsert, so writing a placeholder here would leave
-        # a duplicate turn once the real answer lands. The finaliser appends it
-        # exactly once with the real provider answer and rewrites the idempotency
-        # record from processing -> completed.
-        _mgmt_nl_schedule_provider_finalize(
-            provider_task=provider_task,
-            deterministic_answer=deterministic_answer,
-            session_id=session_id,
-            message_id=message_id,
-            assistant_turn_id=assistant_turn_id,
-            trace_id=trace_id,
-            focus=focus,
-            resolved_key=resolved_key,
-            audit_log_href=audit_log_href,
-            conversation_href=conversation_href,
-            base_result=result,
-            command_reservation=command_reservation,
-        )
-    return JSONResponse(status_code=202, content=result)
-async def bff_management_nl_ask_stream(
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-):
-    """Thin fail-closed wrapper mirroring ``bff_management_nl_ask``: mark a
-    held reservation uncertain exactly once if anything raises, while
-    building the response, after admission granted ownership but before a
-    terminal result was committed. (Failures once the SSE body itself is
-    streaming are handled inline inside the generator.)"""
-    try:
-        return await _bff_management_nl_ask_stream_impl(
-            payload=payload,
-            authorization=authorization,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            x_tenant_id=x_tenant_id,
-            x_pantheon_tenant=x_pantheon_tenant,
-        )
-    except Exception:
-        reservation = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.get()
-        if reservation is not None:
-            await _mgmt_nl_command_mark_uncertain(
-                reservation,
-                reason="request_failed_before_terminal_commit",
-            )
-        raise
-async def _bff_management_nl_ask_stream_impl(
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-):
-    """SSE-streaming variant of /bff/management/nl/ask.
-
-    BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: this transport now shares the
-    exact same durable command admission/replay decision logic as
-    ``bff_management_nl_ask`` (via ``_mgmt_nl_command_admit`` /
-    ``_MANAGEMENT_NL_USE_CASE``) -- same ordering (identity/role ->
-    question validation -> control-command parse -> high-risk refusal ->
-    tenant resolution -> admission -> session/context/provider), same
-    canonical command scope, same fail-closed 503 on storage loss, and the
-    same "exactly one provider effect per idempotency key" guarantee. A
-    concurrent/duplicate request against the same key does not invoke the
-    provider a second time -- it durably replays the terminal answer as SSE
-    frames instead.
-    """
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-
-    question = _agora_required_text(payload, "question")
-    _mgmt_nl_validate_question_size(question)
-    control_command = _mgmt_nl_parse_control_command(question)
-
-    risk = None if control_command is not None else _mgmt_nl_high_risk_classify(question)
-    if risk is not None:
-        raise _bff_error(
-            403,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "NL query matches high-risk action pattern and was refused by policy",
-            "This endpoint is read-only and cannot execute management mutations.",
-            precondition_failed="high_risk_nl_policy",
-            suggestion=risk["safe_alternatives"],
-            details_extra={"refused": True, "matched_category": risk["matched_category"]},
-        )
-
-    caller_tenant_id = _mgmt_nl_caller_tenant(
-        identity, requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant)
-    )
-    operator_context = _mgmt_nl_trim_text(payload.get("context"), max_len=4000)
-    focus = _mgmt_nl_normalize_focus(payload.get("focus"))
-    now = utc_now()
-    session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
-    trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
-    message_id = f"mnl-{uuid.uuid4().hex[:12]}"
-    ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
-
-    # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: admission happens once, for both
-    # the control-command and provider-answer paths, before either does any
-    # work -- exactly mirroring bff_management_nl_ask's ordering.
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
-    command_scope = _mgmt_nl_command_scope(
-        actor_id=identity.operator_id,
-        tenant_id=caller_tenant_id,
-        resolved_key=resolved_key,
-    )
-    command_reservation, cached = await _mgmt_nl_command_admit(
-        scope=command_scope,
-        request_hash=request_hash,
-        display_key=resolved_key,
-    )
-    _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(command_reservation)
-    if cached is not None:
-        _management_ai_record_event(
-            {
-                "event_type": "management_ai.exchange.replayed",
-                "session_id": session_id,
-                "message_id": message_id,
-                "trace_id": trace_id,
-                "actor_id": identity.operator_id,
-                "focus": focus,
-                "route": "POST /bff/management/nl/ask/stream",
-                "idempotency_key": resolved_key,
-            }
-        )
-        return StreamingResponse(
-            _mgmt_nl_cached_result_sse_frames(
-                cached, session_id=session_id, trace_id=trace_id, message_id=message_id
-            ),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
-        )
-
-    if control_command is not None:
-        control_response = _mgmt_nl_handle_control_command(
-            control_command=control_command,
-            payload=payload,
-            identity=identity,
-            caller_tenant_id=caller_tenant_id,
-            focus=focus,
-            ui_snapshot=ui_snapshot,
-            resolved_key=resolved_key,
-            session_id=session_id,
-            message_id=message_id,
-            trace_id=trace_id,
-            now=now,
-        )
-        control_result = json.loads(control_response.body)
-        await _mgmt_nl_command_complete(
-            command_reservation,
-            control_result,
-            display_key=resolved_key,
-        )
-
-        return StreamingResponse(
-            _mgmt_nl_cached_result_sse_frames(
-                control_result, session_id=session_id, trace_id=trace_id, message_id=message_id
-            ),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
-        )
-
-    control_mode = _assistant_control_mode_for_identity(identity, management_session_id=session_id, touch=True)
-    conversation_context = _management_ai_server_conversation_context(
-        session_id=session_id,
-        client_hint=_mgmt_nl_normalize_conversation_context(payload.get("conversation")),
-    )
-    context_bundle = await asyncio.to_thread(
-        _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
-    )
-    snippets = context_bundle["snippets"]
-    surfaces = context_bundle["surfaces"]
-    confidence = _mgmt_nl_surface_confidence(surfaces)
-    context_pack = _mgmt_nl_build_context_pack(
-        session_id=session_id,
-        question=question,
-        focus=focus,
-        identity=identity,
-        caller_tenant_id=caller_tenant_id,
-        snippets=snippets,
-        surfaces=surfaces,
-        source_keys=list(snippets.keys()),
-        confidence=confidence,
-        evidence_entities=context_bundle.get("evidence_entities") or set(),
-        evidence_source_types=context_bundle.get("evidence_source_types") or set(),
-        operator_context=operator_context,
-        conversation_context=conversation_context,
-        ui_snapshot=ui_snapshot,
-        control_mode=control_mode,
-    )
-    prompt = _mgmt_nl_provider_prompt(question=question, focus=focus, context_pack=context_pack)
-    provider_mode = _mgmt_nl_provider_mode_from_context(context_pack)
-
-    _management_ai_ensure_session(
-        session_id=session_id, identity=identity, tenant_id=caller_tenant_id, now=now, title=question
-    )
-    _management_ai_append_turn(
-        turn_id=message_id, session_id=session_id, role="user", text=question, created_at=now, trace_id=trace_id
-    )
-
-    _MGMT_NL_STREAM_EXHAUSTED = object()
-
-    async def event_stream() -> AsyncGenerator[str, None]:
-        provider_run_id = trace_id
-        provider_started = time.monotonic()
-        _management_ai_record_event(
-            {
-                "event_type": "management_ai.provider.started",
-                "session_id": session_id,
-                "message_id": message_id,
-                "trace_id": trace_id,
-                "provider_run_id": provider_run_id,
-                "actor_id": identity.operator_id,
-                "provider": "openclaw",
-                "route": _management_ai_provider_route("openclaw", stream=True),
-                "context_pack_id": context_pack.get("context_pack_id"),
-                "mode": provider_mode,
-                "prompt_bytes": len(prompt.encode("utf-8")),
-            }
-        )
-        yield _mgmt_nl_sse_frame(
-            {
-                "type": "meta", "session_id": session_id,
-                "trace_id": trace_id, "message_id": message_id,
-            }
-        )
-        chunks: List[str] = []
-        final_text: Optional[str] = None
-        final_event: Dict[str, Any] = {}
-        had_error = False
-        failure_event: Optional[Dict[str, Any]] = None
-        try:
-            # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: this generator is now
-            # async (so it can await the shared command-completion calls
-            # exactly once below), but OpenClawOpsClient.stream_assistant_provider
-            # is a synchronous, blocking generator. Drive it one item at a
-            # time in a worker thread via asyncio.to_thread(next, ...) so the
-            # event loop stays free between deltas instead of being blocked
-            # for the whole provider turn, while preserving the exact
-            # per-event streaming behaviour below.
-            provider_iter = OpenClawOpsClient().stream_assistant_provider(
-                mode=provider_mode,
-                prompt=prompt,
-                context_pack=context_pack,
-                operator_id=identity.operator_id,
-                trace_id=trace_id,
-                session_user=session_id,
-                read_timeout_seconds=_mgmt_nl_stream_read_timeout_seconds(),
-            )
-            while True:
-                evt = await asyncio.to_thread(next, provider_iter, _MGMT_NL_STREAM_EXHAUSTED)
-                if evt is _MGMT_NL_STREAM_EXHAUSTED:
-                    break
-                if evt.get("type") == "delta":
-                    chunks.append(str(evt.get("text") or ""))
-                elif evt.get("type") == "done":
-                    final_text = str(evt.get("text") or "")
-                    final_event = dict(evt)
-                    # Only emit the BFF's filtered, persisted completion below.
-                    continue
-                elif evt.get("type") == "error":
-                    had_error = True
-                    failure_event = {
-                        "event_type": "management_ai.provider.failed",
-                        "session_id": session_id,
-                        "message_id": message_id,
-                        "trace_id": trace_id,
-                        "provider_run_id": provider_run_id,
-                        "actor_id": identity.operator_id,
-                        "provider": "openclaw",
-                        "mode": provider_mode,
-                        "duration_ms": max(0, int((time.monotonic() - provider_started) * 1000)),
-                        "status_code": evt.get("status_code"),
-                        "error_code": evt.get("error_code") or "OPENCLAW_STREAM_ERROR",
-                        "error_message": _management_ai_summary_value(evt.get("message")),
-                    }
-                yield _mgmt_nl_sse_frame(evt)
-        except OpenClawOpsClientError as exc:
-            had_error = True
-            failure_event = {
-                "event_type": "management_ai.provider.failed",
-                "session_id": session_id,
-                "message_id": message_id,
-                "trace_id": trace_id,
-                "provider_run_id": provider_run_id,
-                "actor_id": identity.operator_id,
-                "provider": "openclaw",
-                "mode": provider_mode,
-                "duration_ms": max(0, int((time.monotonic() - provider_started) * 1000)),
-                "status_code": exc.status_code,
-                "error_code": exc.error_code,
-                "error_message": _management_ai_summary_value(exc.message),
-            }
-            yield _mgmt_nl_sse_frame(
-                {"type": "error", "error_code": exc.error_code, "message": exc.message}
-            )
-        except Exception as exc:  # noqa: BLE001
-            had_error = True
-            failure_event = {
-                "event_type": "management_ai.provider.failed",
-                "session_id": session_id,
-                "message_id": message_id,
-                "trace_id": trace_id,
-                "provider_run_id": provider_run_id,
-                "actor_id": identity.operator_id,
-                "provider": "openclaw",
-                "mode": provider_mode,
-                "duration_ms": max(0, int((time.monotonic() - provider_started) * 1000)),
-                "status_code": 500,
-                "error_code": "BFF_STREAM_ERROR",
-                "error_message": _management_ai_summary_value(str(exc)[:200]),
-            }
-            yield _mgmt_nl_sse_frame(
-                {"type": "error", "error_code": "BFF_STREAM_ERROR", "message": str(exc)[:200]}
-            )
-        raw_answer = (final_text or "").strip() or "".join(chunks).strip()
-        answer = _mgmt_nl_text_from_provider_value(_mgmt_nl_jsonish(raw_answer)) or raw_answer
-        if not final_event and not had_error:
-            had_error = True
-            failure_event = {
-                "event_type": "management_ai.provider.failed",
-                "session_id": session_id, "message_id": message_id, "trace_id": trace_id,
-                "provider_run_id": provider_run_id, "actor_id": identity.operator_id,
-                "provider": "openclaw", "mode": provider_mode,
-                "error_code": "OPENCLAW_STREAM_INCOMPLETE",
-                "error_message": "Provider stream ended without a terminal result.",
-            }
-            yield _mgmt_nl_sse_frame({
-                "type": "error", "error_code": failure_event["error_code"],
-                "message": failure_event["error_message"],
-            })
-        if answer and not had_error:
-            actions = _mgmt_nl_extract_provider_actions(
-                {**final_event, "text": raw_answer},
-                allowed_action_kinds=_mgmt_nl_allowed_action_kinds(ui_snapshot),
-            )
-            duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
-            _management_ai_record_event(
-                {
-                    "event_type": "management_ai.provider.completed",
-                    "session_id": session_id,
-                    "message_id": message_id,
-                    "trace_id": trace_id,
-                    "provider_run_id": provider_run_id,
-                    "actor_id": identity.operator_id,
-                    "provider": "openclaw",
-                    "provider_state": "completed",
-                    "action_count": len(actions),
-                    "mode": provider_mode,
-                    "duration_ms": duration_ms,
-                    "output_summary": {
-                        "model": "openclaw/main",
-                        "transport": "responses_http",
-                        "output_bytes": len(answer.encode("utf-8")),
-                    },
-                }
-            )
-            provider_status = {
-                "provider": "openclaw",
-                "used": True,
-                "status": "completed",
-                "transport": "responses_http",
-            }
-            _management_ai_append_turn(
-                turn_id=f"{message_id}-assistant",
-                session_id=session_id,
-                role="assistant",
-                text=answer,
-                created_at=utc_now(),
-                trace_id=trace_id,
-                provider_status=provider_status,
-                ui_actions=actions,
-            )
-            yield _mgmt_nl_sse_frame({
-                "type": "done", "text": answer,
-                "provider_status": provider_status, "ui_actions": actions,
-            })
-            # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: complete the durable
-            # reservation exactly once, from the one code path that actually
-            # observed the terminal provider outcome, so a reconnect/retry
-            # with the same Idempotency-Key durably replays this answer
-            # instead of invoking the provider again.
-            stream_result = {
-                "status": "accepted",
-                "data": {
-                    "status": "completed",
-                    "lifecycle_status": "completed",
-                    "answer": answer,
-                    "session_id": session_id,
-                    "message_id": message_id,
-                    "trace_id": trace_id,
-                    "provider_status": provider_status,
-                    "ui_actions": actions,
-                    "actions": actions,
-                },
-                "meta": {
-                    "status": "completed",
-                    "lifecycle_status": "completed",
-                    "provider_status": provider_status,
-                    "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
-                },
-            }
-            await _mgmt_nl_command_complete(
-                command_reservation,
-                stream_result,
-                display_key=resolved_key,
-            )
-        else:
-            if failure_event is not None:
-                _management_ai_record_event(failure_event)
-            # A non-terminal/failed provider turn must not be cached as a
-            # false-positive "completed" result and must not be silently
-            # retried on the same key either -- mark the reservation
-            # uncertain so it becomes retryable again only after the store's
-            # recovery window elapses.
-            await _mgmt_nl_command_mark_uncertain(
-                command_reservation,
-                reason=(failure_event or {}).get("error_code") or "stream_provider_incomplete",
-            )
-        yield _mgmt_nl_sse_frame("[DONE]")
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
-    )
+from .assistant.management_service import (
+    _MGMT_NL_PROVIDER_FINALIZE_TASKS,
+    MGMT_NL_PROVIDER_FINALIZE_TASKS,
+    _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS,
+    _MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS,
+    _mgmt_nl_provider_inline_grace_seconds,
+    _mgmt_nl_provider_inline_wait_seconds,
+    _mgmt_nl_stream_read_timeout_seconds,
+    _mgmt_nl_sse_frame,
+    _mgmt_nl_json_response_payload,
+    _mgmt_nl_cached_result_sse_frames,
+    _mgmt_nl_finalize_result,
+    _mgmt_nl_finalize_provider_turn,
+    _mgmt_nl_schedule_provider_finalize,
+    bff_management_nl_ask,
+    _bff_management_nl_ask_impl,
+    bff_management_nl_ask_stream,
+    _bff_management_nl_ask_stream_impl,
+)
 async def bff_management_ai_audit(
     session_id: Optional[str] = None,
     trace_id: Optional[str] = None,
@@ -11443,14 +10200,19 @@ def _v5_intervention_records(
             records_by_id[record_id] = dict(record)
 
     return list(records_by_id.values())
-async def _process_command(command_id: str):
+async def _process_command(command_id: str, *, command_store: Optional[Any] = None):
     """
     Async command processor that dispatches to the Protected Internal API.
     Records authoritative status, result, and audit data for every execution.
     """
     import asyncio
 
-    record = command_store.get_command(command_id)
+    store = command_store if command_store is not None else globals().get("command_store")
+    if store is None:
+        log.error("Worker: command store unavailable for command %s", command_id)
+        return
+
+    record = store.get_command(command_id)
     if not record:
         log.error("Worker: command %s not found in store", command_id)
         return
@@ -11466,7 +10228,7 @@ async def _process_command(command_id: str):
 
     # Mark processing
     await asyncio.sleep(0.05)  # brief yield to event loop
-    command_store.update_status(command_id, CommandStatus.PROCESSING)
+    store.update_status(command_id, CommandStatus.PROCESSING)
 
     try:
         execution_params = _resolve_execution_params_for_record(record)
@@ -11486,7 +10248,7 @@ async def _process_command(command_id: str):
         audit["executor"] = "command_executor"
         audit["failure_reason"] = error["message"]
         audit["failure_suggestion"] = error["suggestion"]
-        command_store.update_status(
+        store.update_status(
             command_id,
             CommandStatus.FAILED,
             error=error,
@@ -11522,7 +10284,7 @@ async def _process_command(command_id: str):
             audit["execution_completed_at"] = result["execution_completed_at"]
             audit["executor"] = "bff_read_store"
             audit["downstream_verified"] = True
-            command_store.update_status(
+            store.update_status(
                 command_id,
                 CommandStatus.EXECUTED,
                 result=result,
@@ -11543,7 +10305,7 @@ async def _process_command(command_id: str):
             audit["executor"] = "bff_read_store"
             audit["failure_reason"] = error["message"]
             audit["failure_suggestion"] = error["suggestion"]
-            command_store.update_status(
+            store.update_status(
                 command_id,
                 CommandStatus.FAILED,
                 error=error,
@@ -11572,7 +10334,7 @@ async def _process_command(command_id: str):
         audit["failure_suggestion"] = error.get("suggestion", "")
 
     # Persist both result and enriched audit data
-    command_store.update_status(
+    store.update_status(
         command_id,
         status,
         result=result,
@@ -12365,38 +11127,16 @@ def _confirm_token_lifecycle_payload(token_id: str) -> Dict[str, Any]:
         payload["command_id"] = latest_record.get("command_id")
     return payload
 _bff_source_commit = auth_policy.bff_source_commit
-async def sem_bff_version():
-    commit = _bff_source_commit()
-    image_digest = os.getenv("BFF_IMAGE_DIGEST") or os.getenv("IMAGE_DIGEST") or "unknown"
-    build_time = os.getenv("BFF_BUILD_TIME") or os.getenv("BUILD_TIME") or "unknown"
-    environment = os.getenv("PANTHEON_ENV") or os.getenv("ENVIRONMENT") or "unknown"
-
-    config_posture = {
-        "auth_stub": _bff_auth_stub_enabled(),
-        "auth_mode": _bff_auth_mode(),
-        "dev_login_enabled": _dev_login_enabled(),
-        "mfa_required": auth_policy.bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
-        "assistant_kernel_enabled": auth_policy.bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
-        "trade_journey_reader_backend": os.getenv(
-            "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres"
-        ).strip().lower(),
-        "trade_journey_projection_schema": os.getenv(
-            "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA",
-            "trade_journey_projection",
-        ).strip(),
-    }
-
-    return {
-        "service": "operator-bff",
-        "version": "0.2.0",
-        "source_commit_sha": commit,
-        "commit": commit,
-        "source_commit_known": bool(re.fullmatch(r"[0-9a-fA-F]{40}", commit)),
-        "image_digest": image_digest,
-        "build_time": build_time,
-        "environment": environment,
-        "config_posture": config_posture,
-    }
+from .core.app_factory import (
+    create_version_handler as _create_version_handler,
+    sem_bff_version as _sem_bff_version_default,
+)
+sem_bff_version = _create_version_handler(
+    source_commit_fn=_bff_source_commit,
+    auth_stub_fn=_bff_auth_stub_enabled,
+    auth_mode_fn=_bff_auth_mode,
+    dev_login_fn=_dev_login_enabled,
+)
 def _sem_bff_health_payload() -> Dict[str, Any]:
     commit = _bff_source_commit()
     payload = health_payload(
@@ -12925,158 +11665,14 @@ def _assistant_provider_reauth_code(
         )
     except OpenClawOpsClientError as exc:
         raise _openclaw_client_error(exc) from exc
-def _include_governance_subrules_routes() -> None:
-    from .console_gap.permissions import create_permissions_router
-    from .console_gap.memory_governance import create_memory_governance_router
-    from .console_gap.consult_rules import create_consult_rules_router
-    from .console_gap.route_policies import create_route_policies_router
-    _kw = dict(read_surface=app_deps.read_surface, extract_identity=_extract_identity, require_read_role=_require_read_role)
-    app.include_router(create_permissions_router(**_kw))
-    app.include_router(create_memory_governance_router(**_kw))
-    app.include_router(create_consult_rules_router(**_kw))
-    app.include_router(create_route_policies_router(**_kw))
-_include_governance_subrules_routes()
-def _include_assistant_routes() -> None:
-    global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
-    from .assistant.control_mode import ControlModeStore
-    from .assistant.routes import create_assistant_router
-    from .assistant.transcript_store import (
-        ManagementAiAssistantSessionStore,
-        ManagementAiAssistantTranscriptStore,
-    )
+from .ports.evolution_program_commands import (
+    EvolutionServiceProgramCommandPort as _EvolutionServiceProgramCommandPort,
+)
+from services.evolution.client import EvolutionClient as _EvolutionClient
 
-    _ASSISTANT_SESSION_STORE = ManagementAiAssistantSessionStore(
-        store_factory=_management_ai_conversation_store,
-    )
-    _ASSISTANT_TRANSCRIPT_STORE = ManagementAiAssistantTranscriptStore(
-        store_factory=_management_ai_conversation_store,
-    )
-    _ASSISTANT_CONTROL_MODE_STORE = ControlModeStore()
-    app.include_router(
-        create_assistant_router(
-            build_context_pack=_assistant_build_context_pack,
-            extract_identity=_extract_identity,
-            require_read_role=_require_read_role,
-            bff_error=_bff_error,
-            session_store=_ASSISTANT_SESSION_STORE,
-            transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
-            control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
-            provider_readiness=_assistant_provider_readiness,
-            provider_list=_assistant_provider_list,
-            provider_register=_assistant_provider_register,
-            provider_reauth=_assistant_provider_reauth,
-            provider_reauth_status=_assistant_provider_reauth_status,
-            provider_reauth_code=_assistant_provider_reauth_code,
-        )
-    )
-from .console_gap.workflows_hooks import create_workflows_hooks_router
-app.include_router(
-    create_workflows_hooks_router(
-        workflow_hook_port=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        snapshot_now=utc_now,
-    )
-)
-_include_assistant_routes()
-from .source_management_client import SourceManagementClient  # noqa: E402
-from .console_gap.datasources import create_datasources_router  # noqa: E402
-source_management_client = SourceManagementClient()
-app.include_router(
-    create_datasources_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        snapshot_meta=_snapshot_meta,
-        utc_now=utc_now,
-        read_source_connector_registry=_read_management_source_connector_registry,
-        get_source_management_client=lambda: source_management_client,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-    )
-)
-from .management_read_models import (  # noqa: E402
-    create_management_read_models_router,
-    create_management_router,
-)
-app.include_router(
-    create_management_read_models_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        snapshot_meta=_snapshot_meta,
-        utc_now=utc_now,
-    )
-)
-app.include_router(
-    create_management_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        snapshot_meta=_snapshot_meta,
-        utc_now=utc_now,
-        bff_error=_bff_error,
-        raise_if_session_logged_out=_raise_if_session_logged_out,
-        tenant_payload_fn=_bff_me_tenant_payload,
-    )
-)
-from .trade_journal import create_trade_journal_router as _create_trade_journal_router  # noqa: E402
-app.include_router(_create_trade_journal_router(
-    extract_identity=_extract_identity,
-    require_read_role=_require_read_role,
-    require_operator_role=_require_operator_role,
-))
-from . import trade_journeys as _trade_journeys  # noqa: E402
-from .trade_journey_projection_store import InvalidPageToken, ProjectionReadUnavailable  # noqa: E402
-from .trade_journeys import create_trade_journeys_router as _create_trade_journeys_router  # noqa: E402
-app.include_router(_create_trade_journeys_router(
-    extract_identity=_extract_identity,
-    require_read_role=_require_read_role,
-    require_operator_role=_require_operator_role,
-    get_projection_reader=app_deps.read_surface.trade_journey_projection_reader,
-))
-from .console_gap.lineage import create_lineage_router  # noqa: E402
-app.include_router(
-    create_lineage_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        snapshot_meta=_snapshot_meta,
-        utc_now=utc_now,
-    )
-)
-from .console_gap.alpha_factory import create_alpha_factory_router as _create_alpha_factory_router  # noqa: E402
-app.include_router(_create_alpha_factory_router(
-    read_surface=app_deps.read_surface,
-    extract_identity=_extract_identity,
-    require_read_role=_require_read_role,
-    utc_now=utc_now,
-))
-from .jobs.router import create_jobs_router as _create_jobs_router
-app.include_router(
-    _create_jobs_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        page_slice=_page_slice,
-        read_surface_meta=_read_surface_meta,
-        dataset_surface_status=_dataset_surface_status,
-        raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
-        reject_body_idempotency_key=_reject_body_idempotency_key,
-        resolve_final_idempotency_key=_resolve_final_idempotency_key,
-        submit_job_action=lambda job_id, action_id, resolved_key, identity, payload: _evol_exp_bff_action_command(
-            entity_type=ObjectType.JOB,
-            entity_id=job_id,
-            action_id=action_id,
-            resolved_key=resolved_key,
-            identity=identity,
-            payload=payload,
-            command_type=CommandType.JOB_ACTION,
-        ),
-    )
-)
+_evolution_program_commands = _EvolutionServiceProgramCommandPort(_EvolutionClient())
+
+
 async def bff_events_stream_alias(
     channel: str = "system",
     last_event_id: Optional[str] = None,
@@ -13085,324 +11681,15 @@ async def bff_events_stream_alias(
     return await stream_generic_events(channel, last_event_id, authorization)
 
 
-from .events.router import create_events_router as _create_events_router
-_events_router = _create_events_router(
-    read_surface=app_deps.read_surface,
-    command_store=app_deps.command_store,
-    get_read_store=lambda: read_store,
-    extract_identity=_extract_identity,
-    require_read_role=_require_read_role,
-    bff_error=_bff_error,
-    utc_now=utc_now,
-    snapshot_meta=_snapshot_meta,
-    sse_buffers=_sse_buffers,
-    sse_subscribers=_sse_subscribers,
-    sse_channels=SSE_CHANNELS,
-    handle_sse_stream=_handle_sse_stream,
-    include_domain_sse_aliases=False,
-)
-app.include_router(_events_router)
-from .evolution.router import create_evolution_router as _create_evolution_router
-from .ports.evolution_program_commands import EvolutionServiceProgramCommandPort as _EvolutionServiceProgramCommandPort
-from services.evolution.client import EvolutionClient as _EvolutionClient
-
-# Typed write port for evolution program create/PATCH (U8A): calls the
-# Evolution service's owner API (/api/evolution/programs) via the shared
-# EvolutionClient, never the read surface. See
-# services/control-plane/bff/ports/evolution_program_commands.py.
-_evolution_program_commands = _EvolutionServiceProgramCommandPort(_EvolutionClient())
-
-app.include_router(
-    _create_evolution_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        page_slice=_page_slice,
-        snapshot_meta=_snapshot_meta,
-        dataset_surface_status=_dataset_surface_status,
-        read_surface_meta=_read_surface_meta,
-        raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
-        meta_staleness=_meta_staleness,
-        mutation_review_projection=_mutation_review_projection,
-        # A lazy thunk (not the object itself) so tests can rebind the
-        # module-level ``_evolution_program_commands`` global after the app
-        # is built and still be seen — mirrors how ``read_store``/
-        # ``command_store`` are swapped by isolated-BFF test fixtures.
-        program_commands=lambda: _evolution_program_commands,
-        submit_program_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
-            ObjectType.EVOLUTION_PROGRAM,
-            entity_id,
-            action_id,
-            _resolve_final_idempotency_key(resolved_key, None),
-            identity,
-            payload or {},
-            CommandType.EVOLUTION_PROGRAM_ACTION,
-        ),
-
-    )
-)
-from .research.router import create_research_router as _create_research_router
-app.include_router(
-    _create_research_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        page_slice=_page_slice,
-        snapshot_meta=_snapshot_meta,
-        dataset_surface_status=_dataset_surface_status,
-        submit_experiment_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
-            ObjectType.EXPERIMENT,
-            entity_id,
-            action_id,
-            _resolve_final_idempotency_key(resolved_key, None),
-            identity,
-            payload or {},
-            CommandType.EXPERIMENT_ACTION,
-        ),
-        include_prepared_subrouters=True,
-    )
-)
-from .training.router import create_training_router as _create_training_router
-app.include_router(
-    _create_training_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        page_slice=_page_slice,
-        dataset_surface_status=_dataset_surface_status,
-    )
-)
-from .personas.service import PersonaService
-# Constructed once, ahead of runtime router assembly, so runtime, persona and
-# assistant consumers all bind to this single app-scoped PersonaService
-# instance (single projection implementation, single source-health cache).
-persona_service = PersonaService(
-    write_owner=app_deps.persona_write_owner,
-    read_store=app_deps.read_surface,
-    ranking_write_owner=app_deps.ranking_write_owner,
-    command_store=app_deps.command_store,
-)
-from .runtime.router import create_runtime_router as _create_runtime_router
-_runtime_router = _create_runtime_router(
-    read_surface=app_deps.read_surface,
-    dependencies={
-        name: value
-        for name, value in (
-            ("_GOVERNANCE_APPROVAL_QUEUE_ROUTE", _GOVERNANCE_APPROVAL_QUEUE_ROUTE),
-            ("_GOV_BFF_IDEMPOTENCY", _GOV_BFF_IDEMPOTENCY),
-            ("_aggregate_group_surface", _aggregate_group_surface),
-            ("_alert_target_ref", _alert_target_ref),
-            ("_bff_error", _bff_error),
-            ("_build_persona_health_items", persona_service.build_persona_health_items),
-            ("_capital_bff_idempotency_check", _capital_bff_idempotency_check),
-            ("_capital_bff_idempotency_store", _capital_bff_idempotency_store),
-            ("_composed_dataset_surface_status", _composed_dataset_surface_status),
-            ("_composed_surface_status", _composed_surface_status),
-            ("_dataset_surface_status", _dataset_surface_status),
-            ("_deployment_review_href", _deployment_review_href),
-            ("_deprecated_bff_path_response", _deprecated_bff_path_response),
-            ("_dry_run_success_response", _dry_run_success_response),
-            ("_extract_identity", _extract_identity),
-            ("_gov_bff_action_command", _gov_bff_action_command),
-            ("_handle_sse_stream", _handle_sse_stream),
-            ("_incident_detail_href", _incident_detail_href),
-            ("_meta_staleness", _meta_staleness),
-            ("_ooda_packet_list_payload", _ooda_packet_list_payload),
-            ("_page_slice", _page_slice),
-            ("_project_operator_runtime_state_row", _project_operator_runtime_state_row),
-            ("_publish_event", _publish_event),
-            ("_raise_if_read_surface_unavailable", _raise_if_read_surface_unavailable),
-            ("_read_surface_meta", _read_surface_meta),
-            ("_reject_body_idempotency_key", _reject_body_idempotency_key),
-            ("_request_dry_run_requested", _request_dry_run_requested),
-            ("_require_ooda_packet_routes_enabled", _require_ooda_packet_routes_enabled),
-            ("_require_operator_role", _require_operator_role),
-            ("_require_read_role", _require_read_role),
-            ("_resolve_final_idempotency_key", _resolve_final_idempotency_key),
-            ("_snapshot_meta", _snapshot_meta),
-            ("_split_csv_query", _split_csv_query),
-            ("_sse_buffers", _sse_buffers),
-            ("_sse_subscribers", _sse_subscribers),
-            ("_stable_json_hash", _stable_json_hash),
-            ("create_capital_binding", create_capital_binding),
-            ("utc_now", utc_now),
-        )
-    },
-)
-app.routes.extend(_runtime_router.routes)
-from .deployment.router import create_deployment_router as _create_deployment_router
-_deployment_router = (
-    _create_deployment_router(
-        queries=app_deps.deployment_queries,
-        commands=app_deps.deployment_commands,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        page_slice=_page_slice,
-        snapshot_meta=_snapshot_meta,
-        dataset_surface_status=_dataset_surface_status,
-        composed_surface_status=_composed_surface_status,
-        read_surface_meta=_read_surface_meta,
-        raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
-        aggregate_group_surface=_aggregate_group_surface,
-        split_csv_query=_split_csv_query,
-        meta_staleness=_meta_staleness,
-        stable_json_hash=_stable_json_hash,
-        resolve_final_idempotency_key=_resolve_final_idempotency_key,
-        reject_body_idempotency_key=_reject_body_idempotency_key,
-        request_dry_run_requested=_request_dry_run_requested,
-        gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
-        publish_event=_publish_event,
-        sse_buffers=_sse_buffers,
-        sse_subscribers=_sse_subscribers,
-        gov_bff_action_command=_gov_bff_action_command,
-        deprecated_bff_path_response=_deprecated_bff_path_response,
-        sem_command_response=_sem_command_response,
-        stream_generic_events=stream_generic_events,
-        surface_degradation_reason=_surface_degradation_reason,
-    )
-)
-app.include_router(_deployment_router)
-from .command_adapters.router import (
-    create_command_adapters_router as _create_command_adapters_router,
-)
-app.include_router(
-    _create_command_adapters_router(
-        service=_command_adapter_service,
-    )
-)
-from .management_read_models.ranking_router import create_ranking_formulas_router as _create_ranking_formulas_router
-app.include_router(
-    _create_ranking_formulas_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        snapshot_meta=_snapshot_meta,
-    )
-)
-from .management_read_models.ranking_router import (
-    create_performance_attribution_router as _create_performance_attribution_router,
-)
-from .management_read_models.ranking_router import (
-    create_rankings_long_tail_router as _create_rankings_long_tail_router,
-)
-app.include_router(
-    _create_rankings_long_tail_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        page_slice=_page_slice,
-        read_surface_meta=_read_surface_meta,
-        deprecated_bff_path_response=_deprecated_bff_path_response,
-        reject_body_idempotency_key=_reject_body_idempotency_key,
-        resolve_final_idempotency_key=_resolve_final_idempotency_key,
-        capital_bff_idempotency_check=_capital_bff_idempotency_check,
-        capital_bff_idempotency_store=_capital_bff_idempotency_store,
-        capital_bff_action_command=_capital_bff_action_command,
-        object_type=ObjectType,
-        command_type=CommandType,
-    )
-)
-app.include_router(
-    _create_performance_attribution_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        bff_me_tenant_payload=_bff_me_tenant_payload,
-        pm12_performance_attribution_response=_pm12_performance_attribution_response,
-        attribution_dimensions=_PM12_ATTRIBUTION_DIMENSIONS,
-    )
-)
-from .strategies.router import create_strategies_router as _create_strategies_router
-app.include_router(
-    _create_strategies_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        page_slice=_page_slice,
-        read_surface_meta=_read_surface_meta,
-        reject_body_idempotency_key=_reject_body_idempotency_key,
-        resolve_final_idempotency_key=_resolve_final_idempotency_key,
-        stable_json_hash=_stable_json_hash,
-        request_dry_run_requested=_request_dry_run_requested,
-        dry_run_success_response=_dry_run_success_response,
-        normalize_lifecycle_state=_normalize_lifecycle_state,
-        normalize_risk_level=_normalize_risk_level,
-        strategy_persona_idempotency_check=_strategy_persona_idempotency_check,
-        strategy_persona_action_command=_strategy_persona_action_command,
-        strategy_persona_idempotency_store=_STRATEGY_PERSONA_BFF_IDEMPOTENCY,
-        strategy_seed_replication_idempotency_store=_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY,
-        strategy_seed_review_idempotency_store=_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY,
-        list_governance_audit_events=_list_governance_audit_events,
-        ooda_packet_list_payload=_ooda_packet_list_payload,
-        require_ooda_packet_routes_enabled=_require_ooda_packet_routes_enabled,
-        deprecated_bff_path_response=_deprecated_bff_path_response,
-        bff_me_tenant_payload=_bff_me_tenant_payload,
-        list_persona_records=_list_persona_records,
-        list_strategy_summaries=_list_strategy_summaries,
-        strategy_write_owner=lambda: strategy_write_owner,
-    )
-)
-from .incidents.router import create_incident_router as _create_incident_router
-app.include_router(
-    _create_incident_router(
-        read_surface=app_deps.read_surface,
-        command_store=app_deps.command_store,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        page_slice=_page_slice,
-        snapshot_meta=_snapshot_meta,
-        dataset_surface_status=_dataset_surface_status,
-        meta_staleness=_meta_staleness,
-        surface_degradation_reason=_surface_degradation_reason,
-        read_surface_meta=_read_surface_meta,
-        raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
-        resolve_final_idempotency_key=_resolve_final_idempotency_key,
-        reject_body_idempotency_key=_reject_body_idempotency_key,
-        submit_action_command=_gov_bff_action_command,
-        submit_sem_command=_sem_command_response,
-        handle_sse_stream=_handle_sse_stream,
-        run_management_read=_run_management_read,
-        request_dry_run_requested=_request_dry_run_requested,
-        dry_run_success_response=_dry_run_success_response,
-        build_operator_alerts_payload=lambda s: _build_operator_alerts_payload(s),
-        list_governance_audit_events=_list_governance_audit_events,
-        incident_events=_incident_events,
-        incident_subscribers=_incident_subscribers,
-        acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
-        idempotency_ledger=_GOV_BFF_IDEMPOTENCY,
-    )
-)
 def _ensure_agora_servant_openclaw_agent(persona: Dict[str, Any]) -> Dict[str, Any]:
     return OpenClawOpsClient().ensure_agora_servant_agent(persona)
+
+
 from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
 from .agora.interaction.context_resolver import resolve_agora_interaction_context_ref
+
+
 def _resolve_agora_interaction_context_ref(*args: Any, **kwargs: Any) -> Dict[str, Any]:
-    """Composition-root binding for the single ACL owner of interaction
-    context refs.  Explicitly imports ``_trade_journal_allowed`` at module
-    scope (see ``docs/operations/bff-test-migration-b05-journal-context-resolver-seam.md``
-    § 4.2) so the seam never depends on an undefined module global.
-    """
     return resolve_agora_interaction_context_ref(
         *args,
         read_store=read_store,
@@ -13415,207 +11702,35 @@ def _resolve_agora_interaction_context_ref(*args: Any, **kwargs: Any) -> Dict[st
         utc_now=utc_now,
         **kwargs,
     )
-from .auth.router import create_auth_router
-from .auth.service import AuthFacadeService
-from .auth.handlers import AuthDependencies, create_auth_dependencies, create_auth_handlers
 
-# Auth routes are owned by ``auth.router``; bind the concrete handlers here at
-# the composition root so an unassembled facade cannot silently ship a 503 for
-# every session request.  Provider readiness remains cache-only and advisory.
-auth_deps = create_auth_dependencies(
-    bff_error=_bff_error,
-    dev_login_forbidden_environment=_dev_login_forbidden_environment,
-    dev_login_identity_registry=_dev_login_identity_registry,
-    extract_identity=_extract_identity,
-    require_read_role=_require_read_role,
-    raise_if_session_logged_out=_raise_if_session_logged_out,
-    session_lifecycle_store=session_lifecycle_store,
-    bff_me_tenant_payload=_bff_me_tenant_payload,
-    capabilities_for_identity=_capabilities_for_identity,
-    bff_auth_stub_enabled=_bff_auth_stub_enabled,
-    bff_auth_mode=_bff_auth_mode,
-    bff_source_commit=_bff_source_commit,
-    write_roles=frozenset(_WRITE_ROLES),
-    utc_now=utc_now,
+
+from .core.app_factory import compose_bff_app
+
+app = compose_bff_app(
+    app=app,
+    app_deps=app_deps,
 )
-auth_handlers = create_auth_handlers(dependencies=auth_deps)
-auth_facade_service = AuthFacadeService(
-    local_readiness=auth_handlers["bff_auth_readiness"],
-    handlers=auth_handlers,
-    provider_readiness_cache=provider_readiness_cache,
-)
-app.include_router(create_auth_router(service=auth_facade_service, browser_origin_allowed=_cors_origin_allowed))
-from .core.app_factory import (
-    create_settings_router,
-    create_assistant_management_router,
-    create_core_router,
-)
-app.include_router(
-    create_settings_router(
-        settings_store=settings_store,
-        extract_identity=_extract_identity,
-        require_admin_mfa=_require_admin_mfa,
-    )
-)
-_core_handlers = {
-    "bff_management_nl_ask": bff_management_nl_ask,
-    "bff_management_nl_ask_stream": bff_management_nl_ask_stream,
-    "bff_management_ai_audit": bff_management_ai_audit,
-    "bff_assistant_provider_usage_summary": bff_assistant_provider_usage_summary,
-    "bff_management_ai_conversations": bff_management_ai_conversations,
-    "bff_management_ai_conversation": bff_management_ai_conversation,
-    "bff_management_ai_attachment": bff_management_ai_attachment,
-    "bff_management_readiness_ep5": bff_management_readiness_ep5,
-    "bff_management_readiness_broker_live": bff_management_readiness_broker_live,
-    "bff_management_readiness_capital_binding_live": bff_management_readiness_capital_binding_live,
-    "bff_management_readiness_bff_ha": bff_management_readiness_bff_ha,
-    "bff_management_readiness_strict_publish": bff_management_readiness_strict_publish,
-    "bff_types_compat": bff_types_compat,
-    "sem_bff_version": sem_bff_version,
-    "sem_bff_health_alias": sem_bff_health_alias,
-    "sem_bff_readiness_alias": sem_bff_readiness_alias,
-    "sem_bff_capabilities": sem_bff_capabilities,
-}
-app.include_router(create_assistant_management_router(_core_handlers))
-app.include_router(create_core_router(_core_handlers))
-from .personas.router import create_personas_router
-app.include_router(
-    create_personas_router(
-        service=persona_service,
-        extract_identity_fn=_extract_identity,
-        require_read_role_fn=_require_read_role,
-        require_operator_role_fn=_require_operator_role,
-        bff_error_fn=_bff_error,
-        utc_now_fn=utc_now,
-        page_slice_fn=_page_slice,
-        snapshot_meta_fn=_snapshot_meta,
-        dataset_surface_status_fn=_dataset_surface_status,
-        raise_if_read_surface_unavailable_fn=_raise_if_read_surface_unavailable,
-        reject_body_idempotency_key_fn=_reject_body_idempotency_key,
-        resolve_final_idempotency_key_fn=_resolve_final_idempotency_key,
-    )
-)
-from .capital.router import create_capital_router
-app.include_router(
-    create_capital_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        utc_now=utc_now,
-        page_slice=_page_slice,
-        snapshot_meta=_snapshot_meta,
-        dataset_surface_status=_dataset_surface_status,
-        bff_error=_bff_error,
-    )
-)
-from .governance.router import create_governance_router
-app.include_router(
-    create_governance_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        page_slice_fn=_page_slice,
-        snapshot_meta=_snapshot_meta,
-        dataset_surface_status=_dataset_surface_status,
-        read_surface_meta=_read_surface_meta,
-        meta_staleness=_meta_staleness,
-        redact_evidence_refs=redact_evidence_refs,
-        capabilities_for_identity=_capabilities_for_identity,
-        read_surface_state=_read_surface_state,
-        submit_action=_command_adapter_service.submit_governance_action,
-        publish_event=lambda event_type, data: _publish_event(
-            _sse_buffers["audit"], _sse_subscribers["audit"], event_type, data
-        ),
-        reject_body_idempotency_key=_reject_body_idempotency_key,
-    )
-)
-from .postmortems.router import create_postmortem_router
-app.include_router(
-    create_postmortem_router(
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        bff_error=_bff_error,
-        meta_staleness=_meta_staleness,
-    )
-)
-from .control_loops.router import create_control_loops_router
-app.include_router(
-    create_control_loops_router(
-        read_surface=app_deps.read_surface,
-        loop_truth_adapter=loop_truth,
-        downstream_health_monitor=downstream_health_monitor,
-        intervention_records_provider=_v5_intervention_records,
-        submit_sem_command=_sem_command_response,
-        submit_final_command_admission=_submit_final_command_admission,
-        reject_body_idempotency_key=_reject_body_idempotency_key,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now_fn=utc_now,
-    )
-)
-from .tools_integrations.router import create_integrations_router
-app.include_router(
-    create_integrations_router(
-        read_surface=app_deps.read_surface,
-        openclaw_client=OpenClawOpsClient(),
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_operator_role,
-        require_mcp_tool_write_role=_require_operator_role,
-        require_openclaw_command_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now_fn=utc_now,
-        page_slice_fn=_page_slice,
-        snapshot_meta=_snapshot_meta,
-        read_surface_meta=_read_surface_meta,
-        submit_command=_submit_final_command_admission,
-        dry_run_resolver=_truthy_header,
-        dry_run_context=_REQUEST_DRY_RUN_CONTEXT,
-    )
-)
-from .agora.router import create_agora_router as _create_agora_router  # noqa: E402
-_agora_router = _create_agora_router(
-    extract_identity=_extract_identity,
-    require_read_role=_require_read_role,
-    require_write_role=_require_operator_role,
-    require_operator_role=_require_operator_role,
-    require_journal_write_role=_require_journal_write_role,
-    require_agora_signal_write_role=_require_agora_signal_write_role,
-    require_agora_bulk_feedback_role=_require_agora_bulk_feedback_role,
-    bff_error=_bff_error,
-    utc_now=utc_now,
-    read_surface=app_deps.read_surface,
-    get_audit_store=lambda: agora_audit_store,
-    command_store=app_deps.command_store,
-    persona_write_owner=app_deps.persona_write_owner,
-    get_trade_journey_store=app_deps.read_surface.trade_journey_projection_reader,
-    sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
-    canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
-    idempotency_store=_AGORA_CORE_BFF_IDEMPOTENCY,
-    sse_buffers=_sse_buffers,
-    sse_subscribers=_sse_subscribers,
-    assistant_ask_enabled=_assistant_ask_enabled,
-    assistant_build_context_pack=_assistant_build_context_pack,
-    get_assistant_session_store=lambda: _ASSISTANT_SESSION_STORE,
-    get_assistant_transcript_store=lambda: _ASSISTANT_TRANSCRIPT_STORE,
-    openclaw_ops_client_factory=lambda: OpenClawOpsClient(),
-    handle_sse_stream=_handle_sse_stream,
-    publish_event_fn=_publish_event,
-)
-app.include_router(_agora_router)
-interaction_lifecycle = _agora_router.interaction_lifecycle
-workshop_store = _agora_router.workshop_store
-proposal_store = _agora_router.proposal_store
-research_store = getattr(_agora_router, "research_store", None)
-research_dispatcher = getattr(_agora_router, "research_dispatcher", None)
-dataset_store = getattr(_agora_router, "dataset_store", None)
+_events_router = app.state.events_router
+_deployment_router = app.state.deployment_router
+_agora_router = app.state.agora_router
+_runtime_router = app.state.runtime_router
+interaction_lifecycle = app.state.interaction_lifecycle
+workshop_store = app.state.workshop_store
+proposal_store = app.state.proposal_store
+research_store = getattr(app.state, "research_store", None)
+research_dispatcher = getattr(app.state, "research_dispatcher", None)
+dataset_store = getattr(app.state, "dataset_store", None)
+_ASSISTANT_SESSION_STORE = getattr(app.state, "assistant_session_store", None)
+_ASSISTANT_TRANSCRIPT_STORE = getattr(app.state, "assistant_transcript_store", None)
+_ASSISTANT_CONTROL_MODE_STORE = getattr(app.state, "assistant_control_mode_store", None)
+source_management_client = getattr(app.state, "source_management_client", None)
+persona_service = getattr(app.state, "persona_service", None)
+command_adapter_service = getattr(app.state, "command_adapter_service", None)
+auth_deps = getattr(app.state, "auth_deps", None)
+auth_handlers = getattr(app.state, "auth_handlers", None)
+auth_facade_service = getattr(app.state, "auth_facade_service", None)
+_core_handlers = getattr(app.state, "core_handlers", None)
+from .deployment.router import create_deployment_router as _create_deployment_router
 
 
 def _mounted_router_endpoint(router: Any, path: str) -> Any:
@@ -13649,14 +11764,48 @@ from .shared.module_retirement_guard import (
 
 class _BffMainModule(_ModuleRetirementGuard):
     def _on_setattr(self, name: str, value: Any) -> None:
-        if name == "read_store" and hasattr(self, "app_deps") and hasattr(self.app_deps, "read_surface"):
-            if value is not self.app_deps.read_surface:
-                self.app_deps.read_surface._active_delegate = value
-            else:
-                self.app_deps.read_surface._active_delegate = None
+        if name == "read_store":
+            if hasattr(self, "app_deps") and hasattr(self.app_deps, "read_surface"):
+                if value is not self.app_deps.read_surface:
+                    self.app_deps.read_surface._active_delegate = value
+                else:
+                    self.app_deps.read_surface._active_delegate = None
+            try:
+                from .assistant.management_service import set_read_store
+                if hasattr(self, "app_deps") and value is getattr(self.app_deps, "read_store", None):
+                    set_read_store(None)
+                else:
+                    set_read_store(value)
+            except Exception:
+                pass
+        elif name == "OpenClawOpsClient":
+            try:
+                from .assistant.management_service import set_openclaw_ops_client
+                from .openclaw_ops_client import OpenClawOpsClient as _OrigClient
+                if value is not _OrigClient:
+                    set_openclaw_ops_client(value)
+                else:
+                    set_openclaw_ops_client(None)
+            except Exception:
+                pass
+        elif name == "OpenClawOpsClientError":
+            try:
+                from .assistant.management_service import set_openclaw_ops_client_error
+                from .openclaw_ops_client import OpenClawOpsClientError as _OrigErr
+                if value is not _OrigErr:
+                    set_openclaw_ops_client_error(value)
+                else:
+                    set_openclaw_ops_client_error(None)
+            except Exception:
+                pass
 
 import sys as _sys
 _sys.modules[__name__].__class__ = _BffMainModule
+
+try:
+    _ = app.openapi()
+except Exception:
+    pass
 
 if __name__ == "__main__":
     import uvicorn
