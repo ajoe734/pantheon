@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 384,
+  "total_test_files": 386,
   "migrated_in_task_count": 27,
   "composition_allowlist": [
     "smoke_test.py",
@@ -90,23 +90,23 @@
   ],
   "layer_summary": {
     "adapter": 55,
-    "application": 189,
+    "application": 191,
     "composition": 13,
     "hosted": 11,
     "router": 116
   },
   "main_by_layer": {
     "adapter": 0,
-    "application": 5,
+    "application": 7,
     "composition": 9,
     "hosted": 1,
-    "router": 7
+    "router": 9
   },
   "disposition_summary": {
     "ALLOWLIST": 15,
-    "DECOUPLED": 316,
+    "DECOUPLED": 314,
     "MIGRATED": 41,
-    "PLANNED": 12
+    "PLANNED": 16
   },
   "tests": [
     {
@@ -1176,9 +1176,9 @@
     {
       "file": "test_pkt005_sse_substrate_contract.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Corrected from a stale DECOUPLED/imports_main=false record (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 live re-scan): test_sse_replay_survives_restart_via_mounted_route dynamically loads services.control_plane.bff.main via importlib.import_module(...) to drive main._publish_event/main._sse_buffers for a server-restart replay assertion. Detected by the enhanced live AST scanner's importlib.import_module string-literal detection (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001); not a declared artifact of this task so the source file itself is out of scope to edit here."
     },
     {
       "file": "test_pkt006_approval_queue_contract.py",
@@ -2357,6 +2357,20 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
+      "file": "tests/test_main_composition_seam_extraction_002.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Added to inventory (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 live re-scan): was missing from this file's tests[] array despite being a real, on-disk regression suite for BFF-MAIN-COMPOSITION-SEAM-EXTRACTION-002 that dynamically loads services.control_plane.bff.main via importlib.import_module(...) in three of its tests to assert against live composition-root instances. Detected by the enhanced live AST scanner's importlib.import_module string-literal detection (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001); not a declared artifact of this task so the source file itself is out of scope to edit here."
+    },
+    {
+      "file": "tests/test_main_composition_seam_extraction_003.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Added to inventory (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 live re-scan): was missing from this file's tests[] array despite being a real, on-disk regression suite for BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001 that dynamically loads services.control_plane.bff.main via importlib.import_module(...) in two of its tests to assert against live composition-root instances. Detected by the enhanced live AST scanner's importlib.import_module string-literal detection (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001); not a declared artifact of this task so the source file itself is out of scope to edit here."
+    },
+    {
       "file": "tests/test_management_domain_actions.py",
       "layer": "application",
       "imports_main": false,
@@ -2394,9 +2408,9 @@
     {
       "file": "tests/test_management_read_models_router.py",
       "layer": "router",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Corrected from a stale DECOUPLED/imports_main=false record (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 live re-scan): its module fixture helper calls importlib.import_module('main') (and importlib.import_module('integrations')) to obtain the composition root. Detected by the enhanced live AST scanner's importlib.import_module string-literal detection (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001); not a declared artifact of this task so the source file itself is out of scope to edit here."
     },
     {
       "file": "tests/test_management_real_read_models.py",
@@ -2800,7 +2814,11 @@
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 5,
   "live_scan_non_whitelisted_main_importers": [
-    "test_bff_mgmt_ai_persistence_2026_06_03.py"
+    "test_bff_mgmt_ai_persistence_2026_06_03.py",
+    "test_pkt005_sse_substrate_contract.py",
+    "tests/test_main_composition_seam_extraction_002.py",
+    "tests/test_main_composition_seam_extraction_003.py",
+    "tests/test_management_read_models_router.py"
   ],
   "dynamic_non_ast_visible_main_dependencies": [
     {
@@ -2824,5 +2842,6 @@
       "why_not_removable_in_scope": "test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt exercises main.py's own startup command-replay against main.py's own process-global command_store/read_store via main._process_command_stub (main.py:10203/10344). It requires the real, fully composed main.app itself; editing main.py is out of scope (forbidden by AC1). test_bff_version_reports_configured_source_sha is now closed: sem_bff_version was extracted into core/app_factory.py's create_version_handler (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001), so the test now calls the standalone sem_bff_version_default handler directly with no composition-root dependency (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001).",
       "blocker": "external_production_seam"
     }
-  ]
+  ],
+  "live_scan_reconciliation_note": "This 5-entry list is the full, honest live-scanned non-whitelisted-main-importer count (previously under-recorded as a single entry despite the ceiling already being 5). It reconciles exactly with tests/test_bff_test_architecture.py's own test_non_whitelisted_main_importers_is_live_scanned_and_bounded, whose expected_offenders = recorded | UNCOVERED_DYNAMIC_MAIN_IMPORTERS union resolves to this same 5-file set. Additionally, tests/test_bff_rebalance_proposals.py has one test (test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt) with a real main.py dependency that this AST scanner cannot detect at all, because the importlib.import_module(...) call it depends on lives inside tests/rebalance_authority_test_support.py's get_management_nl_module() helper, not as a literal import call in the test file itself; see dynamic_non_ast_visible_main_dependencies below for that file's own entry. AC3's 'zero remaining non-allowlisted BFF main importers' is therefore NOT satisfied: 5 AST-visible offenders plus this 1 scanner-invisible transitive offender remain, each disclosed here and in dynamic_non_ast_visible_main_dependencies with file/test/mechanism/root-cause, none silently hidden behind the live_scan ceiling."
 }
