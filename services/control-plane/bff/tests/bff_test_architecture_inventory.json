@@ -3,7 +3,7 @@
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
   "total_test_files": 384,
-  "migrated_in_task_count": 20,
+  "migrated_in_task_count": 24,
   "composition_allowlist": [
     "smoke_test.py",
     "smoke_test_incident.py",
@@ -32,8 +32,10 @@
     "test_bff_consol_016_detail_smoke_a.py",
     "test_bff_consol_017_detail_smoke_b.py",
     "test_bff_mgmt_common_filters.py",
+    "test_bff_mgmt_ops_006_operator_actions_contract.py",
     "test_bff_performance_ranking_read_model_contract.py",
     "test_bff_pm12_portfolio_book_contract.py",
+    "test_bff_promotion_review_governance.py",
     "test_bff_v5_loop_sentinel_contract.py",
     "test_cw01_consult_request_contract.py",
     "test_cw02_debate_transcript_contract.py",
@@ -42,6 +44,7 @@
     "test_inc001_rebaseline_incidents_contract.py",
     "test_incident_stream_route_order.py",
     "test_loop_auto_bff004_cross_loop_drill.py",
+    "test_mgmt_load_005_read_concurrency.py",
     "test_mgmt_qlib_006_artifact_research_linkage.py",
     "test_openclaw_ops_surface.py",
     "test_pkt001_deployment_review_console_contract.py",
@@ -2794,12 +2797,9 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 6,
+  "live_scan_non_whitelisted_main_importer_ceiling": 3,
   "live_scan_non_whitelisted_main_importers": [
     "test_bff_mgmt_ai_persistence_2026_06_03.py",
-    "test_bff_mgmt_ops_006_operator_actions_contract.py",
-    "test_bff_promotion_review_governance.py",
-    "test_mgmt_load_005_read_concurrency.py",
     "tests/test_bff_path_dedupe.py",
     "tests/test_bff_rebalance_proposals.py"
   ]

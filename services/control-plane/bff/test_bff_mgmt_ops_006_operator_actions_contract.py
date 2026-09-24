@@ -406,7 +406,7 @@ def test_pause_paper_runtime_distinct_binding_success() -> None:
         assert ct_resp.status_code == 201, ct_resp.text
 
         # 2. Submit and verify a separate authoritative owner GET, not the POST echo.
-        # runtime_adapter's own binding lookup falls back to bff_main.read_store
+        # runtime_adapter's own binding lookup falls back to main's read store global
         # when no store is injected; patch that resolver directly to the same
         # test-owned store instead of importing/monkeypatching main.py.
         with patch("services.control_plane.bff.command_adapters.runtime_adapter.http_request_json") as mock_http, patch(
