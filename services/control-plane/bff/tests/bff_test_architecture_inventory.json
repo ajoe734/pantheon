@@ -31,6 +31,7 @@
     "test_bff_consol_010_fixture_pack_c.py",
     "test_bff_consol_016_detail_smoke_a.py",
     "test_bff_consol_017_detail_smoke_b.py",
+    "test_bff_mgmt_ai_persistence_2026_06_03.py",
     "test_bff_mgmt_common_filters.py",
     "test_bff_mgmt_ops_006_operator_actions_contract.py",
     "test_bff_performance_ranking_read_model_contract.py",
@@ -97,7 +98,7 @@
   },
   "main_by_layer": {
     "adapter": 0,
-    "application": 7,
+    "application": 6,
     "composition": 9,
     "hosted": 1,
     "router": 8
@@ -105,8 +106,8 @@
   "disposition_summary": {
     "ALLOWLIST": 15,
     "DECOUPLED": 314,
-    "MIGRATED": 42,
-    "PLANNED": 15
+    "MIGRATED": 43,
+    "PLANNED": 14
   },
   "tests": [
     {
@@ -595,9 +596,9 @@
     {
       "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "NOT fully migrated -- open production-seam blocker: 4 of this file's tests (test_attachment_storage_base64_proxy_url_and_size_rejections, test_multimodal_image_attachment_is_forwarded_to_codex_provider, test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider, test_persist_turns) POST to /bff/management/nl/ask and still reach services.control_plane.bff.main through importlib.import_module(...) (_bff_main_module(), line 53 as of this task). BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001 gave assistant/management_service.py real injectable seams for read_store and OpenClawOpsClient (set_read_store/get_read_store, set_openclaw_ops_client/reset_openclaw_ops_client), but bff_management_nl_ask's implementation also calls through roughly three dozen other helpers (_mgmt_nl_validate_question_size, _mgmt_nl_parse_control_command, _mgmt_nl_invoke_provider, ...) that management_service.py's own _MainCallable forwarder (_REMAINING_MAIN_HELPERS) still resolves via sys.modules.get('services.control_plane.bff.main') at call time, with no injectable-parameter or real-setter alternative for those helper bodies (which still live only in main.py). Mounting the handler through core.app_factory.create_assistant_management_router without ever loading main raises RuntimeError: Unresolved management NL helper: ... on the first request (confirmed empirically). This is a genuine external production-seam gap in assistant/management_service.py, not a test-authoring choice: editing management_service.py is production source and out of this task's scope. imports_main is now true because BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001's enhanced live AST scanner detects importlib.import_module(...)/__import__ by string literal, not just static import nodes; disposition is intentionally NOT 'MIGRATED' because a real, functioning main dependency remains at runtime for these 4 tests. See dynamic_non_ast_visible_main_dependencies below."
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Fully migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001, generation 7): BFF-MGMT-NL-HELPER-EXTRACTION-001 (merged into dev) extracted the remaining ~36 management-NL helpers (_mgmt_nl_validate_question_size, _mgmt_nl_parse_control_command, _mgmt_nl_invoke_provider, ...) out of main.py into real implementations on assistant/management_service.py itself; _REMAINING_MAIN_HELPERS there is now a plain name list, not a sys.modules-lookup forwarder. The 4 previously-blocked tests (test_attachment_storage_base64_proxy_url_and_size_rejections, test_multimodal_image_attachment_is_forwarded_to_codex_provider, test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider, test_persist_turns) now build their app via core.app_factory.build_bff_app() + create_assistant_management_router wired to management_service.bff_management_nl_ask and the file's own _handle_management_ai_conversation/_handle_management_ai_attachment handlers (the same production router-factory pattern _management_ai_route_client already used for this file's read-path tests), with management_service.set_read_store/set_openclaw_ops_client providing per-test isolation. The _bff_main_module()/importlib.import_module dynamic accessor was removed entirely. Verified: .venv-pantheon/bin/python3 -m pytest -q test_bff_mgmt_ai_persistence_2026_06_03.py -> 10 passed, 1 failed (pre-existing unreachable-Postgres test, unrelated), 1 skipped."
     },
     {
       "file": "test_bff_mgmt_common_filters.py",
@@ -2814,24 +2815,11 @@
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 5,
   "live_scan_non_whitelisted_main_importers": [
-    "test_bff_mgmt_ai_persistence_2026_06_03.py",
     "test_pkt005_sse_substrate_contract.py",
     "tests/test_main_composition_seam_extraction_002.py",
     "tests/test_main_composition_seam_extraction_003.py"
   ],
   "dynamic_non_ast_visible_main_dependencies": [
-    {
-      "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
-      "tests": [
-        "test_attachment_storage_base64_proxy_url_and_size_rejections",
-        "test_multimodal_image_attachment_is_forwarded_to_codex_provider",
-        "test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider",
-        "test_persist_turns"
-      ],
-      "mechanism": "importlib.import_module('services.control_plane.bff.main') via _bff_main_module() (line 53)",
-      "why_not_removable_in_scope": "BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001 gave assistant/management_service.py real injectable seams for read_store and OpenClawOpsClient (set_read_store/get_read_store, set_openclaw_ops_client/reset_openclaw_ops_client), but bff_management_nl_ask's implementation also calls through roughly three dozen other helpers (_mgmt_nl_validate_question_size, _mgmt_nl_parse_control_command, _mgmt_nl_invoke_provider, ...) that management_service.py's own _MainCallable forwarder (_REMAINING_MAIN_HELPERS) still resolves by looking up sys.modules['services.control_plane.bff.main'] at call time; those helper bodies still live only in main.py. Building the nl/ask route via core.app_factory.create_assistant_management_router without ever loading main raises RuntimeError: Unresolved management NL helper: ... on the very first request (confirmed empirically working this task). The enhanced live AST scanner (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001, which now also detects importlib.import_module/__import__ by string literal) correctly flags this file's _bff_main_module() as a real offender; it is recorded here rather than silently exempted. Editing management_service.py or main.py is out of scope (production source, forbidden by AC1).",
-      "blocker": "external_production_seam"
-    },
     {
       "file": "tests/test_bff_rebalance_proposals.py",
       "tests": [
@@ -2842,5 +2830,5 @@
       "blocker": "external_production_seam"
     }
   ],
-  "live_scan_reconciliation_note": "Generation 7 update (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): tests/test_management_read_models_router.py was fully migrated off main this generation and confirmed dropped from the live AST scan (was 5 entries, now 4: test_bff_mgmt_ai_persistence_2026_06_03.py, test_pkt005_sse_substrate_contract.py, tests/test_main_composition_seam_extraction_002.py, tests/test_main_composition_seam_extraction_003.py). The remaining 3 files (pkt005, seam_extraction_002, seam_extraction_003) each retain exactly one or more GENUINE BLOCKER test(s) whose entire purpose is an identity/route-set comparison against main.py's own module state (main.py's own attribute bindings, or main.py's own legacy unmounted stream_generic_events function, or main.py's own assembled app route set) -- by definition these cannot be tested without importing main.py; see each file's inline GENUINE BLOCKER comments and production_seam_blocker in evidence.json. IMPORTANT KNOWN GATE MISMATCH: tests/test_bff_test_architecture.py's own hardcoded UNCOVERED_DYNAMIC_MAIN_IMPORTERS set (defined in that file, not in this inventory) still lists tests/test_management_read_models_router.py as an offender; that file is not a declared artifact of this task (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001's Scoped Artifacts do not include it), so it was not edited here to avoid unauthorized scope expansion into the scanner itself. As a direct, mechanical, and honestly-disclosed consequence, test_non_whitelisted_main_importers_is_live_scanned_and_bounded will still fail (expected 5, live scan finds 4, diff: removed={test_management_read_models_router.py}) until a follow-up task removes that one stale entry from UNCOVERED_DYNAMIC_MAIN_IMPORTERS. This is not a scanner weakening -- the scanner's own live count is more accurate than its hardcoded expectation now. Additionally, tests/test_bff_rebalance_proposals.py has one test (test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt) with a real main.py dependency this AST scanner cannot detect at all (transitive, via tests/rebalance_authority_test_support.py's get_management_nl_module()); see dynamic_non_ast_visible_main_dependencies. The Human/Ops-authorized composition_allowlist addition for that one test could NOT be made this generation: test_bff_test_architecture.py's own test_composition_allowlist_is_strictly_contained_and_retained requires every composition_allowlist filename to contain one of a fixed keyword set (composition, catalog, resolution, uniqueness, smoke, boundaries, deletion, owner, architecture, migration) or be in the separate WHOLE_APP_ALLOWLIST -- 'tests/test_bff_rebalance_proposals.py' matches neither, so adding it to composition_allowlist as authorized would itself fail that guard test, and satisfying the guard would require editing test_bff_test_architecture.py (out of this task's declared artifact scope, and explicitly prohibited: 'the scanner must not be weakened'). This is reported as a structural conflict for Human/Ops or the reviewer to resolve (e.g. via a follow-up artifact-contract or a WHOLE_APP_ALLOWLIST addition in a companion task), not silently worked around. tests/test_bff_rebalance_proposals.py's one blocked test therefore remains recorded only in production_seam_blocker/dynamic_non_ast_visible_main_dependencies, unchanged from generation 6, with composition_allowlist itself untouched."
+  "live_scan_reconciliation_note": "Generation 7 update (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): (1) tests/test_management_read_models_router.py's generation-6 migration is now correctly reflected by tests/test_bff_test_architecture.py's own UNCOVERED_DYNAMIC_MAIN_IMPORTERS set (the one stale entry for it was removed as a reviewer-authorized companion scanner change following PR #5961's REJECT verdict; see evidence.json generation_7_response). (2) test_bff_mgmt_ai_persistence_2026_06_03.py was fully migrated off main this generation: BFF-MGMT-NL-HELPER-EXTRACTION-001 (merged into dev) extracted the remaining ~36 management-NL helpers into real implementations on assistant/management_service.py, closing the production-seam gap the generation-6 disclosure described; the file's 4 previously-blocked tests now build their app via build_bff_app()+create_assistant_management_router with zero main.py dependency. Live scan is now 3 entries (test_pkt005_sse_substrate_contract.py, tests/test_main_composition_seam_extraction_002.py, tests/test_main_composition_seam_extraction_003.py); tests/test_bff_test_architecture.py's expected_offenders is likewise 3 (this JSON's 3 recorded entries; UNCOVERED_DYNAMIC_MAIN_IMPORTERS has no entries beyond those, all already recorded here). The 3 remaining files each retain exactly one or more GENUINE BLOCKER test(s) whose entire purpose is an identity/route-set comparison against main.py's own module state (main.py's own attribute bindings, or main.py's own legacy unmounted stream_generic_events function, or main.py's own assembled app route set) -- by definition these cannot be tested without importing main.py; see each file's inline GENUINE BLOCKER comments and production_seam_blocker in evidence.json. tests/test_bff_rebalance_proposals.py has one additional test (test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt) with a real main.py dependency this AST scanner cannot detect at all (transitive, via tests/rebalance_authority_test_support.py's get_management_nl_module()); see dynamic_non_ast_visible_main_dependencies. The Human/Ops-authorized composition_allowlist addition for that one test could NOT be made in generation 6 or this generation: test_bff_test_architecture.py's own test_composition_allowlist_is_strictly_contained_and_retained requires every composition_allowlist filename to contain one of a fixed keyword set (composition, catalog, resolution, uniqueness, smoke, boundaries, deletion, owner, architecture, migration) or be in the separate WHOLE_APP_ALLOWLIST -- 'tests/test_bff_rebalance_proposals.py' matches neither, so adding it to composition_allowlist as authorized would itself fail that guard test, and satisfying the guard would require editing test_bff_test_architecture.py's guard rules themselves (a materially different, broader change than the single stale-entry removal made in item (1) above, and not something this generation's narrower reviewer authorization covers). This remains a structural conflict for Human/Ops or the reviewer to resolve explicitly (e.g. via a follow-up WHOLE_APP_ALLOWLIST addition), not silently worked around. tests/test_bff_rebalance_proposals.py's one blocked test therefore remains recorded only in production_seam_blocker/dynamic_non_ast_visible_main_dependencies, with composition_allowlist itself untouched."
 }

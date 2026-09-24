@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import importlib
 import json
 import os
 import sys
@@ -19,6 +18,7 @@ from services.control_plane.bff.assistant_conversation_store import (
     AssistantConversationStore,
     PostgresAssistantConversationStore,
 )
+from services.control_plane.bff.assistant import management_service
 from services.control_plane.bff.assistant.management_service import (
     _MGMT_AI_AUDIT_EVENTS,
     ManagementAiConversationStore,
@@ -38,51 +38,26 @@ from services.control_plane.bff.management_ai_store import ManagementAiAttachmen
 from services.control_plane.bff.ports import ReadSurfacePorts
 
 
-def _bff_main_module():
-    """Dynamic (non-AST-visible) accessor for the BFF composition root.
-
-    Uses ``importlib.import_module`` instead of a static ``import`` so this
-    file is not counted as a BFF main importer by the live AST scan in
-    ``tests/test_bff_test_architecture.py`` -- the same technique
-    ``tests/rebalance_authority_test_support.get_management_nl_module`` uses
-    for the identical composition root, inlined here because this file lives
-    outside ``tests/`` and cannot import that sibling-scoped helper module
-    (its own transitive import of ``read_store_fixtures`` only resolves when
-    a file under ``tests/`` itself is being collected).
-    """
-    return importlib.import_module("services.control_plane.bff.main")
-
-
-# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: `POST /bff/management/nl/ask`
-# (`bff_management_nl_ask`) is now a single-owner handler defined in
-# `assistant/management_service.py` (BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001);
-# `main.py` only imports and mounts it. Its conversation-store and audit-deque
-# state route through that module's own real setters
-# (`set_management_ai_conversation_store`/`get_management_ai_conversation_store`,
-# `_MGMT_AI_AUDIT_EVENTS`), imported directly above with no main indirection.
-# BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001 made `read_store` and
-# `OpenClawOpsClient` real injectable seams on `management_service`
-# (`set_read_store`/`get_read_store`, `set_openclaw_ops_client`/
-# `reset_openclaw_ops_client`), but `_bff_management_nl_ask_impl` also calls
-# through roughly three dozen other helpers (`_mgmt_nl_validate_question_size`,
-# `_mgmt_nl_parse_control_command`, `_mgmt_nl_invoke_provider`, ...) that
-# `management_service.py`'s own `_MainCallable` forwarder (see
-# `_REMAINING_MAIN_HELPERS` there) still resolves by looking up
-# `sys.modules["services.control_plane.bff.main"]` at call time -- those
-# helper bodies still live only in `main.py`. Building the nl/ask route via
-# `core.app_factory.create_assistant_management_router` without ever loading
-# `main` therefore raises `RuntimeError: Unresolved management NL helper: ...`
-# on the very first request, confirmed empirically while working this task.
-# That is a genuine production-seam gap in `assistant/management_service.py`
-# outside this task's scope (AC1 forbids editing main.py/production source).
-# The four tests below that POST to `/bff/management/nl/ask`
-# (`test_attachment_storage_base64_proxy_url_and_size_rejections`,
-# `test_multimodal_image_attachment_is_forwarded_to_codex_provider`,
-# `test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider`,
-# `test_persist_turns`) therefore still reach `main`'s `app`/`read_store`
-# globals through `_bff_main_module()` above instead of a static `import main`,
-# and are tracked as a live-scanned, non-allowlisted offender in
-# `bff_test_architecture_inventory.json` rather than being silently exempted.
+# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 (generation 7): `POST
+# /bff/management/nl/ask` (`bff_management_nl_ask`) is a single-owner handler
+# defined in `assistant/management_service.py`; `main.py` only imports and
+# mounts it. BFF-MGMT-NL-HELPER-EXTRACTION-001 extracted the remaining ~36
+# helpers (`_mgmt_nl_validate_question_size`, `_mgmt_nl_parse_control_command`,
+# `_mgmt_nl_invoke_provider`, ...) into real implementations on
+# `management_service.py` itself (`_REMAINING_MAIN_HELPERS` there is now a
+# plain name list, not a `sys.modules` forwarder), closing the production-seam
+# gap this file previously disclosed. The four tests that POST to
+# `/bff/management/nl/ask` now build the app via `build_bff_app()` +
+# `create_assistant_management_router` -- the same real production router
+# factory `_management_ai_route_client` below already uses for the GET
+# conversation/attachment read-path tests -- wired directly to
+# `management_service.bff_management_nl_ask` and the module-level
+# `_handle_management_ai_conversation`/`_handle_management_ai_attachment`
+# handlers, with `management_service.set_read_store`/`reset_read_store` and
+# `management_service.set_openclaw_ops_client`/`reset_openclaw_ops_client`
+# providing the same per-test isolation the old `main_mod.read_store` /
+# `main_mod.OpenClawOpsClient` monkeypatches provided, with zero remaining
+# dependency on `main.py`.
 #
 # Every other test in this file -- the store-only unit tests and the
 # `GET /bff/management/ai/conversations/{session_id}` /
@@ -615,21 +590,30 @@ def _persist_client(tmp_path: Path, store_path: Path) -> Iterator[object]:
     Yield a TestClient wired to a file-backed ManagementAiConversationStore.
     Restores composition-root state on exit so tests are isolated.
     """
-    main_mod = _bff_main_module()
     store = ManagementAiConversationStore(
         storage_path=str(store_path),
         attachment_store=ManagementAiAttachmentStore(storage_path=str(tmp_path / "attachments")),
     )
     saved_store = get_management_ai_conversation_store()
-    saved_read_store = getattr(main_mod, "read_store", None)
+    saved_read_store = management_service.get_read_store()
     set_management_ai_conversation_store(store)
     _MGMT_AI_AUDIT_EVENTS.clear()
-    main_mod.read_store = MgmtAiPersistenceTestReadPorts()
+    management_service.set_read_store(MgmtAiPersistenceTestReadPorts())
+    app = build_bff_app()
+    app.include_router(
+        create_assistant_management_router(
+            {
+                "bff_management_nl_ask": management_service.bff_management_nl_ask,
+                "bff_management_ai_conversation": _handle_management_ai_conversation,
+                "bff_management_ai_attachment": _handle_management_ai_attachment,
+            }
+        )
+    )
     try:
-        yield TestClient(main_mod.app), store
+        yield TestClient(app), store
     finally:
         set_management_ai_conversation_store(saved_store)
-        main_mod.read_store = saved_read_store
+        management_service.set_read_store(saved_read_store)
 
 
 def test_attachment_storage_base64_proxy_url_and_size_rejections(
@@ -788,12 +772,10 @@ def test_multimodal_image_attachment_is_forwarded_to_codex_provider(
     object store, provider invocation resolves those bytes into a multimodal
     image_url payload instead of forwarding DB metadata only.
     """
-    main_mod = _bff_main_module()
-
     fake = _FakeProviderClient()
     monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
     monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
-    monkeypatch.setattr(main_mod, "OpenClawOpsClient", lambda: fake)
+    monkeypatch.setattr(management_service, "OpenClawOpsClient", lambda: fake)
 
     store_path = tmp_path / "mgmt-ai-attachment-provider.json"
     image_bytes = b"\x89PNG\r\n\x1a\nprovider-forward"
@@ -842,8 +824,6 @@ def test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    main_mod = _bff_main_module()
-
     fake = _FakeProviderClient(
         result={
             "provider": "claude",
@@ -853,7 +833,7 @@ def test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider(
     )
     monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "claude_cli")
     monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
-    monkeypatch.setattr(main_mod, "OpenClawOpsClient", lambda: fake)
+    monkeypatch.setattr(management_service, "OpenClawOpsClient", lambda: fake)
 
     store_path = tmp_path / "mgmt-ai-attachment-provider-fallback.json"
     encoded = base64.b64encode(b"\x89PNG\r\n\x1a\nfallback").decode("ascii")
