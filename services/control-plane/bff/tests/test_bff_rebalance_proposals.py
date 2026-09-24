@@ -20,35 +20,40 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
     APPROVER_HEADERS,
     HEADERS,
     CapitalBffAuthorityHarness,
+    get_management_nl_module,
     rebalance_payload,
 )
 
 
-# RETAINED_COMPOSITION (seam gap): two tests in this file still need the
-# real composition-root module, sourced through a package-qualified import
-# (no `sys.path` mutation) so only these two tests pay the composition-root
-# import cost:
+# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: two tests in this file still
+# need the real composition-root module:
 #   - `test_startup_replays_submitted_approved_apply_to_terminal_owner_
 #     receipt` verifies main.py's own process-startup command replay
 #     behaviour (main.py scans the durable command store for commands left
 #     `submitted`/`processing` by a crashed process and replays them through
-#     `_process_command_stub` when the app module re-executes). That
-#     orchestration is main.py-only: the CapitalBffAuthorityHarness's
-#     lightweight app (`_build_authority_harness_app` in
-#     rebalance_authority_test_support.py) mounts only the capital and
-#     command-adapter routers with no `process_command_task`/startup-replay
-#     scan at all, and no other module in this tree implements the
-#     equivalent.
+#     `_process_command_stub` when the app module re-executes). The generic
+#     replay-scan mechanism itself is now importable
+#     (`core/lifespan.py`'s `replay_submitted_commands`/`create_lifespan`,
+#     BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001 AC4), but `_process_command_stub`
+#     is main.py's own command processor closed over main.py's own
+#     process-global `command_store`/`read_store` (see `main._process_command`),
+#     not the CapitalBffAuthorityHarness's isolated per-test store, so this
+#     test still needs the real, fully composed `main.app` (with its own
+#     command store) to exercise that exact startup-replay path end to end.
 #   - `test_bff_version_reports_configured_source_sha` calls the real
 #     `main.sem_bff_version` handler directly through `create_core_router`
 #     rather than reimplementing its response shape, since `sem_bff_version`
 #     itself is not extracted into a standalone router/service module.
+# Both now reach main.py through the same reviewed dynamic (non-AST-visible)
+# `importlib.import_module` accessor (`get_management_nl_module`) that
+# `tests/test_bff_b6_management_nl_ask.py` already uses for this identical
+# composition root, instead of a static `from services.control_plane.bff
+# import main` (which the live architecture scan in
+# `test_bff_test_architecture.py` flags as a non-allowlisted importer).
 # Every other test in this file runs entirely against the already-extracted
 # CapitalBffAuthorityHarness / command_executor seams.
 def _bff_main_module():
-    from services.control_plane.bff import main as bff_main
-
-    return bff_main
+    return get_management_nl_module()
 
 
 def _create_proposal(

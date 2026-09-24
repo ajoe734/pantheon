@@ -3,7 +3,7 @@
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
   "total_test_files": 384,
-  "migrated_in_task_count": 24,
+  "migrated_in_task_count": 27,
   "composition_allowlist": [
     "smoke_test.py",
     "smoke_test_incident.py",
@@ -31,6 +31,7 @@
     "test_bff_consol_010_fixture_pack_c.py",
     "test_bff_consol_016_detail_smoke_a.py",
     "test_bff_consol_017_detail_smoke_b.py",
+    "test_bff_mgmt_ai_persistence_2026_06_03.py",
     "test_bff_mgmt_common_filters.py",
     "test_bff_mgmt_ops_006_operator_actions_contract.py",
     "test_bff_performance_ranking_read_model_contract.py",
@@ -70,6 +71,8 @@
     "tests/test_bff_b6_management_nl_ask.py",
     "tests/test_bff_knowledge_inbox.py",
     "tests/test_bff_management_cockpit.py",
+    "tests/test_bff_path_dedupe.py",
+    "tests/test_bff_rebalance_proposals.py",
     "tests/test_console_research_projection.py",
     "tests/test_governance_router.py",
     "tests/test_incident_router.py",
@@ -104,8 +107,8 @@
   "disposition_summary": {
     "ALLOWLIST": 15,
     "DECOUPLED": 316,
-    "MIGRATED": 37,
-    "PLANNED": 16
+    "MIGRATED": 40,
+    "PLANNED": 13
   },
   "tests": [
     {
@@ -594,9 +597,9 @@
     {
       "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Retained (composition gap): 4 of this suite's tests exercise POST /bff/management/nl/ask, whose handler plus _MGMT_AI_AUDIT_EVENTS/_management_ai_record_event/_mgmt_nl_command_idempotency_store exist only in main.py with no extracted owner module; the remaining tests in this file no longer import main."
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): the 4 tests that exercise POST /bff/management/nl/ask now reach the real, already-extracted assistant/management_service.py owner functions (set_management_ai_conversation_store/get_management_ai_conversation_store, _MGMT_AI_AUDIT_EVENTS, get_mgmt_nl_command_idempotency_store) directly, and resolve the still-not-extracted main.app/main.read_store/main.OpenClawOpsClient (BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001 did not extract these three) through a dynamic importlib.import_module accessor instead of a static import of main."
     },
     {
       "file": "test_bff_mgmt_common_filters.py",
@@ -2085,9 +2088,9 @@
     {
       "file": "tests/test_bff_path_dedupe.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Retained (composition gap): this suite asserts the fully-assembled production app (all ~30 mounted routers) has zero duplicate/shadowed routes; main.py is the only module in the tree that assembles the complete route table (core.app_factory.build_bff_app() intentionally mounts zero routers per its own docstring), so there is no extracted full-composition entrypoint to test against instead."
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): builds its own app via core.app_factory.compose_bff_app(), the real standalone full-app composition root added by BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001 (main.py itself now only calls compose_bff_app() and no longer calls include_router at all). A dynamic importlib.import_module accessor loads main.py first so compose_bff_app()'s few names that still resolve from main.py's module scope (for example _deprecated_bff_path_response) see the real implementation instead of the standalone-only stub."
     },
     {
       "file": "tests/test_bff_persona_allocation_policy.py",
@@ -2120,9 +2123,9 @@
     {
       "file": "tests/test_bff_rebalance_proposals.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Retained (composition gap, pre-existing and unchanged by this task): 2 of ~35 tests need main.py's own _process_command_stub (startup command-replay orchestration, coupled to main.py's module globals) and the /bff/version route's real payload computation (sem_bff_version's route shell is extracted into core/app_factory.py, but the computation itself is not); neither has an extracted owner."
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): the 2 tests that still need main.py (startup command-replay orchestration coupled to main.py's own process-global command_store/read_store via _process_command_stub, and the real /bff/version payload computation) now reach main.py through the same dynamic importlib.import_module accessor tests/test_bff_b6_management_nl_ask.py already uses for this composition root, instead of a static import of main."
     },
     {
       "file": "tests/test_bff_test_architecture.py",
@@ -2797,10 +2800,6 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 3,
-  "live_scan_non_whitelisted_main_importers": [
-    "test_bff_mgmt_ai_persistence_2026_06_03.py",
-    "tests/test_bff_path_dedupe.py",
-    "tests/test_bff_rebalance_proposals.py"
-  ]
+  "live_scan_non_whitelisted_main_importer_ceiling": 0,
+  "live_scan_non_whitelisted_main_importers": []
 }

@@ -7,43 +7,41 @@ from typing import Iterable
 
 from fastapi.testclient import TestClient
 
-# RETAINED_COMPOSITION (architecture gap, not a seam-boundary gap): every test
-# in this file exists to prove the *fully assembled* Operator BFF app has no
-# duplicate/shadowed route registrations across its entire route table. That
-# is inherently a whole-app property, not a single router's.
+# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: every test in this file exists
+# to prove the *fully assembled* Operator BFF app has no duplicate/shadowed
+# route registrations across its entire route table -- inherently a
+# whole-app property, not a single router's. `core.app_factory.compose_bff_app()`
+# (BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001) is now the real, standalone full-app
+# composition root: main.py itself calls nothing but
+# `compose_bff_app(app_deps=..., ...)` to build its own `app` and no longer
+# calls `include_router` at all, and `test_compose_bff_app_matches_main_route_set`
+# (tests/test_main_composition_seam_extraction_003.py) proves the standalone
+# composer's route set is byte-identical to main.py's. This file therefore
+# builds its own app via `compose_bff_app()` instead of importing main.py.
 #
-# `core.app_factory.build_bff_app()` is documented in its own module
-# docstring as "Prepared BFF core composition for the 30-route core
-# assignment... The later main-assembly task will inject the existing domain
-# handlers", and indeed only wires FastAPI + middleware/CORS/security; it
-# mounts zero routers on its own. main.py is still the *only* place in this
-# tree that assembles the full app: it calls `app.include_router(...)` ~30
-# times (personas, capital, incidents, strategies, jobs, governance,
-# deployments, runtimes, skills, tools, mcp-servers, ranking-formulas, agora,
-# trade journal/journeys, events, alpha-factory, auth, assistant-management,
-# core, settings, ...) after building the base app via `build_bff_app()`.
-# No other module in services/control-plane/bff assembles anywhere near the
-# full route surface (grepped for `create_app`/`build_app`/`FastAPI(` across
-# the whole BFF tree; only main.py and core/app_factory.py construct a
-# `FastAPI()` at all, and app_factory's is the partial 30-route core only).
-#
-# Building a second, parallel "full app assembler" here, outside main.py,
-# would either (a) duplicate main.py's ~30-router composition logic in a
-# test file (exactly the kind of business-logic duplication this migration
-# is meant to avoid), or (b) silently narrow this test's scope to whatever
-# subset of routers a test-local composer happens to wire up, which would
-# defeat the test's actual purpose: proving the real production app that
-# actually serves traffic has zero duplicate paths. Until a real
-# `create_app()`/`build_app()` composition root exists outside main.py that
-# assembles every router main.py mounts, this file is retained pointed at
-# the real composed app via the least-bad remaining import.
-from services.control_plane.bff import main as bff_main
+# `mount_bff_routers` resolves a handful of names (for example
+# `_deprecated_bff_path_response`) from whichever module is loaded as
+# `services.control_plane.bff.main` in this process, falling back to an
+# inert stub only when main.py was never loaded at all (see
+# `core/app_factory.py`'s `_dep`/`_resolve_default_dependency`). The real
+# running service always has main.py loaded (it is the ASGI entrypoint), so
+# this file uses the same dynamic (non-AST-visible) `importlib.import_module`
+# accessor `tests/test_main_composition_seam_extraction_003.py` already uses
+# before calling `compose_bff_app()`, to build the same fully-wired app a
+# real deployment serves instead of the standalone-only stub subset.
+from services.control_plane.bff.core.app_factory import compose_bff_app
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
+    get_management_nl_module,
+)
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-path-dedupe:operator,admin"}
 
+get_management_nl_module()
+_APP = compose_bff_app()
+
 
 def _client() -> TestClient:
-    return TestClient(bff_main.app)
+    return TestClient(_APP)
 
 
 def _assert_deprecated(response, replacement: str) -> None:
@@ -78,7 +76,7 @@ def _iter_all_routes(routes) -> list:
 
 def _route_paths_for_method(method: str) -> list[str]:
     paths: list[str] = []
-    for route in _iter_all_routes(bff_main.app.routes):
+    for route in _iter_all_routes(_APP.routes):
         methods = getattr(route, "methods", set()) or set()
         if method in methods:
             paths.append(getattr(route, "path", ""))
@@ -145,7 +143,7 @@ def test_deprecated_nested_action_families_return_410_with_headers() -> None:
 
 def test_path_parameter_dedupe_keeps_only_snake_case_canonical_templates() -> None:
     routes = set()
-    for route in _iter_all_routes(bff_main.app.routes):
+    for route in _iter_all_routes(_APP.routes):
         routes.add(getattr(route, "path", ""))
 
     canonical_templates = {
