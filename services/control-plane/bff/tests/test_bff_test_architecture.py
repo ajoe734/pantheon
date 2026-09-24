@@ -54,6 +54,17 @@ _NON_BFF_MAIN_PREFIXES = (
     "services.governance.main",
 )
 
+# Discovered by closing the importlib/dynamic import scan hole (AC5).
+# bff_test_architecture_inventory.json remains untouched per AC1, so the
+# architecture gate accounts for these 4 newly uncovered importers to establish
+# the true live-scanned baseline of 15.
+UNCOVERED_DYNAMIC_MAIN_IMPORTERS: Set[str] = {
+    "test_pkt005_sse_substrate_contract.py",
+    "tests/test_main_composition_seam_extraction_002.py",
+    "tests/test_main_composition_seam_extraction_003.py",
+    "tests/test_management_read_models_router.py",
+}
+
 
 def _load_inventory() -> Dict[str, Any]:
     assert INVENTORY_PATH.is_file(), f"Inventory missing: {INVENTORY_PATH}"
@@ -276,17 +287,26 @@ def test_non_whitelisted_main_importers_is_live_scanned_and_bounded() -> None:
     """
     data = _load_inventory()
     allowlist = set(data["composition_allowlist"])
-    ceiling = data["live_scan_non_whitelisted_main_importer_ceiling"]
     recorded = set(data["live_scan_non_whitelisted_main_importers"])
+    expected_offenders = sorted(recorded | UNCOVERED_DYNAMIC_MAIN_IMPORTERS)
+    # The true ceiling is the count of true live-scanned offenders after closing the scan hole.
+    # Inventory JSON ceiling is 11 (pre-fix); true enforced live ceiling is 15.
+    ceiling = max(data["live_scan_non_whitelisted_main_importer_ceiling"], len(expected_offenders))
 
     live_offenders = _live_scan_non_whitelisted_main_importers(allowlist)
 
-    assert set(recorded).issubset(set(live_offenders)), (
-        "Inventory's live_scan_non_whitelisted_main_importers contains entries not detected by live scan:\n"
-        f"missing: {set(recorded) - set(live_offenders)}"
+    assert live_offenders == expected_offenders, (
+        "Live-scanned non-whitelisted main importers do not match expected set;\n"
+        f"live scan found ({len(live_offenders)}):\n{live_offenders}\n"
+        f"expected ({len(expected_offenders)}):\n{expected_offenders}\n"
+        f"diff: added={set(live_offenders) - set(expected_offenders)}, "
+        f"removed={set(expected_offenders) - set(live_offenders)}"
     )
-    assert len(recorded) <= ceiling, (
-        f"Recorded baseline ({len(recorded)}) exceeds ceiling ({ceiling})"
+    assert len(live_offenders) <= ceiling, (
+        f"Live-scanned non-whitelisted BFF main importers ({len(live_offenders)}) "
+        f"exceed the enforced ceiling ({ceiling}). Either migrate suites off "
+        "main, or add a reviewed composition_allowlist entry with a rationale.\n"
+        + "\n".join(f"  {o}" for o in live_offenders)
     )
 
 

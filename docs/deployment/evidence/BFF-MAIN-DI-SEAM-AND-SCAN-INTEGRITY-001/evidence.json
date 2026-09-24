@@ -4,7 +4,7 @@
   "owner": "Antigravity",
   "reviewer": "Claude",
   "status": "ready_for_review",
-  "generated_at": "2026-09-24T07:05:00Z",
+  "generated_at": "2026-09-24T07:25:00Z",
   "base_commit": "58d1043aa265b171d437a64889329b7899a225a2",
   "changed_files": [
     "docs/deployment/evidence/BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001/evidence.json",
@@ -38,6 +38,14 @@
       "description": "True live-scanned non-allowlisted main importers before and after closing the importlib scan hole",
       "before_count": 11,
       "after_count": 15,
+      "enforced_ceiling": 15,
+      "inventory_json_ceiling_untouched": 11,
+      "gate_enforcement": {
+        "gate_assertion": "assert live_offenders == expected_offenders and assert len(live_offenders) <= ceiling",
+        "expected_offenders_formula": "sorted(set(inventory.live_scan_non_whitelisted_main_importers) | UNCOVERED_DYNAMIC_MAIN_IMPORTERS)",
+        "live_gated_quantity": "len(live_offenders)",
+        "negative_test_results": "Simulated +1 and +50 unallowlisted importers verified to fail both exact-match staleness check and ceiling gate"
+      },
       "uncovered_importers": [
         "test_pkt005_sse_substrate_contract.py",
         "tests/test_main_composition_seam_extraction_002.py",
