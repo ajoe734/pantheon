@@ -56,13 +56,22 @@ _NON_BFF_MAIN_PREFIXES = (
 
 # Discovered by closing the importlib/dynamic import scan hole (AC5).
 # bff_test_architecture_inventory.json remains untouched per AC1, so the
-# architecture gate accounts for these 4 newly uncovered importers to establish
-# the true live-scanned baseline of 15.
+# architecture gate accounts for these newly uncovered importers to establish
+# the true live-scanned baseline.
+#
+# tests/test_management_read_models_router.py was removed from this set under
+# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 (reviewer-authorized companion
+# scanner change, Codex review of PR #5961: "coordinate ... a companion
+# scanner change to remove this obsolete expectation while preserving live
+# scanning, negative scanner tests and strict exceptions"): that file was
+# fully migrated off main.py in this task's declared scope (Human/Ops
+# artifact-contract expansion) and is confirmed dropped from the live AST
+# scan; retaining it here would keep asserting a main-importer that no
+# longer exists.
 UNCOVERED_DYNAMIC_MAIN_IMPORTERS: Set[str] = {
     "test_pkt005_sse_substrate_contract.py",
     "tests/test_main_composition_seam_extraction_002.py",
     "tests/test_main_composition_seam_extraction_003.py",
-    "tests/test_management_read_models_router.py",
 }
 
 
