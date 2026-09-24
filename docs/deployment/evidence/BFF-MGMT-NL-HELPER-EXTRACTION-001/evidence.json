@@ -1,0 +1,140 @@
+{
+  "task_id": "BFF-MGMT-NL-HELPER-EXTRACTION-001",
+  "title": "Move the 37 management NL helper bodies out of main.py and retire the sys.modules forwarder",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "status": "ready_for_review",
+  "generated_at": "2026-09-24T17:40:00Z",
+  "base_commit": "6aa8193501abe578bbde7a7e7986a633ad3f3195",
+  "changed_files": [
+    "docs/deployment/evidence/BFF-MGMT-NL-HELPER-EXTRACTION-001/evidence.json",
+    "services/control-plane/bff/assistant/management_service.py",
+    "services/control-plane/bff/core/app_factory.py",
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/tests/test_main_composition_seam_extraction_005.py"
+  ],
+  "extracted_helpers": [
+    "_mgmt_nl_validate_question_size",
+    "_mgmt_nl_parse_control_command",
+    "_mgmt_nl_high_risk_classify",
+    "_mgmt_nl_record_high_risk_refusal",
+    "_mgmt_nl_caller_tenant",
+    "_mgmt_nl_trim_text",
+    "_mgmt_nl_normalize_focus",
+    "_mgmt_nl_normalize_conversation_context",
+    "_mgmt_nl_normalize_ui_context",
+    "_mgmt_nl_allowed_action_kinds",
+    "_resolve_final_idempotency_key",
+    "_stable_json_hash",
+    "_request_dry_run_requested",
+    "_dry_run_success_response",
+    "_management_json_clone",
+    "_mgmt_nl_handle_control_command",
+    "_mgmt_nl_collect_context",
+    "_mgmt_nl_deterministic_answer",
+    "_mgmt_nl_provider_enabled",
+    "_mgmt_nl_invoke_provider",
+    "_mgmt_nl_provider_status",
+    "_mgmt_nl_provider_name",
+    "_management_nl_publish_completed_events",
+    "_publish_event",
+    "_record_agora_audit_event",
+    "_assistant_control_mode_for_identity",
+    "_management_ai_audit_href",
+    "_mgmt_nl_synthesize_answer",
+    "_mgmt_nl_text_from_provider_value",
+    "_mgmt_nl_extract_provider_actions",
+    "_mgmt_nl_provider_mode_from_context",
+    "_mgmt_nl_reject_development_payload",
+    "_mgmt_nl_build_context_pack",
+    "_mgmt_nl_jsonish",
+    "_mgmt_nl_maybe_provider_answer",
+    "_mgmt_nl_provider_prompt",
+    "_mgmt_nl_surface_confidence"
+  ],
+  "forwarder_retirement": {
+    "_MainCallable_class_removed": true,
+    "_MainCallable_installation_loop_removed": true,
+    "sys_modules_lookup_in_management_service_count": 0,
+    "summary": "Completely retired _MainCallable and removed sys.modules lookups from management_service.py. All 37 helpers are real in-module implementations with explicit collaborator injection seams."
+  },
+  "empirical_standalone_proof": {
+    "command": "RANKING_STORE_DSN=\"postgresql://test:test@localhost:5432/test\" RANKING_STORE_BOOTSTRAP=\"0\" PANTHEON_BFF_AUTH_STUB=\"true\" PANTHEON_BFF_AUTH_MODE=\"permissive\" PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH=\"/tmp/test_idempotency_store.json\" .venv-pantheon/bin/python3 -c \"import sys; from fastapi import FastAPI; from fastapi.testclient import TestClient; from services.control_plane.bff.core.app_factory import compose_bff_app; assert 'services.control_plane.bff.main' not in sys.modules; app = compose_bff_app(); assert 'services.control_plane.bff.main' not in sys.modules; client = TestClient(app); resp = client.post('/bff/management/nl/ask', json={'question': 'What is the current portfolio status?', 'focus': 'portfolio'}, headers={'Authorization': 'Bearer op-seam-005:operator', 'Idempotency-Key': 'test-key-standalone-proof'}); print('HTTP Status:', resp.status_code); print('Response Status:', resp.json().get('status')); print('Has Answer:', 'answer' in resp.json().get('data', {})); assert 'services.control_plane.bff.main' not in sys.modules; print('Standalone Proof: SUCCESS! Zero imports of main.py, served end to end.')\"",
+    "output": "HTTP Status: 202\nResponse Status: accepted\nHas Answer: True\nStandalone Proof: SUCCESS! Zero imports of main.py, served end to end.",
+    "main_imported_during_compose": false,
+    "main_imported_during_request": false,
+    "runtime_error_raised": false
+  },
+  "duplicate_definitions_grep_readback": {
+    "helpers_checked_count": 37,
+    "management_service_def_count": 37,
+    "main_py_def_count": 0,
+    "duplicate_def_count": 0,
+    "readback_command": "grep -En '^\\s*(async\\s+)?def\\s+(_mgmt_nl_validate_question_size|_mgmt_nl_parse_control_command|_mgmt_nl_high_risk_classify|_mgmt_nl_record_high_risk_refusal|_mgmt_nl_caller_tenant|_mgmt_nl_trim_text|_mgmt_nl_normalize_focus|_mgmt_nl_normalize_conversation_context|_mgmt_nl_normalize_ui_context|_mgmt_nl_allowed_action_kinds|_resolve_final_idempotency_key|_stable_json_hash|_request_dry_run_requested|_dry_run_success_response|_management_json_clone|_mgmt_nl_handle_control_command|_mgmt_nl_collect_context|_mgmt_nl_deterministic_answer|_mgmt_nl_provider_enabled|_mgmt_nl_invoke_provider|_mgmt_nl_provider_status|_mgmt_nl_provider_name|_management_nl_publish_completed_events|_publish_event|_record_agora_audit_event|_assistant_control_mode_for_identity|_management_ai_audit_href|_mgmt_nl_synthesize_answer|_mgmt_nl_text_from_provider_value|_mgmt_nl_extract_provider_actions|_mgmt_nl_provider_mode_from_context|_mgmt_nl_reject_development_payload|_mgmt_nl_build_context_pack|_mgmt_nl_jsonish|_mgmt_nl_maybe_provider_answer|_mgmt_nl_provider_prompt|_mgmt_nl_surface_confidence)\\b' services/control-plane/bff/main.py",
+    "readback_result": ""
+  },
+  "importer_counts": {
+    "scanner_test": "services/control-plane/bff/tests/test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded",
+    "before_count": 15,
+    "after_count": 15,
+    "enforced_ceiling": 15,
+    "allowlist_added_count": 0,
+    "inventory_json_modified": false
+  },
+  "test_results": {
+    "seam_005_suite": {
+      "command": "pytest services/control-plane/bff/tests/test_main_composition_seam_extraction_005.py",
+      "passed": 10,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "seam_004_suite": {
+      "command": "pytest services/control-plane/bff/tests/test_main_composition_seam_extraction_004.py",
+      "passed": 15,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "management_nl_single_owner": {
+      "command": "pytest services/control-plane/bff/tests/test_management_nl_single_owner.py",
+      "passed": 10,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "management_nl_assistant_provider": {
+      "command": "pytest services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+      "passed": 65,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "bff_test_architecture_gate": {
+      "command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "passed": 9,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "bff_b6_management_nl_ask": {
+      "command": "pytest services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+      "passed": 16,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "bff_b6_003_nl_high_risk_refusal": {
+      "command": "pytest services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+      "passed": 7,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "management_read_models_router": {
+      "command": "pytest services/control-plane/bff/tests/test_management_read_models_router.py",
+      "passed": 43,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "bff_smoke_test": {
+      "command": "python3 services/control-plane/bff/smoke_test.py",
+      "passed": 26,
+      "failed": 0,
+      "status": "PASS"
+    }
+  }
+}
