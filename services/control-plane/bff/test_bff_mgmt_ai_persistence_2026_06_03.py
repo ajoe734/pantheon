@@ -60,19 +60,29 @@ def _bff_main_module():
 # state route through that module's own real setters
 # (`set_management_ai_conversation_store`/`get_management_ai_conversation_store`,
 # `_MGMT_AI_AUDIT_EVENTS`), imported directly above with no main indirection.
-# What the extraction did not (and could not, without touching main.py) change
-# is that a handful of names the handler still resolves lazily at call time --
-# `read_store`, `OpenClawOpsClient`, `_mgmt_nl_invoke_provider` -- are dynamic
-# proxies onto whichever module is loaded as `services.control_plane.bff.main`
-# in this process (see `assistant/management_service.py`'s `_DynamicProxy`),
-# because main.py remains the sole place those dependencies are wired for
-# production. The four tests below that POST to `/bff/management/nl/ask`
+# BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001 made `read_store` and
+# `OpenClawOpsClient` real injectable seams on `management_service`
+# (`set_read_store`/`get_read_store`, `set_openclaw_ops_client`/
+# `reset_openclaw_ops_client`), but `_bff_management_nl_ask_impl` also calls
+# through roughly three dozen other helpers (`_mgmt_nl_validate_question_size`,
+# `_mgmt_nl_parse_control_command`, `_mgmt_nl_invoke_provider`, ...) that
+# `management_service.py`'s own `_MainCallable` forwarder (see
+# `_REMAINING_MAIN_HELPERS` there) still resolves by looking up
+# `sys.modules["services.control_plane.bff.main"]` at call time -- those
+# helper bodies still live only in `main.py`. Building the nl/ask route via
+# `core.app_factory.create_assistant_management_router` without ever loading
+# `main` therefore raises `RuntimeError: Unresolved management NL helper: ...`
+# on the very first request, confirmed empirically while working this task.
+# That is a genuine production-seam gap in `assistant/management_service.py`
+# outside this task's scope (AC1 forbids editing main.py/production source).
+# The four tests below that POST to `/bff/management/nl/ask`
 # (`test_attachment_storage_base64_proxy_url_and_size_rejections`,
 # `test_multimodal_image_attachment_is_forwarded_to_codex_provider`,
 # `test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider`,
-# `test_persist_turns`) therefore reach `main`'s `app`/`read_store` globals through
-# `_bff_main_module()` above instead of a static `import main` and not copied
-# business logic.
+# `test_persist_turns`) therefore still reach `main`'s `app`/`read_store`
+# globals through `_bff_main_module()` above instead of a static `import main`,
+# and are tracked as a live-scanned, non-allowlisted offender in
+# `bff_test_architecture_inventory.json` rather than being silently exempted.
 #
 # Every other test in this file -- the store-only unit tests and the
 # `GET /bff/management/ai/conversations/{session_id}` /

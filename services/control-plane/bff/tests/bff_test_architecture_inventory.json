@@ -97,7 +97,7 @@
   },
   "main_by_layer": {
     "adapter": 0,
-    "application": 4,
+    "application": 5,
     "composition": 9,
     "hosted": 1,
     "router": 7
@@ -595,9 +595,9 @@
     {
       "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
       "layer": "application",
-      "imports_main": false,
+      "imports_main": true,
       "disposition": "PLANNED",
-      "rationale": "NOT fully migrated -- open production-seam blocker (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 independent review rejection, 2026-09-24): 4 of this file's tests (test_attachment_storage_base64_proxy_url_and_size_rejections, test_multimodal_image_attachment_is_forwarded_to_codex_provider, test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider, test_persist_turns) POST to /bff/management/nl/ask and still reach services.control_plane.bff.main through importlib.import_module(...) (_bff_main_module(), line 53) because assistant/management_service.py's _bff_management_nl_ask_impl resolves read_store/OpenClawOpsClient module-globals through _DynamicProxy/_resolve_main() (management_service.py:1067-1163), which looks the names up via sys.modules.get('services.control_plane.bff.main') with no injectable-parameter or real-setter alternative (unlike set_management_ai_conversation_store's real DI seam for the conversation store). This is a genuine external production-seam gap in assistant/management_service.py, not a test-authoring choice: editing management_service.py is production source and out of this task's scope. The imports_main field stays literally accurate to a live AST scan (importlib.import_module(...) is not a static import node), but disposition is intentionally NOT 'MIGRATED' because a real, functioning main dependency remains at runtime for these 4 tests. See dynamic_non_ast_visible_main_dependencies below."
+      "rationale": "NOT fully migrated -- open production-seam blocker: 4 of this file's tests (test_attachment_storage_base64_proxy_url_and_size_rejections, test_multimodal_image_attachment_is_forwarded_to_codex_provider, test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider, test_persist_turns) POST to /bff/management/nl/ask and still reach services.control_plane.bff.main through importlib.import_module(...) (_bff_main_module(), line 53 as of this task). BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001 gave assistant/management_service.py real injectable seams for read_store and OpenClawOpsClient (set_read_store/get_read_store, set_openclaw_ops_client/reset_openclaw_ops_client), but bff_management_nl_ask's implementation also calls through roughly three dozen other helpers (_mgmt_nl_validate_question_size, _mgmt_nl_parse_control_command, _mgmt_nl_invoke_provider, ...) that management_service.py's own _MainCallable forwarder (_REMAINING_MAIN_HELPERS) still resolves via sys.modules.get('services.control_plane.bff.main') at call time, with no injectable-parameter or real-setter alternative for those helper bodies (which still live only in main.py). Mounting the handler through core.app_factory.create_assistant_management_router without ever loading main raises RuntimeError: Unresolved management NL helper: ... on the first request (confirmed empirically). This is a genuine external production-seam gap in assistant/management_service.py, not a test-authoring choice: editing management_service.py is production source and out of this task's scope. imports_main is now true because BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001's enhanced live AST scanner detects importlib.import_module(...)/__import__ by string literal, not just static import nodes; disposition is intentionally NOT 'MIGRATED' because a real, functioning main dependency remains at runtime for these 4 tests. See dynamic_non_ast_visible_main_dependencies below."
     },
     {
       "file": "test_bff_mgmt_common_filters.py",
@@ -2123,7 +2123,7 @@
       "layer": "application",
       "imports_main": false,
       "disposition": "PLANNED",
-      "rationale": "NOT fully migrated -- open production-seam blocker (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 independent review rejection, 2026-09-24): 2 of this file's tests still reach services.control_plane.bff.main through tests/rebalance_authority_test_support.get_management_nl_module() (importlib.import_module(...) at that helper's line ~999), which is a shared test-support helper used by several out-of-scope test files and is not itself a declared artifact of this task. test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt verifies main.py's own process-startup command replay (main._process_command_stub, main.py:10203/10344, closed over main.py's own module-global command_store/read_store -- there is no extracted, test-injectable owner for this main-process-global state). test_bff_version_reports_configured_source_sha calls main.sem_bff_version directly (main.py:11125) because that handler is not extracted into any standalone router/service module. Both are genuine external production-seam gaps in main.py itself, out of this task's scope (main.py edits are forbidden by AC1). The imports_main field stays literally accurate to a live AST scan, but disposition is intentionally NOT 'MIGRATED'. See dynamic_non_ast_visible_main_dependencies below."
+      "rationale": "NOT fully migrated -- open production-seam blocker: 1 of this file's tests still reaches services.control_plane.bff.main through tests/rebalance_authority_test_support.get_management_nl_module() (importlib.import_module(...) at that helper's line ~999), which is a shared test-support helper used by several out-of-scope test files and is not itself a declared artifact of this task. test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt verifies main.py's own process-startup command replay (main._process_command_stub, main.py:10203/10344, closed over main.py's own module-global command_store/read_store -- there is no extracted, test-injectable owner for this main-process-global state); this is a genuine external production-seam gap in main.py itself, out of this task's scope (main.py edits are forbidden by AC1). test_bff_version_reports_configured_source_sha is now closed (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): sem_bff_version was extracted into core/app_factory.py's create_version_handler (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001), so the test now calls the standalone sem_bff_version_default handler with no composition-root dependency. The imports_main field stays literally accurate to a live AST scan, but disposition is intentionally NOT 'MIGRATED' because the one remaining test still needs main.py. See dynamic_non_ast_visible_main_dependencies below."
     },
     {
       "file": "tests/test_bff_test_architecture.py",
@@ -2798,8 +2798,10 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 0,
-  "live_scan_non_whitelisted_main_importers": [],
+  "live_scan_non_whitelisted_main_importer_ceiling": 5,
+  "live_scan_non_whitelisted_main_importers": [
+    "test_bff_mgmt_ai_persistence_2026_06_03.py"
+  ],
   "dynamic_non_ast_visible_main_dependencies": [
     {
       "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
@@ -2810,17 +2812,16 @@
         "test_persist_turns"
       ],
       "mechanism": "importlib.import_module('services.control_plane.bff.main') via _bff_main_module() (line 53)",
-      "why_not_removable_in_scope": "assistant/management_service.py's bff_management_nl_ask handler resolves read_store / OpenClawOpsClient via _DynamicProxy/_resolve_main() (management_service.py:1067-1163), which requires sys.modules['services.control_plane.bff.main'] to hold a module exposing those attributes. No injectable parameter or real setter exists for read_store or OpenClawOpsClient in management_service.py (only the conversation store has one). Editing management_service.py is out of scope (production source, forbidden by AC1).",
+      "why_not_removable_in_scope": "BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001 gave assistant/management_service.py real injectable seams for read_store and OpenClawOpsClient (set_read_store/get_read_store, set_openclaw_ops_client/reset_openclaw_ops_client), but bff_management_nl_ask's implementation also calls through roughly three dozen other helpers (_mgmt_nl_validate_question_size, _mgmt_nl_parse_control_command, _mgmt_nl_invoke_provider, ...) that management_service.py's own _MainCallable forwarder (_REMAINING_MAIN_HELPERS) still resolves by looking up sys.modules['services.control_plane.bff.main'] at call time; those helper bodies still live only in main.py. Building the nl/ask route via core.app_factory.create_assistant_management_router without ever loading main raises RuntimeError: Unresolved management NL helper: ... on the very first request (confirmed empirically working this task). The enhanced live AST scanner (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001, which now also detects importlib.import_module/__import__ by string literal) correctly flags this file's _bff_main_module() as a real offender; it is recorded here rather than silently exempted. Editing management_service.py or main.py is out of scope (production source, forbidden by AC1).",
       "blocker": "external_production_seam"
     },
     {
       "file": "tests/test_bff_rebalance_proposals.py",
       "tests": [
-        "test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt",
-        "test_bff_version_reports_configured_source_sha"
+        "test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt"
       ],
       "mechanism": "tests/rebalance_authority_test_support.get_management_nl_module() -> importlib.import_module('services.control_plane.bff.main')",
-      "why_not_removable_in_scope": "test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt exercises main.py's own startup command-replay against main.py's own process-global command_store/read_store via main._process_command_stub (main.py:10203/10344); test_bff_version_reports_configured_source_sha calls main.sem_bff_version directly (main.py:11125), which is not extracted into any standalone router/service module. Both require main.py itself; editing main.py is out of scope (forbidden by AC1).",
+      "why_not_removable_in_scope": "test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt exercises main.py's own startup command-replay against main.py's own process-global command_store/read_store via main._process_command_stub (main.py:10203/10344). It requires the real, fully composed main.app itself; editing main.py is out of scope (forbidden by AC1). test_bff_version_reports_configured_source_sha is now closed: sem_bff_version was extracted into core/app_factory.py's create_version_handler (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001), so the test now calls the standalone sem_bff_version_default handler directly with no composition-root dependency (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001).",
       "blocker": "external_production_seam"
     }
   ]

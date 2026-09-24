@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff import command_executor
-from services.control_plane.bff.core.app_factory import create_core_router
+from services.control_plane.bff.core.app_factory import create_core_router, sem_bff_version_default
 from services.control_plane.bff.models import CommandType
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     APPROVER_HEADERS,
@@ -25,8 +25,8 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
 )
 
 
-# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: two tests in this file still
-# need the real composition-root module:
+# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: one test in this file still
+# needs the real composition-root module:
 #   - `test_startup_replays_submitted_approved_apply_to_terminal_owner_
 #     receipt` verifies main.py's own process-startup command replay
 #     behaviour (main.py scans the durable command store for commands left
@@ -40,18 +40,19 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
 #     not the CapitalBffAuthorityHarness's isolated per-test store, so this
 #     test still needs the real, fully composed `main.app` (with its own
 #     command store) to exercise that exact startup-replay path end to end.
-#   - `test_bff_version_reports_configured_source_sha` calls the real
-#     `main.sem_bff_version` handler directly through `create_core_router`
-#     rather than reimplementing its response shape, since `sem_bff_version`
-#     itself is not extracted into a standalone router/service module.
-# Both now reach main.py through the same reviewed dynamic (non-AST-visible)
+# It reaches main.py through the same reviewed dynamic (non-AST-visible)
 # `importlib.import_module` accessor (`get_management_nl_module`) that
 # `tests/test_bff_b6_management_nl_ask.py` already uses for this identical
 # composition root, instead of a static `from services.control_plane.bff
 # import main` (which the live architecture scan in
 # `test_bff_test_architecture.py` flags as a non-allowlisted importer).
-# Every other test in this file runs entirely against the already-extracted
-# CapitalBffAuthorityHarness / command_executor seams.
+# `test_bff_version_reports_configured_source_sha` (BFF-TEST-MIGRATION-
+# REMAINING-IMPORTERS-001) now calls the real, standalone
+# `core.app_factory.sem_bff_version_default` handler directly -- `sem_bff_version`
+# was extracted from main.py into app_factory.py's `create_version_handler`
+# (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001) -- so it no longer needs main.py
+# at all. Every other test in this file runs entirely against the
+# already-extracted CapitalBffAuthorityHarness / command_executor seams.
 def _bff_main_module():
     return get_management_nl_module()
 
@@ -1318,7 +1319,7 @@ def test_bff_version_reports_configured_source_sha(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_ENV", "dev")
     app = FastAPI()
     app.include_router(
-        create_core_router({"sem_bff_version": _bff_main_module().sem_bff_version})
+        create_core_router({"sem_bff_version": sem_bff_version_default})
     )
     response = TestClient(app).get("/bff/version")
     assert response.status_code == 200, response.text
