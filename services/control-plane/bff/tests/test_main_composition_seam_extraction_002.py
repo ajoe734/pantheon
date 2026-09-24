@@ -523,6 +523,34 @@ def test_pm12_quarter_window_and_action_helpers():
     assert bff_main._pm12_quarterly_recommendation_item is _pm12_quarterly_recommendation_item
 
 
+def test_pm12_duplicate_helpers_resolve_from_service():
+    """Verify BFF-MAIN-PM12-DUPLICATE-CLEANUP-001: main.py resolves the five PM12
+
+    helpers from pm12.service rather than maintaining duplicate local definitions.
+    """
+    import importlib
+    from services.control_plane.bff.pm12 import service as pm12_service
+
+    bff_main = importlib.import_module("services.control_plane.bff.main")
+
+    five_symbols = [
+        "_pm12_allocation_line_digest",
+        "_pm12_allocation_snapshot_record",
+        "_pm12_ranking_snapshot_ttl_seconds",
+        "_pm12_recommendation_snapshot_record",
+        "_pm12_allocation_evaluation_record",
+    ]
+
+    for sym in five_symbols:
+        main_sym = getattr(bff_main, sym)
+        svc_sym = getattr(pm12_service, sym)
+        assert main_sym is svc_sym, f"Expected bff_main.{sym} to be identical to pm12.service.{sym}"
+        assert getattr(main_sym, "__module__", None) == "services.control_plane.bff.pm12.service", (
+            f"Expected bff_main.{sym} to originate from services.control_plane.bff.pm12.service, "
+            f"got {getattr(main_sym, '__module__', None)}"
+        )
+
+
 def test_human_inbox_governance_seam_delegation():
     import importlib
     from services.control_plane.bff.governance.human_inbox import (
