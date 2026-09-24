@@ -1560,6 +1560,8 @@ def mount_bff_routers(
     app.state.assistant_session_store = asst_session_store
     app.state.assistant_transcript_store = asst_transcript_store
     app.state.assistant_control_mode_store = asst_control_mode_store
+    from ..assistant.management_service import set_assistant_control_mode_store
+    set_assistant_control_mode_store(asst_control_mode_store)
     app.state.source_management_client = src_mgmt_client
     app.state.persona_service = persona_service
     app.state.command_adapter_service = command_adapter_service
