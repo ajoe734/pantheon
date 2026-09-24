@@ -812,10 +812,17 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     """Mounted-app regression: replay and restart with BFF_DATA_DIR without PANTHEON_BFF_DATA_DIR.
 
     Verifies production assembly binding:
-    1. Publisher (main._publish_event) persists events to $BFF_DATA_DIR/sse_replay/{channel}.jsonl.
-    2. The mounted reader route (/api/v1/stream/{channel}) reads from $BFF_DATA_DIR when
-       PANTHEON_BFF_DATA_DIR is unset.
-    3. Old handler and mounted route return 200 and replay events after Last-Event-ID.
+    1. Publisher (EventStreamService.publish, the production replacement for main.py's
+       former ``_publish_event``) persists events to $BFF_DATA_DIR/sse_replay/{channel}.jsonl.
+    2. The mounted reader route (/api/v1/stream/{channel}), built by the same
+       ``create_events_router`` seam main.py's ``compose_bff_app`` mounts, reads from
+       $BFF_DATA_DIR when PANTHEON_BFF_DATA_DIR is unset.
+    3. main.py's legacy (unmounted, dead-code) standalone ``stream_generic_events``
+       function and the real mounted route return 200 and replay events after
+       Last-Event-ID. Comparing against main.py's own pre-extraction implementation is
+       the entire point of this sub-assertion, so it necessarily still imports main.py;
+       no seam re-implements that specific legacy free-function signature because it was
+       never mounted to any route (see task report).
     4. Server restart (cleared in-memory buffer) reloads and replays initial events from disk.
     5. Unknown Last-Event-ID fails closed with 409 SSE_REPLAY_HISTORY_MISSING and file store header.
     """
@@ -827,23 +834,20 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
 
-    import importlib
-    main = importlib.import_module("services.control_plane.bff.main")
-    from starlette.testclient import TestClient
-
     # Ensure buffer is empty before test
-    main._sse_buffers["approval"].clear()
+    _sse_buffers["approval"].clear()
 
-    # 1. Publish two events via main._publish_event
-    first_id = main._publish_event(
-        main._sse_buffers["approval"],
-        main._sse_subscribers["approval"],
+    # 1. Publish two events via the real extracted EventStreamService.publish seam
+    #    (services.control_plane.bff.events.service.EventStreamService).
+    first_id = _publish_event(
+        _sse_buffers["approval"],
+        _sse_subscribers["approval"],
         "approval.stage.changed",
         {"sequence_no": 1, "note": "first-approval"},
     )
-    second_id = main._publish_event(
-        main._sse_buffers["approval"],
-        main._sse_subscribers["approval"],
+    second_id = _publish_event(
+        _sse_buffers["approval"],
+        _sse_subscribers["approval"],
         "approval.stage.changed",
         {"sequence_no": 2, "note": "second-approval"},
     )
@@ -852,14 +856,11 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     replay_file = tmp_path / "sse_replay" / "approval.jsonl"
     assert replay_file.exists(), f"Replay file should be created under {tmp_path}/sse_replay/approval.jsonl"
 
-    # 3. Verify mounted reader endpoint (/api/v1/stream/{channel}) on main._events_router
-    _make_finite_service(main._events_router.event_stream_service)
-    client = TestClient(main.app)
-
     async def _read_chunk(iterator):
         return await asyncio.wait_for(anext(iterator), timeout=2.0)
 
-    # 3a. Replay from mounted endpoint with last_event_id=first_id: must return 200 and second event
+    # 3a. Replay from the real mounted reader endpoint (/api/v1/stream/{channel}), built by
+    #     create_events_router -- the same router main.py mounts via compose_bff_app.
     resp = client.get(f"/api/v1/stream/approval?last_event_id={first_id}", headers={"Authorization": AUTH})
     assert resp.status_code == 200
     assert resp.headers["X-SSE-Replay-Store"] == "file"
@@ -868,7 +869,16 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     assert first_id not in resp.text
     assert "second-approval" in resp.text
 
-    # 3b. Verify old handler also returns 200 and replays the second event
+    # 3b. GENUINE BLOCKER (see docstring): main.py's own legacy standalone
+    # stream_generic_events free function (main.py, unmounted dead code kept only to
+    # prove old/new equivalence during the events-router migration) has no extracted
+    # seam, since extracting it would mean editing main.py, which is out of scope here.
+    # Both implementations replay from the same shared-file store
+    # ($BFF_DATA_DIR/sse_replay/approval.jsonl), so this exercises main.py's real
+    # legacy code path against the events already published through the seam above.
+    import importlib
+    main = importlib.import_module("services.control_plane.bff.main")
+
     old_resp = asyncio.run(main.stream_generic_events("approval", first_id, AUTH))
     assert old_resp.headers["X-SSE-Replay-Store"] == "file"
     old_it = old_resp.body_iterator
@@ -878,8 +888,8 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     assert first_id not in old_chunk
 
     # 4. Restart simulation: clear in-memory buffers; mounted reader must reload and replay from disk
-    main._sse_buffers["approval"].clear()
-    assert len(main._sse_buffers["approval"]) == 0
+    _sse_buffers["approval"].clear()
+    assert len(_sse_buffers["approval"]) == 0
 
     resp_restart = client.get("/api/v1/stream/approval", headers={"Authorization": AUTH})
     assert resp_restart.status_code == 200
@@ -890,15 +900,14 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     assert "second-approval" in resp_restart.text
 
     # 5. Unavailable cursor fails closed with 409 SSE_REPLAY_HISTORY_MISSING on mounted app
-    client = TestClient(main.app)
     resp_409 = client.get(
         "/api/v1/stream/approval?last_event_id=evt-nonexistent-cursor",
         headers={"Authorization": AUTH},
     )
     assert resp_409.status_code == 409
     assert resp_409.headers["X-SSE-Replay-Store"] == "file"
-    error_payload = resp_409.json()["error"]
-    assert error_payload["code"] == "RESOURCE_CONFLICT"
+    error_payload = _response_error(resp_409)
+    assert _error_code_value(error_payload["code"]) == "RESOURCE_CONFLICT"
     assert error_payload["details"]["reason"] == "SSE_REPLAY_HISTORY_MISSING"
     assert error_payload["details"]["channel"] == "approval"
     assert error_payload["details"]["lastEventId"] == "evt-nonexistent-cursor"
