@@ -19,25 +19,21 @@ from fastapi.testclient import TestClient
 # composer's route set is byte-identical to main.py's. This file therefore
 # builds its own app via `compose_bff_app()` instead of importing main.py.
 #
-# `mount_bff_routers` resolves a handful of names (for example
-# `_deprecated_bff_path_response`) from whichever module is loaded as
-# `services.control_plane.bff.main` in this process, falling back to an
-# inert stub only when main.py was never loaded at all (see
-# `core/app_factory.py`'s `_dep`/`_resolve_default_dependency`). The real
-# running service always has main.py loaded (it is the ASGI entrypoint), so
-# this file uses the same dynamic (non-AST-visible) `importlib.import_module`
-# accessor `tests/test_main_composition_seam_extraction_003.py` already uses
-# before calling `compose_bff_app()`, to build the same fully-wired app a
-# real deployment serves instead of the standalone-only stub subset.
+# `mount_bff_routers`'s `_dep` helper (`core/app_factory.py`) resolves
+# `_deprecated_bff_path_response` from an explicit keyword argument before
+# ever falling back to a loaded `main` module or the inert stub in
+# `_resolve_default_dependency`. The real, already-extracted production owner
+# of that response (`personas.service._deprecated_bff_path_response`) is
+# passed directly here instead, so this file needs no main.py reference at
+# all -- dynamic or static.
 from services.control_plane.bff.core.app_factory import compose_bff_app
-from services.control_plane.bff.tests.rebalance_authority_test_support import (
-    get_management_nl_module,
+from services.control_plane.bff.personas.service import (
+    _deprecated_bff_path_response,
 )
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-path-dedupe:operator,admin"}
 
-get_management_nl_module()
-_APP = compose_bff_app()
+_APP = compose_bff_app(_deprecated_bff_path_response=_deprecated_bff_path_response)
 
 
 def _client() -> TestClient:
