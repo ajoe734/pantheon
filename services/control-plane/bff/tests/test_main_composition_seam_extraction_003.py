@@ -90,7 +90,13 @@ def test_compose_bff_app_callable_standalone():
 
 
 def test_compose_bff_app_matches_main_route_set():
-    """Verify compose_bff_app produces the identical route set as main.py exposes."""
+    """Verify compose_bff_app produces the identical route set as main.py exposes.
+
+    GENUINE BLOCKER: this test's entire purpose is comparing the standalone
+    ``compose_bff_app()`` seam's route set against main.py's own assembled ``app``,
+    so it inherently requires importing main.py -- there is no seam that can stand
+    in for main.py's own assembled application on the other side of the comparison.
+    """
     import importlib
     bff_main = importlib.import_module("services.control_plane.bff.main")
 
@@ -172,7 +178,13 @@ def test_create_lifespan_builds_callable_contextmanager():
 # ============================================================================
 
 def test_management_nl_handlers_importable_and_callable():
-    """Verify bff_management_nl_ask and stream handler are importable and functional."""
+    """Verify bff_management_nl_ask and stream handler are importable and functional.
+
+    GENUINE BLOCKER: the identity assertions below check that main.py's own module
+    attributes are bound to the assistant.management_service objects (rather than a
+    local duplicate), so they inherently require importing main.py -- there is no
+    seam standing in for main.py's own binding of these names.
+    """
     assert callable(bff_management_nl_ask)
     assert callable(bff_management_nl_ask_stream)
 

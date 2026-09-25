@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -14,6 +13,9 @@ from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.auth.policy import (
     OperatorIdentity,
     extract_identity,
+)
+from services.control_plane.bff.capital.service import (
+    _pm12_allocation_line_assertion_hash,
 )
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.models import CommandType, ObjectType, TargetObject
@@ -93,23 +95,6 @@ def _ranking_snapshot_id(
     finally:
         _current_persona_service.reset(token)
     return snapshot_id
-
-
-# RETAINED_COMPOSITION (seam gap): ``_pm12_allocation_line_assertion_hash`` is
-# referenced only by test_allocation_line_assertion_hash_is_numeric_semantic_
-# and_fail_closed below. No module in the BFF tree defines that symbol any
-# more -- neither main.py nor personas/service.py nor capital/ -- so there is
-# no real implementation to import and reimplementing the canonicalizer inside
-# the test would duplicate product logic. The reference is kept pointing at the
-# composition root (where it used to live) rather than being faked or skipped,
-# so the failure stays visible until the symbol is restored/extracted.
-def _bff_main_module():
-    bff_dir = os.path.dirname(os.path.dirname(__file__))
-    if bff_dir not in sys.path:
-        sys.path.insert(0, bff_dir)
-    import main as bff_main  # noqa: E402
-
-    return bff_main
 
 
 HEADERS = {"Authorization": "Bearer codex2-ppl-alloc:operator,reviewer"}
@@ -770,7 +755,6 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
 
 
 def test_allocation_line_assertion_hash_is_numeric_semantic_and_fail_closed() -> None:
-    bff_main = _bff_main_module()
     admitted = {
         "current_weight": 0.0,
         "target_weight": 1.0,
@@ -783,8 +767,8 @@ def test_allocation_line_assertion_hash_is_numeric_semantic_and_fail_closed() ->
     }
     browser_round_trip = _browser_json_number_round_trip(admitted)
     assert (
-        bff_main._pm12_allocation_line_assertion_hash(browser_round_trip)
-        == bff_main._pm12_allocation_line_assertion_hash(admitted)
+        _pm12_allocation_line_assertion_hash(browser_round_trip)
+        == _pm12_allocation_line_assertion_hash(admitted)
     )
 
     rejected = (
@@ -796,10 +780,10 @@ def test_allocation_line_assertion_hash_is_numeric_semantic_and_fail_closed() ->
     )
     for forged in rejected:
         try:
-            forged_hash = bff_main._pm12_allocation_line_assertion_hash(forged)
+            forged_hash = _pm12_allocation_line_assertion_hash(forged)
         except ValueError:
             continue
-        assert forged_hash != bff_main._pm12_allocation_line_assertion_hash(
+        assert forged_hash != _pm12_allocation_line_assertion_hash(
             admitted
         )
 

@@ -41,9 +41,17 @@ from services.control_plane.bff.tests.test_management_nl_assistant_provider impo
     _seeded_client,
 )
 
+# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: `bff_main` is bound to the real
+# `assistant.management_service` module (get_management_nl_module() no
+# longer loads main.py). main.py's own module proxy already delegates every
+# one of these attributes onto management_service (BFF-MGMT-NL-HELPER-
+# EXTRACTION-001), so this file no longer imports main.py at all; the two
+# "legacy mechanism is deleted from main.py's own source" assertions below
+# read main.py's text directly via Path instead of importing it.
 bff_main = get_management_nl_module()
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+MAIN_PY_PATH = REPO_ROOT / "services" / "control-plane" / "bff" / "main.py"
 
 
 @pytest.fixture(autouse=True)
@@ -65,13 +73,19 @@ def _management_nl_command_idempotency_default_path(monkeypatch, tmp_path):
 
 
 def test_legacy_in_memory_idempotency_dict_no_longer_exists() -> None:
+    # Checked against both the real seam module (management_service, where
+    # the durable admission machinery now lives) and main.py's own source
+    # text directly (no import needed -- AC3), so a leftover definition in
+    # either place would still be caught.
     assert not hasattr(bff_main, "_MGMT_NL_IDEMPOTENCY")
+    assert "_MGMT_NL_IDEMPOTENCY" not in MAIN_PY_PATH.read_text(encoding="utf-8")
 
 
 def test_legacy_command_idempotency_required_flag_is_fully_deleted() -> None:
     assert not hasattr(bff_main, "_mgmt_nl_command_idempotency_required")
 
-    main_source = inspect.getsource(bff_main)
+    main_source = MAIN_PY_PATH.read_text(encoding="utf-8")
+    assert "_mgmt_nl_command_idempotency_required" not in main_source
     assert "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED" not in main_source
 
     compose_path = REPO_ROOT / "docker-compose.yml"
@@ -85,6 +99,9 @@ def test_legacy_command_idempotency_required_flag_is_fully_deleted() -> None:
 def test_legacy_idempotency_check_and_put_helpers_are_deleted() -> None:
     assert not hasattr(bff_main, "_mgmt_nl_idempotency_check")
     assert not hasattr(bff_main, "_mgmt_nl_idempotency_put")
+    main_source = MAIN_PY_PATH.read_text(encoding="utf-8")
+    assert "def _mgmt_nl_idempotency_check" not in main_source
+    assert "def _mgmt_nl_idempotency_put" not in main_source
 
 
 # ---------------------------------------------------------------------------
