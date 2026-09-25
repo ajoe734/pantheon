@@ -32,7 +32,6 @@ from typing import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff.management_ai_store import ManagementAiAttachmentStore
 from services.control_plane.bff.ports import create_read_surface_ports
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     get_management_nl_module,
@@ -343,7 +342,7 @@ def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> Non
         main_mod._MGMT_AI_AUDIT_EVENTS.clear()
         main_mod._MGMT_AI_CONVERSATION_STORE = main_mod.ManagementAiConversationStore(
             storage_path=store_path,
-            attachment_store=ManagementAiAttachmentStore(storage_path="off"),
+            attachment_store=main_mod.ManagementAiAttachmentStore(storage_path="off"),
         )
         with management_nl_test_client(store, reset_conversation_store=False) as client:
             ask_resp = client.post(
@@ -355,7 +354,7 @@ def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> Non
 
             main_mod._MGMT_AI_CONVERSATION_STORE = main_mod.ManagementAiConversationStore(
                 storage_path=store_path,
-                attachment_store=ManagementAiAttachmentStore(storage_path="off"),
+                attachment_store=main_mod.ManagementAiAttachmentStore(storage_path="off"),
             )
 
             transcript_resp = client.get(
