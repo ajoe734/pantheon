@@ -199,6 +199,17 @@ _OPERATOR_WRITE_ROLES = {"operator", "admin"}
 _READ_ROLES = {"operator", "reviewer", "approver", "viewer", "admin"}
 _CONFIRM_TOKEN_FIELDS = ("confirm_token", "confirmToken", "confirmation_token", "confirmationToken")
 
+_COMMAND_AUTH_CONTEXT: Dict[str, Dict[str, Optional[str]]] = {}
+
+
+def set_command_auth_context(command_id: str, context: Dict[str, Optional[str]]) -> None:
+    _COMMAND_AUTH_CONTEXT[command_id] = dict(context)
+
+
+def pop_command_auth_context(command_id: str) -> Dict[str, Optional[str]]:
+    return _COMMAND_AUTH_CONTEXT.pop(command_id, {})
+
+
 
 def _stable_json_hash(payload: Any) -> str:
     try:
@@ -364,7 +375,7 @@ class CommandAdapterService:
                 )
             except Exception:
                 self._validators = {}
-        self._process_command_task = process_command_task
+        self._process_command_task = process_command_task or (lambda cmd_id: _process_command_stub(cmd_id, command_store=self.command_store, read_store=self.read_store))
         self._submit_command_admission = submit_command_admission or self.submit_command_admission
 
         self._final_contract_idempotency: Dict[str, Dict[str, Any]] = (
@@ -1539,6 +1550,7 @@ class CommandAdapterService:
             authorization=authorization,
             mfa_token=x_mfa_token,
             identity=identity,
+            auth_context_sink=_COMMAND_AUTH_CONTEXT,
         )
 
         audit_record = {
@@ -1704,3 +1716,325 @@ class CommandAdapterService:
             route="POST /bff/v1/commands",
             include_durable_meta=True,
         )
+
+
+def _runtime_command_context(
+    runtime_id: str,
+    incident_id: Optional[str] = None,
+    *,
+    read_store: Optional[Any] = None,
+) -> Dict[str, Optional[str]]:
+    effective_store = read_store
+    if effective_store is None:
+        bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        if bff_main is not None:
+            effective_store = getattr(bff_main, "read_store", None)
+    runtime_binding = (
+        effective_store.get_runtime_binding_by_runtime_id(runtime_id)
+        if effective_store and hasattr(effective_store, "get_runtime_binding_by_runtime_id")
+        else None
+    )
+    binding_id = None
+    capital_pool_id = None
+    artifact_id = None
+    artifact_version = None
+    plan_id = None
+
+    if runtime_binding:
+        binding_id = str(runtime_binding.get("id") or runtime_binding.get("binding_id") or runtime_id)
+        capital_pool_id = runtime_binding.get("capital_pool_id")
+        artifact_id = runtime_binding.get("artifact_id")
+        artifact_version = runtime_binding.get("artifact_version")
+        plan_id = runtime_binding.get("plan_id")
+
+    if incident_id and effective_store and hasattr(effective_store, "get_incident"):
+        incident = effective_store.get_incident(incident_id)
+        if incident and str(incident.get("runtime_id") or "") == runtime_id:
+            capital_pool_id = capital_pool_id or incident.get("capital_pool_id")
+            artifact_id = artifact_id or incident.get("artifact_id")
+            artifact_version = artifact_version or incident.get("artifact_version")
+
+    return {
+        "runtime_id": runtime_id,
+        "runtime_binding_id": binding_id,
+        "capital_pool_id": capital_pool_id,
+        "artifact_id": artifact_id,
+        "artifact_version": artifact_version,
+        "plan_id": plan_id,
+    }
+
+
+def _derive_drawer_execution_params(
+    command: CommandType,
+    runtime_id: str,
+    params: Dict[str, Any],
+    *,
+    actor_id: Optional[str],
+    reason: Optional[str],
+    incident_id: Optional[str],
+    read_store: Optional[Any] = None,
+) -> Dict[str, Any]:
+    context = _runtime_command_context(runtime_id, incident_id, read_store=read_store)
+    base = {
+        "runtime_id": runtime_id,
+        "runtime_binding_id": context["runtime_binding_id"],
+        "capital_pool_id": context["capital_pool_id"],
+        "actor_id": actor_id or "operator-command",
+        "reason": reason or "",
+        "incident_id": incident_id,
+    }
+
+    if command == CommandType.PAUSE_EXECUTION:
+        return {
+            **base,
+            "pause_action": "pause",
+            "pause_new_entries": params.get("pause_new_entries"),
+            "cancel_open_orders": params.get("cancel_open_orders"),
+        }
+
+    if command == CommandType.ISSUE_RISK_OFF:
+        if not context["capital_pool_id"]:
+            raise ValueError(
+                f"Runtime {runtime_id} cannot be routed to a capital pool."
+            )
+        return {
+            **base,
+            "scope": "pool",
+            "scope_id": context["capital_pool_id"],
+            "action_override": "risk_off",
+            "trigger_reason": "operator_emergency_stop",
+            "reduce_exposure_pct": params.get("reduce_exposure_pct"),
+        }
+
+    if command == CommandType.LIQUIDATE_ALL:
+        if not context["capital_pool_id"]:
+            raise ValueError(
+                f"Runtime {runtime_id} cannot be routed to a capital pool."
+            )
+        return {
+            **base,
+            "scope": "pool",
+            "scope_id": context["capital_pool_id"],
+            "action_override": "liquidate",
+            "trigger_reason": "operator_emergency_stop",
+        }
+
+    if command == CommandType.HARD_ROLLBACK:
+        return {
+            **base,
+            "rollback_target_type": "runtime",
+            "target_id": context["runtime_binding_id"],
+            "rollback_to_version": params.get("target_artifact_id"),
+            "rollback_action_type": "pause_then_replace",
+            "target_artifact_id": params.get("target_artifact_id"),
+        }
+
+    if not context["capital_pool_id"]:
+        raise ValueError(
+            f"Runtime {runtime_id} cannot be routed to a capital pool."
+        )
+    return {
+        **base,
+        "safe_mode_level": params.get("safe_mode_level"),
+        "target_state": "guarded",
+    }
+
+
+def _resolve_execution_params_for_record(
+    record: Dict[str, Any],
+    *,
+    read_store: Optional[Any] = None,
+) -> Dict[str, Any]:
+    command_type = CommandType(record["type"])
+    params = dict(record.get("params") or {})
+    if command_type not in _DRAWER_RUNTIME_COMMANDS:
+        if command_type in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
+            params.update(entity_type="Runtime", action_id=command_type.value, actionId=command_type.value)
+            target = record.get("target") or {}
+            rt_id = str(target.get("id") or "").strip()
+            params.pop("verified_binding", None)
+            params.pop("verified_binding_id", None)
+            params.pop("verified_runtime_binding_id", None)
+            if rt_id:
+                params["runtime_id"] = rt_id
+                params["entity_id"] = rt_id
+                params.pop("runtimeId", None)
+                params.pop("entityId", None)
+        return params
+
+    target = record.get("target") or {}
+    audit = record.get("audit") or {}
+    runtime_id = str(target.get("id") or "").strip()
+    if not runtime_id:
+        raise ValueError(f"{command_type.value} is missing target.id.")
+
+    return _derive_drawer_execution_params(
+        command_type,
+        runtime_id,
+        params,
+        actor_id=audit.get("operator_id"),
+        reason=audit.get("reason"),
+        incident_id=audit.get("incident_id"),
+        read_store=read_store,
+    )
+
+
+async def process_command(
+    command_id: str,
+    *,
+    command_store: Optional[Any] = None,
+    read_store: Optional[Any] = None,
+    resolve_execution_params: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+) -> None:
+    """Async command processor that dispatches to the Protected Internal API.
+    Records authoritative status, result, and audit data for every execution.
+    """
+    store = command_store
+    if store is None:
+        bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        if bff_main is not None:
+            store = getattr(bff_main, "command_store", None)
+    if store is None:
+        log.error("Worker: command store unavailable for command %s", command_id)
+        return
+
+    record = store.get_command(command_id)
+    if not record:
+        log.error("Worker: command %s not found in store", command_id)
+        return
+
+    command_type = CommandType(record["type"])
+    audit = record.get("audit", {})
+
+    runtime_auth = pop_command_auth_context(command_id)
+    auth_token = runtime_auth.get("auth_token") or audit.get("auth_token")
+    mfa_token = runtime_auth.get("mfa_token") or audit.get("mfa_token")
+
+    await asyncio.sleep(0.05)
+    store.update_status(command_id, CommandStatus.PROCESSING)
+
+    resolver = resolve_execution_params or (lambda rec: _resolve_execution_params_for_record(rec, read_store=read_store))
+    try:
+        execution_params = resolver(record)
+    except Exception as exc:
+        failed_at = utc_now()
+        error = {
+            "code": "TARGET_CONTEXT_UNAVAILABLE",
+            "message": f"Unable to route command {command_id}: {exc}",
+            "started_at": failed_at,
+            "failed_at": failed_at,
+            "suggestion": (
+                "Refresh Pantheon runtime/incident read surfaces or use the secondary control path "
+                "until the runtime target can be resolved."
+            ),
+        }
+        audit["execution_completed_at"] = failed_at
+        audit["executor"] = "command_executor"
+        audit["failure_reason"] = error["message"]
+        audit["failure_suggestion"] = error["suggestion"]
+        store.update_status(
+            command_id,
+            CommandStatus.FAILED,
+            error=error,
+            audit=audit,
+        )
+        log.warning("Worker: command %s failed during routing resolution: %s", command_id, exc)
+        return
+
+    effective_read_store = read_store
+    if effective_read_store is None:
+        bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        if bff_main is not None:
+            effective_read_store = getattr(bff_main, "read_store", None)
+
+    if command_type == CommandType.RECORD_SPONSOR_DECISION and effective_read_store is not None:
+        try:
+            committee_id = str(execution_params.get("committee_id") or "").strip()
+            updated = effective_read_store.record_sponsor_decision(
+                committee_id,
+                sponsor_decision=str(execution_params.get("sponsor_decision") or "").strip().lower(),
+                rationale_ref=str(execution_params.get("rationale_ref") or "").strip(),
+                actor_id=str(audit.get("operator_id") or "operator-command"),
+                recorded_at=utc_now(),
+            )
+            if updated is None:
+                raise ValueError(f"Committee {committee_id} could not be updated.")
+            result = {
+                "command_id": command_id,
+                "committee_id": updated.get("committee_id"),
+                "committee_ref": updated.get("committee_ref"),
+                "sponsor_decision": updated.get("sponsor_decision"),
+                "sponsor_decided_at": updated.get("sponsor_decided_at"),
+                "sponsor_decided_by": updated.get("sponsor_decided_by"),
+                "consensus_state": updated.get("consensus_state"),
+                "rationale_ref": (updated.get("synthesis_summary") or {}).get("rationale_ref"),
+                "service_handoff": updated.get("service_handoff") or {},
+                "execution_completed_at": utc_now(),
+            }
+            audit["execution_completed_at"] = result["execution_completed_at"]
+            audit["executor"] = "bff_read_store"
+            audit["downstream_verified"] = True
+            store.update_status(
+                command_id,
+                CommandStatus.EXECUTED,
+                result=result,
+                audit=audit,
+            )
+            log.info("Worker: command %s completed with status=%s", command_id, CommandStatus.EXECUTED.value)
+            return
+        except Exception as exc:
+            failed_at = utc_now()
+            error = {
+                "code": "COMMITTEE_UPDATE_FAILED",
+                "message": f"Unable to record sponsor decision: {exc}",
+                "started_at": failed_at,
+                "failed_at": failed_at,
+                "suggestion": "Refresh the committee board projection and retry once the committee surface is available.",
+            }
+            audit["execution_completed_at"] = failed_at
+            audit["executor"] = "bff_read_store"
+            audit["failure_reason"] = error["message"]
+            audit["failure_suggestion"] = error["suggestion"]
+            store.update_status(
+                command_id,
+                CommandStatus.FAILED,
+                error=error,
+                audit=audit,
+            )
+            log.warning("Worker: command %s failed during committee update: %s", command_id, exc)
+            return
+
+    from ..command_executor import execute_command_with_status
+    status, result, error = execute_command_with_status(
+        command_id, command_type, execution_params,
+        auth_token=auth_token, mfa_token=mfa_token,
+    )
+
+    audit["execution_completed_at"] = result.get("execution_completed_at") if result else error.get("failed_at") if error else None
+    audit["executor"] = "command_executor"
+    if result:
+        audit["downstream_verified"] = bool(
+            result.get("downstream_verified")
+            or result.get("authoritative_capital_readback")
+            or result.get("dispatch_path") != "bff_action_adapter"
+        )
+    if error:
+        audit["failure_reason"] = error.get("message", "")
+        audit["failure_suggestion"] = error.get("suggestion", "")
+
+    store.update_status(
+        command_id,
+        status,
+        result=result,
+        error=error,
+        audit=audit,
+    )
+
+    log.info(
+        "Worker: command %s completed with status=%s",
+        command_id, status.value,
+    )
+
+
+_process_command_stub = process_command
+

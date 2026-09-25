@@ -250,6 +250,30 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
         typed.update(copy.deepcopy(record))
         return self._replace(self._capital_pools, typed, "pool_id", "id")
 
+    def create_capital_pool(
+        self,
+        *,
+        pool_id: str,
+        name: str,
+        owner_id: str = "fund-real",
+        owner_type: str = "fund",
+        risk_policy_ref: str = "risk-main",
+        status: str = "active",
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        record = self._fixture_builder.add_capital_pool(pool_id)
+        record.update({
+            "pool_id": pool_id,
+            "id": pool_id,
+            "name": name,
+            "owner_id": owner_id,
+            "owner_type": owner_type,
+            "risk_policy_ref": risk_policy_ref,
+            "status": status,
+            **kwargs,
+        })
+        return self._replace(self._capital_pools, record, "pool_id", "id")
+
     def add_authoritative_binding(self, record: Dict[str, Any]) -> Dict[str, Any]:
         binding_id = str(record.get("binding_id") or record.get("id") or "")
         typed = self._fixture_builder.add_binding(
@@ -265,6 +289,43 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
         typed = self._fixture_builder.add_rebalance(rebalance_id)
         typed.update(copy.deepcopy(record))
         return self._replace(self._rebalances, typed, "rebalance_id", "id")
+
+    def create_rebalance(
+        self,
+        *,
+        rebalance_id: str,
+        name: str = "rebalance",
+        status: str = "draft",
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        record = self._fixture_builder.add_rebalance(rebalance_id)
+        record.update({
+            "rebalance_id": rebalance_id,
+            "id": rebalance_id,
+            "name": name,
+            "status": status,
+            **kwargs,
+        })
+        return self._replace(self._rebalances, record, "rebalance_id", "id")
+
+    def apply_rebalance_proposal(
+        self,
+        rebalance_id: str,
+        *,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        rebalance = next(
+            (r for r in self._rebalances if r.get("rebalance_id") == rebalance_id or r.get("id") == rebalance_id),
+            None,
+        )
+        if rebalance is None:
+            rebalance = self.create_rebalance(rebalance_id=rebalance_id)
+        rebalance["status"] = "applied"
+        if command_id:
+            rebalance["command_id"] = command_id
+        rebalance.update(kwargs)
+        return copy.deepcopy(rebalance)
 
     def put_ranking_snapshot(self, record: Dict[str, Any]) -> Dict[str, Any]:
         snapshot_id = str(record.get("ranking_snapshot_id") or "")
@@ -993,60 +1054,68 @@ class CapitalBffAuthorityHarness:
 def get_management_nl_module() -> ModuleType:
     """Dynamic accessor for the BFF management NL composition module.
 
-    Avoids direct static AST import of the composition root while preserving
-    runtime access to management NL handlers and single-owner definitions.
+    Points to the single owner assistant.management_service without importing main.py.
     """
-    return importlib.import_module("services.control_plane.bff.main")
+    return importlib.import_module("services.control_plane.bff.assistant.management_service")
 
 
 def get_management_nl_read_store() -> Any:
     """Retrieve the current active read_store on the management NL module."""
-    main_mod = get_management_nl_module()
-    return getattr(main_mod, "read_store", None)
+    mgmt_mod = get_management_nl_module()
+    return mgmt_mod.get_read_store() if hasattr(mgmt_mod, "get_read_store") else getattr(mgmt_mod, "read_store", None)
 
 
 def set_management_nl_read_store(store: Any) -> None:
     """Set the active read_store on BFF composition, persona service, and context service."""
-    main_mod = get_management_nl_module()
+    mgmt_mod = get_management_nl_module()
     import services.control_plane.bff.personas.service as personas_service
-    setattr(main_mod, "read_store", store)
+    if hasattr(mgmt_mod, "set_read_store"):
+        mgmt_mod.set_read_store(store)
+    else:
+        setattr(mgmt_mod, "read_store", store)
     setattr(personas_service, "read_store", store)
-    context_svc = getattr(main_mod, "_management_ai_context_service", None)
+    context_svc = getattr(mgmt_mod, "_management_ai_context_service", None)
     if context_svc is not None:
         context_svc._get_read_store = (lambda: store) if store is not None else None
 
 
 def get_management_nl_sse_buffer(channel: str = "ask") -> list:
     """Read events from the management NL SSE buffer safely."""
-    main_mod = get_management_nl_module()
-    return list(main_mod._sse_buffers.get(channel, []))
+    mgmt_mod = get_management_nl_module()
+    return list(mgmt_mod._sse_buffers.get(channel, []))
 
 
 def clear_management_nl_sse_buffer(channel: str = "ask") -> None:
     """Clear events in the management NL SSE buffer safely."""
-    main_mod = get_management_nl_module()
-    if channel in main_mod._sse_buffers:
-        main_mod._sse_buffers[channel].clear()
+    mgmt_mod = get_management_nl_module()
+    if channel in mgmt_mod._sse_buffers:
+        mgmt_mod._sse_buffers[channel].clear()
 
 
 @contextmanager
 def bound_management_nl_store(read_surface: Any) -> Iterator[Any]:
-    """Context manager to scope active read_store on BFF main and personas."""
-    main_mod = get_management_nl_module()
+    """Context manager to scope active read_store on BFF assistant and personas."""
+    mgmt_mod = get_management_nl_module()
     import services.control_plane.bff.personas.service as personas_service
 
-    old_main_store = getattr(main_mod, "read_store", None)
+    old_main_store = mgmt_mod.get_read_store() if hasattr(mgmt_mod, "get_read_store") else getattr(mgmt_mod, "read_store", None)
     old_persona_store = getattr(personas_service, "read_store", None)
-    context_svc = getattr(main_mod, "_management_ai_context_service", None)
+    context_svc = getattr(mgmt_mod, "_management_ai_context_service", None)
     old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
     try:
-        setattr(main_mod, "read_store", read_surface)
+        if hasattr(mgmt_mod, "set_read_store"):
+            mgmt_mod.set_read_store(read_surface)
+        else:
+            setattr(mgmt_mod, "read_store", read_surface)
         setattr(personas_service, "read_store", read_surface)
         if context_svc is not None:
             context_svc._get_read_store = (lambda: read_surface) if read_surface is not None else None
         yield read_surface
     finally:
-        setattr(main_mod, "read_store", old_main_store)
+        if hasattr(mgmt_mod, "set_read_store"):
+            mgmt_mod.set_read_store(old_main_store)
+        else:
+            setattr(mgmt_mod, "read_store", old_main_store)
         setattr(personas_service, "read_store", old_persona_store)
         if context_svc is not None:
             context_svc._get_read_store = old_context_fn
@@ -1060,34 +1129,44 @@ def management_nl_test_client(
     reset_conversation_store: bool = True,
 ) -> Iterator[TestClient]:
     """Provide a TestClient wired to the management NL app with clean store/SSE."""
-    main_mod = get_management_nl_module()
+    mgmt_mod = get_management_nl_module()
     import services.control_plane.bff.personas.service as personas_service
+    from services.control_plane.bff.core.app_factory import compose_bff_app
 
-    old_main_store = getattr(main_mod, "read_store", None)
+    old_main_store = mgmt_mod.get_read_store() if hasattr(mgmt_mod, "get_read_store") else getattr(mgmt_mod, "read_store", None)
     old_persona_store = getattr(personas_service, "read_store", None)
-    context_svc = getattr(main_mod, "_management_ai_context_service", None)
+    context_svc = getattr(mgmt_mod, "_management_ai_context_service", None)
     old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
     store = read_surface if read_surface is not None else old_main_store
 
     if reset_conversation_store:
-        main_mod._MGMT_AI_CONVERSATION_STORE = main_mod.ManagementAiConversationStore(
+        mgmt_mod._MGMT_AI_CONVERSATION_STORE = mgmt_mod.ManagementAiConversationStore(
             storage_path="off",
-            attachment_store=main_mod.ManagementAiAttachmentStore(storage_path="off"),
+            attachment_store=mgmt_mod.ManagementAiAttachmentStore(storage_path="off"),
         )
-    if "ask" in main_mod._sse_buffers:
-        main_mod._sse_buffers["ask"].clear()
+    if "ask" in mgmt_mod._sse_buffers:
+        mgmt_mod._sse_buffers["ask"].clear()
 
     try:
-        setattr(main_mod, "read_store", store)
+        if hasattr(mgmt_mod, "set_read_store"):
+            mgmt_mod.set_read_store(store)
+        else:
+            setattr(mgmt_mod, "read_store", store)
         setattr(personas_service, "read_store", store)
         if context_svc is not None:
             context_svc._get_read_store = (lambda: store) if store is not None else None
-        client = TestClient(main_mod.app, raise_server_exceptions=raise_server_exceptions)
+        if hasattr(mgmt_mod, "wire_management_runtime_projections"):
+            mgmt_mod.wire_management_runtime_projections(store)
+        app = compose_bff_app()
+        client = TestClient(app, raise_server_exceptions=raise_server_exceptions)
         yield client
     finally:
-        setattr(main_mod, "read_store", old_main_store)
+        if hasattr(mgmt_mod, "set_read_store"):
+            mgmt_mod.set_read_store(old_main_store)
+        else:
+            setattr(mgmt_mod, "read_store", old_main_store)
         setattr(personas_service, "read_store", old_persona_store)
         if context_svc is not None:
             context_svc._get_read_store = old_context_fn
-        if "ask" in main_mod._sse_buffers:
-            main_mod._sse_buffers["ask"].clear()
+        if "ask" in mgmt_mod._sse_buffers:
+            mgmt_mod._sse_buffers["ask"].clear()

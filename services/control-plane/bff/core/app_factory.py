@@ -844,6 +844,15 @@ def mount_bff_routers(
         "_ASSISTANT_CONTROL_MODE_STORE",
         lambda: ControlModeStore(),
     )
+    from ..assistant.management_service import (
+        _assistant_provider_readiness,
+        _assistant_provider_list,
+        _assistant_provider_register,
+        _assistant_provider_reauth,
+        _assistant_provider_reauth_status,
+        _assistant_provider_reauth_code,
+        _assistant_provider_usage_summary,
+    )
     app.include_router(
         create_assistant_router(
             build_context_pack=_dep("_assistant_build_context_pack"),
@@ -853,12 +862,12 @@ def mount_bff_routers(
             session_store=asst_session_store,
             transcript_store=asst_transcript_store,
             control_mode_store=asst_control_mode_store,
-            provider_readiness=_dep("_assistant_provider_readiness"),
-            provider_list=_dep("_assistant_provider_list"),
-            provider_register=_dep("_assistant_provider_register"),
-            provider_reauth=_dep("_assistant_provider_reauth"),
-            provider_reauth_status=_dep("_assistant_provider_reauth_status"),
-            provider_reauth_code=_dep("_assistant_provider_reauth_code"),
+            provider_readiness=_dep("_assistant_provider_readiness", lambda: _assistant_provider_readiness),
+            provider_list=_dep("_assistant_provider_list", lambda: _assistant_provider_list),
+            provider_register=_dep("_assistant_provider_register", lambda: _assistant_provider_register),
+            provider_reauth=_dep("_assistant_provider_reauth", lambda: _assistant_provider_reauth),
+            provider_reauth_status=_dep("_assistant_provider_reauth_status", lambda: _assistant_provider_reauth_status),
+            provider_reauth_code=_dep("_assistant_provider_reauth_code", lambda: _assistant_provider_reauth_code),
         )
     )
 
@@ -1375,7 +1384,7 @@ def mount_bff_routers(
             "bff_management_nl_ask": _dep("bff_management_nl_ask"),
             "bff_management_nl_ask_stream": _dep("bff_management_nl_ask_stream"),
             "bff_management_ai_audit": _dep("bff_management_ai_audit"),
-            "bff_assistant_provider_usage_summary": _dep("bff_assistant_provider_usage_summary"),
+            "bff_assistant_provider_usage_summary": _dep("bff_assistant_provider_usage_summary", lambda: _assistant_provider_usage_summary),
             "bff_management_ai_conversations": _dep("bff_management_ai_conversations"),
             "bff_management_ai_conversation": _dep("bff_management_ai_conversation"),
             "bff_management_ai_attachment": _dep("bff_management_ai_attachment"),
@@ -1565,6 +1574,9 @@ def mount_bff_routers(
     app.state.source_management_client = src_mgmt_client
     app.state.persona_service = persona_service
     app.state.command_adapter_service = command_adapter_service
+    app.state.command_store = app_deps.command_store
+    from ..command_adapters.service import process_command as _process_cmd_fn
+    app.state.process_command = _dep("process_command", lambda: _process_cmd_fn)
     app.state.auth_deps = auth_deps
     app.state.auth_handlers = auth_handlers
     app.state.auth_facade_service = auth_facade_service
@@ -1590,6 +1602,14 @@ def compose_bff_app(
     via ``build_bff_app``, core routes and health routes are registered, and all
     37 domain routers are mounted.
     """
+    if lifespan is None:
+        from .lifespan import create_lifespan
+        provider_readiness_cache = dependencies.get("provider_readiness_cache")
+        if provider_readiness_cache is None:
+            from ..auth.service import ProviderReadinessCache
+            provider_readiness_cache = ProviderReadinessCache()
+        lifespan = create_lifespan(provider_readiness_cache)
+
     if app is None:
         app = build_bff_app(
             lifespan=lifespan,
@@ -1624,3 +1644,101 @@ def compose_bff_app(
         pass
 
     return app
+
+
+def get_canonical_bff_route_set(app: Optional[FastAPI] = None) -> set[tuple[str, str]]:
+    """Extract canonical (method, path) route set for Operator BFF.
+
+    Enables testing route coverage and parity without importing main.py.
+    """
+    if app is None:
+        app = compose_bff_app()
+
+    routes: set[tuple[str, str]] = set()
+    for r in app.routes:
+        if hasattr(r, "methods") and hasattr(r, "path"):
+            for m in r.methods:
+                if m != "HEAD":
+                    routes.add((m, r.path))
+        elif hasattr(r, "routes"):
+            for sub in r.routes:
+                if hasattr(sub, "methods") and hasattr(sub, "path"):
+                    for m in sub.methods:
+                        if m != "HEAD":
+                            routes.add((m, sub.path))
+        elif hasattr(r, "original_router"):
+            for sub in r.original_router.routes:
+                if hasattr(sub, "methods") and hasattr(sub, "path"):
+                    for m in sub.methods:
+                        if m != "HEAD":
+                            routes.add((m, sub.path))
+    return routes
+
+
+def assert_main_reexport_parity(
+    symbol_name: str,
+    expected_module: str,
+    expected_symbol: Optional[str] = None,
+) -> None:
+    """Verify that main.py re-exports symbol_name from expected_module without importing main.py.
+
+    If main.py is already loaded in sys.modules, verifies runtime identity.
+    Otherwise, parses main.py AST to verify that symbol_name is imported from
+    expected_module (or assigned from expected_symbol/module).
+    """
+    import ast
+    import sys
+    from pathlib import Path
+
+    target_symbol = expected_symbol or symbol_name
+
+    # 1. If main is already loaded, check object identity
+    bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+    if bff_main is not None and hasattr(bff_main, symbol_name):
+        main_val = getattr(bff_main, symbol_name)
+        exp_mod = sys.modules.get(expected_module)
+        if exp_mod is None:
+            import importlib
+            exp_mod = importlib.import_module(expected_module)
+        exp_val = getattr(exp_mod, target_symbol)
+        assert main_val is exp_val, (
+            f"Symbol {symbol_name} on main does not match {expected_module}.{target_symbol}"
+        )
+        return
+
+    # 2. Otherwise, verify via static AST parse of main.py
+    main_path = Path(__file__).resolve().parent.parent / "main.py"
+    if not main_path.exists():
+        raise FileNotFoundError(f"Cannot find main.py at {main_path}")
+
+    tree = ast.parse(main_path.read_text(encoding="utf-8"), filename=str(main_path))
+
+    mod_short = expected_module.split("bff.")[-1] if "bff." in expected_module else expected_module
+    mod_relative = f".{mod_short}"
+
+    found = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            if (
+                mod == expected_module
+                or mod == mod_short
+                or mod == mod_relative
+                or (mod.startswith(".") and expected_module.endswith(mod.lstrip(".")))
+            ):
+                for alias in node.names:
+                    bound_name = alias.asname or alias.name
+                    if bound_name == symbol_name and alias.name == target_symbol:
+                        found = True
+                        break
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == symbol_name:
+                    found = True
+                    break
+        if found:
+            break
+
+    assert found, (
+        f"Symbol {symbol_name!r} not found as re-export from {expected_module!r} in main.py AST"
+    )

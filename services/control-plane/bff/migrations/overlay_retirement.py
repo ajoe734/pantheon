@@ -1636,23 +1636,43 @@ class _ReplicaInstance:
 
 def assert_mandatory_symbol_retirements() -> Dict[str, bool]:
     """Verify that all 5 mandatory symbols are retired from BFF production modules."""
+    import ast
     import sys
-    from services.control_plane.bff import main as bff_main
+    from pathlib import Path
     from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
     results = {}
-
-    # 1-4. Overlays in main.py: globals must NOT contain them
-    for symbol in (
+    retired_symbols = (
         "_PERSONA_BFF_OVERLAY",
         "_STRATEGY_BFF_OVERLAY",
         "_GOV_BFF_INCIDENT_OVERLAY",
         "_GOV_BFF_JOB_OVERLAY",
-    ):
-        is_in_dict = symbol in bff_main.__dict__
-        results[symbol] = not is_in_dict
-        if is_in_dict:
-            raise AssertionError(f"Mandatory deletion failed: {symbol} is still present in main.__dict__")
+    )
+
+    bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+    if bff_main is not None:
+        # 1-4. Overlays in main.py: globals must NOT contain them
+        for symbol in retired_symbols:
+            is_in_dict = symbol in bff_main.__dict__
+            results[symbol] = not is_in_dict
+            if is_in_dict:
+                raise AssertionError(f"Mandatory deletion failed: {symbol} is still present in main.__dict__")
+    else:
+        main_path = Path(__file__).resolve().parent.parent / "main.py"
+        if main_path.exists():
+            tree = ast.parse(main_path.read_text(encoding="utf-8"))
+            defined_names = set()
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    defined_names.add(node.name)
+                elif isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            defined_names.add(target.id)
+            for symbol in retired_symbols:
+                if symbol in defined_names:
+                    raise AssertionError(f"Mandatory deletion failed: {symbol} is defined in main.py")
+                results[symbol] = True
 
     # 5. ReadSurfacePorts._ranking_snapshots: must raise AttributeError on access and mutation
     ports_instance = ReadSurfacePorts()

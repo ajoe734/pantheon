@@ -24,6 +24,7 @@ exact same code path -- no per-transport duplicate.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 import sys
@@ -63,6 +64,7 @@ from .management_contracts import ManagementNlUseCaseDeps
 from ..auth import policy as auth_policy
 from ..management_ai_store import (
     ManagementAiAttachmentError,
+    ManagementAiAttachmentStore,
     ManagementAiConversationStore,
 )
 from ..management_nl_command_idempotency import (
@@ -1045,7 +1047,54 @@ def _management_ai_quota_snapshot(provider: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+_MGMT_AI_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+_MGMT_AI_USAGE_STALE_AFTER_HOURS = 24
+
+
+def _audit_datetime(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _management_ai_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        clean = str(value).strip()
+        return float(clean) if clean else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _management_ai_usage_number(usage: Any, *keys: str) -> Optional[float]:
+    if not isinstance(usage, dict):
+        return None
+    for key in keys:
+        value = _management_ai_number(usage.get(key))
+        if value is not None:
+            return value
+    return None
+
+
 def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
+    observed_usage = {
+        "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
+        "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
+        "truth_policy": "observed_bff_events_only",
+    }
     return {
         "provider": provider,
         "provider_name": _management_ai_provider_display(provider),
@@ -1063,10 +1112,100 @@ def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
         "output_tokens": 0,
         "total_tokens": 0,
         "duration_ms": 0,
+        "average_duration_ms": None,
+        "last_used_at": None,
+        "last_status": None,
+        "last_error": None,
+        "quota": _management_ai_quota_snapshot({}),
+        "persona_dependencies": {
+            "status": "unavailable",
+            "count": None,
+            "personas": [],
+            "source": None,
+            "reason": "persona_dependency_inventory_unavailable",
+        },
+        "observed_usage": dict(observed_usage),
+        "models": {},
+    }
+
+
+def _management_ai_empty_model_row(model: str) -> Dict[str, Any]:
+    return {
+        "model": model,
+        "calls": 0,
+        "success_count": 0,
+        "failed_count": 0,
+        "prompt_bytes": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "duration_ms": 0,
+        "average_duration_ms": None,
+        "last_used_at": None,
+        "last_status": None,
+    }
+
+
+def _management_ai_touch_last(row: Dict[str, Any], event: Dict[str, Any], status: str) -> None:
+    recorded_at = str(event.get("recorded_at") or "")
+    current = _audit_datetime(row.get("last_used_at") or row.get("lastUsedAt"))
+    candidate = _audit_datetime(recorded_at)
+    if candidate is None or current is None or candidate >= current:
+        row["last_used_at"] = recorded_at
+        row["last_status"] = status
+
+
+def _management_ai_usage_age_hours(last_used_at: Any, now_dt: datetime) -> Optional[float]:
+    last_dt = _audit_datetime(last_used_at)
+    if last_dt is None:
+        return None
+    return round(max(0.0, (now_dt - last_dt).total_seconds() / 3600), 2)
+
+
+def _management_ai_finalize_usage_row(
+    row: Dict[str, Any],
+    *,
+    now_dt: datetime,
+    window_hours: Optional[int],
+    event_limit: int,
+    stale_after_hours: int = _MGMT_AI_USAGE_STALE_AFTER_HOURS,
+) -> Dict[str, Any]:
+    calls = int(row.get("calls") or 0)
+    duration = int(row.get("duration_ms") or row.get("durationMs") or 0)
+    avg = round(duration / calls) if calls else None
+    row["average_duration_ms"] = avg
+    age_hours = _management_ai_usage_age_hours(row.get("last_used_at") or row.get("lastUsedAt"), now_dt)
+    stale = bool(calls > 0 and age_hours is not None and age_hours > stale_after_hours)
+    observed = {
         "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
         "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
+        "coverage_label": "BFF observed",
         "truth_policy": "observed_bff_events_only",
+        "calls": row["calls"],
+        "success_count": row["success_count"],
+        "failed_count": row["failed_count"],
+        "prompt_bytes": row["prompt_bytes"],
+        "input_tokens": row["input_tokens"],
+        "output_tokens": row["output_tokens"],
+        "total_tokens": row["total_tokens"],
+        "last_observed_at": row.get("last_used_at"),
+        "age_hours": age_hours,
+        "stale": stale,
+        "stale_after_hours": stale_after_hours,
+        "window_hours": window_hours,
+        "event_limit": event_limit,
+        "message": "Only Management AI calls observed by the BFF audit stream are counted; direct provider CLI usage is not included.",
     }
+    row["observed_usage"] = observed
+    models = []
+    for model_row in row["models"].values():
+        model_calls = int(model_row.get("calls") or 0)
+        model_duration = int(model_row.get("duration_ms") or model_row.get("durationMs") or 0)
+        model_avg = round(model_duration / model_calls) if model_calls else None
+        model_row["average_duration_ms"] = model_avg
+        models.append(model_row)
+    row["models"] = sorted(models, key=lambda item: (-int(item.get("calls") or 0), str(item.get("model") or "")))
+    return row
 
 
 management_ai_record_event = _management_ai_record_event
@@ -1152,6 +1291,9 @@ def get_read_store() -> Any:
 def set_read_store(store: Optional[Any]) -> None:
     global _READ_STORE
     _READ_STORE = store
+    global _MANAGEMENT_AI_CONTEXT_SERVICE
+    if _MANAGEMENT_AI_CONTEXT_SERVICE is not None and hasattr(_MANAGEMENT_AI_CONTEXT_SERVICE, "_get_read_store"):
+        _MANAGEMENT_AI_CONTEXT_SERVICE._get_read_store = (lambda: store) if store is not None else get_read_store
 
 
 def reset_read_store() -> None:
@@ -1226,6 +1368,351 @@ def reset_openclaw_ops_client_error() -> None:
 
 
 OpenClawOpsClientError = _DefaultOpenClawOpsClientError
+
+
+def _openclaw_client_error(exc: Any) -> HTTPException:
+    status_code = getattr(exc, "status_code", 502) or 502
+    if status_code == 404:
+        code = ErrorCode.RESOURCE_NOT_FOUND
+    elif status_code == 409:
+        code = ErrorCode.RESOURCE_CONFLICT
+    elif status_code == 403:
+        code = ErrorCode.PRECONDITION_FAILED
+    elif status_code >= 500:
+        code = ErrorCode.DEPENDENCY_UNAVAILABLE
+    else:
+        code = ErrorCode.VALIDATION_FAILED
+    return _bff_error(
+        status_code,
+        code,
+        getattr(exc, "message", str(exc)),
+        getattr(exc, "error_code", "openclaw_client_error"),
+        precondition_failed="openclaw_adapter",
+        suggestion="Inspect GET /api/v1/operator/openclaw/ops for current adapter degradation state",
+    )
+
+
+def _assistant_provider_readiness() -> Dict[str, Any]:
+    provider = _mgmt_nl_provider_name()
+    try:
+        return OpenClawOpsClient().get_assistant_readiness(provider=provider, auth_probe=True)
+    except (OpenClawOpsClientError, get_openclaw_ops_client_error()) as exc:
+        return {
+            "provider": provider,
+            "runtime": "openclaw_gateway_cli_mount",
+            "ready": False,
+            "status": "unavailable",
+            "reason": getattr(exc, "error_code", "openclaw_client_error"),
+            "message": getattr(exc, "message", str(exc)),
+            "httpStatus": getattr(exc, "status_code", 502),
+        }
+
+
+def _assistant_provider_list(auth_probe: bool = False) -> Dict[str, Any]:
+    provider = _mgmt_nl_provider_name()
+    try:
+        return OpenClawOpsClient().list_assistant_providers(auth_probe=auth_probe)
+    except (OpenClawOpsClientError, get_openclaw_ops_client_error()) as exc:
+        return {
+            "status": "degraded",
+            "data": [
+                {
+                    "provider": provider,
+                    "runtime": "openclaw_gateway_cli_mount",
+                    "ready": False,
+                    "status": "unavailable",
+                    "auth": "unavailable" if auth_probe else "not_checked",
+                    "auth_status": "failed" if auth_probe else "not_checked",
+                    "reason": getattr(exc, "error_code", "openclaw_client_error"),
+                    "message": getattr(exc, "message", str(exc)),
+                    "httpStatus": getattr(exc, "status_code", 502),
+                }
+            ],
+            "meta": {
+                "openclawAdapterStatus": "degraded",
+                "openclaw_adapter_status": "degraded",
+                "reason": getattr(exc, "error_code", "openclaw_client_error"),
+                "message": getattr(exc, "message", str(exc)),
+            },
+        }
+
+
+def _assistant_provider_register(
+    payload: Dict[str, Any],
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().register_assistant_provider(
+            payload=payload,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
+        )
+    except (OpenClawOpsClientError, get_openclaw_ops_client_error()) as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
+def _assistant_provider_reauth(
+    payload: Dict[str, Any],
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    provider = str(payload.get("provider") or "codex").strip() or "codex"
+    try:
+        return OpenClawOpsClient().start_assistant_provider_reauth(
+            provider=provider,
+            payload=payload,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
+        )
+    except (OpenClawOpsClientError, get_openclaw_ops_client_error()) as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
+def _assistant_provider_reauth_status(
+    provider: str,
+    session_id: str,
+    operator_id: str,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().get_assistant_provider_reauth_status(
+            provider=provider or "codex",
+            session_id=session_id,
+            operator_id=operator_id or "management-ai",
+        )
+    except (OpenClawOpsClientError, get_openclaw_ops_client_error()) as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
+def _assistant_provider_reauth_code(
+    provider: str,
+    session_id: str,
+    code: str,
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().submit_assistant_provider_reauth_code(
+            provider=provider or "claude",
+            session_id=session_id,
+            code=code,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
+        )
+    except (OpenClawOpsClientError, get_openclaw_ops_client_error()) as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
+def _assistant_provider_usage_summary(
+    *,
+    auth_probe: bool = False,
+    limit: int = 500,
+    window_hours: Optional[int] = 168,
+) -> Dict[str, Any]:
+    event_limit = min(max(limit, 1), 500)
+    now_dt = datetime.now(timezone.utc)
+    since_dt = (
+        now_dt - timedelta(hours=max(1, int(window_hours)))
+        if window_hours is not None and int(window_hours) > 0
+        else None
+    )
+    rows: Dict[str, Dict[str, Any]] = {}
+
+    def ensure_provider(provider_value: Any) -> Dict[str, Any]:
+        provider = _management_ai_provider_key(provider_value)
+        if provider not in rows:
+            rows[provider] = _management_ai_empty_usage_row(provider)
+        return rows[provider]
+
+    def ensure_model(row: Dict[str, Any], model: str) -> Dict[str, Any]:
+        model_key = str(model or "default")
+        models = row["models"]
+        if model_key not in models:
+            models[model_key] = _management_ai_empty_model_row(model_key)
+        return models[model_key]
+
+    provider_list_payload = _assistant_provider_list(auth_probe=auth_probe)
+    provider_items = provider_list_payload.get("data") if isinstance(provider_list_payload, dict) else []
+    if not isinstance(provider_items, list):
+        provider_items = []
+    for item in provider_items:
+        if not isinstance(item, dict):
+            continue
+        row = ensure_provider(item.get("provider") or item.get("provider_id") or item.get("providerName"))
+        provider_name = str(item.get("provider_name") or item.get("providerName") or row["provider_name"])
+        row["provider_name"] = provider_name
+        row["runtime"] = item.get("runtime")
+        row["ready"] = item.get("ready")
+        auth_status = item.get("auth_status") or item.get("authStatus") or item.get("auth") or item.get("status")
+        row["auth_status"] = auth_status
+        row["status"] = item.get("status") or row["status"]
+        live_auth = bool(item.get("ready") is True and str(auth_status or "").lower() in {"ready", "account_session", "authorized"})
+        row["live_auth"] = live_auth
+        row["quota"] = _management_ai_quota_snapshot(item)
+        dependencies = item.get("persona_dependencies", item.get("personaDependencies"))
+        if isinstance(dependencies, dict):
+            dependency_personas = dependencies.get("personas")
+            if not isinstance(dependency_personas, list):
+                dependency_personas = []
+            dependency_status = str(dependencies.get("status") or "available")
+            row["persona_dependencies"] = {
+                "status": dependency_status,
+                "count": dependencies.get("count", len(dependency_personas)),
+                "personas": dependency_personas,
+                "source": dependencies.get("source") or "provider_inventory",
+                "reason": dependencies.get("reason"),
+            }
+        else:
+            dependency_personas = item.get("dependent_personas", item.get("dependentPersonas"))
+            if isinstance(dependency_personas, list):
+                row["persona_dependencies"] = {
+                    "status": "available",
+                    "count": len(dependency_personas),
+                    "personas": dependency_personas,
+                    "source": "provider_inventory",
+                    "reason": None,
+                }
+        smoke = item.get("live_smoke") if isinstance(item.get("live_smoke"), dict) else {}
+        reauth = item.get("reauth") if isinstance(item.get("reauth"), dict) else {}
+        row["provider_auth"] = {
+            "status": auth_status or "not_checked",
+            "authenticated": str(auth_status or "").lower() in {"ready", "account_session", "authorized"},
+            "source": item.get("auth_source") or item.get("authSource") or "provider_probe",
+        }
+        row["live_smoke"] = {
+            "status": smoke.get("status") or item.get("smoke_status") or "not_checked",
+            "passed": smoke.get("passed") is True,
+            "checked_at": smoke.get("checked_at") or smoke.get("checkedAt") or item.get("last_live_smoke_at"),
+            "reason": smoke.get("reason") or item.get("smoke_reason"),
+        }
+        row["reauth"] = {
+            "status": reauth.get("status") or item.get("reauth_status") or "not_started",
+            "code_entry_required": bool(reauth.get("code_entry_required", reauth.get("codeEntryRequired", False))),
+            "readiness_recheck_required": bool(reauth.get("readiness_recheck_required", reauth.get("readinessRecheckRequired", False))),
+        }
+        row["readiness"] = {
+            "ready": item.get("ready") is True,
+            "proof": item.get("readiness_proof") or "provider_probe",
+            "mount_ready_is_sufficient": False,
+            "reason": item.get("reason"),
+        }
+
+    started_by_run: Dict[str, Dict[str, Any]] = {}
+    events = _management_ai_list_audit_events(limit=event_limit)
+    considered_events = 0
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_dt = _audit_datetime(event.get("recorded_at"))
+        if since_dt is not None and event_dt is not None and event_dt < since_dt:
+            continue
+        event_type = str(event.get("event_type") or "")
+        if not event_type.startswith("management_ai.provider."):
+            continue
+        considered_events += 1
+        provider = event.get("provider") or "unknown"
+        run_id = str(event.get("provider_run_id") or event.get("trace_id") or event.get("message_id") or "")
+        row = ensure_provider(provider)
+        model = _management_ai_event_model(event)
+        model_row = ensure_model(row, model)
+        if event_type == "management_ai.provider.started":
+            if run_id:
+                started_by_run[run_id] = event
+            prompt_bytes = int(_management_ai_number(event.get("prompt_bytes")) or 0)
+            row["started_count"] += 1
+            row["prompt_bytes"] += prompt_bytes
+            model_row["prompt_bytes"] += prompt_bytes
+            _management_ai_touch_last(row, event, "started")
+            _management_ai_touch_last(model_row, event, "started")
+            continue
+
+        if event_type not in {"management_ai.provider.completed", "management_ai.provider.failed"}:
+            continue
+        source_started = started_by_run.get(run_id)
+        if source_started is not None:
+            prompt_bytes = int(_management_ai_number(source_started.get("prompt_bytes")) or 0)
+            if row["started_count"] == 0:
+                row["prompt_bytes"] += prompt_bytes
+                model_row["prompt_bytes"] += prompt_bytes
+        duration_ms = int(_management_ai_number(event.get("duration_ms")) or 0)
+        output_summary = event.get("output_summary") if isinstance(event.get("output_summary"), dict) else {}
+        usage = output_summary.get("usage") if isinstance(output_summary.get("usage"), dict) else {}
+        input_tokens = int(_management_ai_usage_number(usage, "input_tokens", "inputTokens", "prompt_tokens", "promptTokens") or 0)
+        output_tokens = int(_management_ai_usage_number(usage, "output_tokens", "outputTokens", "completion_tokens", "completionTokens") or 0)
+        total_tokens = int(_management_ai_usage_number(usage, "total_tokens", "totalTokens") or 0)
+        if total_tokens == 0:
+            total_tokens = input_tokens + output_tokens
+        failed = event_type == "management_ai.provider.failed"
+        status = "failed" if failed else str(event.get("provider_state") or "completed")
+        for target in (row, model_row):
+            target["calls"] += 1
+            target["duration_ms"] += duration_ms
+            target["input_tokens"] += input_tokens
+            target["output_tokens"] += output_tokens
+            target["total_tokens"] += total_tokens
+            if failed:
+                target["failed_count"] += 1
+            else:
+                target["success_count"] += 1
+            _management_ai_touch_last(target, event, status)
+        if failed:
+            row["last_error"] = event.get("error_code") or event.get("error_message")
+
+    provider_rows = [
+        _management_ai_finalize_usage_row(
+            row,
+            now_dt=now_dt,
+            window_hours=window_hours,
+            event_limit=event_limit,
+        )
+        for row in rows.values()
+    ]
+    provider_rows.sort(key=lambda item: (not bool(item.get("live_auth")), -int(item.get("calls") or 0), str(item.get("provider") or "")))
+    totals = {
+        "providers": len(provider_rows),
+        "live_auth_count": sum(1 for row in provider_rows if row.get("live_auth")),
+        "calls": sum(int(row.get("calls") or 0) for row in provider_rows),
+        "success_count": sum(int(row.get("success_count") or 0) for row in provider_rows),
+        "failed_count": sum(int(row.get("failed_count") or 0) for row in provider_rows),
+        "input_tokens": sum(int(row.get("input_tokens") or 0) for row in provider_rows),
+        "output_tokens": sum(int(row.get("output_tokens") or 0) for row in provider_rows),
+        "total_tokens": sum(int(row.get("total_tokens") or 0) for row in provider_rows),
+    }
+    return {
+        "status": "ok",
+        "data": {
+            "providers": provider_rows,
+            "totals": totals,
+            "quota": {
+                "truth_policy": "provider_snapshot_only",
+                "missing_source_means": "quota remaining is unknown, not zero",
+            },
+            "usage": {
+                "truth_policy": "observed_bff_events_only",
+                "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
+                "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
+                "stale_after_hours": _MGMT_AI_USAGE_STALE_AFTER_HOURS,
+                "missing_source_means": "direct provider CLI usage is unknown unless a provider usage source is configured",
+            },
+        },
+        "meta": {
+            "auth_probe": auth_probe,
+            "event_limit": event_limit,
+            "event_count": considered_events,
+            "window_hours": window_hours,
+            "since": since_dt.isoformat().replace("+00:00", "Z") if since_dt is not None else None,
+            "provider_snapshot_status": provider_list_payload.get("status") if isinstance(provider_list_payload, dict) else None,
+        },
+    }
+
+
+assistant_provider_readiness = _assistant_provider_readiness
+assistant_provider_list = _assistant_provider_list
+assistant_provider_usage_summary = _assistant_provider_usage_summary
+assistant_provider_register = _assistant_provider_register
+assistant_provider_reauth = _assistant_provider_reauth
+assistant_provider_reauth_status = _assistant_provider_reauth_status
+assistant_provider_reauth_code = _assistant_provider_reauth_code
 
 
 
@@ -1628,7 +2115,7 @@ def get_management_ai_context_service() -> Any:
     if _MANAGEMENT_AI_CONTEXT_SERVICE is None:
         from ..management_read_models.service import ManagementService as _ManagementServiceForContext
         _MANAGEMENT_AI_CONTEXT_SERVICE = _ManagementServiceForContext(
-            read_store=get_read_store(),
+            get_read_store=get_read_store,
             utc_now=utc_now,
         )
     return _MANAGEMENT_AI_CONTEXT_SERVICE
@@ -1752,12 +2239,341 @@ def _project_persona_fleet_item(persona: Dict[str, Any], **kwargs: Any) -> Tuple
     return get_project_persona_fleet_item()(persona, **kwargs)
 
 
-_PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN: Optional[Callable[..., Dict[str, Any]]] = None
+def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not summary:
+        return None
+    projected = {
+        "window": summary.get("window"),
+        "collected_at": summary.get("collected_at"),
+        "metrics": {
+            "pnl": summary.get("pnl"),
+            "drawdown": summary.get("drawdown"),
+            "sharpe_ratio": summary.get("sharpe_ratio"),
+            "fill_rate": summary.get("fill_rate"),
+            "avg_slippage_bps": summary.get("avg_slippage_bps"),
+            "total_trades": summary.get("total_trades"),
+        },
+    }
+    for key in (
+        "runtime_binding_id",
+        "binding_id",
+        "deployment_stage",
+        "state",
+        "last_heartbeat_at",
+        "last_event_at",
+        "last_event_type",
+        "engine_bridge_repo",
+        "engine_bridge_commit",
+        "engine_bridge_path",
+        "runtime_adapter_version",
+        "health_summary",
+        "projection_source",
+        "projection_updated_at",
+        "staleness",
+        "executed_trade_count",
+        "position_count",
+        "positions",
+        "last_fill",
+    ):
+        if key in summary:
+            projected[key] = summary.get(key)
+    return projected
+
+
+def _project_runtime_state_monitoring_session(session: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not session:
+        return None
+    projected: Dict[str, Any] = {}
+    for key in (
+        "session_id",
+        "session_type",
+        "binding_id",
+        "runtime_binding_id",
+        "runtime_id",
+        "deployment_stage",
+        "status",
+        "active",
+        "started_at",
+        "ended_at",
+        "ended_reason",
+        "terminal_reason",
+        "last_heartbeat_at",
+        "heartbeat_status",
+        "stale_after_seconds",
+        "restart_count",
+        "staleness",
+        "last_error",
+    ):
+        if key in session:
+            projected[key] = session.get(key)
+    terminal_reason = _runtime_state_monitoring_terminal_reason(session)
+    if terminal_reason and "terminal_reason" not in projected:
+        projected["terminal_reason"] = terminal_reason
+    return projected
+
+
+def _runtime_state_monitoring_terminal_reason(
+    session: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    if not session:
+        return None
+    for key in ("terminal_reason", "ended_reason"):
+        value = str(session.get(key) or "").strip()
+        if value:
+            return value
+    staleness = session.get("staleness")
+    if isinstance(staleness, dict):
+        reason = str(staleness.get("reason") or "").strip()
+        if reason:
+            return reason
+        status = str(staleness.get("status") or "").strip().lower()
+        if status == "stale":
+            return "stale_monitoring_session"
+    status = str(session.get("status") or "").strip().lower()
+    if status in {"ended", "stale", "failed"}:
+        return status
+    return None
+
+
+def _project_runtime_state_latest_rollback(rollbacks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not rollbacks:
+        return None
+    latest = max(
+        rollbacks,
+        key=lambda rollback: (
+            rollback.get("completed_at")
+            or rollback.get("executed_at")
+            or rollback.get("initiated_at")
+            or ""
+        ),
+    )
+    return {
+        "rollback_id": latest.get("rollback_id") or latest.get("id"),
+        "action_type": latest.get("action_type"),
+        "status": latest.get("status"),
+        "from_version": latest.get("from_version"),
+        "to_version": latest.get("to_version"),
+        "initiated_at": latest.get("initiated_at"),
+        "completed_at": latest.get("completed_at") or latest.get("executed_at"),
+    }
+
+
+def _runtime_state_row_health_check(
+    status: str,
+    *,
+    source: str,
+    message: Optional[str] = None,
+    applies: bool = True,
+) -> Dict[str, Any]:
+    check: Dict[str, Any] = {
+        "status": status,
+        "source": source,
+        "applies": applies,
+    }
+    if message:
+        check["message"] = message
+    return check
+
+
+def _runtime_state_monitoring_health_check(
+    monitoring_session: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if monitoring_session is None:
+        return _runtime_state_row_health_check(
+            "unavailable",
+            source="paper_runtime_monitoring_sessions",
+            message="Paper runtime monitoring session is unavailable for this runtime.",
+        )
+    terminal_reason = _runtime_state_monitoring_terminal_reason(monitoring_session)
+    inactive = monitoring_session.get("active") is False
+    ended = monitoring_session.get("ended_at") not in (None, "")
+    if terminal_reason or inactive or ended:
+        reason = terminal_reason or "inactive_monitoring_session"
+        return _runtime_state_row_health_check(
+            "degraded",
+            source="paper_runtime_monitoring_sessions",
+            message=f"Paper runtime monitoring session is terminal: {reason}.",
+        )
+    return _runtime_state_row_health_check(
+        "ok",
+        source="paper_runtime_monitoring_sessions",
+    )
+
+
+def _derive_runtime_state_row_health(
+    *,
+    binding: Dict[str, Any],
+    telemetry_summary: Optional[Dict[str, Any]],
+    monitoring_session: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    deployment_stage = str(
+        binding.get("deployment_stage") or binding.get("deployment_mode") or ""
+    ).lower()
+    checks: Dict[str, Dict[str, Any]] = {
+        "runtime_binding": _runtime_state_row_health_check(
+            "ok",
+            source="runtime_bindings",
+        ),
+        "telemetry_summary": (
+            _runtime_state_row_health_check("ok", source="telemetry_summaries")
+            if telemetry_summary is not None
+            else _runtime_state_row_health_check(
+                "unavailable",
+                source="telemetry_summaries",
+                message="Telemetry summary row is unavailable for this runtime.",
+            )
+        ),
+    }
+    if deployment_stage == "paper":
+        checks["paper_runtime_monitoring"] = _runtime_state_monitoring_health_check(
+            monitoring_session
+        )
+    else:
+        checks["paper_runtime_monitoring"] = _runtime_state_row_health_check(
+            "ok",
+            source="not_applicable",
+            applies=False,
+            message="Paper runtime monitoring applies only to paper runtimes.",
+        )
+
+    degraded_checks = [
+        key
+        for key, check in checks.items()
+        if check.get("applies", True) and check.get("status") != "ok"
+    ]
+    return {
+        "status": "degraded" if degraded_checks else "ok",
+        "checks": checks,
+        "degraded_checks": degraded_checks,
+    }
+
+
+def _derive_runtime_state_last_updated_at(
+    binding: Dict[str, Any],
+    telemetry_summary: Optional[Dict[str, Any]],
+    latest_rollback: Optional[Dict[str, Any]],
+    monitoring_session: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    candidates = [
+        binding.get("last_updated_at"),
+        binding.get("updated_at"),
+        binding.get("started_at"),
+        binding.get("created_at"),
+        (telemetry_summary or {}).get("last_heartbeat_at"),
+        (telemetry_summary or {}).get("last_event_at"),
+        (telemetry_summary or {}).get("collected_at"),
+        (latest_rollback or {}).get("completed_at"),
+        (latest_rollback or {}).get("initiated_at"),
+        (monitoring_session or {}).get("last_heartbeat_at"),
+        (monitoring_session or {}).get("ended_at"),
+        (monitoring_session or {}).get("started_at"),
+    ]
+    values = [candidate for candidate in candidates if candidate]
+    if not values:
+        return None
+    return max(values)
+
+
+def _project_operator_runtime_state_row_impl(
+    binding: Dict[str, Any],
+    *,
+    telemetry_summary_record: Optional[Dict[str, Any]] = None,
+    monitoring_session_record: Optional[Dict[str, Any]] = None,
+    prefetched: bool = False,
+) -> Dict[str, Any]:
+    runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+    runtime_binding_id = (
+        binding.get("runtime_binding_id")
+        or binding.get("binding_id")
+        or binding.get("id")
+    )
+    telemetry_observation: Optional[Dict[str, Any]] = None
+    if prefetched:
+        raw_telemetry_summary = telemetry_summary_record
+    else:
+        raw_telemetry_summary, telemetry_observation = (
+            _management_ai_context_service.get_context_telemetry_summary(runtime_id)
+        )
+    telemetry_summary = _project_runtime_state_telemetry_summary(
+        raw_telemetry_summary
+    )
+    monitoring_observation: Optional[Dict[str, Any]] = None
+    if prefetched:
+        raw_monitoring_session = monitoring_session_record
+    else:
+        raw_monitoring_session, monitoring_observation = (
+            _management_ai_context_service.get_context_monitoring_session(
+                runtime_id, str(runtime_binding_id or "")
+            )
+        )
+    monitoring_session = _project_runtime_state_monitoring_session(
+        raw_monitoring_session
+    )
+    rollbacks, rollback_observation = _management_ai_context_service.get_context_rollbacks(
+        runtime_id
+    )
+    latest_rollback = _project_runtime_state_latest_rollback(rollbacks)
+    artifact_id = binding.get("artifact_id")
+    artifact_version = binding.get("artifact_version") or binding.get("version")
+    plan_id = binding.get("plan_id")
+
+    return {
+        "runtime_id": runtime_id,
+        "runtime_binding_id": runtime_binding_id,
+        "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
+        "status": binding.get("status"),
+        "capital_pool_id": binding.get("capital_pool_id"),
+        "plan_ref": (
+            {
+                "plan_id": plan_id,
+                "href": f"/operator/deployment-review?plan={plan_id}",
+            }
+            if plan_id
+            else None
+        ),
+        "artifact_ref": (
+            {
+                "artifact_id": artifact_id,
+                "artifact_version": artifact_version,
+            }
+            if artifact_id or artifact_version
+            else None
+        ),
+        "telemetry_summary": telemetry_summary,
+        "telemetry_observation": telemetry_observation,
+        "monitoring_observation": monitoring_observation,
+        "rollback_observation": rollback_observation,
+        "executed_trade_count": (telemetry_summary or {}).get("executed_trade_count"),
+        "total_trades": ((telemetry_summary or {}).get("metrics") or {}).get("total_trades"),
+        "position_count": (telemetry_summary or {}).get("position_count"),
+        "positions": (telemetry_summary or {}).get("positions"),
+        "last_fill": (telemetry_summary or {}).get("last_fill"),
+        "paper_runtime_monitoring": monitoring_session,
+        "row_health": _derive_runtime_state_row_health(
+            binding=binding,
+            telemetry_summary=telemetry_summary,
+            monitoring_session=monitoring_session,
+        ),
+        "rollback_summary": {
+            "count": len(rollbacks),
+            "latest": latest_rollback,
+            "href": f"/api/v1/runtimes/{runtime_id}/rollbacks",
+        },
+        "last_updated_at": _derive_runtime_state_last_updated_at(
+            binding,
+            telemetry_summary,
+            latest_rollback,
+            monitoring_session,
+        ),
+    }
+
+
+_PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN: Optional[Callable[..., Dict[str, Any]]] = _project_operator_runtime_state_row_impl
 
 def get_project_operator_runtime_state_row() -> Callable[..., Dict[str, Any]]:
     if _PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN is not None:
         return _PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN
-    return lambda binding, **kwargs: dict(binding or {})
+    return _project_operator_runtime_state_row_impl
 
 def set_project_operator_runtime_state_row(fn: Optional[Callable[..., Dict[str, Any]]]) -> None:
     global _PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN
@@ -1765,7 +2581,7 @@ def set_project_operator_runtime_state_row(fn: Optional[Callable[..., Dict[str, 
 
 def reset_project_operator_runtime_state_row() -> None:
     global _PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN
-    _PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN = None
+    _PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN = _project_operator_runtime_state_row_impl
 
 def _project_operator_runtime_state_row(binding: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     return get_project_operator_runtime_state_row()(binding, **kwargs)
@@ -1776,7 +2592,11 @@ _MANAGEMENT_TELEMETRY_ROLLUP_FN: Optional[Callable[..., Dict[str, Any]]] = None
 def get_management_telemetry_rollup() -> Callable[..., Dict[str, Any]]:
     if _MANAGEMENT_TELEMETRY_ROLLUP_FN is not None:
         return _MANAGEMENT_TELEMETRY_ROLLUP_FN
-    return lambda telemetry_list: {}
+    try:
+        from ..shared.cross_domain_utils import _management_telemetry_rollup as _cross_domain_rollup
+        return _cross_domain_rollup
+    except Exception:
+        return lambda telemetry_list: {}
 
 def set_management_telemetry_rollup(fn: Optional[Callable[..., Dict[str, Any]]]) -> None:
     global _MANAGEMENT_TELEMETRY_ROLLUP_FN
@@ -1843,6 +2663,66 @@ def register_sse_buffers(buffers: Dict[str, deque], subscribers: Optional[Dict[s
         _sse_subscribers = subscribers
     if buffers not in _ACTIVE_SSE_BUFFERS:
         _ACTIVE_SSE_BUFFERS.append(buffers)
+
+
+def wire_management_runtime_projections(
+    read_store: Optional[Any] = None,
+    *,
+    project_operator_runtime_state_row: Optional[Callable[..., Dict[str, Any]]] = None,
+    management_telemetry_rollup: Optional[Callable[..., Dict[str, Any]]] = None,
+    build_operator_alerts_payload: Optional[Callable[[str], Dict[str, Any]]] = None,
+    build_management_anomalies_payload: Optional[Callable[[str], Dict[str, Any]]] = None,
+    human_inbox_payload: Optional[Callable[..., Dict[str, Any]]] = None,
+    list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    project_persona_fleet_item: Optional[Callable[..., Tuple[Dict[str, Any], List[Dict[str, Any]]]]] = None,
+    dataset_surface_status: Optional[Callable[..., Dict[str, Any]]] = None,
+    assistant_collect_source: Optional[Callable[..., Any]] = None,
+    agora_audit_store: Optional[Any] = None,
+    assistant_control_mode_store: Optional[Any] = None,
+    sse_buffers: Optional[Dict[str, deque]] = None,
+    sse_subscribers: Optional[Dict[str, list]] = None,
+) -> None:
+    """Wire management projections, setters, and audit/SSE stores.
+
+    Exposes the callable required by AC 3 so tests and callers can perform the
+    necessary wiring without importing main.py.
+    """
+    if read_store is not None:
+        set_read_store(read_store)
+    if project_operator_runtime_state_row is not None:
+        set_project_operator_runtime_state_row(project_operator_runtime_state_row)
+    else:
+        set_project_operator_runtime_state_row(_project_operator_runtime_state_row_impl)
+
+    if management_telemetry_rollup is not None:
+        set_management_telemetry_rollup(management_telemetry_rollup)
+    else:
+        try:
+            from ..shared.cross_domain_utils import _management_telemetry_rollup as _cross_domain_rollup
+            set_management_telemetry_rollup(_cross_domain_rollup)
+        except Exception:
+            pass
+
+    if build_operator_alerts_payload is not None:
+        set_build_operator_alerts_payload(build_operator_alerts_payload)
+    if build_management_anomalies_payload is not None:
+        set_build_management_anomalies_payload(build_management_anomalies_payload)
+    if human_inbox_payload is not None:
+        set_human_inbox_payload(human_inbox_payload)
+    if list_persona_records is not None:
+        set_list_persona_records(list_persona_records)
+    if project_persona_fleet_item is not None:
+        set_project_persona_fleet_item(project_persona_fleet_item)
+    if dataset_surface_status is not None:
+        set_dataset_surface_status(dataset_surface_status)
+    if assistant_collect_source is not None:
+        set_assistant_collect_source(assistant_collect_source)
+    if agora_audit_store is not None:
+        set_agora_audit_store(agora_audit_store)
+    if assistant_control_mode_store is not None:
+        set_assistant_control_mode_store(assistant_control_mode_store)
+    if sse_buffers is not None:
+        register_sse_buffers(sse_buffers, sse_subscribers)
 
 def _make_event_id(prefix: str = "evt") -> str:
     return f"{prefix}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
