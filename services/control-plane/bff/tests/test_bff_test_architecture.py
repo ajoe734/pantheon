@@ -55,14 +55,16 @@ _NON_BFF_MAIN_PREFIXES = (
 )
 
 # Discovered by closing the importlib/dynamic import scan hole (AC5).
-# bff_test_architecture_inventory.json remains untouched per AC1, so the
-# architecture gate accounts for these 4 newly uncovered importers to establish
-# the true live-scanned baseline of 15.
+# tests/test_management_read_models_router.py was migrated off main in a
+# prior generation of BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 (its
+# _import_main_for_inventory() dynamic accessor was removed entirely); its
+# entry here went stale and is dropped. The remaining 3 entries are real
+# on-disk dynamic importers not reflected in the inventory's own live-scan
+# list unless also covered by the reviewed composition_allowlist below.
 UNCOVERED_DYNAMIC_MAIN_IMPORTERS: Set[str] = {
     "test_pkt005_sse_substrate_contract.py",
     "tests/test_main_composition_seam_extraction_002.py",
     "tests/test_main_composition_seam_extraction_003.py",
-    "tests/test_management_read_models_router.py",
 }
 
 
@@ -288,9 +290,11 @@ def test_non_whitelisted_main_importers_is_live_scanned_and_bounded() -> None:
     data = _load_inventory()
     allowlist = set(data["composition_allowlist"])
     recorded = set(data["live_scan_non_whitelisted_main_importers"])
-    expected_offenders = sorted(recorded | UNCOVERED_DYNAMIC_MAIN_IMPORTERS)
-    # The true ceiling is the count of true live-scanned offenders after closing the scan hole.
-    # Inventory JSON ceiling is 11 (pre-fix); true enforced live ceiling is 15.
+    # A file that a reviewer has moved into the composition_allowlist (with an
+    # inline GENUINE BLOCKER rationale) is no longer an unreviewed offender:
+    # subtract the allowlist so an authorized allowlist entry can pass this
+    # gate instead of permanently failing it.
+    expected_offenders = sorted((recorded | UNCOVERED_DYNAMIC_MAIN_IMPORTERS) - allowlist)
     ceiling = max(data["live_scan_non_whitelisted_main_importer_ceiling"], len(expected_offenders))
 
     live_offenders = _live_scan_non_whitelisted_main_importers(allowlist)
