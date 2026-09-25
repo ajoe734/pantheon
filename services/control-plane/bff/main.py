@@ -3113,7 +3113,6 @@ from .assistant.management_service import (
     _runtime_state_monitoring_health_check,
     _derive_runtime_state_row_health,
     _derive_runtime_state_last_updated_at,
-    _project_operator_runtime_state_row,
 )
 def _highest_ranked_value(
     values: List[Optional[str]],
@@ -5573,11 +5572,6 @@ from .pm12.service import (
     _pm12_performance_attribution_sources,
 )
 
-from .assistant.management_service import (
-    _persona_fleet_runtime_matches,
-    _project_persona_fleet_health,
-    _project_persona_fleet_item,
-)
 from .governance.human_inbox import (
     _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES,
     _HUMAN_INBOX_OPEN_APPROVAL_STATES,
@@ -7576,8 +7570,6 @@ wire_management_runtime_projections(
     build_management_anomalies_payload=_build_management_anomalies_payload,
     human_inbox_payload=_human_inbox_payload,
     list_persona_records=_list_persona_records,
-    project_persona_fleet_item=_project_persona_fleet_item,
-    project_operator_runtime_state_row=_project_operator_runtime_state_row,
     management_telemetry_rollup=_management_telemetry_rollup,
     dataset_surface_status=_dataset_surface_status,
     assistant_collect_source=_assistant_collect_source,
