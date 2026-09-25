@@ -490,6 +490,7 @@ def _legacy_promotion_submission_params(
 
 
 def _append_command(
+    command_store: CommandStore,
     *,
     command_id: str,
     command_type: CommandType,
@@ -1362,6 +1363,7 @@ def test_human_inbox_promotion_projection_reads_command_log_once(monkeypatch) ->
         ]
         for index, recommendation_id in enumerate(recommendation_ids, start=1):
             _append_command(
+                command_store,
                 command_id=f"cmd-promotion-submit-{index}",
                 command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
                 target_type=ObjectType.RANKING,
@@ -1372,6 +1374,7 @@ def test_human_inbox_promotion_projection_reads_command_log_once(monkeypatch) ->
                 ),
             )
         _append_command(
+            command_store,
             command_id="cmd-promotion-decision-1",
             command_type=CommandType.HUMAN_GATE_APPROVE,
             target_type=ObjectType.HUMAN_GATE_ITEM,
@@ -1441,6 +1444,7 @@ def test_human_inbox_omits_inconsistent_generic_snapshot_and_private_evidence() 
             }
         )
         _append_command(
+            command_store,
             command_id="cmd-promotion-forged-snapshot",
             command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
             target_type=ObjectType.RANKING,
@@ -1468,6 +1472,7 @@ def test_human_inbox_legacy_snapshotless_submission_is_safe_and_minimal() -> Non
         )
         params["source_document"] = "must-not-be-projected"
         _append_command(
+            command_store,
             command_id="cmd-promotion-legacy",
             command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
             target_type=ObjectType.RANKING,
@@ -1498,6 +1503,7 @@ def test_human_inbox_omits_failed_promotion_submission() -> None:
     with _isolated_client() as (client, store, command_store):
         recommendation_id = "pm12-2026-q3-persona-failed-promote_to_canary_candidate"
         _append_command(
+            command_store,
             command_id="cmd-promotion-failed",
             command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
             target_type=ObjectType.RANKING,
