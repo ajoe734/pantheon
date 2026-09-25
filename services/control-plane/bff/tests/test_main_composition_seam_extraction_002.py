@@ -517,7 +517,13 @@ def test_pm12_quarter_window_and_action_helpers():
     _pm12_add_recommendation_action(actions, "unknown_action_not_in_manifest")
     assert len(actions) == 1
 
-    # 4. Delegation identity: main re-exports pm12 service implementations
+    # 4. Delegation identity: main re-exports pm12 service implementations.
+    # GENUINE BLOCKER: this assertion is specifically about whether main.py's own
+    # module-level names are bound to the pm12.service objects (rather than a local
+    # duplicate definition living in main.py itself), so it inherently requires
+    # importing main.py -- there is no seam that can stand in for main.py's own
+    # binding. Steps 1-3 above already exercise the real pm12.service seam directly
+    # with no main dependency.
     assert bff_main._pm12_quarter_window is _pm12_quarter_window
     assert bff_main._pm12_add_recommendation_action is _pm12_add_recommendation_action
     assert bff_main._pm12_quarterly_recommendation_item is _pm12_quarterly_recommendation_item
@@ -527,6 +533,11 @@ def test_pm12_duplicate_helpers_resolve_from_service():
     """Verify BFF-MAIN-PM12-DUPLICATE-CLEANUP-001: main.py resolves the five PM12
 
     helpers from pm12.service rather than maintaining duplicate local definitions.
+
+    GENUINE BLOCKER: this whole test is an identity check on main.py's own module
+    attributes (proving they are the pm12.service objects, not local duplicates), so
+    it inherently requires importing main.py -- there is no seam standing in for
+    main.py's own binding of these names.
     """
     import importlib
     from services.control_plane.bff.pm12 import service as pm12_service
@@ -560,7 +571,10 @@ def test_human_inbox_governance_seam_delegation():
     )
     bff_main = importlib.import_module("services.control_plane.bff.main")
 
-    # 1. Main re-exports human_inbox governance implementations
+    # 1. Main re-exports human_inbox governance implementations.
+    # GENUINE BLOCKER: identity checks on main.py's own module attributes require
+    # importing main.py -- there is no seam standing in for main.py's own binding
+    # of these names. Step 2 below exercises the real human_inbox seam directly.
     assert bff_main._human_inbox_payload is _human_inbox_payload
     assert bff_main._human_inbox_priority is _human_inbox_priority
     assert bff_main._human_inbox_promotion_review_item is _human_inbox_promotion_review_item

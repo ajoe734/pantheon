@@ -15,7 +15,6 @@ import ast
 import inspect
 import json
 import os
-import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,9 +24,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.responses import JSONResponse
 
-BFF_DIR = str(Path(__file__).resolve().parents[1])
-REPO_ROOT = str(Path(__file__).resolve().parents[4])
-
+from services.control_plane.bff.core.app_factory import compose_bff_app
 from services.control_plane.bff.management_read_models.router import (
     create_management_read_models_router,
     create_management_router,
@@ -232,40 +229,6 @@ def _ast_decorated_routes(path: Path, owner: str) -> Counter[tuple[str, str, str
                 if val:
                     routes[(method, val, owner)] += 1
     return routes
-
-
-def _import_main_for_inventory() -> Any:
-    """Import ``main`` with the repository-level integrations package pinned.
-
-    The BFF directory also contains a legacy top-level ``integrations``
-    package.  ``main`` prepends that directory to ``sys.path`` while Agora
-    imports ``integrations.openclaw`` from the repository package.  Tests that
-    import other BFF modules may already have loaded the legacy package, so
-    replace only the package binding before importing the composition root.
-    """
-    import importlib
-
-    # ``main`` and this module's sibling ``test_normalized_route_uniqueness``
-    # are legacy bare (non-package-qualified) modules that only this
-    # AST/route-inventory family of tests still needs; scope the sys.path
-    # mutation to this helper rather than polluting the whole test module.
-    if BFF_DIR not in sys.path:
-        sys.path.insert(0, BFF_DIR)
-
-    loaded = sys.modules.get("integrations")
-    repo_package_dir = Path(REPO_ROOT) / "integrations"
-    loaded_package_dir = (
-        Path(str(getattr(loaded, "__file__", ""))).resolve().parent
-        if loaded is not None and getattr(loaded, "__file__", None)
-        else None
-    )
-    if loaded_package_dir != repo_package_dir.resolve():
-        for name in list(sys.modules):
-            if name == "integrations" or name.startswith("integrations."):
-                sys.modules.pop(name, None)
-        sys.path.insert(0, REPO_ROOT)
-        importlib.import_module("integrations")
-    return importlib.import_module("main")
 
 
 # ---------------------------------------------------------------------------
@@ -1951,8 +1914,15 @@ def test_main_composes_management_router_without_legacy_decorators():
 
 
 def test_main_management_routes_have_zero_duplicate_registrations():
-    """The mounted Management surface must contain each route exactly once."""
-    bff_main = _import_main_for_inventory()
+    """The mounted Management surface must contain each route exactly once.
+
+    Uses ``compose_bff_app()`` -- the real production composition seam main.py's
+    own module-level ``app`` is built from (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001)
+    -- rather than importing main.py directly. ``test_compose_bff_app_matches_main_route_set``
+    in test_main_composition_seam_extraction_003.py independently proves this produces
+    an identical route set to main.py's assembled app.
+    """
+    composed_app = compose_bff_app()
     from collections import Counter
     from test_normalized_route_uniqueness import scan_fastapi_routes
 
@@ -1980,7 +1950,7 @@ def test_main_management_routes_have_zero_duplicate_registrations():
         "/bff/management/postmortems",
         "/bff/management/postmortems/{postmortem_id}",
     }
-    entries = scan_fastapi_routes(bff_main.app)
+    entries = scan_fastapi_routes(composed_app)
     routes = [
         (entry.method, entry.raw_path)
         for entry in entries
@@ -1992,13 +1962,18 @@ def test_main_management_routes_have_zero_duplicate_registrations():
 
 
 def test_main_preserves_management_evolution_journal_once():
-    """The existing evolution-journal owner remains mounted exactly once."""
-    bff_main = _import_main_for_inventory()
+    """The existing evolution-journal owner remains mounted exactly once.
+
+    Uses ``compose_bff_app()`` -- the real production composition seam -- rather
+    than importing main.py directly (see docstring on the sibling
+    ``test_main_management_routes_have_zero_duplicate_registrations`` above).
+    """
+    composed_app = compose_bff_app()
     from test_normalized_route_uniqueness import scan_fastapi_routes
 
     matching = [
         entry
-        for entry in scan_fastapi_routes(bff_main.app)
+        for entry in scan_fastapi_routes(composed_app)
         if entry.method == "GET"
         and entry.raw_path == "/bff/management/evolution-journal"
     ]
