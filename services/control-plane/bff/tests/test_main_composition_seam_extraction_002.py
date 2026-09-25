@@ -490,13 +490,13 @@ def test_management_ai_service_audit_and_store_isolation():
 # ============================================================================
 
 def test_pm12_quarter_window_and_action_helpers():
-    import importlib
+    from services.control_plane.bff.core.app_factory import assert_main_reexport_parity
     from services.control_plane.bff.pm12.service import (
         _pm12_add_recommendation_action,
         _pm12_current_quarter_id,
         _pm12_quarter_window,
+        _pm12_quarterly_recommendation_item,
     )
-    bff_main = importlib.import_module("services.control_plane.bff.main")
 
     # 1. Format validation and 422 HTTPException on invalid quarter
     with pytest.raises(HTTPException) as exc_info:
@@ -518,9 +518,9 @@ def test_pm12_quarter_window_and_action_helpers():
     assert len(actions) == 1
 
     # 4. Delegation identity: main re-exports pm12 service implementations
-    assert bff_main._pm12_quarter_window is _pm12_quarter_window
-    assert bff_main._pm12_add_recommendation_action is _pm12_add_recommendation_action
-    assert bff_main._pm12_quarterly_recommendation_item is _pm12_quarterly_recommendation_item
+    assert_main_reexport_parity("_pm12_quarter_window", "services.control_plane.bff.pm12.service")
+    assert_main_reexport_parity("_pm12_add_recommendation_action", "services.control_plane.bff.pm12.service")
+    assert_main_reexport_parity("_pm12_quarterly_recommendation_item", "services.control_plane.bff.pm12.service")
 
 
 def test_pm12_duplicate_helpers_resolve_from_service():
@@ -528,10 +528,7 @@ def test_pm12_duplicate_helpers_resolve_from_service():
 
     helpers from pm12.service rather than maintaining duplicate local definitions.
     """
-    import importlib
-    from services.control_plane.bff.pm12 import service as pm12_service
-
-    bff_main = importlib.import_module("services.control_plane.bff.main")
+    from services.control_plane.bff.core.app_factory import assert_main_reexport_parity
 
     five_symbols = [
         "_pm12_allocation_line_digest",
@@ -542,28 +539,21 @@ def test_pm12_duplicate_helpers_resolve_from_service():
     ]
 
     for sym in five_symbols:
-        main_sym = getattr(bff_main, sym)
-        svc_sym = getattr(pm12_service, sym)
-        assert main_sym is svc_sym, f"Expected bff_main.{sym} to be identical to pm12.service.{sym}"
-        assert getattr(main_sym, "__module__", None) == "services.control_plane.bff.pm12.service", (
-            f"Expected bff_main.{sym} to originate from services.control_plane.bff.pm12.service, "
-            f"got {getattr(main_sym, '__module__', None)}"
-        )
+        assert_main_reexport_parity(sym, "services.control_plane.bff.pm12.service")
 
 
 def test_human_inbox_governance_seam_delegation():
-    import importlib
+    from services.control_plane.bff.core.app_factory import assert_main_reexport_parity
     from services.control_plane.bff.governance.human_inbox import (
         _human_inbox_payload,
         _human_inbox_priority,
         _human_inbox_promotion_review_item,
     )
-    bff_main = importlib.import_module("services.control_plane.bff.main")
 
     # 1. Main re-exports human_inbox governance implementations
-    assert bff_main._human_inbox_payload is _human_inbox_payload
-    assert bff_main._human_inbox_priority is _human_inbox_priority
-    assert bff_main._human_inbox_promotion_review_item is _human_inbox_promotion_review_item
+    assert_main_reexport_parity("_human_inbox_payload", "services.control_plane.bff.governance.human_inbox")
+    assert_main_reexport_parity("_human_inbox_priority", "services.control_plane.bff.governance.human_inbox")
+    assert_main_reexport_parity("_human_inbox_promotion_review_item", "services.control_plane.bff.governance.human_inbox")
 
     # 2. Priority normalization handles sev/p prefixes
     assert _human_inbox_priority("sev1") == "critical"

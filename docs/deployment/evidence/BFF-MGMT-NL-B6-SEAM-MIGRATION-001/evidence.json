@@ -1,0 +1,173 @@
+{
+  "task_id": "BFF-MGMT-NL-B6-SEAM-MIGRATION-001",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "fork_point_from_dev": "64b59ea46daae61e2946e4fbda24be25da78a4a7",
+  "note_on_base": "This task's branch forked from dev at 64b59ea46daae61e2946e4fbda24be25da78a4a7. A previous session on this branch already produced one anchor commit (660556a75a9d2abb44975f6617a279c9b2a1f37c, 'anchor seam extraction') that did the bulk of the assistant-provider, command-routing, and setter-injection extraction described in the task brief. This delivery is the continuation from that anchor commit: it closes the remaining gaps (persona-fleet projection duplication, management-ai route handlers still only assembled by main.py, a compose_bff_app control-mode-store clobber bug, the last main.py import in test_bff_rebalance_proposals.py, and the migration of test_main_composition_seam_extraction_002/003.py off dynamic main.py imports), adds the required regression suite, and republishes the live-scan counts.",
+  "summary": "Extracted the assistant-provider, persona-fleet-projection, and management-AI-conversation seams that were still only assembled inside main.py so the six consumer test files can exercise them via core.app_factory.compose_bff_app() without importing main.py. Closed a bug where compose_bff_app() silently replaced any pre-wired assistant control-mode store with a fresh empty one on every call.",
+  "live_scan_non_whitelisted_main_importer_count": {
+    "before_this_task_dev_base_64b59ea4": {
+      "recorded_in_inventory": 11,
+      "uncovered_dynamic_importers_at_base": [
+        "test_pkt005_sse_substrate_contract.py",
+        "tests/test_main_composition_seam_extraction_002.py",
+        "tests/test_main_composition_seam_extraction_003.py",
+        "tests/test_management_read_models_router.py"
+      ],
+      "true_live_scanned_total": 15,
+      "composition_allowlist_size": 15
+    },
+    "after_this_task_head": {
+      "recorded_in_inventory": 10,
+      "uncovered_dynamic_importers_now": [
+        "test_pkt005_sse_substrate_contract.py",
+        "tests/test_management_read_models_router.py"
+      ],
+      "true_live_scanned_total": 12,
+      "composition_allowlist_size": 15
+    },
+    "note": "composition_allowlist_size held at the frozen pre-task baseline of 15 (never grown); the true live-scanned non-allowlisted importer count fell from 15 to 12 by migrating tests/test_bff_rebalance_proposals.py and tests/test_main_composition_seam_extraction_002.py / _003.py off main.py, not by weakening the importlib/__import__/call-graph detection in test_bff_test_architecture.py (that detection code is unchanged in this delivery)."
+  },
+  "acceptance_criteria_status": [
+    {
+      "id": "AC1",
+      "description": "Record true live-scan count and allowlist size before/after from a current origin/dev base",
+      "status": "done",
+      "evidence": "See live_scan_non_whitelisted_main_importer_count above; base commit 64b59ea46daae61e2946e4fbda24be25da78a4a7."
+    },
+    {
+      "id": "AC2",
+      "description": "Extract _assistant_provider_list / _assistant_provider_usage_summary / _assistant_provider_readiness so test_management_nl_assistant_provider.py can exercise them without importing main.py",
+      "status": "done",
+      "evidence": "Already extracted into services/control-plane/bff/assistant/management_service.py by the prior anchor commit (660556a75). This delivery additionally moved the persona-fleet projection implementation (_project_persona_fleet_item / _project_persona_fleet_health / _persona_fleet_runtime_matches) and the management-ai route handlers (bff_management_ai_audit, bff_assistant_provider_usage_summary, bff_management_ai_conversations, bff_management_ai_conversation, bff_management_ai_attachment) into management_service.py and registered them as resolvable app_factory dependencies, because compose_bff_app() previously fell back to a trivial stub / an unmounted handler for these when main.py's own module-scope wiring never ran. test_management_nl_assistant_provider.py now builds its TestClient via core.app_factory.compose_bff_app() only; 65/65 tests pass."
+    },
+    {
+      "id": "AC3",
+      "description": "Give test_bff_b6_001_security_hardening.py an injectable path to the runtime-state-row / setter-injection wiring",
+      "status": "done",
+      "evidence": "Already wired via wire_management_runtime_projections() in the prior anchor commit; test_bff_b6_001_security_hardening.py uses rebalance_authority_test_support.management_nl_test_client() (compose_bff_app-based) and does not import main.py. 5/5 tests pass."
+    },
+    {
+      "id": "AC4",
+      "description": "Extract _process_command routing/auth-context orchestration so test_bff_rebalance_proposals.py can exercise startup replay without importing main.py",
+      "status": "done",
+      "evidence": "command_adapters/service.py already owned process_command / _process_command_stub from the prior anchor commit. This delivery removed the file's remaining lazy `import main` (used only by 2 of ~35 tests for the real composition-root app and the process-command-stub monkeypatch target) and replaced it with core.app_factory.compose_bff_app(app_deps=AppDependencies.create_default(read_surface=..., command_store=...)) plus monkeypatching command_adapters.service._process_command_stub directly. tests/test_bff_rebalance_proposals.py now imports zero main.py (verified by AST scan in test_main_composition_seam_extraction_006.py)."
+    },
+    {
+      "id": "AC5",
+      "description": "Close the production identity-check gap in migrations/overlay_retirement.py",
+      "status": "done",
+      "evidence": "Already closed by the prior anchor commit: assert_mandatory_symbol_retirements() checks sys.modules first and falls back to an AST parse of main.py, so it never forces an import. migrations/test_overlay_retirement.py passes without importing main.py."
+    },
+    {
+      "id": "AC6",
+      "description": "Give test_main_composition_seam_extraction_002.py and _003.py a supported way to assert route-set/identity parity without importing main.py",
+      "status": "done",
+      "evidence": "Both files' remaining `importlib.import_module(\"services.control_plane.bff.main\")` call sites (test_pm12_quarter_window_and_action_helpers, test_pm12_duplicate_helpers_resolve_from_service, test_human_inbox_governance_seam_delegation in _002.py; test_compose_bff_app_matches_main_route_set, test_management_nl_handlers_importable_and_callable in _003.py) were replaced with the already-existing core.app_factory.assert_main_reexport_parity() / get_canonical_bff_route_set() seam helpers. Both files now import zero main.py."
+    },
+    {
+      "id": "AC7",
+      "description": "Migrate all six consumer test files off main.py and shrink composition_allowlist back to the frozen baseline of 15",
+      "status": "done",
+      "evidence": "composition_allowlist size held at 15 throughout (never grown). All six consumer files (test_management_nl_assistant_provider.py, test_bff_b6_001_security_hardening.py, test_bff_rebalance_proposals.py, migrations/test_overlay_retirement.py, test_main_composition_seam_extraction_002.py, test_main_composition_seam_extraction_003.py) plus the new test_main_composition_seam_extraction_006.py import zero main.py, asserted both by test_bff_test_architecture.py's live AST/importlib/__import__ scan and by test_main_composition_seam_extraction_006.py::test_migrated_consumer_test_files_do_not_import_main."
+    },
+    {
+      "id": "AC8",
+      "description": "No symbol defined in both main.py and its new owner; publish a grep readback",
+      "status": "done",
+      "evidence": "See 'duplicate_definition_readback' below: every extracted symbol has exactly 1 `def`/`async def` across main.py, assistant/management_service.py, command_adapters/service.py, core/app_factory.py, migrations/overlay_retirement.py."
+    },
+    {
+      "id": "AC9",
+      "description": "Add focused regression coverage asserting against live imported instances with no monkeypatching of main.py globals",
+      "status": "done",
+      "evidence": "services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py (10 tests, 10 passed). It never imports main.py; it monkeypatches only assistant.management_service.OpenClawOpsClient (a DI seam), never a main.py global."
+    },
+    {
+      "id": "AC10",
+      "description": "Run the six migrated suites plus the new seam test plus BFF composition tests plus the existing BFF architecture gate; publish base/head/changed files/commands/results",
+      "status": "done_with_documented_pre_existing_gap",
+      "evidence": "See 'test_execution' below. test_bff_rebalance_proposals.py and test_bff_main_composition.py each carry a pre-existing, environment-caused failure set that reproduces identically on the unmodified dev-fork-point base (before any of this task's changes) and is unrelated to main.py-import status; see 'pre_existing_unrelated_failures'."
+    }
+  ],
+  "duplicate_definition_readback": {
+    "command": "for sym in _assistant_provider_list _assistant_provider_readiness _assistant_provider_usage_summary _project_operator_runtime_state_row _project_operator_runtime_state_row_impl set_project_operator_runtime_state_row process_command _process_command_stub _persona_fleet_runtime_matches _project_persona_fleet_health _project_persona_fleet_item _project_persona_fleet_item_impl _management_prune_camel_aliases _management_camel_to_snake_key bff_management_ai_audit bff_assistant_provider_usage_summary bff_management_ai_conversations bff_management_ai_conversation bff_management_ai_attachment wire_management_runtime_projections; do grep -rn \"^def $sym\\b\\|^async def $sym\\b\" main.py assistant/management_service.py command_adapters/service.py core/app_factory.py migrations/overlay_retirement.py; done",
+    "result": "Every symbol resolves to exactly one `def`/`async def` site (all in assistant/management_service.py except process_command in command_adapters/service.py). _process_command_stub is an alias assignment (`_process_command_stub = process_command`), not a second def. main.py contains zero of these definitions; it only imports them."
+  },
+  "changed_files": [
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/assistant/management_service.py",
+    "services/control-plane/bff/core/app_factory.py",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py",
+    "services/control-plane/bff/tests/test_main_composition_seam_extraction_002.py",
+    "services/control-plane/bff/tests/test_main_composition_seam_extraction_003.py",
+    "services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py",
+    "docs/deployment/evidence/BFF-MGMT-NL-B6-SEAM-MIGRATION-001/evidence.json"
+  ],
+  "production_changes_summary": [
+    "assistant/management_service.py: moved the persona-fleet projection implementation (_persona_fleet_runtime_matches, _project_persona_fleet_health, _project_persona_fleet_item_impl) here from main.py and made it the live default of get_project_persona_fleet_item(); moved the management-ai route handlers (bff_management_ai_audit, bff_assistant_provider_usage_summary, bff_management_ai_conversations, bff_management_ai_conversation, bff_management_ai_attachment) and the camel-alias helpers (_MANAGEMENT_CAMEL_KEY_RE, _management_camel_to_snake_key, _management_prune_camel_aliases) here from main.py; gave get_list_persona_records() a real default (personas.service._list_persona_records) instead of an always-empty stub.",
+    "core/app_factory.py: registered the five moved management-ai route handlers as resolvable default dependencies (mirroring the existing bff_management_nl_ask pattern) so compose_bff_app() mounts them without main.py; fixed mount_bff_routers() so the assistant control-mode store default checks assistant.management_service.get_assistant_control_mode_store() first instead of unconditionally constructing (and injecting) a brand-new empty ControlModeStore on every compose_bff_app() call, which was silently discarding any store a caller had already wired (this is what caused test_management_nl_context_pack_reflects_active_control_mode and 3 sibling tests to fail before this fix).",
+    "main.py: replaced each moved definition with an import from its new owner; no behavioral change to main.py's own composition/injection role."
+  ],
+  "test_execution": {
+    "environment": "PYTHONPATH-free editable install via scripts/dev/provision_python_distribution.py; dependency interpreter borrowed from an existing sibling checkout's .venv (PANTHEON_DEPENDENCY_PYTHON) because this worktree host has no pre-provisioned .venv of its own.",
+    "runs": [
+      {
+        "command": "PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "result": "9 passed"
+      },
+      {
+        "command": "PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+        "result": "65 passed"
+      },
+      {
+        "command": "PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+        "result": "5 passed"
+      },
+      {
+        "command": "PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_bff_rebalance_proposals.py",
+        "result": "7 passed, 33 failed (all 33 fail identically on the unmodified dev-fork-point base at CapitalBffAuthorityHarness.__enter__ before any application code from this task runs; see pre_existing_unrelated_failures)"
+      },
+      {
+        "command": "PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/migrations/test_overlay_retirement.py",
+        "result": "part of the combined run below: passed, no failures"
+      },
+      {
+        "command": "PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_main_composition_seam_extraction_002.py services/control-plane/bff/tests/test_main_composition_seam_extraction_003.py services/control-plane/bff/migrations/test_overlay_retirement.py",
+        "result": "70 passed, 3 skipped (skips are pre-existing real-Postgres-only fixtures gated on TEST_DATABASE_URL, unrelated to this task)"
+      },
+      {
+        "command": "PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py",
+        "result": "10 passed"
+      },
+      {
+        "command": "PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
+        "result": "20 passed, 4 failed (all 4 fail identically, with an equal-or-larger failure count, on the unmodified dev-fork-point base; see pre_existing_unrelated_failures)"
+      },
+      {
+        "command": "combined: PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/tests/test_bff_rebalance_proposals.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_main_composition_seam_extraction_002.py services/control-plane/bff/tests/test_main_composition_seam_extraction_003.py services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "result": "186 passed, 3 skipped, 37 failed (33 in test_bff_rebalance_proposals.py + 4 in test_bff_main_composition.py, all pre-existing and unrelated to main.py import status; see pre_existing_unrelated_failures)"
+      }
+    ]
+  },
+  "pre_existing_unrelated_failures": {
+    "method": "Verified by `git stash` of every file this task touched (production and test) and re-running the exact same suites against the untouched dev-fork-point commit (64b59ea46) in the same sandbox.",
+    "test_bff_rebalance_proposals.py": {
+      "baseline_result": "33 failed, 7 passed (identical failing test names)",
+      "root_cause": "CapitalBffAuthorityHarness.__enter__ posts to /bff/capital-pools against a real, freshly-imported services.capital.main app and asserts response.json()['pool_id'] == 'pool-real'; in this sandbox that response body has no 'pool_id' key, before any BFF main.py or seam code from this task is even reached. This is an environment/service-boundary gap in the capital service test double available on this host, not a main.py-import regression -- it reproduces byte-for-byte on the unmodified base."
+    },
+    "test_bff_main_composition.py": {
+      "baseline_result": "4 failed, 20 passed (test_all_canonical_domain_routers_mounted, test_training_v3_router_mounted, test_zero_unreferenced_dead_functions_in_main_py, test_main_py_zero_lambda_read_store_service_locator_seams)",
+      "root_cause": "Pre-existing main.py dead-code and lambda-read_store-seam debt unrelated to this task's scoped seams. This delivery's main.py edits only remove code (net negative dead-function count: 83 dead functions on the unmodified base vs. 79 after this task's extraction, because 5 of the moved management-ai handlers were among the dead-code list); it introduces zero new lambda read_store seams (the 2 flagged lines pre-date this task and are untouched by this diff)."
+    }
+  },
+  "delivery": {
+    "branch": "task/BFF-MGMT-NL-B6-SEAM-MIGRATION-001",
+    "fork_point_from_dev": "64b59ea46daae61e2946e4fbda24be25da78a4a7",
+    "anchor_commit": "660556a75a9d2abb44975f6617a279c9b2a1f37c",
+    "note": "PR number, exact head SHA, and CI run links are filled in at handoff time per task-closeout-finalization.md; this manifest is committed at the exact PR head before handoff."
+  }
+}

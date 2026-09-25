@@ -46,7 +46,7 @@ from typing import (
     Set,
     Tuple,
 )
-from fastapi import Body, Header, HTTPException, Query
+from fastapi import Body, Header, HTTPException, Query, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -2015,6 +2015,29 @@ def _stable_json_hash(payload: Dict[str, Any]) -> str:
 def _management_json_clone(value: Any) -> Any:
     return json.loads(json.dumps(value))
 
+_MANAGEMENT_CAMEL_KEY_RE = re.compile(r"[A-Z]")
+
+def _management_camel_to_snake_key(value: str) -> str:
+    value = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", value)
+    value = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
+    return value.lower()
+
+def _management_prune_camel_aliases(value: Any) -> Any:
+    """Keep snake_case when a dict carries both snake_case and camelCase aliases."""
+    if isinstance(value, list):
+        return [_management_prune_camel_aliases(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    keys = {key for key in value if isinstance(key, str)}
+    pruned: Dict[str, Any] = {}
+    for key, nested in value.items():
+        if isinstance(key, str) and _MANAGEMENT_CAMEL_KEY_RE.search(key):
+            snake_key = _management_camel_to_snake_key(key)
+            if snake_key in keys:
+                continue
+        pruned[key] = _management_prune_camel_aliases(nested)
+    return pruned
+
 def _management_number(value: Any) -> Optional[float]:
     if isinstance(value, (int, float)):
         return float(value)
@@ -2197,7 +2220,8 @@ _LIST_PERSONA_RECORDS_FN: Optional[Callable[..., List[Dict[str, Any]]]] = None
 def get_list_persona_records() -> Callable[..., List[Dict[str, Any]]]:
     if _LIST_PERSONA_RECORDS_FN is not None:
         return _LIST_PERSONA_RECORDS_FN
-    return lambda tenant_id=None: []
+    from ..personas.service import _list_persona_records as _personas_list_records
+    return lambda tenant_id=None: _personas_list_records(tenant_id, read_store=get_read_store())
 
 def set_list_persona_records(fn: Optional[Callable[..., List[Dict[str, Any]]]]) -> None:
     global _LIST_PERSONA_RECORDS_FN
@@ -2211,21 +2235,309 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
     return get_list_persona_records()(tenant_id)
 
 
+def _persona_fleet_runtime_matches(
+    runtime_binding: Dict[str, Any],
+    *,
+    binding_ids: set[str],
+    capital_pool_ids: set[str],
+    runtime_refs: set[str],
+) -> bool:
+    runtime_ids = {
+        str(runtime_binding.get(key) or "").strip()
+        for key in ("id", "binding_id", "runtime_binding_id", "runtime_id")
+    }
+    runtime_ids.discard("")
+    if runtime_ids.intersection(runtime_refs):
+        return True
+
+    persona_binding_id = str(runtime_binding.get("persona_capital_binding_id") or "").strip()
+    if persona_binding_id and persona_binding_id in binding_ids:
+        return True
+
+    capital_pool_id = str(runtime_binding.get("capital_pool_id") or "").strip()
+    if capital_pool_id and capital_pool_id in capital_pool_ids:
+        return True
+
+    plan_id = str(runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or "").strip()
+    if plan_id:
+        store = get_read_store()
+        plan = (store.get_deployment_plan(plan_id) or {}) if store is not None and hasattr(store, "get_deployment_plan") else {}
+        plan_binding_ids = {
+            str(value).strip()
+            for value in (plan.get("binding_ids") or [])
+            if str(value).strip()
+        }
+        if plan_binding_ids.intersection(binding_ids):
+            return True
+        plan_pool_id = str(plan.get("capital_pool_id") or plan.get("target_pool_id") or "").strip()
+        if plan_pool_id and plan_pool_id in capital_pool_ids:
+            return True
+
+    return False
+
+
+def _project_persona_fleet_health(
+    *,
+    persona: Dict[str, Any],
+    runtime_bindings: List[Dict[str, Any]],
+    telemetry_summaries: List[Dict[str, Any]],
+    active_incidents: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    from ..personas.service import _is_persona_lifecycle_operational
+    reasons: List[str] = []
+    lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
+    if lifecycle and not _is_persona_lifecycle_operational(lifecycle):
+        reasons.append("persona_lifecycle_not_active")
+    if not runtime_bindings:
+        reasons.append("no_runtime_binding")
+    if active_incidents:
+        reasons.append("active_incident")
+
+    latest_telemetry = telemetry_summaries[0] if telemetry_summaries else {}
+    drawdown = latest_telemetry.get("drawdown")
+    pnl = latest_telemetry.get("pnl")
+    try:
+        if drawdown is not None and float(drawdown) >= 0.10:
+            reasons.append("drawdown_threshold")
+    except (TypeError, ValueError):
+        pass
+    try:
+        if pnl is not None and float(pnl) <= -0.05:
+            reasons.append("negative_pnl")
+    except (TypeError, ValueError):
+        pass
+
+    runtime_statuses = {
+        str(binding.get("status") or "").strip().lower()
+        for binding in runtime_bindings
+        if str(binding.get("status") or "").strip()
+    }
+    unhealthy_runtime_statuses = sorted(runtime_statuses.difference({"active", "ready", "running", "idle"}))
+    if unhealthy_runtime_statuses:
+        reasons.append("runtime_status_attention")
+
+    status = "healthy"
+    severity = "low"
+    if active_incidents or "drawdown_threshold" in reasons:
+        status = "critical"
+        severity = "high"
+    elif reasons:
+        status = "degraded"
+        severity = "medium"
+
+    score = max(0, 100 - (35 if status == "critical" else 0) - (15 * max(len(reasons) - 1, 0)))
+    return {
+        "status": status,
+        "severity": severity,
+        "score": score,
+        "reasons": reasons,
+        "runtime_statuses": sorted(runtime_statuses),
+        "latest_telemetry_at": latest_telemetry.get("collected_at"),
+        "active_incident_count": len(active_incidents),
+    }
+
+
+def _project_persona_fleet_item_impl(
+    raw_persona: Dict[str, Any],
+    *,
+    all_runtime_bindings: List[Dict[str, Any]],
+    all_incidents: List[Dict[str, Any]],
+    all_evolution_decisions: List[Dict[str, Any]],
+    telemetry_by_runtime_id: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]],
+    tenant_id: Optional[str] = None,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    from ..personas.service import _project_persona_dto
+    from ..shared.cross_domain_utils import _sort_records_latest_first
+
+    persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
+    record_filter = lambda rows: _mgmt_nl_filter_tenant_records(rows, tenant_id)
+    ctx_svc = get_management_ai_context_service()
+    strategies, strategies_obs = ctx_svc.get_context_strategies_for_persona(
+        persona_id, record_filter=record_filter
+    )
+    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=len(strategies))
+
+    bindings, bindings_obs = ctx_svc.get_context_bindings_for_persona(
+        persona_id, record_filter=record_filter
+    )
+    bindings = list(bindings or [])
+    binding_ids = {
+        str(binding.get("id") or binding.get("binding_id") or "").strip()
+        for binding in bindings
+        if str(binding.get("id") or binding.get("binding_id") or "").strip()
+    }
+    capital_pool_ids = {
+        str(binding.get("capital_pool_id") or "").strip()
+        for binding in bindings
+        if str(binding.get("capital_pool_id") or "").strip()
+    }
+
+    sessions, sessions_obs = ctx_svc.get_context_sessions_for_persona(
+        persona_id, record_filter=record_filter
+    )
+    runtime_refs = {
+        str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
+        for session in sessions
+        if str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
+    }
+    runtime_bindings = [
+        binding
+        for binding in all_runtime_bindings
+        if _persona_fleet_runtime_matches(
+            binding,
+            binding_ids=binding_ids,
+            capital_pool_ids=capital_pool_ids,
+            runtime_refs=runtime_refs,
+        )
+    ]
+    runtime_ids = {
+        str(binding.get("runtime_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+        for binding in runtime_bindings
+        if str(binding.get("runtime_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+    }
+    artifact_ids = {
+        str(binding.get("artifact_id") or "").strip()
+        for binding in runtime_bindings
+        if str(binding.get("artifact_id") or "").strip()
+    }
+
+    matched_telemetry = [
+        telemetry_by_runtime_id[runtime_id]
+        for runtime_id in sorted(runtime_ids)
+        if runtime_id in telemetry_by_runtime_id
+    ]
+    telemetry_summaries = [summary for summary, _obs in matched_telemetry if summary]
+    telemetry_summaries = _sort_records_latest_first(telemetry_summaries, ("collected_at", "updated_at", "created_at"))
+    latest_telemetry = telemetry_summaries[0] if telemetry_summaries else None
+    telemetry_observations = [obs for _summary, obs in matched_telemetry]
+
+    teaching_sessions, teaching_sessions_obs = ctx_svc.get_context_teaching_sessions_for_persona(
+        persona_id, record_filter=record_filter
+    )
+    teaching_sessions = _sort_records_latest_first(
+        list(teaching_sessions or []),
+        ("started_at", "created_at", "updated_at"),
+    )
+    latest_training = teaching_sessions[0] if teaching_sessions else None
+
+    active_incidents = [
+        incident
+        for incident in all_incidents
+        if str(incident.get("status") or "").lower() in {"open", "active", "investigating"}
+        and (
+            str(incident.get("persona_id") or "").strip() == persona_id
+            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
+            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
+            or str(incident.get("runtime_id") or "").strip() in runtime_ids
+        )
+    ]
+    incident_ids = {
+        str(incident.get("incident_id") or incident.get("id") or "").strip()
+        for incident in all_incidents
+        if str(incident.get("incident_id") or incident.get("id") or "").strip()
+        and (
+            str(incident.get("persona_id") or "").strip() == persona_id
+            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
+            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
+            or str(incident.get("runtime_id") or "").strip() in runtime_ids
+        )
+    }
+    evolution_decisions = [
+        decision
+        for decision in all_evolution_decisions
+        if str(decision.get("target_id") or "").strip() == persona_id
+        or str(decision.get("artifact_id") or "").strip() in artifact_ids
+        or str(decision.get("incident_ref") or decision.get("linked_incident_id") or "").strip() in incident_ids
+    ]
+    evolution_decisions = _sort_records_latest_first(evolution_decisions, ("updated_at", "created_at"))
+
+    pool_results = {
+        pool_id: ctx_svc.get_context_capital_pool(
+            pool_id, record_filter=record_filter
+        )
+        for pool_id in sorted(capital_pool_ids)
+    }
+    capital_pools = [pool for pool, _obs in pool_results.values() if pool]
+    enriched_bindings = [
+        {
+            **binding,
+            "capital_pool": pool_results.get(str(binding.get("capital_pool_id") or "").strip(), (None, None))[0],
+        }
+        for binding in bindings
+    ]
+    health = _project_persona_fleet_health(
+        persona=raw_persona,
+        runtime_bindings=runtime_bindings,
+        telemetry_summaries=telemetry_summaries,
+        active_incidents=active_incidents,
+    )
+    allowed_actions, allowed_actions_obs = ctx_svc.get_context_persona_allowed_actions(
+        persona_id, record_filter=record_filter
+    )
+
+    telemetry_summary = {
+        "latest": latest_telemetry,
+        "runtime_count": len(runtime_bindings),
+        "covered_runtime_count": len(telemetry_summaries),
+        "summaries": telemetry_summaries,
+    }
+    training_summary = {
+        "session_count": len(teaching_sessions),
+        "active_session_count": len([
+            session for session in teaching_sessions
+            if str(session.get("status") or "").lower() == "active"
+        ]),
+        "completed_session_count": len([
+            session for session in teaching_sessions
+            if str(session.get("status") or "").lower() == "completed"
+        ]),
+        "latest_session": latest_training,
+    }
+    evolution_summary = {
+        "decision_count": len(evolution_decisions),
+        "pending_decision_count": len([
+            decision for decision in evolution_decisions
+            if str(decision.get("status") or decision.get("decision_state") or "").lower()
+            in {"pending", "in_review", "reviewed", "under_review"}
+        ]),
+        "latest_decision": evolution_decisions[0] if evolution_decisions else None,
+        "decisions": evolution_decisions,
+    }
+
+    item = {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "persona": persona_dto,
+        "health": health,
+        "bindings": enriched_bindings,
+        "capitalPools": capital_pools,
+        "capital_pools": capital_pools,
+        "runtimeBindings": runtime_bindings,
+        "runtime_bindings": runtime_bindings,
+        "telemetrySummary": telemetry_summary,
+        "telemetry_summary": telemetry_summary,
+        "training": training_summary,
+        "evolution": evolution_summary,
+        "sessions": sessions,
+        "activeIncidents": active_incidents,
+        "active_incidents": active_incidents,
+        "allowedActions": allowed_actions or {},
+    }
+    owner_observations = [
+        strategies_obs, bindings_obs, sessions_obs, teaching_sessions_obs,
+        allowed_actions_obs, *[obs for _pool, obs in pool_results.values()],
+        *telemetry_observations,
+    ]
+    item["owner_observations"] = owner_observations
+    return item, owner_observations
+
+
 _PROJECT_PERSONA_FLEET_ITEM_FN: Optional[Callable[..., Tuple[Dict[str, Any], List[Dict[str, Any]]]]] = None
 
 def get_project_persona_fleet_item() -> Callable[..., Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
     if _PROJECT_PERSONA_FLEET_ITEM_FN is not None:
         return _PROJECT_PERSONA_FLEET_ITEM_FN
-    def _default(persona: Dict[str, Any], **kwargs: Any) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-        item = {
-            "persona_id": persona.get("persona_id") or persona.get("id"),
-            "health": {"status": "healthy" if persona.get("lifecycle_state") == "active" else "degraded"},
-            "bindings": [],
-            "runtimeBindings": [],
-            **persona,
-        }
-        return item, []
-    return _default
+    return _project_persona_fleet_item_impl
 
 def set_project_persona_fleet_item(fn: Optional[Callable[..., Tuple[Dict[str, Any], List[Dict[str, Any]]]]]) -> None:
     global _PROJECT_PERSONA_FLEET_ITEM_FN
@@ -2235,8 +2547,8 @@ def reset_project_persona_fleet_item() -> None:
     global _PROJECT_PERSONA_FLEET_ITEM_FN
     _PROJECT_PERSONA_FLEET_ITEM_FN = None
 
-def _project_persona_fleet_item(persona: Dict[str, Any], **kwargs: Any) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    return get_project_persona_fleet_item()(persona, **kwargs)
+def _project_persona_fleet_item(*args: Any, **kwargs: Any) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    return get_project_persona_fleet_item()(*args, **kwargs)
 
 
 def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -6593,6 +6905,137 @@ async def _bff_management_nl_ask_stream_impl(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
+
+
+async def bff_management_ai_audit(
+    session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Read backend Management AI audit events for conversation/provider tracing."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    events = _management_ai_list_audit_events(
+        session_id=session_id,
+        trace_id=trace_id,
+        message_id=message_id,
+        event_type=event_type,
+        limit=limit,
+    )
+    canonical_events = _management_prune_camel_aliases(events)
+    return {
+        "data": {
+            "id": "management_ai_audit",
+            "items": canonical_events,
+            "summary": {
+                "total_events": len(canonical_events),
+                "returned_items": len(canonical_events),
+            },
+        },
+        "page_info": {
+            "next_page_token": None,
+            "total": len(canonical_events),
+            "page_size": limit,
+        },
+        "meta": {
+            "count": len(canonical_events),
+            "filters": {
+                "session_id": session_id,
+                "trace_id": trace_id,
+                "message_id": message_id,
+                "event_type": event_type,
+            },
+        },
+    }
+async def bff_assistant_provider_usage_summary(
+    auth_probe: bool = False,
+    limit: int = Query(default=500, ge=1, le=500),
+    window_hours: int = Query(default=168, ge=1, le=24 * 90),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return provider/model usage history plus provider-reported quota snapshots."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _assistant_provider_usage_summary(
+        auth_probe=auth_probe,
+        limit=limit,
+        window_hours=window_hours,
+    )
+async def bff_management_ai_conversations(
+    limit: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """List visible server-side Management AI conversations for frontend resync."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
+    )
+    return management_ai_list_conversations(
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        limit=limit,
+        conversation_href_fn=_management_ai_conversation_href,
+        session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
+        conversation_store=get_management_ai_conversation_store(),
+    )
+async def bff_management_ai_conversation(
+    session_id: str,
+    trace_id: Optional[str] = None,
+    limit: int = Query(default=500, ge=1, le=1000),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """Read full Management AI session turns from the server-side conversation store."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_session_id = str(session_id or "").strip()
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
+    )
+    return management_ai_get_conversation(
+        session_id=clean_session_id,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        trace_id=trace_id,
+        limit=limit,
+        audit_href_fn=lambda s_id, t_id: _management_ai_audit_href(session_id=s_id, trace_id=t_id),
+        session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
+        conversation_store=get_management_ai_conversation_store(),
+    )
+async def bff_management_ai_attachment(
+    attachment_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """Return a BFF-proxied Management AI attachment object for visible sessions."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
+    )
+    content, mime_type, filename = management_ai_get_attachment(
+        attachment_id=attachment_id,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        conversation_store=get_management_ai_conversation_store(),
+    )
+    return Response(
+        content=content,
+        media_type=mime_type,
+        headers={"Content-Disposition": f"inline; filename=\"{filename}\""},
+    )
+
 
 # ---------------------------------------------------------------------------
 # Public exports & aliases

@@ -65,6 +65,7 @@
     "tests/test_bff_b6_management_nl_ask.py",
     "tests/test_bff_knowledge_inbox.py",
     "tests/test_bff_management_cockpit.py",
+    "tests/test_bff_rebalance_proposals.py",
     "tests/test_console_research_projection.py",
     "tests/test_governance_router.py",
     "tests/test_incident_router.py",
@@ -2112,9 +2113,9 @@
     {
       "file": "tests/test_bff_rebalance_proposals.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated suite: decoupled from main composition in BFF-MGMT-NL-B6-SEAM-MIGRATION-001 and enforced by AST checks"
     },
     {
       "file": "tests/test_bff_test_architecture.py",
@@ -2798,7 +2799,6 @@
     "test_bff_promotion_review_governance.py",
     "test_mgmt_load_005_read_concurrency.py",
     "tests/test_bff_path_dedupe.py",
-    "tests/test_bff_rebalance_proposals.py",
     "tests/test_overlay_retirement.py",
     "tests/test_ppl_alloc_009_assertion_semantics.py",
     "tests/test_ppl_alloc_012_ranking_projection.py"

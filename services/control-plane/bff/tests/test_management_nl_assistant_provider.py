@@ -14,6 +14,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff.core.app_factory import compose_bff_app
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     clear_management_nl_sse_buffer,
     get_management_nl_module,
@@ -336,7 +337,7 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
         storage_path="off",
         attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
     )
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    return TestClient(compose_bff_app(), raise_server_exceptions=False)
 
 
 def _clear_provider_env(monkeypatch) -> None:

@@ -615,6 +615,21 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     if name == "bff_management_nl_ask_stream":
         from ..assistant.management_service import bff_management_nl_ask_stream
         return bff_management_nl_ask_stream
+    if name == "bff_management_ai_audit":
+        from ..assistant.management_service import bff_management_ai_audit
+        return bff_management_ai_audit
+    if name == "bff_assistant_provider_usage_summary":
+        from ..assistant.management_service import bff_assistant_provider_usage_summary
+        return bff_assistant_provider_usage_summary
+    if name == "bff_management_ai_conversations":
+        from ..assistant.management_service import bff_management_ai_conversations
+        return bff_management_ai_conversations
+    if name == "bff_management_ai_conversation":
+        from ..assistant.management_service import bff_management_ai_conversation
+        return bff_management_ai_conversation
+    if name == "bff_management_ai_attachment":
+        from ..assistant.management_service import bff_management_ai_attachment
+        return bff_management_ai_attachment
 
     # 5. Shared bounded read
     if name in {"run_management_read", "_run_management_read"}:
@@ -840,9 +855,10 @@ def mount_bff_routers(
         "_ASSISTANT_TRANSCRIPT_STORE",
         lambda: ManagementAiAssistantTranscriptStore(store_factory=conv_store),
     )
+    from ..assistant.management_service import get_assistant_control_mode_store
     asst_control_mode_store = _dep(
         "_ASSISTANT_CONTROL_MODE_STORE",
-        lambda: ControlModeStore(),
+        lambda: get_assistant_control_mode_store() or ControlModeStore(),
     )
     from ..assistant.management_service import (
         _assistant_provider_readiness,

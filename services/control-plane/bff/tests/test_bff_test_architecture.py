@@ -60,8 +60,6 @@ _NON_BFF_MAIN_PREFIXES = (
 # the true live-scanned baseline of 15.
 UNCOVERED_DYNAMIC_MAIN_IMPORTERS: Set[str] = {
     "test_pkt005_sse_substrate_contract.py",
-    "tests/test_main_composition_seam_extraction_002.py",
-    "tests/test_main_composition_seam_extraction_003.py",
     "tests/test_management_read_models_router.py",
 }
 
