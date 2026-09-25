@@ -172,6 +172,9 @@ from services.control_plane.bff.governance.command_audit import (
     project_command_record_audit_event as _project_command_record_audit_event,
     audit_event_matches as _audit_event_matches,
 )
+from services.control_plane.bff.governance.promotion_review import (
+    _promotion_review_stored_source,
+)
 from services.control_plane.bff.ports import (
     ReadSurfacePorts,
     create_persona_registry_write_owner,
@@ -9121,6 +9124,30 @@ def _list_governance_audit_events(
     merged = list(events_by_id.values())
     merged.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
     return json.loads(json.dumps(merged))
+
+
+# --- _pm12_recommendation_snapshot_record ---
+def _pm12_recommendation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
+    """Read back a previously admitted PM12 ranking snapshot.
+
+    ``_pm12_attach_ranking_snapshot`` durably persists quarterly ranking
+    snapshots through the canonical Rankings write-owner port
+    (``_get_ranking_write_owner()``, see ``ports/rankings.py``). Recommendation
+    submission must re-admit a caller-asserted ``ranking_snapshot_id`` against
+    that same canonical store -- not the retired ``ReadSurfacePorts`` local
+    overlay, which is a distinct store that never observes snapshots written
+    here.
+    """
+    record = _get_ranking_write_owner().get_ranking_snapshot(snapshot_id)
+    if not isinstance(record, dict):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "unknown ranking snapshot",
+            "The submitted ranking_snapshot_id does not match a BFF-admitted quarterly ranking snapshot.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    return record
 
 
 # --- _pm12_resolve_quarterly_recommendation_submit_params ---

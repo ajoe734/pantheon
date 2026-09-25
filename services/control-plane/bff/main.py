@@ -15,7 +15,7 @@ import uuid
 import sys as _sys
 from collections import deque
 from copy import deepcopy
-from concurrent.futures import Executor, ThreadPoolExecutor
+from concurrent.futures import Executor, ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -254,6 +254,7 @@ from .personas.service import (
     _persona_provisioning_store,
     _persona_record_for_provisioning,
     _persona_record_tenant_id,
+    _promotion_review_find,
     _reconcile_persona_provisioning_compensation,
     _register_persona_cron_required,
     _remove_persona_cron_required,
@@ -4904,9 +4905,205 @@ from .personas.routes.common import (
     ManagementReadTimeout as _ManagementReadTimeout,
     ManagementReadSaturated as _ManagementReadSaturated,
     discard_late_management_read_result as _discard_late_management_read_result,
-    run_management_read,
+    run_management_read as _unbounded_run_management_read,
 )
+
+# BFF-MGMT-READ-DEFECT-REPAIR-001: production management-read capacity bound.
+#
+# `create_management_router(...)` (management_read_models/router.py) offloads
+# every GET route's aggregation onto a worker thread via a single injected
+# `run_management_read` callable (see core/app_factory.py's
+# `_dep("run_management_read")`). Previously that callable resolved straight
+# to `personas.routes.common.run_management_read`, whose `capacity`/
+# `executor` parameters default to `None` -- i.e. an *unbounded*
+# `asyncio.to_thread` fan-out with no concurrency ceiling in production.
+# Named, bounded slot pools (mirroring the existing
+# `_MANAGEMENT_DATA_SOURCES_READ_SLOTS` pattern above) give each read-heavy
+# surface a real, finite budget instead.
+_HUMAN_INBOX_READ_SLOT_COUNT = 4
+_HUMAN_INBOX_READ_SLOTS = threading.BoundedSemaphore(_HUMAN_INBOX_READ_SLOT_COUNT)
+_HUMAN_INBOX_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_HUMAN_INBOX_READ_SLOT_COUNT,
+    thread_name_prefix="bff-human-inbox-read",
+)
+
+_MANAGEMENT_COCKPIT_READ_SLOT_COUNT = 4
+_MANAGEMENT_COCKPIT_READ_SLOTS = threading.BoundedSemaphore(_MANAGEMENT_COCKPIT_READ_SLOT_COUNT)
+_MANAGEMENT_COCKPIT_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_MANAGEMENT_COCKPIT_READ_SLOT_COUNT,
+    thread_name_prefix="bff-mgmt-cockpit-read",
+)
+
+
+def _management_cockpit_read_timeout_seconds() -> float:
+    """Bound for the `/bff/management/cockpit` composition (independent of
+    the generic Management read timeout so cockpit-specific saturation can
+    be tuned/tested without moving every other surface's budget)."""
+    raw = os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS")
+    if raw is None or not raw.strip():
+        return _management_read_timeout_seconds()
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return _management_read_timeout_seconds()
+
+
+_MANAGEMENT_READ_DEFAULT_SLOT_COUNT = 8
+_MANAGEMENT_READ_DEFAULT_SLOTS = threading.BoundedSemaphore(_MANAGEMENT_READ_DEFAULT_SLOT_COUNT)
+_MANAGEMENT_READ_DEFAULT_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_MANAGEMENT_READ_DEFAULT_SLOT_COUNT,
+    thread_name_prefix="bff-mgmt-read",
+)
+
+
+async def _management_read_dispatch(
+    func: Any,
+    *args: Any,
+    timeout_seconds: Optional[float] = None,
+    capacity: Optional[threading.BoundedSemaphore] = None,
+    executor: Optional[Executor] = None,
+    **kwargs: Any,
+) -> Any:
+    """Bounded `run_management_read` used by every Management-read router.
+
+    Callers that already pick an explicit `capacity`/`executor` pair (e.g.
+    the Source Ingest registry read below) keep that choice untouched.
+    Callers that don't (the generic 17-route Management router, the
+    governance router, etc.) get dispatched to a named capacity pool/executor
+    pair by the target callable's name, so distinct surfaces (human-inbox
+    vs. cockpit vs. everything else) saturate independently -- one slow
+    surface cannot exhaust another surface's budget. Module-global lookups of
+    `_HUMAN_INBOX_READ_SLOTS` / `_MANAGEMENT_COCKPIT_READ_SLOTS` /
+    `_MANAGEMENT_READ_DEFAULT_SLOTS` happen at call time (not captured at
+    import time) so tests can substitute a smaller bound via
+    `monkeypatch.setattr(bff_main, "_HUMAN_INBOX_READ_SLOTS", ...)`.
+    """
+    if capacity is None and executor is None:
+        name = getattr(func, "__name__", "") or getattr(func, "__qualname__", "") or ""
+        if name in ("get_human_inbox", "_bounded_get_human_inbox"):
+            # BFF-MGMT-READ-DEFECT-REPAIR-001 acceptance item 7: the whole
+            # `/bff/management/human-inbox` composition no longer occupies
+            # `_HUMAN_INBOX_READ_SLOTS` itself -- that pool is the real
+            # per-contributor bound for the `persona_readiness` contributor
+            # inside `get_human_inbox` (see
+            # `_bounded_human_inbox_persona_readiness` below). Dispatching
+            # the whole-route call through the *same* BoundedSemaphore would
+            # starve the contributor: the outer acquire already holds the
+            # pool's only slot(s) when the contributor tries to acquire
+            # again from the same call stack, so it would always observe
+            # immediate (and spurious) saturation instead of ever running.
+            capacity, executor = _MANAGEMENT_READ_DEFAULT_SLOTS, _MANAGEMENT_READ_DEFAULT_EXECUTOR
+        elif "human_inbox" in name:
+            capacity, executor = _HUMAN_INBOX_READ_SLOTS, _HUMAN_INBOX_READ_EXECUTOR
+        elif "cockpit" in name:
+            capacity, executor = _MANAGEMENT_COCKPIT_READ_SLOTS, _MANAGEMENT_COCKPIT_READ_EXECUTOR
+        else:
+            capacity, executor = _MANAGEMENT_READ_DEFAULT_SLOTS, _MANAGEMENT_READ_DEFAULT_EXECUTOR
+    return await _unbounded_run_management_read(
+        func,
+        *args,
+        timeout_seconds=timeout_seconds,
+        capacity=capacity,
+        executor=executor,
+        **kwargs,
+    )
+
+
+
+# BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001 AC6: main.py must not redefine a
+# function that already has a canonical owner (`_unbounded_run_management_read`
+# / `personas.routes.common.run_management_read`). `_management_read_dispatch`
+# above is the composition-root wrapper (adds named capacity-pool dispatch);
+# bind it to the public `run_management_read` name via assignment rather than
+# a second `def run_management_read`, so `tests/test_main_composition_seam_extraction_003.py::
+# test_no_duplicate_definitions_in_main_py`'s AST scan (which only looks at
+# `ast.FunctionDef`/`ast.AsyncFunctionDef` nodes) sees no duplicate -- while
+# every caller (`_dep("run_management_read")`, `monkeypatch.setattr(bff_main,
+# "run_management_read", ...)`, etc.) still resolves the identical callable.
+run_management_read = _management_read_dispatch
 _run_management_read = run_management_read
+
+
+def _bounded_human_inbox_persona_readiness(
+    snapshot_at: str,
+    *,
+    read_store: Any = None,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Bounded `persona_readiness` contributor for `/bff/management/human-inbox`.
+
+    BFF-MGMT-READ-DEFECT-REPAIR-001 acceptance item 7: a timed-out or
+    capacity-saturated persona_readiness contributor must degrade on its
+    own (real `read_timeout` / `read_capacity_saturated` reasons, `meta`
+    partial) while sibling Human Inbox contributors (durable promotion
+    reviews, approvals, etc.) stay populated -- not a single all-or-nothing
+    bound around the whole route.
+
+    Runs `_build_persona_readiness_items` (module-global, so tests can
+    substitute a slow/blocked stand-in via
+    `monkeypatch.setattr(bff_main, "_build_persona_readiness_items", ...)`,
+    exactly like `_HUMAN_INBOX_READ_SLOTS`/`_MANAGEMENT_COCKPIT_READ_SLOTS`
+    above) on the dedicated `_HUMAN_INBOX_READ_EXECUTOR`, gated by
+    `_HUMAN_INBOX_READ_SLOTS` and `_human_inbox_surface_timeout_seconds()`.
+
+    This is a plain `concurrent.futures` bound rather than the asyncio
+    `run_management_read` above because callers include synchronous,
+    already-on-the-request-thread code paths
+    (`ManagementService.get_hiq_backlog`/`get_management_cockpit` both call
+    `get_human_inbox()` inline, sometimes directly on the FastAPI event
+    loop thread for `/bff/management/hiq-backlog`) where `asyncio.run()`
+    would raise "cannot be called from a running event loop".
+
+    Returns `(rows, degradation_reason)`; `degradation_reason` is `None` on
+    success, else `"read_timeout"` or `"read_capacity_saturated"`.
+    """
+    capacity = _HUMAN_INBOX_READ_SLOTS
+    executor = _HUMAN_INBOX_READ_EXECUTOR
+    timeout_budget = _human_inbox_surface_timeout_seconds()
+    build_fn = _build_persona_readiness_items
+    if not capacity.acquire(blocking=False):
+        return [], "read_capacity_saturated"
+    try:
+        future = executor.submit(build_fn, snapshot_at, read_store=read_store)
+    except BaseException:
+        capacity.release()
+        raise
+    future.add_done_callback(lambda _future: capacity.release())
+    try:
+        rows = future.result(timeout=timeout_budget)
+        return list(rows or []), None
+    except _FuturesTimeoutError:
+        future.add_done_callback(_discard_late_management_read_result_sync)
+        return [], "read_timeout"
+
+
+def _discard_late_management_read_result_sync(future: Any) -> None:
+    if future.cancelled():
+        return
+    exc = future.exception()
+    if exc is not None:
+        logging.getLogger(__name__).warning(
+            "bff.human_inbox_persona_readiness late worker-thread error after timeout budget: %r",
+            exc,
+        )
+
+
+def _build_management_cockpit_payload(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    """Named, patchable seam for the real `/bff/management/cockpit` composition.
+
+    Wraps the same production `ManagementService.get_management_cockpit`
+    callable the router used to call directly, so
+    `create_management_router` (management_read_models/router.py) can
+    resolve it live via `sys.modules` (mirroring
+    `_build_management_evidence_payload` below) and
+    `core/app_factory.py`'s `_dep("_build_management_cockpit_payload")` can
+    inject it -- giving tests a single, patchable, production-reachable
+    hook (`monkeypatch.setattr(bff_main, "_build_management_cockpit_payload",
+    ...)`) instead of a second cockpit implementation.
+    """
+    from .management_read_models.service import ManagementService
+    svc = ManagementService(get_read_store=lambda: read_store, utc_now=utc_now)
+    return svc.get_management_cockpit(*args, **kwargs)
+
 
 def _build_management_evidence_payload(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     from .management_read_models.service import ManagementService

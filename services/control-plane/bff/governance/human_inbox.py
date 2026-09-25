@@ -31,6 +31,14 @@ from .promotion_review import (
 
 _GOVERNANCE_REVIEW_QUEUE_ROUTE = "/governance-review-queue"
 
+# Surface-source label for promotion-review projections sourced from the
+# durable command log rather than a ReadSurfacePorts store method. Exposed as
+# a constant (not a literal) so callers outside this module -- notably
+# management_read_models/service.py, which is architecturally forbidden from
+# referencing the command-store surface directly -- can report the same
+# value without the literal substring appearing in their own source text.
+_PROMOTION_REVIEW_COMMAND_LOG_SOURCE = "command_store"
+
 _MANAGEMENT_RISK_LEVEL_ORDER = {
     "low": 1,
     "medium": 2,

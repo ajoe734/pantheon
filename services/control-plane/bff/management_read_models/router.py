@@ -79,6 +79,22 @@ def _get_human_inbox_surface_timeout() -> float:
         return 3.0
 
 
+def _get_management_cockpit_read_timeout() -> float:
+    try:
+        import sys
+        main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        if main_mod is not None:
+            fn = getattr(main_mod, "_management_cockpit_read_timeout_seconds", None)
+            if fn is not None:
+                return float(fn())
+    except Exception:
+        pass
+    try:
+        return max(0.05, float(os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "0.6").strip()))
+    except (TypeError, ValueError):
+        return 0.6
+
+
 class _StoreTimeoutProxy:
     def __init__(self, target: Any, timeout: float):
         self._target = target
@@ -1523,6 +1539,7 @@ def create_management_router(
     service: Optional[ManagementService] = None,
     run_management_read: Optional[Callable[..., Any]] = None,
     build_evidence_payload: Optional[Callable[..., Any]] = None,
+    build_cockpit_payload: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Create the APIRouter for all 17 Management domain HTTP GET routes."""
     router = APIRouter()
@@ -1585,12 +1602,33 @@ def create_management_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
+
+        def _resolve_cockpit_composer() -> Callable[..., Any]:
+            try:
+                import sys
+                main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+                if main_mod is not None:
+                    main_fn = getattr(main_mod, "_build_management_cockpit_payload", None)
+                    if main_fn is not None:
+                        return main_fn
+            except Exception:
+                pass
+            if build_cockpit_payload is not None:
+                return build_cockpit_payload
+            return svc.get_management_cockpit
+
+        cockpit_composer = _resolve_cockpit_composer()
+
         if run_management_read is not None:
             try:
-                return await run_management_read(svc.get_management_cockpit, snapshot_at=snap)
+                return await run_management_read(
+                    cockpit_composer,
+                    snapshot_at=snap,
+                    timeout_seconds=_get_management_cockpit_read_timeout(),
+                )
             except Exception:
                 return svc.get_management_cockpit_degraded_payload(snapshot_at=snap)
-        return svc.get_management_cockpit(snapshot_at=snap)
+        return cockpit_composer(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
     # 4. Trading Pulse
