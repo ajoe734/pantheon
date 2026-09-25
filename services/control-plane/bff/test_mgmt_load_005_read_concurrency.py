@@ -18,22 +18,19 @@ test-owned ``ReadSurfacePorts`` store, instead of driving the composed
 ``asyncio.to_thread`` dispatch) is the real production implementation, not
 a reimplementation.
 
-Of the routes this suite covers, only ``/bff/alerts`` (via
-``incidents.router.create_incident_router``) is currently wired with the
-``run_management_read`` isolation/timeout wrapper (confirmed by grepping
-``run_management_read``/``ManagementReadTimeout`` usage across
-``services/control-plane/bff``, and by main.py's own
-``create_incident_router(..., run_management_read=_run_management_read,
-build_operator_alerts_payload=_build_operator_alerts_payload)`` wiring).
-``/bff/management/evidence``, ``/bff/management/human-inbox``, and
-``/bff/approvals`` call their service methods directly with no bounded
-executor/timeout in the current router implementations -- a slow read on
-those routes takes as long as the read takes rather than degrading at a
-budget. The evidence/human-inbox/approvals sub-tests below assert that real
-current behavior (a slow read still completes with the genuine payload,
-without hanging indefinitely) rather than a stale MGMT-LOAD-005-style
-degraded-envelope contract that no route composition actually implements
-for them today.
+``/bff/alerts`` (via ``incidents.router.create_incident_router``),
+``/bff/management/evidence`` and ``/bff/management/human-inbox`` (via
+``management_read_models.router.create_management_router``'s
+``run_management_read`` parameter, wired below in ``_build_app``), and
+``/bff/approvals`` (via ``governance.router.create_governance_router``,
+which defaults ``run_management_read`` to the real
+``personas.routes.common.run_management_read`` wrapper when the caller does
+not override it) are all wired with the real MGMT-LOAD-005
+``run_management_read`` isolation/timeout wrapper. A slow read on these
+routes therefore either completes within the wait budget (asserted by the
+"slow read completes" sub-tests below) or degrades to an explicit envelope
+once it exceeds the budget (asserted by the "timeout returns degraded
+envelope" sub-tests below), the same MGMT-LOAD-005 contract as ``/bff/alerts``.
 """
 from __future__ import annotations
 
@@ -96,6 +93,7 @@ def _build_app(
             snapshot_meta=_default_snapshot_meta,
             utc_now=_utc_now_rfc3339,
             bff_error=_default_bff_error,
+            run_management_read=run_management_read,
         )
     )
     app.include_router(
@@ -258,12 +256,11 @@ def test_evidence_returns_normal_payload_when_fast() -> None:
 
 
 def test_evidence_slow_read_completes_without_hanging() -> None:
-    """The Evidence route (management_read_models.router) has no
-    MGMT-LOAD-005 isolation wrapper today (see module docstring): a slow
-    store read is not offloaded/bounded, so it simply takes as long as the
-    read takes and returns the real payload rather than a degraded one.
-    This proves the route does not hang indefinitely, without asserting a
-    non-blocking guarantee this composition does not currently provide.
+    """The Evidence route (management_read_models.router) carries the real
+    MGMT-LOAD-005 isolation wrapper via ``run_management_read`` (see module
+    docstring and ``_build_app``): a slow store read within the wait budget
+    (default 0.6s) is offloaded to a worker thread and still returns the
+    real payload once it completes, rather than degrading early.
     """
     with _isolated_bff() as (client, store):
         def slow_list_evidence_refs():
@@ -282,11 +279,38 @@ def test_evidence_slow_read_completes_without_hanging() -> None:
     assert payload["meta"]["surfaces"]["management_evidence"].get("reason") != "read_timeout"
 
 
+def test_evidence_timeout_returns_degraded_envelope_without_hanging() -> None:
+    """A slow Evidence read that exceeds the wait budget must degrade to an
+    explicit timeout envelope instead of hanging, the same MGMT-LOAD-005
+    contract already covered for ``/bff/alerts`` above.
+    """
+
+    def slow_list_evidence_refs():
+        time.sleep(0.6)
+        return [{"ref_id": "should-not-appear"}]
+
+    with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
+        with _isolated_bff() as (client, store):
+            store.list_evidence_refs = slow_list_evidence_refs
+            started = time.monotonic()
+            response = client.get("/bff/management/evidence", headers=HEADERS)
+            elapsed = time.monotonic() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.4, f"evidence route took {elapsed:.3f}s; it should degrade near the timeout budget"
+    payload = response.json()
+    surface = payload["meta"]["surfaces"]["management_evidence"]
+    assert surface["status"] == "degraded"
+    assert surface["reason"] == "read_timeout"
+
+
 def test_approvals_slow_read_completes_without_hanging() -> None:
-    """``/bff/approvals`` (governance.router) has no MGMT-LOAD-005 isolation
-    wrapper today: it calls ``GovernanceService.list_pending_approvals``
-    directly, so a slow store read simply extends the response time and the
-    real (non-degraded) pending items are returned once it completes.
+    """``/bff/approvals`` (governance.router) carries the real MGMT-LOAD-005
+    isolation wrapper: ``create_governance_router`` defaults
+    ``run_management_read`` to the real wrapper when the caller does not
+    override it, so a slow store read within the wait budget is offloaded
+    to a worker thread and the real (non-degraded) pending items are
+    returned once it completes.
     """
 
     def slow_list_approval_queue_items(**_kwargs):
@@ -307,6 +331,32 @@ def test_approvals_slow_read_completes_without_hanging() -> None:
     assert payload["count"] == 1
 
 
+def test_approvals_timeout_returns_degraded_envelope_without_hanging() -> None:
+    """A slow Approvals read that exceeds the wait budget must degrade to an
+    explicit timeout envelope instead of hanging or returning stale data.
+    """
+
+    def slow_list_approval_queue_items(**_kwargs):
+        time.sleep(0.6)
+        return [{"decision_id": "should-not-appear", "decision_state": "pending"}]
+
+    with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
+        with _isolated_bff() as (client, store):
+            store.list_approval_queue_items = slow_list_approval_queue_items
+            started = time.monotonic()
+            response = client.get("/bff/approvals", headers=HEADERS)
+            elapsed = time.monotonic() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.4, f"approvals route took {elapsed:.3f}s; it should degrade near the timeout budget"
+    payload = response.json()
+    assert payload["items"] == []
+    assert payload["count"] == 0
+    surface = payload["meta"]["surfaces"]["approvals"]
+    assert surface["status"] == "degraded"
+    assert surface["reason"] == "read_timeout"
+
+
 def test_human_inbox_returns_normal_payload_when_fast() -> None:
     with _isolated_bff() as (client, _store):
         response = client.get("/bff/management/human-inbox", headers=HEADERS)
@@ -318,10 +368,11 @@ def test_human_inbox_returns_normal_payload_when_fast() -> None:
 
 
 def test_human_inbox_slow_read_completes_without_hanging() -> None:
-    """``/bff/management/human-inbox`` (management_read_models.router) has
-    no MGMT-LOAD-005 isolation wrapper today: a slow governance review
-    queue read simply extends the response time rather than degrading at a
-    timeout budget.
+    """``/bff/management/human-inbox`` (management_read_models.router)
+    carries the real MGMT-LOAD-005 isolation wrapper via
+    ``run_management_read`` (see module docstring and ``_build_app``): a
+    slow governance review queue read within the wait budget is offloaded
+    to a worker thread and the real payload is returned once it completes.
     """
 
     def slow_list_governance_review_queue_items(**_kwargs):
@@ -339,3 +390,28 @@ def test_human_inbox_slow_read_completes_without_hanging() -> None:
     assert elapsed < 1.0, f"human-inbox route took {elapsed:.3f}s; it should still complete promptly after the slow read"
     payload = response.json()
     assert any(item.get("item_id") == "review-should-appear" for item in payload["data"]["items"])
+
+
+def test_human_inbox_timeout_returns_degraded_envelope_without_hanging() -> None:
+    """A slow Human Inbox read that exceeds the wait budget must degrade to
+    an explicit timeout envelope instead of hanging.
+    """
+
+    def slow_list_governance_review_queue_items(**_kwargs):
+        time.sleep(0.6)
+        return [{"item_id": "should-not-appear", "item_type": "DeploymentPlan"}]
+
+    with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
+        with _isolated_bff() as (client, store):
+            store.list_governance_review_queue_items = slow_list_governance_review_queue_items
+            started = time.monotonic()
+            response = client.get("/bff/management/human-inbox", headers=HEADERS)
+            elapsed = time.monotonic() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.4, f"human-inbox route took {elapsed:.3f}s; it should degrade near the timeout budget"
+    payload = response.json()
+    assert payload["data"]["items"] == []
+    surface = payload["meta"]["surfaces"]["human_inbox"]
+    assert surface["status"] == "degraded"
+    assert surface["reason"] == "read_timeout"

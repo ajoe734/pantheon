@@ -9,6 +9,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Iterator
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -19,6 +20,7 @@ from services.control_plane.bff.capital.router import create_capital_router
 from services.control_plane.bff.command_adapters.router import create_command_adapters_router
 from services.control_plane.bff.command_adapters.service import CommandAdapterService
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.core.app_factory import create_core_router
 from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.management_read_models.router import create_management_router
 from services.control_plane.bff.models import (
@@ -29,6 +31,9 @@ from services.control_plane.bff.models import (
     utc_now,
 )
 from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.personas.routes.common import (
+    run_management_read as _real_run_management_read,
+)
 from services.control_plane.bff.personas.service import (
     _human_inbox_decision_projection_from_record,
     _human_inbox_decision_recommendation_id,
@@ -322,9 +327,11 @@ def _build_promotion_review_app(
     store: PromotionReviewTestReadPorts, command_store: CommandStore
 ) -> FastAPI:
     """Standalone app built from the same real, already-extracted production
-    router factories the composition root mounts for the persona-league,
-    quarterly-ranking, promotion-review, capital, command-adapter, and
-    management surfaces (``personas.create_personas_router``,
+    router factories the composition root mounts for the core health,
+    persona-league, quarterly-ranking, promotion-review, capital,
+    command-adapter, and management surfaces
+    (``core.app_factory.create_core_router``,
+    ``personas.create_personas_router``,
     ``capital.router.create_capital_router``,
     ``command_adapters.router.create_command_adapters_router``,
     ``management_read_models.router.create_management_router``), with the
@@ -334,6 +341,7 @@ def _build_promotion_review_app(
     """
     app = FastAPI()
     register_error_handlers(app)
+    app.include_router(create_core_router({}))
     app.include_router(
         create_personas_router(
             service=PersonaService(
@@ -379,6 +387,7 @@ def _build_promotion_review_app(
             require_read_role=auth_policy.require_read_role,
             bff_error=auth_policy.bff_error,
             utc_now=utc_now,
+            run_management_read=_real_run_management_read,
         )
     )
     return app
@@ -900,13 +909,11 @@ def test_human_inbox_ignores_decision_with_mismatched_target_aliases() -> None:
 def test_human_inbox_keeps_durable_promotion_review_visible_despite_slow_persona_readiness(
     monkeypatch,
 ) -> None:
-    """The live ``get_human_inbox`` persona-readiness contributor
-    (``management_read_models/service.py``, calling ``store.list_personas``
-    directly) has no bounded timeout wrapper today -- it is not routed
-    through ``governance.human_inbox._build_persona_readiness_items`` or any
-    ``run_management_read``-style isolation. A slow persona-readiness read
-    therefore simply extends the whole response's latency rather than
-    degrading at a budget; this asserts the durable promotion-review item
+    """``/bff/management/human-inbox`` (``management_read_models.router``)
+    carries the real MGMT-LOAD-005 isolation wrapper via
+    ``run_management_read`` (wired in ``_build_promotion_review_app``): a
+    slow ``store.list_personas`` read within the wait budget (default 0.6s)
+    is offloaded to a worker thread, so the durable promotion-review item
     still surfaces once the slow, unrelated contributor completes.
     """
     with _isolated_client() as (client, store, command_store):
@@ -1036,16 +1043,17 @@ def test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one(monke
 
 
 def test_human_inbox_cockpit_hiq_backlog_share_read_surface_under_concurrent_calls() -> None:
-    """``human-inbox``/``cockpit``/``hiq-backlog`` all resolve persona
-    readiness via a direct, unbounded ``store.list_personas()`` call in the
-    current ``management_read_models/service.py`` (no
+    """``human-inbox`` and ``cockpit`` resolve persona readiness through the
+    real ``run_management_read`` isolation wrapper (offloaded to a worker
+    thread, bounded by the wait budget); ``hiq-backlog`` calls
+    ``store.list_personas()`` directly with no wrapper. No
     ``_HUMAN_INBOX_READ_SLOTS``-style bounded semaphore or
-    ``read_capacity_saturated``/``read_timeout`` degradation exists for this
-    contributor today -- that machinery predates the router extraction and
-    has no live equivalent, confirmed by grep). This asserts the three
-    routes still compose correctly and consistently off the same store when
-    called concurrently, without asserting a capacity-bounding contract this
-    composition does not currently implement.
+    ``read_capacity_saturated`` degradation exists for this contributor
+    today -- that machinery predates the router extraction and has no live
+    equivalent, confirmed by grep. This asserts the three routes still
+    compose correctly and consistently off the same store when called
+    concurrently, with each route resolving persona readiness exactly once
+    (no duplicate/N+1 reads from the shared store under concurrency).
     """
     with _isolated_client() as (client, store, command_store):
         calls = 0
@@ -1082,19 +1090,18 @@ def test_human_inbox_cockpit_hiq_backlog_share_read_surface_under_concurrent_cal
         assert inbox.status_code == 200, inbox.text
         assert cockpit.status_code == 200, cockpit.text
         assert hiq.status_code == 200, hiq.text
-        assert calls >= 3
+        assert calls == 3
 
 
 def test_cockpit_composition_completes_after_slow_contributor_read() -> None:
-    """``/bff/management/cockpit`` (``management_read_models.router``) has
-    no ``_MANAGEMENT_COCKPIT_READ_SLOTS``-style bounded-semaphore/timeout
-    isolation wrapper in the current router/service implementation -- it
-    calls ``ManagementService.get_management_cockpit`` directly, which
-    composes ``get_human_inbox`` (and so ``store.list_personas``) inline
-    with no offload/timeout budget. This asserts the composed cockpit
-    response still completes with the real data after a slow contributor
-    read, rather than a stale bounded-capacity/timeout-degradation contract
-    this composition does not currently implement.
+    """``/bff/management/cockpit`` (``management_read_models.router``)
+    carries the real MGMT-LOAD-005 isolation wrapper via
+    ``run_management_read`` (wired in ``_build_promotion_review_app``):
+    ``ManagementService.get_management_cockpit`` (which composes
+    ``get_human_inbox`` and so ``store.list_personas`` inline) is offloaded
+    to a worker thread and bounded by the wait budget. A slow contributor
+    read within that budget (default 0.6s) still completes with the real,
+    non-degraded data.
     """
     with _isolated_client() as (client, store, command_store):
         def slow_list_personas(*_args, **_kwargs):
@@ -1111,6 +1118,46 @@ def test_cockpit_composition_completes_after_slow_contributor_read() -> None:
         assert elapsed < 1.0
         cockpit_surface = cockpit.json()["meta"]["surfaces"]["management_cockpit"]
         assert cockpit_surface["status"] in {"ok", "degraded"}
+        assert cockpit_surface.get("reason") != "read_timeout", (
+            "the composed cockpit surface may be 'degraded' from unrelated "
+            "contributor surfaces (e.g. trading_pulse) in this test store, "
+            "but must not be the isolation wrapper's timeout fallback"
+        )
+
+
+def test_cockpit_timeout_degrades_without_blocking_health() -> None:
+    """A slow cockpit contributor read that exceeds the wait budget must
+    degrade to an explicit timeout envelope, and the offload to a worker
+    thread must not block a concurrent, unrelated request from completing
+    promptly -- the same MGMT-LOAD-005 event-loop-responsiveness contract
+    restored for ``/bff/alerts`` in ``test_mgmt_load_005_read_concurrency.py``.
+    """
+    with _isolated_client() as (client, store, command_store):
+        def slow_list_personas(*_args, **_kwargs):
+            time.sleep(0.6)
+            return []
+
+        store.list_personas = slow_list_personas
+        with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                cockpit_future = pool.submit(
+                    client.get, "/bff/management/cockpit", headers=OPERATOR_HEADERS
+                )
+                time.sleep(0.02)  # let the slow cockpit request start first
+                health_started = time.monotonic()
+                health = client.get("/health")
+                health_elapsed = time.monotonic() - health_started
+                cockpit = cockpit_future.result(timeout=3)
+
+        assert health.status_code == 200, health.text
+        assert health_elapsed < 0.55, (
+            f"/health took {health_elapsed:.3f}s while a slow cockpit contributor read was in "
+            "flight; the event loop must not be blocked by the offloaded synchronous read work"
+        )
+        assert cockpit.status_code == 200, cockpit.text
+        cockpit_surface = cockpit.json()["meta"]["surfaces"]["management_cockpit"]
+        assert cockpit_surface["status"] == "degraded"
+        assert cockpit_surface["reason"] == "read_timeout"
 
 
 def test_human_inbox_filtered_local_snapshot_empty_remains_degraded(monkeypatch) -> None:
