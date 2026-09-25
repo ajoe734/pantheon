@@ -3,7 +3,7 @@
   "title": "Migrate the remaining BFF main importers to the extracted production seams",
   "owner": "Claude",
   "reviewer": "Codex",
-  "generation": 12,
+  "generation": 13,
   "base": {
     "description": "generation 10 base is generation 9's rejected delivered head (PR #5961, exact head 705a67bc0dc17a8e241c7a337211f33f3187d570). Independent review rejected generation 9 for four defects: (1) an unsupported blanket composition_allowlist expansion from 15 to 24 entries; (2) a graph-aware scanner that missed several import forms (static imports inside/outside function bodies, importlib.import_module(name=...) keyword form, module-alias imports); (3) a commit-message trailer collision (a prose line beginning with 'reviewer:' misread as a second Reviewer trailer); (4) incomplete verification.",
     "commit": "705a67bc0dc17a8e241c7a337211f33f3187d570",
@@ -431,6 +431,61 @@
         "test_bff_test_architecture.py + test_pkt005_sse_substrate_contract.py": "34 passed, 3 warnings in 30.92s",
         "live_scan_non_whitelisted_main_importers": "5 offenders (unchanged from the rejection's own independent finding): tests/test_bff_b6_001_security_hardening.py, tests/test_bff_b6_003_nl_high_risk_refusal.py, tests/test_bff_b6_management_nl_ask.py, tests/test_management_nl_assistant_provider.py, tests/test_management_nl_single_owner.py; ceiling=5"
       }
+    }
+  },
+  "generation_13_response": {
+    "dispatch_instruction": "Human/Ops granted the artifact-contract expansion the reviewer required (contract_revision recorded on the canonical task row, updated_by Human/Ops, 2026-09-25T04:36:59Z): tests/rebalance_authority_test_support.py plus the five B6/management-NL test files it rewires (test_bff_b6_001_security_hardening.py, test_bff_b6_003_nl_high_risk_refusal.py, test_bff_b6_management_nl_ask.py, test_management_nl_assistant_provider.py, test_management_nl_single_owner.py) are now declared artifacts of this task. Close AC3 for real by migrating them off main, without raising the ceiling or the composition_allowlist as a substitute, and publish the true live-scan count before and after.",
+    "action_taken": "Independently re-derived the same conclusion generation 10 already reached (confirmed by reading main.py, core/app_factory.py's _dep()/mount_bff_routers()/_resolve_default_dependency(), and assistant/management_service.py before looking at git history): the real fix is to rewire tests/rebalance_authority_test_support.py's get_management_nl_module() and its consumers (get_management_nl_read_store, set_management_nl_read_store, get_management_nl_sse_buffer, clear_management_nl_sse_buffer, bound_management_nl_store, management_nl_test_client) onto the real, already-extracted assistant.management_service seam plus core.app_factory.compose_bff_app(), exactly as BFF-MGMT-NL-HELPER-EXTRACTION-001 made possible. Generation 10 (commit 1decacd30) had already implemented this correctly and verified it (103 tests green across the 5 files, architecture gate 14/14) before being reverted purely for an artifact-contract process violation (touching files outside the then-declared scope), not for a defect in the fix itself. Rather than re-deriving 400+ lines of equivalent code from scratch, restored generation 10's exact byte-for-byte content via `git checkout 1decacd30 -- <path>` for the 6 files it touched (rebalance_authority_test_support.py, test_bff_b6_001_security_hardening.py, test_bff_b6_management_nl_ask.py, test_management_nl_assistant_provider.py, test_management_nl_single_owner.py, and bff_test_architecture_inventory.json), then re-verified independently rather than trusting the prior verification claim. test_bff_b6_003_nl_high_risk_refusal.py needed no edit (confirmed via `git diff` showing zero delta against generation 10's tree; it only inherits the migration transitively through the shared helper, exactly as generation 10's own commit message stated).",
+    "independent_verification_beyond_generation_10s_claim": {
+      "audit_log_test_isolation_finding": "Running the restored 5 files together (not standalone, unlike generation 10's own verification) surfaced a flaky failure in test_assistant_provider_usage_summary_aggregates_history_and_quota: assistant/management_service.py's _management_ai_audit_path() defaults to a fixed, non-tmp_path-scoped path (/tmp/pantheon-bff/management-ai-audit.jsonl) and _management_ai_list_audit_events() reads that file in preference to the in-memory _MGMT_AI_AUDIT_EVENTS deque; repeated local pytest invocations across process runs accumulate audit events on disk across runs, inflating the test's expected counts. This one test does not call the shared _seeded_client() helper (which does monkeypatch PANTHEON_MANAGEMENT_AI_AUDIT_PATH to a tmp_path file for every other test in the file) because it intentionally uses a narrow, function-scoped, real-main.py client instead. Confirmed pre-existing and independent of this generation's changes: reproduced identically against the stashed pre-restore baseline. Not fixed (production source, not a declared artifact of this task); each verification run below used PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off to avoid the false negative, and a fresh CI container (empty /tmp) is unaffected either way.",
+      "cross_file_test_order_finding": "Confirmed generation 10's own documented KNOWN LIMITATION still holds: test_management_nl_assistant_provider.py's narrow real-main.py test test_provider_enabled_invokes_openclaw_with_tenant_scoped_context reads stale portfolio telemetry (total_pnl 1.25 instead of 2.5) when run in the same pytest session as test_bff_b6_001_security_hardening.py's own narrow real-main.py test(s), due to the pre-existing ports/read_surface_ports.py delegate-forwarding MRO gap documented in generation 10's inventory rationale and evidence.json. Each of the 5 files passes fully standalone (matching generation 10's verification scope); this task's acceptance (\"run all target suites\") is satisfied by per-file pytest invocations, the same bar generation 10 was reviewed and accepted against.",
+      "capital_authority_and_unrelated_route_shape_failures": "Re-confirmed (via a temporary git stash of this generation's 6-file restore and re-running against the untouched baseline) that test_bff_rebalance_proposals.py (33 failed/7 passed), test_ppl_alloc_012_ranking_projection.py (24 failed/3 passed), test_bff_capital_ranking_rebalance_contract.py, test_bff_pm12_portfolio_book_contract.py, test_bff_promotion_review_governance.py, and test_bff_mgmt_common_filters.py fail identically before and after this generation's restore, with the exact DEPENDENCY_UNAVAILABLE / CapitalAuthorityUnavailable and route-shape-mismatch symptoms already documented in pre_existing_functional_failures_confirmed_out_of_scope. None of these files import or reference tests/rebalance_authority_test_support.py's management-NL accessors touched this generation."
+    },
+    "true_live_scan_count": {
+      "before_this_generation": 5,
+      "before_files": [
+        "tests/test_bff_b6_001_security_hardening.py",
+        "tests/test_bff_b6_003_nl_high_risk_refusal.py",
+        "tests/test_bff_b6_management_nl_ask.py",
+        "tests/test_management_nl_assistant_provider.py",
+        "tests/test_management_nl_single_owner.py"
+      ],
+      "after_this_generation": 2,
+      "after_files": [
+        "tests/test_bff_b6_001_security_hardening.py",
+        "tests/test_management_nl_assistant_provider.py"
+      ],
+      "ceiling_before": 5,
+      "ceiling_after": 2,
+      "note": "Ceiling lowered (never raised) to match the true live-scanned count, per test_bff_test_architecture.py's own ceiling field description. No composition_allowlist entries were added for either residual file, per explicit task instruction."
+    },
+    "residual_genuine_blocker_unchanged_from_generation_10": "The 2 remaining non-allowlisted importers are exactly generation 10's own honest conclusion, re-verified rather than taken on faith: test_bff_b6_001_security_hardening.py (2 tests: test_nl_ask_tenant_scopes_portfolio_summary, test_nl_ask_filters_evidence_by_tenant_and_used_entities) and test_management_nl_assistant_provider.py (4 tests: test_assistant_provider_usage_summary_aggregates_history_and_quota, test_management_nl_stream_records_openclaw_provider_audit_and_usage, test_provider_enabled_invokes_openclaw_with_tenant_scoped_context, test_management_nl_persona_fleet_summary_includes_health_items) each need main.py directly for a collaborator with no extracted seam: _assistant_provider_list/_assistant_provider_usage_summary (main.py lines ~8930/~6624 -- independently confirmed absent from assistant/management_service.py, core/app_factory.py's _resolve_default_dependency() default for both names is a no-op stub/None, not real behavior), and the telemetry/persona-fleet projection DI wiring main.py performs only at its own module import time (main.py lines ~3465+/~9080-9107). AC1 forbids editing main.py or other production source in this test-only task, so closing these 2 files to true zero requires a dedicated follow-up production-seam-extraction task (proposed: BFF-MGMT-NL-B6-SEAM-MIGRATION-001), matching the precedent BFF-MGMT-NL-HELPER-EXTRACTION-001 already set to unblock the other 4 files this generation. Recorded as a known open delivery item, not weakened, skipped, xfailed, or hidden behind an unauthorized allowlist/ceiling change.",
+    "p1_2_commit_trailer_history_rewrite_blocker": "Unchanged from prior generations: the Commit trailers CI check failure on historical commit 705a67bc0 needs a history rewrite this sandbox denies (non-interactive rebase/force-push restrictions). This is a known open delivery blocker for Human/Ops, not resolvable from within this task's worker sandbox; recorded here again per explicit dispatch instruction and left untouched.",
+    "verification": {
+      "environment": "PANTHEON_DEPENDENCY_PYTHON=<main-checkout .venv> scripts/dev/provision_python_distribution.py; PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off used for the per-file runs below to avoid the pre-existing disk-persisted-audit-log flake documented above.",
+      "per_file_standalone": {
+        "test_bff_b6_001_security_hardening.py": "5 passed",
+        "test_bff_b6_003_nl_high_risk_refusal.py": "7 passed",
+        "test_bff_b6_management_nl_ask.py": "16 passed",
+        "test_management_nl_single_owner.py": "10 passed",
+        "test_management_nl_assistant_provider.py": "65 passed"
+      },
+      "architecture_gate": "test_bff_test_architecture.py: 14 passed",
+      "regression_sweep_of_other_rebalance_authority_test_support_consumers": {
+        "tests/test_bff_emergency_containment.py": "30 passed",
+        "tests/test_bff_path_dedupe.py": "4 passed",
+        "tests/test_overlay_retirement.py": "25 passed, 1 skipped",
+        "tests/test_main_composition_seam_extraction_002.py": "22 passed",
+        "tests/test_main_composition_seam_extraction_003.py": "11 passed",
+        "tests/test_management_read_models_router.py": "43 passed",
+        "test_pkt005_sse_substrate_contract.py": "20 passed",
+        "test_mgmt_load_005_read_concurrency.py": "9 passed",
+        "test_bff_mgmt_ops_006_operator_actions_contract.py": "13 passed",
+        "test_bff_capital_ranking_rebalance_contract.py": "pre-existing failures, confirmed identical against stashed baseline",
+        "tests/test_bff_rebalance_proposals.py": "pre-existing failures (33 failed/7 passed), confirmed identical against stashed baseline",
+        "tests/test_ppl_alloc_012_ranking_projection.py": "pre-existing failures (24 failed/3 passed), confirmed identical against stashed baseline"
+      },
+      "base": "919da9fcc7a809899b4d44425313264a30bf4a20"
     }
   }
 }
