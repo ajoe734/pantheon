@@ -20,7 +20,6 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
     APPROVER_HEADERS,
     HEADERS,
     CapitalBffAuthorityHarness,
-    get_management_nl_module,
     rebalance_payload,
 )
 
@@ -32,29 +31,39 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
 #     behaviour (main.py scans the durable command store for commands left
 #     `submitted`/`processing` by a crashed process and replays them through
 #     `_process_command_stub` when the app module re-executes). The generic
-#     replay-scan mechanism itself is now importable
+#     replay-scan mechanism itself is importable
 #     (`core/lifespan.py`'s `replay_submitted_commands`/`create_lifespan`,
 #     BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001 AC4), but `_process_command_stub`
-#     is main.py's own command processor closed over main.py's own
-#     process-global `command_store`/`read_store` (see `main._process_command`),
-#     not the CapitalBffAuthorityHarness's isolated per-test store, so this
-#     test still needs the real, fully composed `main.app` (with its own
-#     command store) to exercise that exact startup-replay path end to end.
-# It reaches main.py through the same reviewed dynamic (non-AST-visible)
-# `importlib.import_module` accessor (`get_management_nl_module`) that
-# `tests/test_bff_b6_management_nl_ask.py` already uses for this identical
-# composition root, instead of a static `from services.control_plane.bff
-# import main` (which the live architecture scan in
-# `test_bff_test_architecture.py` flags as a non-allowlisted importer).
-# `test_bff_version_reports_configured_source_sha` (BFF-TEST-MIGRATION-
-# REMAINING-IMPORTERS-001) now calls the real, standalone
-# `core.app_factory.sem_bff_version_default` handler directly -- `sem_bff_version`
-# was extracted from main.py into app_factory.py's `create_version_handler`
-# (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001) -- so it no longer needs main.py
-# at all. Every other test in this file runs entirely against the
-# already-extracted CapitalBffAuthorityHarness / command_executor seams.
-def _bff_main_module():
-    return get_management_nl_module()
+#     (an alias of main.py's own `_process_command`, main.py line ~7566) is
+#     main.py's own command processor -- it dispatches per CommandType via
+#     the real `command_executor.execute_command_with_status` seam, but its
+#     own routing/auth-context orchestration (`_resolve_execution_params_
+#     for_record`, `_COMMAND_AUTH_CONTEXT`) has never been extracted from
+#     main.py into a standalone seam. So there is still no test-injectable
+#     replacement for `_process_command_stub` itself, closed as it is over
+#     main.py's own process-global `command_store`/`read_store`, not the
+#     CapitalBffAuthorityHarness's isolated per-test store.
+# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 (this generation): this test
+# now reaches main.py directly and only within its own function body (a
+# narrow, single-purpose, function-scoped `importlib.import_module`, the
+# same pattern already reviewed and accepted for
+# `tests/test_bff_main_composition.py`, `tests/test_main_composition_seam_
+# extraction_002.py`, and `tests/test_main_composition_seam_extraction_003.
+# py`), instead of going through the shared `tests/rebalance_authority_
+# test_support.get_management_nl_module()` accessor, which the 5 out-of-
+# scope b6/management_nl suites also used to reach main.py transitively
+# through this file's helper. Decoupling from that shared accessor here
+# keeps this file's own disposition independent of those suites' migration
+# status (those suites have since been migrated onto the real
+# `assistant.management_service` seam directly and no longer use this
+# accessor for main.py access at all).
+# `test_bff_version_reports_configured_source_sha` calls the real,
+# standalone `core.app_factory.sem_bff_version_default` handler directly --
+# `sem_bff_version` was extracted from main.py into app_factory.py's
+# `create_version_handler` (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001) -- so
+# it no longer needs main.py at all. Every other test in this file runs
+# entirely against the already-extracted CapitalBffAuthorityHarness /
+# command_executor seams.
 
 
 def _create_proposal(
@@ -1150,7 +1159,9 @@ def test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bff_main = _bff_main_module()
+    import importlib
+
+    bff_main = importlib.import_module("services.control_plane.bff.main")
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         created = _create_proposal(harness, key="rb-proposal-startup-replay")
         rebalance_id = created.json()["rebalance_id"]

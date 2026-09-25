@@ -15,7 +15,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 import pytest
 
@@ -88,6 +88,50 @@ def _is_bff_main_module_name(name: str) -> bool:
     return False
 
 
+def _import_call_target(node: ast.Call) -> Optional[str]:
+    """Extract the string-literal module name passed to an
+    ``importlib.import_module(...)``/``__import__(...)`` call, whether given
+    positionally or via the ``name=``/``name_or_module=`` keyword (AC5).
+    Shared by the direct scanner and the helper call-graph scanner so the two
+    never drift out of sync."""
+    func = node.func
+    is_import_call = (isinstance(func, ast.Name) and func.id in ("import_module", "__import__")) or (
+        isinstance(func, ast.Attribute) and func.attr in ("import_module", "__import__")
+    )
+    if not is_import_call:
+        return None
+    if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+        return node.args[0].value
+    for kw in node.keywords:
+        if kw.arg in ("name", "name_or_module") and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+            return kw.value.value
+    return None
+
+
+def _static_import_bff_main_bound_names(node: ast.AST) -> Set[str]:
+    """If ``node`` is a static ``import``/``from ... import`` statement that
+    resolves to the BFF composition root, return the local name(s) it binds
+    in the enclosing scope, honoring ``as`` aliases (AC3/AC5: ``import main
+    as bm`` must still resolve to the real target transitively)."""
+    names: Set[str] = set()
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if _is_bff_main_module_name(alias.name):
+                names.add(alias.asname or alias.name.split(".")[0])
+    elif isinstance(node, ast.ImportFrom):
+        module = node.module
+        if not module:
+            return names
+        if _is_bff_main_module_name(module):
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+        elif module in ("services.control_plane.bff", "services.control-plane.bff"):
+            for alias in node.names:
+                if alias.name == "main":
+                    names.add(alias.asname or alias.name)
+    return names
+
+
 def _file_imports_bff_main(path: Path) -> bool:
     """AST-scan a single file for an import of the BFF composition root (main.py).
 
@@ -99,38 +143,13 @@ def _file_imports_bff_main(path: Path) -> bool:
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if _is_bff_main_module_name(alias.name):
-                    return True
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module
-            if not module:
-                continue
-            if _is_bff_main_module_name(module):
-                return True
-            if module in ("services.control_plane.bff", "services.control-plane.bff") and any(
-                alias.name == "main" for alias in node.names
-            ):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if _static_import_bff_main_bound_names(node):
                 return True
         elif isinstance(node, ast.Call):
-            is_import_call = False
-            func = node.func
-            if isinstance(func, ast.Name) and func.id in ("import_module", "__import__"):
-                is_import_call = True
-            elif isinstance(func, ast.Attribute) and func.attr in ("import_module", "__import__"):
-                is_import_call = True
-            if is_import_call:
-                target = None
-                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                    target = node.args[0].value
-                elif node.keywords:
-                    for kw in node.keywords:
-                        if kw.arg in ("name", "name_or_module") and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                            target = kw.value.value
-                            break
-                if target and _is_bff_main_module_name(target):
-                    return True
+            target = _import_call_target(node)
+            if target and _is_bff_main_module_name(target):
+                return True
     return False
 
 
@@ -165,28 +184,71 @@ def _module_dotted_path(rel_path: Path) -> str:
     return "services.control_plane.bff." + ".".join(rel_path.with_suffix("").parts)
 
 
+def _module_level_bff_main_names(tree: ast.Module) -> Set[str]:
+    """Names bound to the BFF composition root by statements *outside* any
+    function (module level): static ``import main`` / ``import main as bm``
+    / ``from services.control_plane.bff import main``, and dynamic
+    ``x = importlib.import_module(...)``/``__import__(...)`` assignments.
+    A function that merely references one of these names (without importing
+    main itself) still transitively reaches main through the module's own
+    top-level binding (AC3)."""
+    names: Set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # Not module level; function bodies are handled separately.
+                continue
+            if isinstance(child, (ast.Import, ast.ImportFrom)):
+                names.update(_static_import_bff_main_bound_names(child))
+            elif isinstance(child, ast.Assign) and isinstance(child.value, ast.Call):
+                target = _import_call_target(child.value)
+                if target and _is_bff_main_module_name(target):
+                    for assign_target in child.targets:
+                        if isinstance(assign_target, ast.Name):
+                            names.add(assign_target.id)
+            visit(child)
+
+    visit(tree)
+    return names
+
+
+def _function_directly_reaches_bff_main(
+    node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    module_level_names: Set[str],
+) -> bool:
+    """True if ``node``'s own body reaches the BFF composition root: a
+    static import of main anywhere in the body (including nested inside the
+    function, not just at module level), an import_module/__import__ call
+    (positional or keyword target, reusing ``_import_call_target``), or a
+    reference to a name bound to main by a module-level static/dynamic
+    import (AC3)."""
+    for inner in ast.walk(node):
+        if isinstance(inner, (ast.Import, ast.ImportFrom)):
+            if _static_import_bff_main_bound_names(inner):
+                return True
+        elif isinstance(inner, ast.Call):
+            target = _import_call_target(inner)
+            if target and _is_bff_main_module_name(target):
+                return True
+        elif isinstance(inner, ast.Name) and inner.id in module_level_names:
+            return True
+    return False
+
+
 def _functions_calling_bff_main(tree: ast.Module) -> Set[str]:
     """Top-level function/method names in ``tree`` whose own body directly
-    dynamically-loads the BFF composition root via import_module/__import__."""
+    reaches the BFF composition root -- via a static import inside the
+    function, a dynamic import_module/__import__ call inside the function
+    (positional or keyword target), or use of a name a module-level import
+    bound to main (AC3/AC5)."""
+    module_level_names = _module_level_bff_main_names(tree)
     direct: Set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        for inner in ast.walk(node):
-            if not isinstance(inner, ast.Call):
-                continue
-            func = inner.func
-            is_import_call = (isinstance(func, ast.Name) and func.id in ("import_module", "__import__")) or (
-                isinstance(func, ast.Attribute) and func.attr in ("import_module", "__import__")
-            )
-            if not is_import_call:
-                continue
-            target = None
-            if inner.args and isinstance(inner.args[0], ast.Constant) and isinstance(inner.args[0].value, str):
-                target = inner.args[0].value
-            if target and _is_bff_main_module_name(target):
-                direct.add(node.name)
-                break
+        if _function_directly_reaches_bff_main(node, module_level_names):
+            direct.add(node.name)
     return direct
 
 
@@ -304,21 +366,23 @@ def test_every_entry_has_valid_layer_and_disposition() -> None:
 WHOLE_APP_ALLOWLIST = {
     "test_execute_plans_contract_registry.py",
     "test_execute_plans_final_live_wiring_contract.py",
-    # GENUINE BLOCKER: compares a mounted route against main.py's own
-    # unmounted legacy free function; no extracted seam exists and
-    # extracting one would mean editing main.py (forbidden by AC1).
-    "test_pkt005_sse_substrate_contract.py",
-    # GENUINE BLOCKER: the one remaining test in each of these files reaches
-    # main.py transitively through the reviewed dynamic accessor
-    # tests/rebalance_authority_test_support.get_management_nl_module()
-    # (and its thin wrappers), because it exercises main.py's own
-    # process-global state (command replay / read_store / SSE buffers) that
-    # has no test-injectable owner without editing main.py.
+    # GENUINE BLOCKER: test_startup_replays_submitted_approved_apply_to_
+    # terminal_owner_receipt exercises main.py's own process-startup command
+    # replay through _process_command_stub (alias of main.py's own
+    # _process_command, main.py line ~7566); that function's own routing/
+    # auth-context orchestration has never been extracted from main.py into
+    # a standalone seam, so there is no test-injectable replacement. Reaches
+    # main.py via a narrow, function-scoped importlib.import_module local to
+    # that one test only (not the shared rebalance_authority_test_support
+    # accessor -- see that file's own inline comment).
     "tests/test_bff_rebalance_proposals.py",
-    "tests/test_bff_b6_001_security_hardening.py",
-    "tests/test_bff_b6_003_nl_high_risk_refusal.py",
-    "tests/test_bff_b6_management_nl_ask.py",
-    "tests/test_management_nl_assistant_provider.py",
+    # GENUINE BLOCKER: migrations/overlay_retirement.py (production source,
+    # out of scope to edit) has assert_mandatory_symbol_retirements(), which
+    # imports main.py inside its own function body to verify four legacy
+    # overlay symbols are absent from main.py's own __dict__ -- an inherent
+    # identity/deletion check on main.py's own namespace. Discovered by this
+    # generation's graph-aware scanner fix (previously invisible).
+    "migrations/test_overlay_retirement.py",
 }
 
 
@@ -496,4 +560,108 @@ def test_scanner_detects_transitive_helper_main_import(tmp_path: Path) -> None:
     non_reacher = tmp_path / "test_non_reacher.py"
     non_reacher.write_text("from support_helper import unrelated_helper\n", encoding="utf-8")
     assert _file_imports_main_via_helper(non_reacher, helper_symbols) is False
+
+
+def test_scanner_detects_static_import_inside_helper_function_body(tmp_path: Path) -> None:
+    """AC3 regression (defect fix): a *static* ``import`` statement located
+    inside a helper function's own body -- not a call to import_module/
+    __import__ -- must still mark that function as directly reaching main."""
+    helper = tmp_path / "static_inside_function_helper.py"
+    helper.write_text(
+        "def get_main():\n"
+        "    from services.control_plane.bff import main as bm\n"
+        "    return bm\n"
+        "def unrelated_helper():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    reaching = _reaches_main_symbols(helper)
+    assert reaching == {"get_main"}
+
+    helper_symbols = {"static_inside_function_helper": reaching}
+    reacher = tmp_path / "test_static_inside_reacher.py"
+    reacher.write_text("from static_inside_function_helper import get_main\n", encoding="utf-8")
+    assert _file_imports_main_via_helper(reacher, helper_symbols) is True
+
+
+def test_scanner_detects_module_level_static_import_reached_via_call_graph(tmp_path: Path) -> None:
+    """AC3 regression (defect fix): a static import *outside* any function
+    (module level) that a helper function merely references (not
+    reimports) must still mark that function -- and anything that
+    transitively calls it -- as reaching main."""
+    helper = tmp_path / "module_level_static_helper.py"
+    helper.write_text(
+        "import services.control_plane.bff.main as bm\n"
+        "def get_read_store():\n"
+        "    return bm.read_store\n"
+        "def wraps_get_read_store():\n"
+        "    return get_read_store()\n"
+        "def unrelated_helper():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    reaching = _reaches_main_symbols(helper)
+    assert reaching == {"get_read_store", "wraps_get_read_store"}
+    assert "unrelated_helper" not in reaching
+
+    helper_symbols = {"module_level_static_helper": reaching}
+    reacher = tmp_path / "test_module_level_reacher.py"
+    reacher.write_text(
+        "from module_level_static_helper import wraps_get_read_store\n", encoding="utf-8"
+    )
+    assert _file_imports_main_via_helper(reacher, helper_symbols) is True
+
+
+def test_scanner_detects_import_module_keyword_argument_in_helper(tmp_path: Path) -> None:
+    """AC3/AC5 regression (defect fix): ``importlib.import_module(name=...)``
+    with the module name passed as a keyword argument, inside a helper
+    function, must be detected the same as the positional form."""
+    helper = tmp_path / "keyword_import_helper.py"
+    helper.write_text(
+        "import importlib\n"
+        "def get_main():\n"
+        "    return importlib.import_module(name='services.control_plane.bff.main')\n"
+        "def unrelated_helper():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    reaching = _reaches_main_symbols(helper)
+    assert reaching == {"get_main"}
+    assert "unrelated_helper" not in reaching
+
+    # Also verify the direct single-file scanner (not just the helper-graph
+    # scanner) detects the keyword form.
+    direct_probe = tmp_path / "test_keyword_direct.py"
+    direct_probe.write_text(
+        "import importlib\n"
+        "mod = importlib.import_module(name='services.control_plane.bff.main')\n",
+        encoding="utf-8",
+    )
+    assert _file_imports_bff_main(direct_probe) is True
+
+
+def test_scanner_detects_module_alias_import_transitively(tmp_path: Path) -> None:
+    """AC3/AC5 regression (defect fix): ``import main as <alias>`` (module
+    alias form), then using the alias, must still resolve to the real
+    target module transitively -- both for the direct scanner on the
+    importing file itself and for the helper call-graph scanner."""
+    direct_probe = tmp_path / "test_alias_direct.py"
+    direct_probe.write_text(
+        "import services.control_plane.bff.main as bm\nx = bm.read_store\n",
+        encoding="utf-8",
+    )
+    assert _file_imports_bff_main(direct_probe) is True
+
+    helper = tmp_path / "alias_helper.py"
+    helper.write_text(
+        "def get_main():\n"
+        "    import services.control_plane.bff.main as bm\n"
+        "    return bm\n"
+        "def unrelated_helper():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    reaching = _reaches_main_symbols(helper)
+    assert reaching == {"get_main"}
+    assert "unrelated_helper" not in reaching
 

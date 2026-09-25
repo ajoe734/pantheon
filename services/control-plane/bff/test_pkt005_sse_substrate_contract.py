@@ -817,14 +817,18 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     2. The mounted reader route (/api/v1/stream/{channel}), built by the same
        ``create_events_router`` seam main.py's ``compose_bff_app`` mounts, reads from
        $BFF_DATA_DIR when PANTHEON_BFF_DATA_DIR is unset.
-    3. main.py's legacy (unmounted, dead-code) standalone ``stream_generic_events``
-       function and the real mounted route return 200 and replay events after
-       Last-Event-ID. Comparing against main.py's own pre-extraction implementation is
-       the entire point of this sub-assertion, so it necessarily still imports main.py;
-       no seam re-implements that specific legacy free-function signature because it was
-       never mounted to any route (see task report).
-    4. Server restart (cleared in-memory buffer) reloads and replays initial events from disk.
-    5. Unknown Last-Event-ID fails closed with 409 SSE_REPLAY_HISTORY_MISSING and file store header.
+    3. Server restart (cleared in-memory buffer) reloads and replays initial events from disk.
+    4. Unknown Last-Event-ID fails closed with 409 SSE_REPLAY_HISTORY_MISSING and file store header.
+
+    BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: this test used to also
+    compare the mounted route's response against a direct call into main.py's
+    own legacy, unmounted, dead-code standalone ``stream_generic_events``
+    free function (never wired to any route; superseded by ``events.router.
+    create_events_router``'s mounted route exercised above). That comparison
+    exercised no reachable production behavior -- unmounted dead code has no
+    caller in production -- so it added no real coverage beyond what's
+    already asserted against the real mounted route in this same test, and
+    has been removed rather than kept as a main.py import with no seam.
     """
     monkeypatch.setenv("BFF_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("PANTHEON_BFF_DATA_DIR", raising=False)
@@ -856,11 +860,8 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     replay_file = tmp_path / "sse_replay" / "approval.jsonl"
     assert replay_file.exists(), f"Replay file should be created under {tmp_path}/sse_replay/approval.jsonl"
 
-    async def _read_chunk(iterator):
-        return await asyncio.wait_for(anext(iterator), timeout=2.0)
-
-    # 3a. Replay from the real mounted reader endpoint (/api/v1/stream/{channel}), built by
-    #     create_events_router -- the same router main.py mounts via compose_bff_app.
+    # 3. Replay from the real mounted reader endpoint (/api/v1/stream/{channel}), built by
+    #    create_events_router -- the same router main.py mounts via compose_bff_app.
     resp = client.get(f"/api/v1/stream/approval?last_event_id={first_id}", headers={"Authorization": AUTH})
     assert resp.status_code == 200
     assert resp.headers["X-SSE-Replay-Store"] == "file"
@@ -868,24 +869,6 @@ def test_mounted_app_sse_replay_and_restart_with_bff_data_dir(tmp_path: Path, mo
     assert second_id in resp.text
     assert first_id not in resp.text
     assert "second-approval" in resp.text
-
-    # 3b. GENUINE BLOCKER (see docstring): main.py's own legacy standalone
-    # stream_generic_events free function (main.py, unmounted dead code kept only to
-    # prove old/new equivalence during the events-router migration) has no extracted
-    # seam, since extracting it would mean editing main.py, which is out of scope here.
-    # Both implementations replay from the same shared-file store
-    # ($BFF_DATA_DIR/sse_replay/approval.jsonl), so this exercises main.py's real
-    # legacy code path against the events already published through the seam above.
-    import importlib
-    main = importlib.import_module("services.control_plane.bff.main")
-
-    old_resp = asyncio.run(main.stream_generic_events("approval", first_id, AUTH))
-    assert old_resp.headers["X-SSE-Replay-Store"] == "file"
-    old_it = old_resp.body_iterator
-    old_chunk = asyncio.run(_read_chunk(old_it))
-    asyncio.run(old_it.aclose())
-    assert second_id in old_chunk
-    assert first_id not in old_chunk
 
     # 4. Restart simulation: clear in-memory buffers; mounted reader must reload and replay from disk
     _sse_buffers["approval"].clear()
