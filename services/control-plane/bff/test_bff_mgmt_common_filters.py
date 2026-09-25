@@ -4,43 +4,47 @@ Covers Portfolio Book and Performance Attribution endpoints' parameter binding a
 """
 from __future__ import annotations
 
+import functools
+
 import pytest
 from fastapi.testclient import TestClient
 
-# RETAINED_COMPOSITION (see task BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001):
-# Portfolio Book (`/bff/management/portfolio-book*`) is already extracted into
-# `capital/router.py::create_capital_router`, and main.py mounts that same
-# real router (no duplicate route). Performance Attribution
-# (`/bff/management/performance-attribution*`) is already extracted into
-# `management_read_models/ranking_router.py::create_performance_attribution_router`,
-# which takes `pm12_performance_attribution_response` as an injected
-# dependency; main.py supplies its own `_pm12_performance_attribution_response`
-# closure for that dependency, and no equivalent standalone implementation of
-# the sources/facts/grouping pipeline it wraps
-# (`_pm12_performance_attribution_sources` / `_facts` / `_page_entries` /
-# `_rows`) exists outside main.py. Building a B05-style standalone app for
-# this file would therefore require either reimplementing that pipeline in
-# the test (forbidden by the migration's rule against copying production
-# logic into tests) or fabricating a fake response builder that no longer
-# exercises the pipeline this suite is meant to cover, so this file keeps a
-# package-qualified `from services.control_plane.bff import main as bff_main`
-# import rather than a `sys.path` hack.
-#
-# Separately, this session's investigation of the file found that the real
-# `capital/router.py` portfolio-book handlers do not read any of the
-# `pool`/`strategyId`/`personaId`/`runtimeId` query filters this suite
-# exercises (`CapitalService.portfolio_rows()` takes no filter arguments),
-# so `test_portfolio_book_common_filters`,
-# `test_portfolio_book_pools_common_filters`, and
-# `test_portfolio_book_exposure_common_filters` already fail against the real
-# production app on `dev`, independent of this migration. That is a
-# pre-existing product/test gap in `capital/router.py`, which is outside this
-# task's declared artifacts and receiver-module scope; it is left unchanged
-# here to avoid silently weakening the suite's assertions or touching a file
-# this task does not own.
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.agora.performance import service as agora_perf_service
+from services.control_plane.bff.capital.router import create_capital_router
+from services.control_plane.bff.core.app_factory import build_bff_app
+from services.control_plane.bff.management_read_models.ranking_router import (
+    create_performance_attribution_router,
+)
 from services.control_plane.bff.ports import ReadSurfacePorts
 
+# Portfolio Book (`/bff/management/portfolio-book*`) is mounted from the real,
+# already-extracted `capital/router.py::create_capital_router` factory below --
+# the same factory main.py mounts (no duplicate/forked route exists). That
+# real router's `bff_management_portfolio_book(_pools|_exposure)` handlers do
+# not accept any of the `pool`/`strategyId`/`personaId`/`runtimeId` query
+# filters this suite exercises (`CapitalService.portfolio_rows()` takes no
+# filter arguments), so `test_portfolio_book_common_filters`,
+# `test_portfolio_book_pools_common_filters`, and
+# `test_portfolio_book_exposure_common_filters` already fail against the real
+# production app today -- independent of which test harness mounts the
+# router. That is a pre-existing product/test gap in `capital/router.py`,
+# which is outside this task's declared two-test-file scope (production
+# source files may not be edited here); it is left unchanged to avoid
+# silently weakening the suite's assertions or touching a file this task
+# does not own.
+#
+# Performance Attribution (`/bff/management/performance-attribution*`) is
+# mounted from the real `management_read_models/ranking_router.py::
+# create_performance_attribution_router`, which takes
+# `pm12_performance_attribution_response` as an injected dependency. That
+# dependency's real owner is `agora/performance/service.py::
+# pm12_performance_attribution_response`, bound here with `read_store` via
+# `functools.partial` the same way production wiring binds it over the
+# module-global read store. Its internal `pm12_performance_attribution_sources`
+# / `pm12_performance_attribution_facts` composition steps are real,
+# already-extracted module-level functions in that same file, so this suite
+# monkeypatches them directly (matching their real call signatures) instead
+# of reimplementing or bypassing the pipeline.
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
 
@@ -107,10 +111,30 @@ class MgmtCommonFiltersTestReadPorts(ReadSurfacePorts):
         return "local_snapshot"
 
 
-def test_portfolio_book_common_filters(monkeypatch) -> None:
+def _bff_me_tenant_payload(identity, **_kwargs):
+    return {"id": "tenant-default", "tenant_id": "tenant-default"}
+
+
+def _build_client(store: "MgmtCommonFiltersTestReadPorts") -> TestClient:
+    """Compose the real production routers this suite exercises, the same
+    way main.py mounts them, without importing main.py itself."""
+    app = build_bff_app()
+    app.include_router(create_capital_router(read_surface=lambda: store))
+    app.include_router(
+        create_performance_attribution_router(
+            bff_me_tenant_payload=_bff_me_tenant_payload,
+            pm12_performance_attribution_response=functools.partial(
+                agora_perf_service.pm12_performance_attribution_response,
+                read_store=store,
+            ),
+        )
+    )
+    return TestClient(app)
+
+
+def test_portfolio_book_common_filters() -> None:
     mock_store = MgmtCommonFiltersTestReadPorts()
-    monkeypatch.setattr(bff_main, "read_store", mock_store)
-    client = TestClient(bff_main.app)
+    client = _build_client(mock_store)
 
     # 1. Test filtering by pool_id (alias pool)
     resp = client.get("/bff/management/portfolio-book?pool=pool-1", headers=HEADERS)
@@ -147,10 +171,9 @@ def test_portfolio_book_common_filters(monkeypatch) -> None:
     assert len(items) == 0
 
 
-def test_portfolio_book_pools_common_filters(monkeypatch) -> None:
+def test_portfolio_book_pools_common_filters() -> None:
     mock_store = MgmtCommonFiltersTestReadPorts()
-    monkeypatch.setattr(bff_main, "read_store", mock_store)
-    client = TestClient(bff_main.app)
+    client = _build_client(mock_store)
 
     # Test filtering pools by strategyId
     resp = client.get("/bff/management/portfolio-book/pools?strategyId=strategy-1", headers=HEADERS)
@@ -160,10 +183,9 @@ def test_portfolio_book_pools_common_filters(monkeypatch) -> None:
     assert items[0]["pool_id"] == "pool-1"
 
 
-def test_portfolio_book_exposure_common_filters(monkeypatch) -> None:
+def test_portfolio_book_exposure_common_filters() -> None:
     mock_store = MgmtCommonFiltersTestReadPorts()
-    monkeypatch.setattr(bff_main, "read_store", mock_store)
-    client = TestClient(bff_main.app)
+    client = _build_client(mock_store)
 
     # Test filtering exposure by strategyId
     resp = client.get("/bff/management/portfolio-book/exposure?strategyId=strategy-2", headers=HEADERS)
@@ -174,7 +196,7 @@ def test_portfolio_book_exposure_common_filters(monkeypatch) -> None:
 
 
 def test_performance_attribution_common_filters(monkeypatch) -> None:
-    # We mock _pm12_performance_attribution_sources to return dummy records
+    # We mock pm12_performance_attribution_sources to return dummy records
     dummy_sources = {
         "runtime_bindings": [],
         "telemetry_by_runtime_id": {},
@@ -203,9 +225,13 @@ def test_performance_attribution_common_filters(monkeypatch) -> None:
         "plans_by_id": {},
         "bindings_by_id": {},
     }
-    monkeypatch.setattr(bff_main, "_pm12_performance_attribution_sources", lambda: dummy_sources)
+    monkeypatch.setattr(
+        agora_perf_service,
+        "pm12_performance_attribution_sources",
+        lambda *args, **kwargs: dummy_sources,
+    )
 
-    # We mock _pm12_performance_attribution_facts to return facts containing filters
+    # We mock pm12_performance_attribution_facts to return facts containing filters
     dummy_facts = [
         {
             "persona_id": "persona-1",
@@ -236,19 +262,21 @@ def test_performance_attribution_common_filters(monkeypatch) -> None:
             }
         }
     ]
-    monkeypatch.setattr(bff_main, "_pm12_performance_attribution_facts", lambda sources, period: dummy_facts)
+    monkeypatch.setattr(
+        agora_perf_service,
+        "pm12_performance_attribution_facts",
+        lambda sources, period: dummy_facts,
+    )
 
     mock_store = MgmtCommonFiltersTestReadPorts()
-    monkeypatch.setattr(bff_main, "read_store", mock_store)
-
-    client = TestClient(bff_main.app)
+    client = _build_client(mock_store)
 
     # Test /bff/management/performance-attribution with filters
     resp = client.get("/bff/management/performance-attribution?strategyId=strategy-1", headers=HEADERS)
     assert resp.status_code == 200
     items = resp.json()["data"]["items"]
     # Aggregate summary facts when no dimensions are explicitly requested
-    
+
     # Test grouping endpoints
     resp = client.get("/bff/management/performance-attribution/by-strategy?personaId=persona-2", headers=HEADERS)
     assert resp.status_code == 200
