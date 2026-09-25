@@ -1,26 +1,20 @@
 """BFF contract tests for MGMT-OPS-006: governed operator actions and Human Review.
 
-RETAINED_COMPOSITION: the operator-action precondition logic this suite
-exercises (role checks that route through ``_enforce_ops_console_preconditions``,
-the ``_VALIDATORS`` dispatch table, and the source-confidence gate driven by
-``_ops_read_model_entry_for_persona``) is defined only as module-level globals
-in ``services/control_plane/bff/main.py`` and wired into the extracted
-``CommandAdapterService``/``create_command_adapters_router`` purely through
-that composition (see ``main.py`` around ``_VALIDATORS = {...}`` and
-``_command_adapter_service = _CommandAdapterService(validators=_VALIDATORS, ...)``).
-Neither ``command_adapters/service.py``, ``command_adapters/router.py`` nor
-``command_adapters/preconditions.py`` define an equivalent standalone
-validators table or ``_ops_read_model_entry_for_persona`` hook (grepped for
-``_enforce_ops_console_preconditions``/``_VALIDATORS`` across
-``services/control-plane/bff`` and found only in ``main.py``), so this suite
-still imports the package-qualified composition root to reach the *real*,
-already-wired ``command_adapter_service`` object (never a sys.path hack) and
-monkeypatches the same module globals (``read_store``, ``command_store``,
-``_ops_read_model_entry_for_persona``) the production validators close over.
-The HTTP surface itself is still exercised through a fresh ``FastAPI()`` app
-that mounts only the extracted ``create_command_adapters_router`` (not the
-full ``bff_main.app`` monolith), reusing the real production service/router
-factory rather than reimplementing any handler or validator logic here.
+The operator-action precondition logic this suite exercises
+(``_enforce_ops_console_preconditions``, the default validators dispatch
+table, and the source-confidence gate) is the real extracted
+``command_adapters.preconditions`` seam: ``build_default_validators`` builds
+the same dispatch table ``CommandAdapterService`` uses in production, and
+each validator takes its ``read_surface``/``ops_read_model_fn`` collaborators
+as constructor-time parameters rather than reading process-global state. This
+suite therefore builds a standalone ``CommandAdapterService`` (real
+preconditions/idempotency/audit logic, no reimplementation) against a fresh,
+test-owned ``ReadSurfacePorts`` and ``CommandStore`` per test, and mounts it
+on a fresh ``FastAPI()`` app via the real ``create_command_adapters_router``
+factory -- the same "no symbol imported from main.py, only the real
+production modules" pattern ``tests/conftest.py``'s
+``build_command_security_app`` uses. No handler or validator logic is
+reimplemented here.
 """
 from __future__ import annotations
 
@@ -28,7 +22,7 @@ import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional
 from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
@@ -37,13 +31,24 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 import json
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from services.control_plane.bff import main as bff_main
-from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff import command_executor
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity_stub,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.command_adapters.preconditions import (
+    build_default_validators,
+)
 from services.control_plane.bff.command_adapters.router import (
     create_command_adapters_router,
 )
+from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.models import CommandType, RiskLevel, utc_now
 from services.control_plane.bff.ports import ReadSurfacePorts
-from services.control_plane.bff.models import CommandType, RiskLevel
 
 OPERATOR_TOKEN = "Bearer op-mgmt-ops-006:operator"
 ADMIN_TOKEN = "Bearer op-mgmt-ops-006:admin"
@@ -137,33 +142,91 @@ class MgmtOps006TestReadPorts(ReadSurfacePorts):
         return next((r for r in ds if isinstance(r, dict) and (r.get("runtime_id") == runtime_id or r.get("runtimeId") == runtime_id)), None)
 
 
-def _mounted_app() -> FastAPI:
-    # RETAINED_COMPOSITION: mounts the real, already-wired production
-    # command_adapter_service (built in main.py from _VALIDATORS and the
-    # _enforce_ops_console_preconditions/_ops_read_model_entry_for_persona
-    # composition graph) onto a fresh app instead of the bff_main.app
-    # monolith. No handler/validator logic is reimplemented here.
+def _extract_identity_from_bearer(
+    authorization: Optional[str],
+    mfa_token: Optional[str] = None,
+    **_kwargs: Any,
+) -> Any:
+    """Adapt the real stub extractor to the ``(auth, mfa_token=...)`` shape
+    ``create_command_adapters_router`` expects (same adapter shape as
+    ``tests/conftest.py``'s ``extract_identity_from_bearer_stub``)."""
+    return extract_identity_stub(authorization)
+
+
+def _make_process_command_task(commands: CommandStore) -> Any:
+    """Real synchronous command executor glue for the injected store.
+
+    Fetches the submitted record and dispatches it through the real
+    ``command_executor.execute_command_with_status`` (the same executor
+    ``main.py``'s background worker calls), then persists the resulting
+    status/result/error. No execution/dispatch business logic is
+    reimplemented here -- only the thin fetch/dispatch/persist wiring that
+    ``tests/test_bff_emergency_containment.py`` uses for the same purpose.
+    """
+
+    def _process_command_task(command_id: str) -> None:
+        record = commands.get_command(command_id)
+        if not record:
+            return
+        command_type = CommandType(record["type"])
+        params = dict(record.get("params") or {})
+        status, result, error = command_executor.execute_command_with_status(
+            command_id, command_type, params
+        )
+        commands.update_status(command_id, status, result=result, error=error)
+
+    return _process_command_task
+
+
+def _mounted_app(
+    store: MgmtOps006TestReadPorts,
+    commands: CommandStore,
+    *,
+    ops_read_model_fn: Optional[Any] = None,
+) -> FastAPI:
+    """Mount a standalone ``CommandAdapterService`` built from the real
+    extracted ``build_default_validators`` dispatch table (the same table
+    production wires in) against a fresh, test-owned read surface and
+    command store, rather than the ``bff_main.app`` monolith.
+    """
+    service = CommandAdapterService(
+        command_store=commands,
+        read_surface=store,
+        extract_identity=_extract_identity_from_bearer,
+        require_operator_role=require_operator_role,
+        require_read_role=require_read_role,
+        bff_error=bff_error,
+        utc_now_fn=utc_now,
+        validators=build_default_validators(
+            read_surface=lambda: store,
+            ops_read_model_fn=ops_read_model_fn,
+            bff_error_fn=bff_error,
+            utc_now_fn=utc_now,
+        ),
+        process_command_task=_make_process_command_task(commands),
+    )
     app = FastAPI()
     register_error_handlers(app)
-    app.include_router(create_command_adapters_router(service=bff_main.command_adapter_service))
+    app.include_router(create_command_adapters_router(service=service))
+    app.state.command_store = commands
     return app
 
 
 @contextmanager
-def _client_with_store(store: MgmtOps006TestReadPorts) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    original_commands = bff_main.command_store
-    bff_main.read_store = store
-    try:
-        with tempfile.TemporaryDirectory(prefix="paper-action-contract-") as command_dir, patch.dict(os.environ, {"PANTHEON_BFF_TENANT_ID": "tenant-default"}):
-            # Router factories retain this same injected owner instance.
-            commands = bff_main.app_deps.command_store
-            bff_main.command_store = commands
-            with patch.object(commands, "file_path", os.path.join(command_dir, "commands.jsonl")), patch.object(commands, "_cache", []):
-                yield TestClient(_mounted_app(), raise_server_exceptions=False)
-    finally:
-        bff_main.read_store = original_store
-        bff_main.command_store = original_commands
+def _client_with_store(
+    store: MgmtOps006TestReadPorts,
+    *,
+    ops_read_model_fn: Optional[Any] = None,
+) -> Iterator[TestClient]:
+    with tempfile.TemporaryDirectory(prefix="paper-action-contract-") as command_dir, patch.dict(
+        os.environ, {"PANTHEON_BFF_TENANT_ID": "tenant-default"}
+    ):
+        # A fresh, isolated CommandStore backed by a private tmp file is used
+        # per test (CommandStore is a durable file-backed store with no
+        # in-memory `_cache`/mutable `file_path` to swap out).
+        commands = CommandStore(os.path.join(command_dir, "commands.jsonl"))
+        app = _mounted_app(store, commands, ops_read_model_fn=ops_read_model_fn)
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 def _fresh_store() -> MgmtOps006TestReadPorts:
@@ -206,8 +269,6 @@ def test_rejected_preconditions_unverifiable_source_confidence() -> None:
         metadata={},
     )
 
-    original_ops_model = bff_main._ops_read_model_entry_for_persona
-
     from operations_read_model import OperationsReadModelEntry, OperationsIdentity, DataConfidence as OpsDataConfidence, OperationsPerformance
 
     def mock_ops_model(persona_id, period="latest"):
@@ -219,24 +280,19 @@ def test_rejected_preconditions_unverifiable_source_confidence() -> None:
             diagnostics=[]
         )
 
-    bff_main._ops_read_model_entry_for_persona = mock_ops_model
-
-    try:
-        with _client_with_store(store) as client:
-            response = client.post(
-                "/bff/v1/commands",
-                headers={"Authorization": OPERATOR_TOKEN, "Idempotency-Key": "test-unverifiable-1"},
-                json={
-                    "command": "PausePaperRuntime",
-                    "target": {"type": "Runtime", "id": "runtime-test"},
-                    "params": {"persona_id": "persona-test-unverifiable", "runtime_id": "runtime-test"},
-                    "audit_context": {"reason": "Test confidence block"},
-                }
-            )
-            assert response.status_code == 422
-            assert "source_confidence" in response.text or "unavailable" in response.text or "unverifiable" in response.text
-    finally:
-        bff_main._ops_read_model_entry_for_persona = original_ops_model
+    with _client_with_store(store, ops_read_model_fn=mock_ops_model) as client:
+        response = client.post(
+            "/bff/v1/commands",
+            headers={"Authorization": OPERATOR_TOKEN, "Idempotency-Key": "test-unverifiable-1"},
+            json={
+                "command": "PausePaperRuntime",
+                "target": {"type": "Runtime", "id": "runtime-test"},
+                "params": {"persona_id": "persona-test-unverifiable", "runtime_id": "runtime-test"},
+                "audit_context": {"reason": "Test confidence block"},
+            }
+        )
+        assert response.status_code == 422
+        assert "source_confidence" in response.text or "unavailable" in response.text or "unverifiable" in response.text
 
 
 def test_emergency_containment_limit() -> None:
@@ -290,8 +346,6 @@ def test_command_idempotency() -> None:
     store.list_runtime_bindings = lambda **_: runtimes
     store.get_runtime_binding_by_runtime_id = lambda runtime_id: runtimes[0] if runtime_id == "runtime-test" else None
 
-    original_ops_model = bff_main._ops_read_model_entry_for_persona
-
     from operations_read_model import OperationsReadModelEntry, OperationsIdentity, DataConfidence as OpsDataConfidence, OperationsPerformance
 
     def mock_ops_model(persona_id, period="latest"):
@@ -303,31 +357,26 @@ def test_command_idempotency() -> None:
             diagnostics=[]
         )
 
-    bff_main._ops_read_model_entry_for_persona = mock_ops_model
+    with _client_with_store(store, ops_read_model_fn=mock_ops_model) as client:
+        body = {
+            "command": "Observe",
+            "target": {"type": "Persona", "id": "persona-test-idempotency"},
+            "params": {"persona_id": "persona-test-idempotency"},
+            "audit_context": {"reason": "Idempotency testing"},
+        }
+        headers = {
+            "Authorization": OPERATOR_TOKEN,
+            "Idempotency-Key": "key-idempotency-ops-006",
+            "X-Correlation-Id": "corr-idempotency-ops-006",
+        }
 
-    try:
-        with _client_with_store(store) as client:
-            body = {
-                "command": "Observe",
-                "target": {"type": "Persona", "id": "persona-test-idempotency"},
-                "params": {"persona_id": "persona-test-idempotency"},
-                "audit_context": {"reason": "Idempotency testing"},
-            }
-            headers = {
-                "Authorization": OPERATOR_TOKEN,
-                "Idempotency-Key": "key-idempotency-ops-006",
-                "X-Correlation-Id": "corr-idempotency-ops-006",
-            }
+        first = client.post("/bff/v1/commands", headers=headers, json=body)
+        assert first.status_code == 202, first.text
+        assert first.json()["data"]["command_id"]
 
-            first = client.post("/bff/v1/commands", headers=headers, json=body)
-            assert first.status_code == 202, first.text
-            assert first.json()["data"]["command_id"]
-
-            second = client.post("/bff/v1/commands", headers=headers, json=body)
-            assert second.status_code == 202
-            assert second.json()["data"]["command_id"] == first.json()["data"]["command_id"]
-    finally:
-        bff_main._ops_read_model_entry_for_persona = original_ops_model
+        second = client.post("/bff/v1/commands", headers=headers, json=body)
+        assert second.status_code == 202
+        assert second.json()["data"]["command_id"] == first.json()["data"]["command_id"]
 
 
 def test_pause_paper_runtime_distinct_binding_success() -> None:
@@ -357,9 +406,15 @@ def test_pause_paper_runtime_distinct_binding_success() -> None:
         assert ct_resp.status_code == 201, ct_resp.text
 
         # 2. Submit and verify a separate authoritative owner GET, not the POST echo.
+        # runtime_adapter's own binding lookup falls back to main's read store global
+        # when no store is injected; patch that resolver directly to the same
+        # test-owned store instead of importing/monkeypatching main.py.
         with patch("services.control_plane.bff.command_adapters.runtime_adapter.http_request_json") as mock_http, patch(
             "services.control_plane.bff.command_adapters.runtime_adapter._get_runtime_manager_client"
-        ) as mock_rm, patch.dict(os.environ, {"PANTHEON_INTERNAL_API_URL": "http://internal.unit.invalid"}):
+        ) as mock_rm, patch(
+            "services.control_plane.bff.command_adapters.runtime_adapter._get_read_store",
+            return_value=store,
+        ), patch.dict(os.environ, {"PANTHEON_INTERNAL_API_URL": "http://internal.unit.invalid"}):
             mock_rm.return_value.get.return_value = {**binding, "status": "paused"}
             mock_http.return_value = {
                 "status": "executed",
@@ -396,7 +451,7 @@ def test_pause_paper_runtime_distinct_binding_success() -> None:
             assert receipt["result"]["authoritative_readback"]["status"] == "paused"
             mock_rm.return_value.get.assert_called_once_with("bind-paper-001")
 
-            stored = bff_main.command_store.get_command(data["command_id"])
+            stored = client.app.state.command_store.get_command(data["command_id"])
             assert stored is not None
             assert stored["params"]["runtime_id"] == "rt-paper-001"
             assert stored["params"]["runtime_binding_id"] == "bind-paper-001"
@@ -701,49 +756,43 @@ def test_generic_enforce_ops_console_preconditions_no_runtime_from_persona_entit
             diagnostics=[],
         )
 
-    orig_ops_model = bff_main._ops_read_model_entry_for_persona
-    bff_main._ops_read_model_entry_for_persona = mock_ops_model
+    with _client_with_store(store, ops_read_model_fn=mock_ops_model) as client:
+        # Test Observe with entity_id in params matching persona id
+        resp_obs = client.post(
+            "/bff/v1/commands",
+            headers={
+                "Authorization": OPERATOR_TOKEN,
+                "Idempotency-Key": "key-cmd-observe-regression",
+            },
+            json={
+                "command": "Observe",
+                "target": {"type": "Persona", "id": "persona-no-runtime"},
+                "params": {
+                    "persona_id": "persona-no-runtime",
+                    "entity_id": "persona-no-runtime",
+                },
+                "audit_context": {"reason": "Regression test for Observe entity_id"},
+            },
+        )
+        assert resp_obs.status_code == 202, resp_obs.text
+        assert resp_obs.json()["data"]["command_id"]
 
-    try:
-        with _client_with_store(store) as client:
-            # Test Observe with entity_id in params matching persona id
-            resp_obs = client.post(
-                "/bff/v1/commands",
-                headers={
-                    "Authorization": OPERATOR_TOKEN,
-                    "Idempotency-Key": "key-cmd-observe-regression",
+        # Test RequestReview with entity_id in params matching persona id
+        resp_rev = client.post(
+            "/bff/v1/commands",
+            headers={
+                "Authorization": OPERATOR_TOKEN,
+                "Idempotency-Key": "key-cmd-request-review-regression",
+            },
+            json={
+                "command": "RequestReview",
+                "target": {"type": "Persona", "id": "persona-no-runtime"},
+                "params": {
+                    "persona_id": "persona-no-runtime",
+                    "entity_id": "persona-no-runtime",
                 },
-                json={
-                    "command": "Observe",
-                    "target": {"type": "Persona", "id": "persona-no-runtime"},
-                    "params": {
-                        "persona_id": "persona-no-runtime",
-                        "entity_id": "persona-no-runtime",
-                    },
-                    "audit_context": {"reason": "Regression test for Observe entity_id"},
-                },
-            )
-            assert resp_obs.status_code == 202, resp_obs.text
-            assert resp_obs.json()["data"]["command_id"]
-
-            # Test RequestReview with entity_id in params matching persona id
-            resp_rev = client.post(
-                "/bff/v1/commands",
-                headers={
-                    "Authorization": OPERATOR_TOKEN,
-                    "Idempotency-Key": "key-cmd-request-review-regression",
-                },
-                json={
-                    "command": "RequestReview",
-                    "target": {"type": "Persona", "id": "persona-no-runtime"},
-                    "params": {
-                        "persona_id": "persona-no-runtime",
-                        "entity_id": "persona-no-runtime",
-                    },
-                    "audit_context": {"reason": "Regression test for RequestReview entity_id"},
-                },
-            )
-            assert resp_rev.status_code == 202, resp_rev.text
-            assert resp_rev.json()["data"]["command_id"]
-    finally:
-        bff_main._ops_read_model_entry_for_persona = orig_ops_model
+                "audit_context": {"reason": "Regression test for RequestReview entity_id"},
+            },
+        )
+        assert resp_rev.status_code == 202, resp_rev.text
+        assert resp_rev.json()["data"]["command_id"]
