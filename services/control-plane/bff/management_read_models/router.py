@@ -79,6 +79,22 @@ def _get_human_inbox_surface_timeout() -> float:
         return 3.0
 
 
+def _get_management_cockpit_read_timeout() -> float:
+    try:
+        import sys
+        main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        if main_mod is not None:
+            fn = getattr(main_mod, "_management_cockpit_read_timeout_seconds", None)
+            if fn is not None:
+                return float(fn())
+    except Exception:
+        pass
+    try:
+        return max(0.05, float(os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "0.6").strip()))
+    except (TypeError, ValueError):
+        return 0.6
+
+
 class _StoreTimeoutProxy:
     def __init__(self, target: Any, timeout: float):
         self._target = target
@@ -1511,6 +1527,7 @@ def create_management_router(
     *,
     read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable] = None,
+    get_command_store: Optional[Callable] = None,
     extract_identity: Optional[Callable] = None,
     require_read_role: Optional[Callable] = None,
     snapshot_meta: Optional[Callable] = None,
@@ -1523,6 +1540,7 @@ def create_management_router(
     service: Optional[ManagementService] = None,
     run_management_read: Optional[Callable[..., Any]] = None,
     build_evidence_payload: Optional[Callable[..., Any]] = None,
+    build_cockpit_payload: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Create the APIRouter for all 17 Management domain HTTP GET routes."""
     router = APIRouter()
@@ -1539,6 +1557,7 @@ def create_management_router(
         get_read_store=_store_getter,
         utc_now=_now,
         ops_read_model_entry_fn=ops_read_model_entry_fn,
+        get_promotion_review_command_log=get_command_store,
     )
 
     # -----------------------------------------------------------------------
@@ -1585,12 +1604,37 @@ def create_management_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
+
+        def _resolve_cockpit_composer() -> Callable[..., Any]:
+            # Prefer whatever composer this router was actually wired with
+            # (an explicit `build_cockpit_payload`, or the `svc` bound to
+            # this call's own injected read/command stores) over reaching
+            # into the `main` module singleton. main.py's production
+            # composition root always passes `build_cockpit_payload`
+            # explicitly (core/app_factory.py), so this order is a no-op
+            # there; it only matters for a standalone app (e.g. a test
+            # harness composing routers directly from the factories) that
+            # never touches `main.py`'s globals -- for that caller, falling
+            # through to `main._build_management_cockpit_payload` whenever
+            # `main` happens to be imported elsewhere in the process would
+            # silently swap in the real production read/command stores in
+            # place of the caller's own injected test doubles.
+            if build_cockpit_payload is not None:
+                return build_cockpit_payload
+            return svc.get_management_cockpit
+
+        cockpit_composer = _resolve_cockpit_composer()
+
         if run_management_read is not None:
             try:
-                return await run_management_read(svc.get_management_cockpit, snapshot_at=snap)
+                return await run_management_read(
+                    cockpit_composer,
+                    snapshot_at=snap,
+                    timeout_seconds=_get_management_cockpit_read_timeout(),
+                )
             except Exception:
                 return svc.get_management_cockpit_degraded_payload(snapshot_at=snap)
-        return svc.get_management_cockpit(snapshot_at=snap)
+        return cockpit_composer(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
     # 4. Trading Pulse
@@ -1884,15 +1928,12 @@ def create_management_router(
         snap = _now()
 
         def _resolve_evidence_reader():
-            try:
-                import sys
-                main_mod = sys.modules.get("services.control_plane.bff.main")
-                if main_mod is not None:
-                    main_fn = getattr(main_mod, "_build_management_evidence_payload", None)
-                    if main_fn is not None:
-                        return main_fn
-            except Exception:
-                pass
+            # See _resolve_cockpit_composer's comment above: prefer the
+            # composer this router was actually wired with over reaching
+            # into the `main` module singleton, so a standalone app that
+            # never touches main.py's globals does not silently swap in
+            # main.py's real production read/command stores in place of
+            # its own injected test doubles.
             if build_evidence_payload is not None:
                 return build_evidence_payload
             return svc.get_evidence
