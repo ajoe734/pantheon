@@ -1527,6 +1527,7 @@ def create_management_router(
     *,
     read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable] = None,
+    get_command_store: Optional[Callable] = None,
     extract_identity: Optional[Callable] = None,
     require_read_role: Optional[Callable] = None,
     snapshot_meta: Optional[Callable] = None,
@@ -1556,6 +1557,7 @@ def create_management_router(
         get_read_store=_store_getter,
         utc_now=_now,
         ops_read_model_entry_fn=ops_read_model_entry_fn,
+        get_promotion_review_command_log=get_command_store,
     )
 
     # -----------------------------------------------------------------------
@@ -1604,15 +1606,19 @@ def create_management_router(
         snap = _now()
 
         def _resolve_cockpit_composer() -> Callable[..., Any]:
-            try:
-                import sys
-                main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
-                if main_mod is not None:
-                    main_fn = getattr(main_mod, "_build_management_cockpit_payload", None)
-                    if main_fn is not None:
-                        return main_fn
-            except Exception:
-                pass
+            # Prefer whatever composer this router was actually wired with
+            # (an explicit `build_cockpit_payload`, or the `svc` bound to
+            # this call's own injected read/command stores) over reaching
+            # into the `main` module singleton. main.py's production
+            # composition root always passes `build_cockpit_payload`
+            # explicitly (core/app_factory.py), so this order is a no-op
+            # there; it only matters for a standalone app (e.g. a test
+            # harness composing routers directly from the factories) that
+            # never touches `main.py`'s globals -- for that caller, falling
+            # through to `main._build_management_cockpit_payload` whenever
+            # `main` happens to be imported elsewhere in the process would
+            # silently swap in the real production read/command stores in
+            # place of the caller's own injected test doubles.
             if build_cockpit_payload is not None:
                 return build_cockpit_payload
             return svc.get_management_cockpit
@@ -1922,15 +1928,12 @@ def create_management_router(
         snap = _now()
 
         def _resolve_evidence_reader():
-            try:
-                import sys
-                main_mod = sys.modules.get("services.control_plane.bff.main")
-                if main_mod is not None:
-                    main_fn = getattr(main_mod, "_build_management_evidence_payload", None)
-                    if main_fn is not None:
-                        return main_fn
-            except Exception:
-                pass
+            # See _resolve_cockpit_composer's comment above: prefer the
+            # composer this router was actually wired with over reaching
+            # into the `main` module singleton, so a standalone app that
+            # never touches main.py's globals does not silently swap in
+            # main.py's real production read/command stores in place of
+            # its own injected test doubles.
             if build_evidence_payload is not None:
                 return build_evidence_payload
             return svc.get_evidence

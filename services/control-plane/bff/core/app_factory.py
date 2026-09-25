@@ -916,9 +916,31 @@ def mount_bff_routers(
             utc_now=_dep("utc_now"),
         )
     )
+
+    def _resolve_command_store_for_management_router() -> Any:
+        # This module intentionally does not statically import main.py
+        # (see module docstring). main.py aliases its own module-level
+        # `command_store` global from `app_deps.command_store` once at
+        # import time (`command_store = app_deps.command_store`); a test
+        # that swaps `main.command_store` afterwards (to inject a test
+        # double against the real composed app, mirroring how
+        # `main.read_store` is already swapped elsewhere) only reassigns
+        # that module attribute, not `app_deps.command_store`. Resolve
+        # through the live `main` module when it is already present in
+        # sys.modules (true for every real request, since main.py is the
+        # sole entrypoint that calls this composition function) so such a
+        # swap is observed; fall back to `app_deps.command_store` for any
+        # caller that composes this app without going through main.py.
+        import sys
+        main_mod = sys.modules.get("services.control_plane.bff.main")
+        if main_mod is not None and hasattr(main_mod, "command_store"):
+            return main_mod.command_store
+        return app_deps.command_store
+
     app.include_router(
         create_management_router(
             read_surface=app_deps.read_surface,
+            get_command_store=_resolve_command_store_for_management_router,
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             snapshot_meta=_dep("_snapshot_meta"),

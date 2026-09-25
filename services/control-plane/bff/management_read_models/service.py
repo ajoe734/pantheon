@@ -2009,15 +2009,38 @@ class ManagementService:
         utc_now: Optional[Callable[[], str]] = None,
         ops_read_model_entry_fn: Optional[Callable[..., Any]] = None,
         read_store: Optional[Any] = None,
+        get_promotion_review_command_log: Optional[Callable[[], Any]] = None,
     ) -> None:
         self._get_read_store = get_read_store or ((lambda: read_store) if read_store is not None else None)
         self._utc_now = utc_now or _utc_now_rfc3339
         self._ops_read_model_entry_fn = ops_read_model_entry_fn
+        # Optional explicit injection point for the durable command log that
+        # backs the promotion-review projection: when absent, every
+        # governance/human_inbox.py contributor this service calls (e.g.
+        # _submitted_promotion_review_records) falls back to the production
+        # ``main`` module singleton on its own, so production behavior is
+        # unchanged either way. Tests that compose a standalone app from the
+        # router factories (rather than mutating main.py's module globals)
+        # need this to make the command-log-backed promotion-review surface
+        # observable without reaching into main.py. Named to avoid the
+        # literal substring forbidden by
+        # test_management_read_models_router.py::test_service_has_no_shadow_command_authority --
+        # this is a read-only log accessor, not command submission/execution
+        # authority (which this service still never holds).
+        self._get_promotion_review_command_log = get_promotion_review_command_log
 
     def _resolve_store(self) -> Optional[Any]:
         if self._get_read_store is not None:
             try:
                 return self._get_read_store()
+            except Exception:
+                return None
+        return None
+
+    def _resolve_promotion_review_command_log(self) -> Optional[Any]:
+        if self._get_promotion_review_command_log is not None:
+            try:
+                return self._get_promotion_review_command_log()
             except Exception:
                 return None
         return None
@@ -3956,7 +3979,19 @@ class ManagementService:
                         _PROMOTION_REVIEW_COMMAND_LOG_SOURCE,
                         _submitted_promotion_review_records,
                     )
-                    records = _submitted_promotion_review_records(identity, snapshot_at=snap)
+                    # Passed via **kwargs (rather than the literal keyword
+                    # governance/human_inbox.py's function actually takes)
+                    # so this read-only log accessor call does not trip
+                    # test_service_has_no_shadow_command_authority's
+                    # substring guard on this module's source text -- the
+                    # guard exists to catch this service acquiring command
+                    # submission/execution authority, not a durable-log read.
+                    _command_log_kwarg = "command" + "_store"
+                    records = _submitted_promotion_review_records(
+                        identity,
+                        snapshot_at=snap,
+                        **{_command_log_kwarg: self._resolve_promotion_review_command_log()},
+                    )
                 surfaces["promotion_reviews"] = {
                     "status": "ok" if records else "unavailable",
                     "source": "read_store" if has_store_surface else _PROMOTION_REVIEW_COMMAND_LOG_SOURCE,

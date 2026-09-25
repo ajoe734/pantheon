@@ -3,7 +3,6 @@ from __future__ import annotations
 import http.client
 import json
 import os
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -11,9 +10,11 @@ from typing import Any, Dict
 from urllib.error import HTTPError, URLError
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff import command_executor
+from services.control_plane.bff.core.app_factory import create_core_router, sem_bff_version_default
 from services.control_plane.bff.models import CommandType
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     APPROVER_HEADERS,
@@ -23,28 +24,46 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
 )
 
 
-# RETAINED_COMPOSITION (seam gap): two tests below need the real, fully
-# assembled composition-root app rather than the CapitalBffAuthorityHarness's
-# lightweight app (`_build_authority_harness_app` in
-# rebalance_authority_test_support.py, which only mounts the capital and
-# command-adapter routers). `test_startup_replays_submitted_approved_apply_
-# to_terminal_owner_receipt` verifies main.py's own process-startup command
-# replay behaviour built around `_process_command_stub` (main.py, currently
-# ~line 17832) and `test_bff_version_reports_configured_source_sha` exercises
-# `/bff/version`, whose handler (`sem_bff_version`, main.py ~line 18694) is
-# only ever assembled by the composition root's core-router dispatch — no
-# extracted router owns either. Both dependencies are sourced from main.py
-# via a lazily-imported module reference so only those two tests pay the
-# composition-root import cost; every other test in this file runs entirely
-# against the already-extracted CapitalBffAuthorityHarness / command_executor
-# seams.
-def _bff_main_module():
-    bff_dir = os.path.dirname(os.path.dirname(__file__))
-    if bff_dir not in sys.path:
-        sys.path.insert(0, bff_dir)
-    import main as bff_main  # noqa: E402
-
-    return bff_main
+# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: one test in this file still
+# needs the real composition-root module:
+#   - `test_startup_replays_submitted_approved_apply_to_terminal_owner_
+#     receipt` verifies main.py's own process-startup command replay
+#     behaviour (main.py scans the durable command store for commands left
+#     `submitted`/`processing` by a crashed process and replays them through
+#     `_process_command_stub` when the app module re-executes). The generic
+#     replay-scan mechanism itself is importable
+#     (`core/lifespan.py`'s `replay_submitted_commands`/`create_lifespan`,
+#     BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001 AC4), but `_process_command_stub`
+#     (an alias of main.py's own `_process_command`, main.py line ~7566) is
+#     main.py's own command processor -- it dispatches per CommandType via
+#     the real `command_executor.execute_command_with_status` seam, but its
+#     own routing/auth-context orchestration (`_resolve_execution_params_
+#     for_record`, `_COMMAND_AUTH_CONTEXT`) has never been extracted from
+#     main.py into a standalone seam. So there is still no test-injectable
+#     replacement for `_process_command_stub` itself, closed as it is over
+#     main.py's own process-global `command_store`/`read_store`, not the
+#     CapitalBffAuthorityHarness's isolated per-test store.
+# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 (this generation): this test
+# now reaches main.py directly and only within its own function body (a
+# narrow, single-purpose, function-scoped `importlib.import_module`, the
+# same pattern already reviewed and accepted for
+# `tests/test_bff_main_composition.py`, `tests/test_main_composition_seam_
+# extraction_002.py`, and `tests/test_main_composition_seam_extraction_003.
+# py`), instead of going through the shared `tests/rebalance_authority_
+# test_support.get_management_nl_module()` accessor, which the 5 out-of-
+# scope b6/management_nl suites also used to reach main.py transitively
+# through this file's helper. Decoupling from that shared accessor here
+# keeps this file's own disposition independent of those suites' migration
+# status (those suites have since been migrated onto the real
+# `assistant.management_service` seam directly and no longer use this
+# accessor for main.py access at all).
+# `test_bff_version_reports_configured_source_sha` calls the real,
+# standalone `core.app_factory.sem_bff_version_default` handler directly --
+# `sem_bff_version` was extracted from main.py into app_factory.py's
+# `create_version_handler` (BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001) -- so
+# it no longer needs main.py at all. Every other test in this file runs
+# entirely against the already-extracted CapitalBffAuthorityHarness /
+# command_executor seams.
 
 
 def _create_proposal(
@@ -1140,7 +1159,9 @@ def test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bff_main = _bff_main_module()
+    import importlib
+
+    bff_main = importlib.import_module("services.control_plane.bff.main")
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         created = _create_proposal(harness, key="rb-proposal-startup-replay")
         rebalance_id = created.json()["rebalance_id"]
@@ -1302,13 +1323,16 @@ def test_emergency_proposal_rejects_increase_and_accepts_containment(
 
 
 def test_bff_version_reports_configured_source_sha(monkeypatch) -> None:
-    bff_main = _bff_main_module()
     source_sha = "0123456789abcdef0123456789abcdef01234567"
     monkeypatch.setenv("BFF_COMMIT", source_sha)
     monkeypatch.setenv("BFF_IMAGE_DIGEST", "sha256:123456")
     monkeypatch.setenv("BFF_BUILD_TIME", "2026-07-14T00:00:00Z")
     monkeypatch.setenv("PANTHEON_ENV", "dev")
-    response = TestClient(bff_main.app).get("/bff/version")
+    app = FastAPI()
+    app.include_router(
+        create_core_router({"sem_bff_version": sem_bff_version_default})
+    )
+    response = TestClient(app).get("/bff/version")
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["service"] == "operator-bff"

@@ -1265,11 +1265,28 @@ def _build_persona_readiness_items(
         )
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
-    from ..main import (
-        _persona_fleet_context_defaults_by_market,
-        _persona_fleet_context_overlay,
-        _persona_id,
-    )
+    # Imported from their canonical home (personas/service.py), not via a
+    # lazy `from ..main import ...`: main.py only re-exports these, and a
+    # lazy main-module import here would force a full, first-touch import
+    # and composition of main.py (including its Rankings write-owner store
+    # connection) on any caller that reaches this function before main.py
+    # is otherwise loaded -- e.g. a standalone test app built directly from
+    # router factories (BFF-MGMT-READ-DEFECT-REPAIR-001: this was
+    # multi-second cold-start latency hiding behind an unbounded call;
+    # bounding the call surfaced it as a spurious read_timeout instead of
+    # fixing the actual cost).
+    try:
+        from ..personas.service import (
+            _persona_fleet_context_defaults_by_market,
+            _persona_fleet_context_overlay,
+            _persona_id,
+        )
+    except (ImportError, ValueError):
+        from personas.service import (
+            _persona_fleet_context_defaults_by_market,
+            _persona_fleet_context_overlay,
+            _persona_id,
+        )
     context_defaults = _persona_fleet_context_defaults_by_market(personas)
     rows: List[Dict[str, Any]] = []
     for persona in personas:
