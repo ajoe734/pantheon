@@ -3,7 +3,7 @@
   "title": "Migrate the remaining BFF main importers to the extracted production seams",
   "owner": "Claude",
   "reviewer": "Codex",
-  "generation": 11,
+  "generation": 12,
   "base": {
     "description": "generation 10 base is generation 9's rejected delivered head (PR #5961, exact head 705a67bc0dc17a8e241c7a337211f33f3187d570). Independent review rejected generation 9 for four defects: (1) an unsupported blanket composition_allowlist expansion from 15 to 24 entries; (2) a graph-aware scanner that missed several import forms (static imports inside/outside function bodies, importlib.import_module(name=...) keyword form, module-alias imports); (3) a commit-message trailer collision (a prose line beginning with 'reviewer:' misread as a second Reviewer trailer); (4) incomplete verification.",
     "commit": "705a67bc0dc17a8e241c7a337211f33f3187d570",
@@ -413,6 +413,23 @@
         "test_bff_test_architecture.py": "14 passed (architecture gate + all 4 scanner regression tests), 2 warnings",
         "test_pkt005_sse_substrate_contract.py": "20 passed, 3 warnings",
         "tests/test_bff_rebalance_proposals.py": "7 passed, 33 failed -- unchanged from generation 10's confirmed result: all 33 failures are the pre-existing CapitalBffAuthorityHarness / capital/service.py '_authority()' create_pool-method-unavailable harness-setup failure documented in pre_existing_functional_failures_confirmed_out_of_scope; not a regression from this generation's revert-only change (this generation touched zero lines in this file)."
+      }
+    }
+  },
+  "generation_12_response": {
+    "dispatch_instruction": "Independent review rejected PR #5961 (frozen head 6e161d7c326e32b75a31facfe124591c03df33e4) for two P1 defects: (1) AC3 remains unmet -- the live graph-aware scan honestly reports 5 non-allowlisted importers (tests/test_bff_b6_001_security_hardening.py, tests/test_bff_b6_003_nl_high_risk_refusal.py, tests/test_bff_b6_management_nl_ask.py, tests/test_management_nl_assistant_provider.py, tests/test_management_nl_single_owner.py); a bounded ceiling=5 gate passing is disclosure, not the required zero-importer proof, and closing it needs a Human/Ops artifact-contract/acceptance disposition for those 5 files plus the shared rebalance_authority_test_support.py helper, which this task's owner cannot self-authorize. (2) Required-status-check CI failed on historical commit 705a67bc0dc17a8e241c7a337211f33f3187d570: a wrapped prose line beginning with lowercase 'reviewer:' inside the Verified section was parsed by scripts/git/check_commit_trailers.py as a second, conflicting Reviewer trailer.",
+    "action_taken_ci_trailer_fix": "Fixed defect (2) without touching any reviewed file content. Rebuilt the 3-commit chain 705a67bc0..6e161d7c3 with `git commit-tree`, reusing each commit's original tree, author, committer, and timestamps unchanged and only rewording the offending paragraph in 705a67bc0's message (the wrapped 'named by the reviewer: test_pkt005...' line became 'named by the prior reviewer -- namely test_pkt005...', removing the false 'key: value' line-start pattern; no other line in any of the 3 messages changed). Verified byte-identical trees before and after (`git rev-parse HEAD^{tree}` unchanged) and reran the exact CI gate (`scripts/git/check_commit_trailers.py --range 64b59ea46daae61e2946e4fbda24be25da78a4a7..<new-head> --skip-merge --delivery-class product --task-id BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001`), which now reports zero problems across the whole PR range. The rewritten head replaces 6e161d7c326e32b75a31facfe124591c03df33e4 with a new SHA on the same task branch; no file content, review scope, or declared-artifact set changed.",
+    "defect_1_status": "Not resolved by this generation; not resolvable by this task's owner alone. Reconfirmed the reviewer's independent scan is exactly reproduced: live-scanned non-whitelisted main importers = the same 5 files, ceiling = 5, zero drift from the rejection's own findings. This restates generation 11's open_item_and_recommendation verbatim -- a Human/Ops artifact-contract expansion adding the 5 files and rebalance_authority_test_support.py, or acceptance of the proposed follow-up task BFF-MGMT-NL-B6-SEAM-MIGRATION-001, is required before AC3's zero-non-allowlisted-importers requirement can be satisfied. This task is blocked on that Human/Ops decision, not on further owner implementation.",
+    "verification": {
+      "commands": [
+        "python3 scripts/git/check_commit_trailers.py --range 64b59ea46daae61e2946e4fbda24be25da78a4a7..<new-head> --skip-merge --delivery-class product --task-id BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001",
+        ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
+        ".venv-pantheon/bin/python3 -c \"live-scan reproduction against bff_test_architecture_inventory.json's composition_allowlist\""
+      ],
+      "results": {
+        "check_commit_trailers": "no problems reported for the full base..head range (previously: non-canonical trailer casing + conflicting Reviewer trailer on 705a67bc0)",
+        "test_bff_test_architecture.py + test_pkt005_sse_substrate_contract.py": "34 passed, 3 warnings in 30.92s",
+        "live_scan_non_whitelisted_main_importers": "5 offenders (unchanged from the rejection's own independent finding): tests/test_bff_b6_001_security_hardening.py, tests/test_bff_b6_003_nl_high_risk_refusal.py, tests/test_bff_b6_management_nl_ask.py, tests/test_management_nl_assistant_provider.py, tests/test_management_nl_single_owner.py; ceiling=5"
       }
     }
   }
