@@ -487,5 +487,31 @@
       },
       "base": "919da9fcc7a809899b4d44425313264a30bf4a20"
     }
+  },
+  "generation_14_response_amended_acceptance_disposition": {
+    "dispatch_instruction": "Human/Ops disposition option (a), recorded on the canonical task row's `next` field: this task's acceptance is amended to accept its current honestly-disclosed residual state as the terminal outcome. The 2 remaining non-allowlisted importers (tests/test_bff_b6_001_security_hardening.py and tests/test_management_nl_assistant_provider.py) stay recorded as real offenders with their documented main.py collaborators, and composition_allowlist stays at its current 19 entries. This task is NOT required to reach zero non-allowlisted importers and is NOT required to shrink composition_allowlist back to 15. Both obligations transfer to BFF-MGMT-NL-B6-SEAM-MIGRATION-001, which Human/Ops has opened to extract the two named main.py-exclusive collaborators (_assistant_provider_list/_assistant_provider_usage_summary and the telemetry/persona-fleet projection DI wiring) and then restore the 15-entry composition_allowlist baseline.",
+    "amended_acceptance_statement": "AC3 ('prove there are zero remaining non-allowlisted BFF main importers') is amended for this task from a zero-importer requirement to a disclose-and-transfer requirement: the live-scanned residual list and count must be honest and exact, the ceiling must match the true live-scanned count (not be raised as a substitute for migration), composition_allowlist must not gain any new entries, and the unresolved production-seam gap must be handed to a named successor task rather than left silently open. This task's terminal state satisfies that amended bar; it does not satisfy the original zero-importer bar, and this document does not claim that it does.",
+    "residual_non_allowlisted_importers_at_this_head": [
+      "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+      "services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
+    ],
+    "successor_task_id": "BFF-MGMT-NL-B6-SEAM-MIGRATION-001",
+    "true_live_scan_count_at_this_head": 2,
+    "composition_allowlist_size_at_this_head": 19,
+    "live_scan_non_whitelisted_main_importer_ceiling_at_this_head": 2,
+    "head_commit": "2d73162131f65cf18716938d30cce6f3a789c9dd",
+    "reconfirmation_verification_at_this_head": {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/venv-bff-test/bin/python python3 scripts/dev/provision_python_distribution.py; then .venv-pantheon/bin/python3 -m pytest -q <each file standalone>",
+      "results": {
+        "test_bff_b6_001_security_hardening.py": "5 passed",
+        "test_bff_b6_003_nl_high_risk_refusal.py": "7 passed",
+        "test_bff_b6_management_nl_ask.py": "16 passed",
+        "test_management_nl_single_owner.py": "10 passed",
+        "test_management_nl_assistant_provider.py": "65 passed",
+        "test_bff_test_architecture.py": "14 passed"
+      },
+      "note": "Standalone per-file counts reproduce generation_13_response.verification.per_file_standalone exactly at this exact head. A combined run of all 6 files together reproduces the same documented cross_file_test_order_finding (test_provider_enabled_invokes_openclaw_with_tenant_scoped_context reads stale portfolio telemetry when run in the same session as test_bff_b6_001_security_hardening.py); this is the pre-existing ports/read_surface_ports.py delegate-forwarding MRO gap already disclosed in generation_13_response, not a regression, and this task's acceptance is satisfied by per-file pytest invocations, the same bar prior generations were reviewed and accepted against.",
+      "inventory_reproduction": "services/control-plane/bff/tests/bff_test_architecture_inventory.json at this head: composition_allowlist has 19 entries, live_scan_non_whitelisted_main_importer_ceiling=2, live_scan_non_whitelisted_main_importers=['tests/test_bff_b6_001_security_hardening.py', 'tests/test_management_nl_assistant_provider.py'] -- matches this section's declared counts exactly."
+    }
   }
 }
