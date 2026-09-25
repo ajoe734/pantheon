@@ -565,5 +565,70 @@
     "files_changed": {
       "services/control-plane/bff/test_bff_promotion_review_governance.py": "0ec329d4bbf39c19da8bd308b96fd7759a22cffd"
     }
+  },
+  "generation_17_response_amended_ac2_disposition_and_evidence_correction": {
+    "dispatch_instruction": "Human/Ops disposition option (3), recorded on the canonical task row's `next` field: the owner's diagnosis was independently verified at origin/dev and confirmed correct -- the tenant filter at personas/service.py:2288 fail-closes on records with no owner tenant, the PM12 recommendation near line 12344 requires overall score at or above 85, and PromotionReviewTestReadPorts (this file's own fixture) seeds lifecycle_state=active with zero occurrences of tenant_id, so `/bff/management/promotion-reviews` necessarily returns an empty items list and `_first_review` (line 429) cannot pass. The controlled experiment restoring the unmodified pre-migration file (base 64b59ea46daae61e2946e4fbda24be25da78a4a7) unmodified and observing the identical failure is accepted as proof this predates the migration. AC2 is amended: the promotion-review-list-dependent tests in test_bff_promotion_review_governance.py are scoped OUT of this task's acceptance and transfer to BFF-MGMT-READ-DEFECT-REPAIR-001 (opened by Human/Ops), which also owns the two related defects the reviewer found in management_read_models/service.py (~line 3874, promotion-review records bound but never returned so a partial read reports ok with empty items) and core/app_factory.py (~line 909, run_management_read injected into create_management_router with no capacity/executor so no production concurrency bound exists). This task must not attempt those repairs and must not edit production. Every assertion genuinely restored against the real extracted owner in generations 15-16 stays in place unchanged. The AC3 residual-importer disposition (generation_14_response_amended_acceptance_disposition) stays accepted and is not reopened here.",
+    "amended_acceptance_statement": "AC2 ('restore the guarantees the weakened tests dropped ... against the real extracted production owner') is amended for this task from a fully-green-file requirement to a disclose-and-transfer requirement for the subset of test_bff_promotion_review_governance.py that depends on production defects this test-only task may not repair (AC1 forbids editing main.py or other production source). The 21 currently-failing tests below stay exactly as committed at this head -- none deleted, weakened, skipped, or xfailed -- and their fix is transferred in full to BFF-MGMT-READ-DEFECT-REPAIR-001, whose own acceptance criteria explicitly takes 'the previous owner measured 21 failed and 6 passed at head 35fe76128' as its starting baseline. This task's terminal state satisfies that amended bar; it does not claim the file is fully green, and this document does not claim that it does.",
+    "promotion_review_list_dependent_tests_scoped_out": {
+      "successor_task_id": "BFF-MGMT-READ-DEFECT-REPAIR-001",
+      "count": 21,
+      "reason_by_group": {
+        "fails_directly_on_first_review_helper_or_list_detail_read_returning_empty_data_items_line_429_or_528": {
+          "root_cause": "personas/service.py:2288 tenant fail-close + PM12 recommendation threshold (~line 12344) + this file's own PromotionReviewTestReadPorts fixture seeding lifecycle_state=active with no tenant_id -- confirmed pre-existing by restoring the unmodified pre-migration file and observing the identical failure.",
+          "tests": [
+            "test_promotion_reviews_list_and_detail_are_readable_by_operator",
+            "test_quarterly_recommendation_submit_creates_promotion_review_inbox_item",
+            "test_quarterly_recommendation_submit_rejects_caller_source_snapshot_tampering",
+            "test_quarterly_recommendation_submit_rejects_tuple_tampering_before_and_on_replay",
+            "test_generic_quarterly_submit_paths_reject_unadmitted_or_tampered_tuple",
+            "test_generic_command_does_not_block_trusted_semantic_submission",
+            "test_human_inbox_keeps_durable_promotion_review_visible_despite_persona_readiness_timeout",
+            "test_promotion_review_decision_requires_prior_submit",
+            "test_promotion_review_approve_submits_human_gate_command",
+            "test_promotion_review_approve_with_conditions_preserves_conditions_and_rationale",
+            "test_promotion_review_reject_requires_non_empty_rationale",
+            "test_promotion_review_decision_requires_approver_or_admin_role",
+            "test_promotion_review_idempotency_replay_has_no_direct_live_mutation"
+          ]
+        },
+        "fails_in_the_shared_append_command_helper_line_501_nameerror_command_store": {
+          "root_cause": "This file's module-level _append_command helper (line 492) references `command_store` as a free variable instead of a parameter; every _isolated_client-scoped test binds `command_store` as a local, so calling _append_command from these four tests raises NameError regardless of the promotion-reviews-list defect. A distinct pre-existing test-file authoring gap in the same file this task may migrate but not otherwise repair -- transferred alongside the list-dependent group rather than left half-triaged, since BFF-MGMT-READ-DEFECT-REPAIR-001's own acceptance takes this file's full 21-failed/6-passed count as its baseline.",
+          "tests": [
+            "test_human_inbox_promotion_projection_reads_command_log_once",
+            "test_human_inbox_omits_inconsistent_generic_snapshot_and_private_evidence",
+            "test_human_inbox_legacy_snapshotless_submission_is_safe_and_minimal",
+            "test_human_inbox_omits_failed_promotion_submission"
+          ]
+        },
+        "other_pre_existing_functional_drift_in_the_same_file": {
+          "root_cause": "Route-shape/store-shape drift between the declared test file and current production surfaces, independent of the promotion-reviews-list defect but within the same file and already partly disclosed in pre_existing_functional_failures_confirmed_out_of_scope (test_command_store_caching's missing CommandStore._cache). Not investigated further here per the Human/Ops instruction not to attempt repairs; transferred with the rest of this file's failing set to the successor task, which owns triage and repair of all three named production defects plus whatever else its own investigation finds.",
+          "tests": [
+            "test_human_inbox_ignores_decision_with_mismatched_target_aliases",
+            "test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one",
+            "test_human_inbox_filtered_local_snapshot_empty_remains_degraded",
+            "test_command_store_caching"
+          ]
+        }
+      }
+    },
+    "generation_16_evidence_overclaim_correction": {
+      "reviewer_flagged_line": "generation_16_response_p1_ac2_partial_and_saturation_restoration.verification.results.targeted_new_tests stated: 'the relabeling mechanism itself (meta.partial, surfaces.persona_readiness.reason) is independently proven by the sibling test above using the same store methods without depending on the broken promotion-reviews list.'",
+      "why_this_overclaimed": "The named sibling test, test_human_inbox_degrades_cleanly_when_persona_readiness_blocks, exercises a different, coarser code path (a genuinely *blocked* store.list_personas call caught only by the outer whole-call run_management_read budget) and asserts surfaces.human_inbox.status/reason with data.items == []. It never asserts meta.partial, never asserts surfaces.persona_readiness.status or .reason, and by its own docstring explicitly does not preserve durable items. It therefore does not prove the per-contributor relabeling/durable-item-preservation mechanism that test_human_inbox_keeps_durable_promotion_review_visible_despite_persona_readiness_timeout exists to assert; the two tests prove two different, non-substitutable guarantees.",
+      "corrected_statement": "The per-contributor relabeling mechanism (meta.partial, surfaces.persona_readiness.status=degraded, surfaces.persona_readiness.reason=read_timeout, durable promotion-review item retained in data.items) is asserted only by test_human_inbox_keeps_durable_promotion_review_visible_despite_persona_readiness_timeout. That mechanism was independently confirmed real by direct source read of management_read_models/service.py and router.py plus a standalone reproduction of the relabel/partial behavior, but the test's own end-to-end assertion does not currently pass in this sandbox -- it fails on `_first_review`'s `assert items` (line 429), the same pre-existing promotion-reviews-list defect documented above, now scoped to BFF-MGMT-READ-DEFECT-REPAIR-001. No test in this file currently proves the full guarantee end-to-end; this document no longer claims otherwise.",
+      "also_corrects": "The adjacent 'full_file' verification line's characterization of the file's 21 pre-existing failures as merely 'unrelated to this generation's changes' is accurate but incomplete without this generation_17 disposition explaining which production defects they trace to and who now owns fixing them; that gap is closed by promotion_review_list_dependent_tests_scoped_out above."
+    },
+    "no_production_or_test_behavior_changed": "Only this evidence.json changed in this generation. No file in the task's declared artifacts other than this manifest was edited; no test assertion, fixture, or production source was added, removed, or weakened. This is a disclosure and disposition-recording generation only.",
+    "verification": {
+      "commands": [
+        ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py",
+        "git status --short",
+        "git diff --check"
+      ],
+      "results": {
+        "test_bff_promotion_review_governance.py": "21 failed, 6 passed -- identical set (by name) to generation 16's committed head 35fe76128, confirming this evidence-only generation introduced no behavioral change.",
+        "git_status": "only this evidence.json modified.",
+        "git_diff_check": "clean."
+      }
+    }
   }
 }
