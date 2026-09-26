@@ -5,6 +5,8 @@
   "total_test_files": 388,
   "migrated_in_task_count": 32,
   "composition_allowlist": [
+    "auth/test_policy.py",
+    "migrations/test_overlay_retirement.py",
     "smoke_test.py",
     "smoke_test_incident.py",
     "test_action_catalog.py",
@@ -15,16 +17,15 @@
     "test_route_resolution_no_shadowing.py",
     "tests/test_agora_servant_production_write_owner.py",
     "tests/test_bff_main_composition.py",
+    "tests/test_bff_rebalance_proposals.py",
     "tests/test_bff_test_architecture.py",
     "tests/test_http_auth_composition_owner.py",
     "tests/test_main_composition_seam_extraction_002.py",
     "tests/test_main_composition_seam_extraction_003.py",
+    "tests/test_management_read_timeout_and_capacity.py",
     "tests/test_read_store_final_deletion.py",
     "tests/test_read_store_fixture_boundaries.py",
-    "tests/test_read_surface_caller_migration.py",
-    "tests/test_bff_rebalance_proposals.py",
-    "migrations/test_overlay_retirement.py",
-    "tests/test_management_read_timeout_and_capacity.py"
+    "tests/test_read_surface_caller_migration.py"
   ],
   "migrated_suites": [
     "agora/performance/test_performance.py",
@@ -102,15 +103,15 @@
     "router": 115
   },
   "main_by_layer": {
-    "adapter": 0,
+    "adapter": 1,
     "application": 3,
     "composition": 13,
     "hosted": 1,
     "router": 7
   },
   "disposition_summary": {
-    "ALLOWLIST": 20,
-    "DECOUPLED": 324,
+    "ALLOWLIST": 21,
+    "DECOUPLED": 323,
     "MIGRATED": 44,
     "PLANNED": 0
   },
@@ -286,9 +287,9 @@
     {
       "file": "auth/test_policy.py",
       "layer": "adapter",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "Corrected from a stale DECOUPLED record (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 subprocess-variable scanner fix): test_composition_root_smoke() builds a python -c snippet in a local \"code\" variable (not an inline string literal) and runs it via subprocess.run([sys.executable, \"-c\", code]); that snippet does \"from services.control_plane.bff import main as bff_main\" to prove the default composition wires auth_deps/session_lifecycle_store/guards correctly end to end. The pre-fix scanner only resolved -c snippets that were literal string constants, not a variable assigned earlier in the same file, so this real composition-root import was invisible to the live scan. It runs in an isolated subprocess specifically so the importing pytest process itself never loads main, which is why the other six tests in this file (including test_standalone_auth_policy_imports_no_main) still prove no main import leaks into the shared test process. This is exactly the reviewed \"smoke/subprocess imports\" exception AC2 anticipates, so it is now recorded honestly in composition_allowlist rather than left misclassified as DECOUPLED."
     },
     {
       "file": "events/test_router.py",

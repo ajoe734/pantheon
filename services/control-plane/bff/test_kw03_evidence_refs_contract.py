@@ -65,13 +65,15 @@ def _seeded_client():
     os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
     os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     app = _build_test_app(create_seeded_knowledge_read_ports())
-    with TestClient(app) as client:
-        yield client
-    for key, value in tracked_env.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        for key, value in tracked_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @contextmanager
@@ -246,13 +248,15 @@ def _service_backed_client():
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
 
         app = _build_test_app(create_environment_knowledge_read_ports())
-        with TestClient(app) as client:
-            yield client
-        for key, value in tracked_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+        try:
+            with TestClient(app) as client:
+                yield client
+        finally:
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def test_kw03_list_and_detail_return_contract_shape_with_degraded_fallback() -> None:

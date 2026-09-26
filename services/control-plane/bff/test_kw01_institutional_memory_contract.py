@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 import json
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
@@ -49,21 +49,13 @@ def _build_test_app(read_store: Any) -> FastAPI:
             **kwargs,
         )
 
-    def _test_bff_error(status_code: int, code: Any, message: str, reason: str, **kwargs: Any) -> HTTPException:
-        details_extra = dict(kwargs.get("details_extra") or {})
-        if "does not exist" in reason:
-            parts = reason.split()
-            if len(parts) >= 3 and parts[0] == "Research" and parts[1] == "record":
-                details_extra["entry_id"] = parts[2]
-        return auth_policy.bff_error(status_code, code, message, reason, details_extra=details_extra, **kwargs)
-
     app.include_router(
         create_research_router(
             read_surface=read_store,
             extract_identity=auth_policy.extract_identity,
             require_read_role=auth_policy.require_read_role,
             require_operator_role=auth_policy.require_operator_role,
-            bff_error=_test_bff_error,
+            bff_error=auth_policy.bff_error,
             utc_now=utc_now,
             dataset_surface_status=_test_dataset_surface_status,
         )
@@ -84,13 +76,15 @@ def _seeded_client():
     os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
     os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     app = _build_test_app(create_seeded_knowledge_read_ports())
-    with TestClient(app) as client:
-        yield client
-    for key, value in tracked_env.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        for key, value in tracked_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @contextmanager
@@ -140,13 +134,15 @@ def _service_backed_client():
         os.environ["PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE"] = str(memory_store)
 
         app = _build_test_app(create_environment_knowledge_read_ports())
-        with TestClient(app) as client:
-            yield client
-        for key, value in tracked_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+        try:
+            with TestClient(app) as client:
+                yield client
+        finally:
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 @contextmanager
@@ -198,8 +194,10 @@ def _memory_service_data_dir_client():
         os.environ.pop("PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE", None)
 
         app = _build_test_app(create_environment_knowledge_read_ports())
-        with TestClient(app) as client:
-            yield client
+        try:
+            with TestClient(app) as client:
+                yield client
+        finally:
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -365,4 +363,4 @@ def test_kw01_detail_returns_404_without_service_store_even_if_local_snapshot_is
         assert response.status_code == 404, response.text
         payload = response.json()
         assert payload["error"]["code"] == "RESOURCE_NOT_FOUND"
-        assert payload["error"]["details"]["entry_id"] == ENTRY_ID
+        assert payload["error"]["details"]["reason"] == f"Research record {ENTRY_ID} does not exist"
