@@ -15,7 +15,7 @@ import uuid
 import sys as _sys
 from collections import deque
 from copy import deepcopy
-from concurrent.futures import Executor, ThreadPoolExecutor
+from concurrent.futures import Executor, ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -254,6 +254,7 @@ from .personas.service import (
     _persona_provisioning_store,
     _persona_record_for_provisioning,
     _persona_record_tenant_id,
+    _promotion_review_find,
     _reconcile_persona_provisioning_compensation,
     _register_persona_cron_required,
     _remove_persona_cron_required,
@@ -1312,40 +1313,7 @@ def _deployment_review_href(plan_id: str) -> str:
     return f"{_OPERATOR_DEPLOYMENT_REVIEW_ROUTE}?plan={plan_id}"
 def _incident_detail_href(incident_id: str) -> str:
     return f"{_OPERATOR_INCIDENT_HOME_ROUTE}/{incident_id}"
-def _runtime_command_context(runtime_id: str, incident_id: Optional[str] = None) -> Dict[str, Optional[str]]:
-    runtime_binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
-    binding_id = None
-    capital_pool_id = None
-    artifact_id = None
-    artifact_version = None
-    plan_id = None
-
-    if runtime_binding:
-        binding_id = str(runtime_binding.get("id") or runtime_binding.get("binding_id") or runtime_id)
-        capital_pool_id = runtime_binding.get("capital_pool_id")
-        artifact_id = runtime_binding.get("artifact_id")
-        artifact_version = runtime_binding.get("artifact_version")
-        plan_id = runtime_binding.get("plan_id")
-
-    if incident_id:
-        incident = read_store.get_incident(incident_id)
-        if incident and str(incident.get("runtime_id") or "") == runtime_id:
-            capital_pool_id = capital_pool_id or incident.get("capital_pool_id")
-            artifact_id = artifact_id or incident.get("artifact_id")
-            artifact_version = artifact_version or incident.get("artifact_version")
-
-    if plan_id and not capital_pool_id:
-        plan = read_store.get_deployment_plan(plan_id)
-        if plan:
-            capital_pool_id = plan.get("capital_pool_id")
-
-    return {
-        "runtime_id": runtime_id,
-        "runtime_binding_id": binding_id or runtime_id,
-        "capital_pool_id": capital_pool_id,
-        "artifact_id": artifact_id,
-        "artifact_version": artifact_version,
-    }
+from .command_adapters.service import _runtime_command_context
 def _validate_drawer_runtime_target(cmd: OperatorCommand) -> None:
     if cmd.command not in _DRAWER_RUNTIME_COMMANDS:
         return
@@ -2654,79 +2622,7 @@ from .command_adapters.preconditions import (
     _validate_hard_rollback,
     _validate_issue_safe_mode,
 )
-def _derive_drawer_execution_params(
-    command: CommandType,
-    runtime_id: str,
-    params: Dict[str, Any],
-    *,
-    actor_id: Optional[str],
-    reason: Optional[str],
-    incident_id: Optional[str],
-) -> Dict[str, Any]:
-    context = _runtime_command_context(runtime_id, incident_id)
-    base = {
-        "runtime_id": runtime_id,
-        "runtime_binding_id": context["runtime_binding_id"],
-        "capital_pool_id": context["capital_pool_id"],
-        "actor_id": actor_id or "operator-command",
-        "reason": reason or "",
-        "incident_id": incident_id,
-    }
-
-    if command == CommandType.PAUSE_EXECUTION:
-        return {
-            **base,
-            "pause_action": "pause",
-            "pause_new_entries": params["pause_new_entries"],
-            "cancel_open_orders": params["cancel_open_orders"],
-        }
-
-    if command == CommandType.ISSUE_RISK_OFF:
-        if not context["capital_pool_id"]:
-            raise ValueError(
-                f"Runtime {runtime_id} cannot be routed to a capital pool."
-            )
-        return {
-            **base,
-            "scope": "pool",
-            "scope_id": context["capital_pool_id"],
-            "action_override": "risk_off",
-            "trigger_reason": "operator_emergency_stop",
-            "reduce_exposure_pct": params["reduce_exposure_pct"],
-        }
-
-    if command == CommandType.LIQUIDATE_ALL:
-        if not context["capital_pool_id"]:
-            raise ValueError(
-                f"Runtime {runtime_id} cannot be routed to a capital pool."
-            )
-        return {
-            **base,
-            "scope": "pool",
-            "scope_id": context["capital_pool_id"],
-            "action_override": "liquidate",
-            "trigger_reason": "operator_emergency_stop",
-        }
-
-    if command == CommandType.HARD_ROLLBACK:
-        return {
-            **base,
-            "rollback_target_type": "runtime",
-            "target_id": context["runtime_binding_id"],
-            "rollback_to_version": params["target_artifact_id"],
-            "rollback_action_type": "pause_then_replace",
-            "target_artifact_id": params["target_artifact_id"],
-        }
-
-    if not context["capital_pool_id"]:
-        raise ValueError(
-            f"Runtime {runtime_id} cannot be routed to a capital pool."
-        )
-    return {
-        **base,
-        "safe_mode_level": params["safe_mode_level"],
-        "target_state": "guarded",
-    }
+from .command_adapters.service import _derive_drawer_execution_params
 
 
 from .command_adapters.service import stored_command_params as _stored_command_params
@@ -2814,41 +2710,7 @@ def _persist_admitted_command_with_confirm_token(
         confirmation_request_hash=_stable_json_hash(confirmation_request),
         operator_id=identity.operator_id,
     )
-def _resolve_execution_params_for_record(record: Dict[str, Any]) -> Dict[str, Any]:
-    command_type = CommandType(record["type"])
-    params = dict(record.get("params") or {})
-    if command_type not in _DRAWER_RUNTIME_COMMANDS:
-        if command_type in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
-            params.update(entity_type="Runtime", action_id=command_type.value, actionId=command_type.value)
-            target = record.get("target") or {}
-            rt_id = str(target.get("id") or "").strip()
-            # Discard caller-supplied verified_binding/verified_binding_id;
-            # server resolve authoritative owner both admission and execution;
-            # never replace immutable target with binding.runtime_id.
-            params.pop("verified_binding", None)
-            params.pop("verified_binding_id", None)
-            params.pop("verified_runtime_binding_id", None)
-            if rt_id:
-                params["runtime_id"] = rt_id
-                params["entity_id"] = rt_id
-                params.pop("runtimeId", None)
-                params.pop("entityId", None)
-        return params
-
-    target = record.get("target") or {}
-    audit = record.get("audit") or {}
-    runtime_id = str(target.get("id") or "").strip()
-    if not runtime_id:
-        raise ValueError(f"{command_type.value} is missing target.id.")
-
-    return _derive_drawer_execution_params(
-        command_type,
-        runtime_id,
-        params,
-        actor_id=audit.get("operator_id"),
-        reason=audit.get("reason"),
-        incident_id=audit.get("incident_id"),
-    )
+from .command_adapters.service import _resolve_execution_params_for_record
 from .pm12.service import (
     _pm12_resolve_quarterly_recommendation_submit_params,
 )
@@ -3243,325 +3105,16 @@ def _split_csv_query(value: Optional[str]) -> Optional[List[str]]:
         return None
     tokens = [token.strip() for token in value.split(",") if token.strip()]
     return tokens or None
-def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if not summary:
-        return None
-    projected = {
-        "window": summary.get("window"),
-        "collected_at": summary.get("collected_at"),
-        "metrics": {
-            "pnl": summary.get("pnl"),
-            "drawdown": summary.get("drawdown"),
-            "sharpe_ratio": summary.get("sharpe_ratio"),
-            "fill_rate": summary.get("fill_rate"),
-            "avg_slippage_bps": summary.get("avg_slippage_bps"),
-            "total_trades": summary.get("total_trades"),
-        },
-    }
-    for key in (
-        "runtime_binding_id",
-        "binding_id",
-        "deployment_stage",
-        "state",
-        "last_heartbeat_at",
-        "last_event_at",
-        "last_event_type",
-        "engine_bridge_repo",
-        "engine_bridge_commit",
-        "engine_bridge_path",
-        "runtime_adapter_version",
-        "health_summary",
-        "projection_source",
-        "projection_updated_at",
-        "staleness",
-        "executed_trade_count",
-        "position_count",
-        "positions",
-        "last_fill",
-    ):
-        if key in summary:
-            projected[key] = summary.get(key)
-    return projected
-def _project_runtime_state_monitoring_session(session: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if not session:
-        return None
-    projected: Dict[str, Any] = {}
-    for key in (
-        "session_id",
-        "session_type",
-        "binding_id",
-        "runtime_binding_id",
-        "runtime_id",
-        "deployment_stage",
-        "status",
-        "active",
-        "started_at",
-        "ended_at",
-        "ended_reason",
-        "terminal_reason",
-        "last_heartbeat_at",
-        "heartbeat_status",
-        "stale_after_seconds",
-        "restart_count",
-        "staleness",
-        "last_error",
-    ):
-        if key in session:
-            projected[key] = session.get(key)
-    terminal_reason = _runtime_state_monitoring_terminal_reason(session)
-    if terminal_reason and "terminal_reason" not in projected:
-        projected["terminal_reason"] = terminal_reason
-    return projected
-def _project_runtime_state_latest_rollback(rollbacks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if not rollbacks:
-        return None
-    latest = max(
-        rollbacks,
-        key=lambda rollback: (
-            rollback.get("completed_at")
-            or rollback.get("executed_at")
-            or rollback.get("initiated_at")
-            or ""
-        ),
-    )
-    return {
-        "rollback_id": latest.get("rollback_id") or latest.get("id"),
-        "action_type": latest.get("action_type"),
-        "status": latest.get("status"),
-        "from_version": latest.get("from_version"),
-        "to_version": latest.get("to_version"),
-        "initiated_at": latest.get("initiated_at"),
-        "completed_at": latest.get("completed_at") or latest.get("executed_at"),
-    }
-def _runtime_state_row_health_check(
-    status: str,
-    *,
-    source: str,
-    message: Optional[str] = None,
-    applies: bool = True,
-) -> Dict[str, Any]:
-    check: Dict[str, Any] = {
-        "status": status,
-        "source": source,
-        "applies": applies,
-    }
-    if message:
-        check["message"] = message
-    return check
-def _runtime_state_monitoring_terminal_reason(
-    session: Optional[Dict[str, Any]],
-) -> Optional[str]:
-    if not session:
-        return None
-    for key in ("terminal_reason", "ended_reason"):
-        value = str(session.get(key) or "").strip()
-        if value:
-            return value
-    staleness = session.get("staleness")
-    if isinstance(staleness, dict):
-        reason = str(staleness.get("reason") or "").strip()
-        if reason:
-            return reason
-        status = str(staleness.get("status") or "").strip().lower()
-        if status == "stale":
-            return "stale_monitoring_session"
-    status = str(session.get("status") or "").strip().lower()
-    if status in {"ended", "stale", "failed"}:
-        return status
-    return None
-def _runtime_state_monitoring_health_check(
-    monitoring_session: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    if monitoring_session is None:
-        return _runtime_state_row_health_check(
-            "unavailable",
-            source="paper_runtime_monitoring_sessions",
-            message="Paper runtime monitoring session is unavailable for this runtime.",
-        )
-    terminal_reason = _runtime_state_monitoring_terminal_reason(monitoring_session)
-    inactive = monitoring_session.get("active") is False
-    ended = monitoring_session.get("ended_at") not in (None, "")
-    if terminal_reason or inactive or ended:
-        reason = terminal_reason or "inactive_monitoring_session"
-        return _runtime_state_row_health_check(
-            "degraded",
-            source="paper_runtime_monitoring_sessions",
-            message=f"Paper runtime monitoring session is terminal: {reason}.",
-        )
-    return _runtime_state_row_health_check(
-        "ok",
-        source="paper_runtime_monitoring_sessions",
-    )
-def _derive_runtime_state_row_health(
-    *,
-    binding: Dict[str, Any],
-    telemetry_summary: Optional[Dict[str, Any]],
-    monitoring_session: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    deployment_stage = str(
-        binding.get("deployment_stage") or binding.get("deployment_mode") or ""
-    ).lower()
-    checks: Dict[str, Dict[str, Any]] = {
-        "runtime_binding": _runtime_state_row_health_check(
-            "ok",
-            source="runtime_bindings",
-        ),
-        "telemetry_summary": (
-            _runtime_state_row_health_check("ok", source="telemetry_summaries")
-            if telemetry_summary is not None
-            else _runtime_state_row_health_check(
-                "unavailable",
-                source="telemetry_summaries",
-                message="Telemetry summary row is unavailable for this runtime.",
-            )
-        ),
-    }
-    if deployment_stage == "paper":
-        checks["paper_runtime_monitoring"] = _runtime_state_monitoring_health_check(
-            monitoring_session
-        )
-    else:
-        checks["paper_runtime_monitoring"] = _runtime_state_row_health_check(
-            "ok",
-            source="not_applicable",
-            applies=False,
-            message="Paper runtime monitoring applies only to paper runtimes.",
-        )
-
-    degraded_checks = [
-        key
-        for key, check in checks.items()
-        if check.get("applies", True) and check.get("status") != "ok"
-    ]
-    return {
-        "status": "degraded" if degraded_checks else "ok",
-        "checks": checks,
-        "degraded_checks": degraded_checks,
-    }
-def _derive_runtime_state_last_updated_at(
-    binding: Dict[str, Any],
-    telemetry_summary: Optional[Dict[str, Any]],
-    latest_rollback: Optional[Dict[str, Any]],
-    monitoring_session: Optional[Dict[str, Any]],
-) -> Optional[str]:
-    candidates = [
-        binding.get("last_updated_at"),
-        binding.get("updated_at"),
-        binding.get("started_at"),
-        binding.get("created_at"),
-        (telemetry_summary or {}).get("last_heartbeat_at"),
-        (telemetry_summary or {}).get("last_event_at"),
-        (telemetry_summary or {}).get("collected_at"),
-        (latest_rollback or {}).get("completed_at"),
-        (latest_rollback or {}).get("initiated_at"),
-        (monitoring_session or {}).get("last_heartbeat_at"),
-        (monitoring_session or {}).get("ended_at"),
-        (monitoring_session or {}).get("started_at"),
-    ]
-    values = [candidate for candidate in candidates if candidate]
-    if not values:
-        return None
-    return max(values)
-def _project_operator_runtime_state_row(
-    binding: Dict[str, Any],
-    *,
-    telemetry_summary_record: Optional[Dict[str, Any]] = None,
-    monitoring_session_record: Optional[Dict[str, Any]] = None,
-    prefetched: bool = False,
-) -> Dict[str, Any]:
-    runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
-    runtime_binding_id = (
-        binding.get("runtime_binding_id")
-        or binding.get("binding_id")
-        or binding.get("id")
-    )
-    telemetry_observation: Optional[Dict[str, Any]] = None
-    if prefetched:
-        raw_telemetry_summary = telemetry_summary_record
-    else:
-        # Route through the purpose-built owner-observation accessor instead
-        # of a bare store call: it never raises (a failed read is reported
-        # as a typed unavailable observation) and it preserves the owner's
-        # own status/degradation_reason/provenance instead of collapsing an
-        # explicitly degraded telemetry record into a healthy-looking blob.
-        raw_telemetry_summary, telemetry_observation = (
-            _management_ai_context_service.get_context_telemetry_summary(runtime_id)
-        )
-    telemetry_summary = _project_runtime_state_telemetry_summary(
-        raw_telemetry_summary
-    )
-    monitoring_observation: Optional[Dict[str, Any]] = None
-    if prefetched:
-        raw_monitoring_session = monitoring_session_record
-    else:
-        # Same purpose-built accessor pattern as telemetry above: a raised
-        # exception here must not blow past this row and discard every
-        # owner observation already collected by the caller.
-        raw_monitoring_session, monitoring_observation = (
-            _management_ai_context_service.get_context_monitoring_session(
-                runtime_id, str(runtime_binding_id or "")
-            )
-        )
-    monitoring_session = _project_runtime_state_monitoring_session(
-        raw_monitoring_session
-    )
-    rollbacks, rollback_observation = _management_ai_context_service.get_context_rollbacks(
-        runtime_id
-    )
-    latest_rollback = _project_runtime_state_latest_rollback(rollbacks)
-    artifact_id = binding.get("artifact_id")
-    artifact_version = binding.get("artifact_version") or binding.get("version")
-    plan_id = binding.get("plan_id")
-
-    return {
-        "runtime_id": runtime_id,
-        "runtime_binding_id": runtime_binding_id,
-        "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
-        "status": binding.get("status"),
-        "capital_pool_id": binding.get("capital_pool_id"),
-        "plan_ref": (
-            {
-                "plan_id": plan_id,
-                "href": _deployment_review_href(str(plan_id)),
-            }
-            if plan_id
-            else None
-        ),
-        "artifact_ref": (
-            {
-                "artifact_id": artifact_id,
-                "artifact_version": artifact_version,
-            }
-            if artifact_id or artifact_version
-            else None
-        ),
-        "telemetry_summary": telemetry_summary,
-        "telemetry_observation": telemetry_observation,
-        "monitoring_observation": monitoring_observation,
-        "rollback_observation": rollback_observation,
-        "executed_trade_count": (telemetry_summary or {}).get("executed_trade_count"),
-        "total_trades": ((telemetry_summary or {}).get("metrics") or {}).get("total_trades"),
-        "position_count": (telemetry_summary or {}).get("position_count"),
-        "positions": (telemetry_summary or {}).get("positions"),
-        "last_fill": (telemetry_summary or {}).get("last_fill"),
-        "paper_runtime_monitoring": monitoring_session,
-        "row_health": _derive_runtime_state_row_health(
-            binding=binding,
-            telemetry_summary=telemetry_summary,
-            monitoring_session=monitoring_session,
-        ),
-        "rollback_summary": {
-            "count": len(rollbacks),
-            "latest": latest_rollback,
-            "href": f"/api/v1/runtimes/{runtime_id}/rollbacks",
-        },
-        "last_updated_at": _derive_runtime_state_last_updated_at(
-            binding,
-            telemetry_summary,
-            latest_rollback,
-            monitoring_session,
-        ),
-    }
+from .assistant.management_service import (
+    _project_runtime_state_telemetry_summary,
+    _project_runtime_state_monitoring_session,
+    _project_runtime_state_latest_rollback,
+    _runtime_state_row_health_check,
+    _runtime_state_monitoring_terminal_reason,
+    _runtime_state_monitoring_health_check,
+    _derive_runtime_state_row_health,
+    _derive_runtime_state_last_updated_at,
+)
 def _highest_ranked_value(
     values: List[Optional[str]],
     order: Dict[str, int],
@@ -4002,26 +3555,11 @@ def _management_count_by(records: List[Dict[str, Any]], field: str) -> Dict[str,
         counts[value] = counts.get(value, 0) + 1
     return counts
 from .assistant.management_service import _management_json_clone
-_MANAGEMENT_CAMEL_KEY_RE = re.compile(r"[A-Z]")
-def _management_camel_to_snake_key(value: str) -> str:
-    value = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", value)
-    value = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
-    return value.lower()
-def _management_prune_camel_aliases(value: Any) -> Any:
-    """Keep snake_case when a dict carries both snake_case and camelCase aliases."""
-    if isinstance(value, list):
-        return [_management_prune_camel_aliases(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    keys = {key for key in value if isinstance(key, str)}
-    pruned: Dict[str, Any] = {}
-    for key, nested in value.items():
-        if isinstance(key, str) and _MANAGEMENT_CAMEL_KEY_RE.search(key):
-            snake_key = _management_camel_to_snake_key(key)
-            if snake_key in keys:
-                continue
-        pruned[key] = _management_prune_camel_aliases(nested)
-    return pruned
+from .assistant.management_service import (
+    _MANAGEMENT_CAMEL_KEY_RE,
+    _management_camel_to_snake_key,
+    _management_prune_camel_aliases,
+)
 _MANAGEMENT_RISK_LEVEL_ORDER = {
     "low": 1,
     "medium": 2,
@@ -4904,9 +4442,205 @@ from .personas.routes.common import (
     ManagementReadTimeout as _ManagementReadTimeout,
     ManagementReadSaturated as _ManagementReadSaturated,
     discard_late_management_read_result as _discard_late_management_read_result,
-    run_management_read,
+    run_management_read as _unbounded_run_management_read,
 )
+
+# BFF-MGMT-READ-DEFECT-REPAIR-001: production management-read capacity bound.
+#
+# `create_management_router(...)` (management_read_models/router.py) offloads
+# every GET route's aggregation onto a worker thread via a single injected
+# `run_management_read` callable (see core/app_factory.py's
+# `_dep("run_management_read")`). Previously that callable resolved straight
+# to `personas.routes.common.run_management_read`, whose `capacity`/
+# `executor` parameters default to `None` -- i.e. an *unbounded*
+# `asyncio.to_thread` fan-out with no concurrency ceiling in production.
+# Named, bounded slot pools (mirroring the existing
+# `_MANAGEMENT_DATA_SOURCES_READ_SLOTS` pattern above) give each read-heavy
+# surface a real, finite budget instead.
+_HUMAN_INBOX_READ_SLOT_COUNT = 4
+_HUMAN_INBOX_READ_SLOTS = threading.BoundedSemaphore(_HUMAN_INBOX_READ_SLOT_COUNT)
+_HUMAN_INBOX_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_HUMAN_INBOX_READ_SLOT_COUNT,
+    thread_name_prefix="bff-human-inbox-read",
+)
+
+_MANAGEMENT_COCKPIT_READ_SLOT_COUNT = 4
+_MANAGEMENT_COCKPIT_READ_SLOTS = threading.BoundedSemaphore(_MANAGEMENT_COCKPIT_READ_SLOT_COUNT)
+_MANAGEMENT_COCKPIT_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_MANAGEMENT_COCKPIT_READ_SLOT_COUNT,
+    thread_name_prefix="bff-mgmt-cockpit-read",
+)
+
+
+def _management_cockpit_read_timeout_seconds() -> float:
+    """Bound for the `/bff/management/cockpit` composition (independent of
+    the generic Management read timeout so cockpit-specific saturation can
+    be tuned/tested without moving every other surface's budget)."""
+    raw = os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS")
+    if raw is None or not raw.strip():
+        return _management_read_timeout_seconds()
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return _management_read_timeout_seconds()
+
+
+_MANAGEMENT_READ_DEFAULT_SLOT_COUNT = 8
+_MANAGEMENT_READ_DEFAULT_SLOTS = threading.BoundedSemaphore(_MANAGEMENT_READ_DEFAULT_SLOT_COUNT)
+_MANAGEMENT_READ_DEFAULT_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_MANAGEMENT_READ_DEFAULT_SLOT_COUNT,
+    thread_name_prefix="bff-mgmt-read",
+)
+
+
+async def _management_read_dispatch(
+    func: Any,
+    *args: Any,
+    timeout_seconds: Optional[float] = None,
+    capacity: Optional[threading.BoundedSemaphore] = None,
+    executor: Optional[Executor] = None,
+    **kwargs: Any,
+) -> Any:
+    """Bounded `run_management_read` used by every Management-read router.
+
+    Callers that already pick an explicit `capacity`/`executor` pair (e.g.
+    the Source Ingest registry read below) keep that choice untouched.
+    Callers that don't (the generic 17-route Management router, the
+    governance router, etc.) get dispatched to a named capacity pool/executor
+    pair by the target callable's name, so distinct surfaces (human-inbox
+    vs. cockpit vs. everything else) saturate independently -- one slow
+    surface cannot exhaust another surface's budget. Module-global lookups of
+    `_HUMAN_INBOX_READ_SLOTS` / `_MANAGEMENT_COCKPIT_READ_SLOTS` /
+    `_MANAGEMENT_READ_DEFAULT_SLOTS` happen at call time (not captured at
+    import time) so tests can substitute a smaller bound via
+    `monkeypatch.setattr(bff_main, "_HUMAN_INBOX_READ_SLOTS", ...)`.
+    """
+    if capacity is None and executor is None:
+        name = getattr(func, "__name__", "") or getattr(func, "__qualname__", "") or ""
+        if name in ("get_human_inbox", "_bounded_get_human_inbox"):
+            # BFF-MGMT-READ-DEFECT-REPAIR-001 acceptance item 7: the whole
+            # `/bff/management/human-inbox` composition no longer occupies
+            # `_HUMAN_INBOX_READ_SLOTS` itself -- that pool is the real
+            # per-contributor bound for the `persona_readiness` contributor
+            # inside `get_human_inbox` (see
+            # `_bounded_human_inbox_persona_readiness` below). Dispatching
+            # the whole-route call through the *same* BoundedSemaphore would
+            # starve the contributor: the outer acquire already holds the
+            # pool's only slot(s) when the contributor tries to acquire
+            # again from the same call stack, so it would always observe
+            # immediate (and spurious) saturation instead of ever running.
+            capacity, executor = _MANAGEMENT_READ_DEFAULT_SLOTS, _MANAGEMENT_READ_DEFAULT_EXECUTOR
+        elif "human_inbox" in name:
+            capacity, executor = _HUMAN_INBOX_READ_SLOTS, _HUMAN_INBOX_READ_EXECUTOR
+        elif "cockpit" in name:
+            capacity, executor = _MANAGEMENT_COCKPIT_READ_SLOTS, _MANAGEMENT_COCKPIT_READ_EXECUTOR
+        else:
+            capacity, executor = _MANAGEMENT_READ_DEFAULT_SLOTS, _MANAGEMENT_READ_DEFAULT_EXECUTOR
+    return await _unbounded_run_management_read(
+        func,
+        *args,
+        timeout_seconds=timeout_seconds,
+        capacity=capacity,
+        executor=executor,
+        **kwargs,
+    )
+
+
+
+# BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001 AC6: main.py must not redefine a
+# function that already has a canonical owner (`_unbounded_run_management_read`
+# / `personas.routes.common.run_management_read`). `_management_read_dispatch`
+# above is the composition-root wrapper (adds named capacity-pool dispatch);
+# bind it to the public `run_management_read` name via assignment rather than
+# a second `def run_management_read`, so `tests/test_main_composition_seam_extraction_003.py::
+# test_no_duplicate_definitions_in_main_py`'s AST scan (which only looks at
+# `ast.FunctionDef`/`ast.AsyncFunctionDef` nodes) sees no duplicate -- while
+# every caller (`_dep("run_management_read")`, `monkeypatch.setattr(bff_main,
+# "run_management_read", ...)`, etc.) still resolves the identical callable.
+run_management_read = _management_read_dispatch
 _run_management_read = run_management_read
+
+
+def _bounded_human_inbox_persona_readiness(
+    snapshot_at: str,
+    *,
+    read_store: Any = None,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Bounded `persona_readiness` contributor for `/bff/management/human-inbox`.
+
+    BFF-MGMT-READ-DEFECT-REPAIR-001 acceptance item 7: a timed-out or
+    capacity-saturated persona_readiness contributor must degrade on its
+    own (real `read_timeout` / `read_capacity_saturated` reasons, `meta`
+    partial) while sibling Human Inbox contributors (durable promotion
+    reviews, approvals, etc.) stay populated -- not a single all-or-nothing
+    bound around the whole route.
+
+    Runs `_build_persona_readiness_items` (module-global, so tests can
+    substitute a slow/blocked stand-in via
+    `monkeypatch.setattr(bff_main, "_build_persona_readiness_items", ...)`,
+    exactly like `_HUMAN_INBOX_READ_SLOTS`/`_MANAGEMENT_COCKPIT_READ_SLOTS`
+    above) on the dedicated `_HUMAN_INBOX_READ_EXECUTOR`, gated by
+    `_HUMAN_INBOX_READ_SLOTS` and `_human_inbox_surface_timeout_seconds()`.
+
+    This is a plain `concurrent.futures` bound rather than the asyncio
+    `run_management_read` above because callers include synchronous,
+    already-on-the-request-thread code paths
+    (`ManagementService.get_hiq_backlog`/`get_management_cockpit` both call
+    `get_human_inbox()` inline, sometimes directly on the FastAPI event
+    loop thread for `/bff/management/hiq-backlog`) where `asyncio.run()`
+    would raise "cannot be called from a running event loop".
+
+    Returns `(rows, degradation_reason)`; `degradation_reason` is `None` on
+    success, else `"read_timeout"` or `"read_capacity_saturated"`.
+    """
+    capacity = _HUMAN_INBOX_READ_SLOTS
+    executor = _HUMAN_INBOX_READ_EXECUTOR
+    timeout_budget = _human_inbox_surface_timeout_seconds()
+    build_fn = _build_persona_readiness_items
+    if not capacity.acquire(blocking=False):
+        return [], "read_capacity_saturated"
+    try:
+        future = executor.submit(build_fn, snapshot_at, read_store=read_store)
+    except BaseException:
+        capacity.release()
+        raise
+    future.add_done_callback(lambda _future: capacity.release())
+    try:
+        rows = future.result(timeout=timeout_budget)
+        return list(rows or []), None
+    except _FuturesTimeoutError:
+        future.add_done_callback(_discard_late_management_read_result_sync)
+        return [], "read_timeout"
+
+
+def _discard_late_management_read_result_sync(future: Any) -> None:
+    if future.cancelled():
+        return
+    exc = future.exception()
+    if exc is not None:
+        logging.getLogger(__name__).warning(
+            "bff.human_inbox_persona_readiness late worker-thread error after timeout budget: %r",
+            exc,
+        )
+
+
+def _build_management_cockpit_payload(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    """Named, patchable seam for the real `/bff/management/cockpit` composition.
+
+    Wraps the same production `ManagementService.get_management_cockpit`
+    callable the router used to call directly, so
+    `create_management_router` (management_read_models/router.py) can
+    resolve it live via `sys.modules` (mirroring
+    `_build_management_evidence_payload` below) and
+    `core/app_factory.py`'s `_dep("_build_management_cockpit_payload")` can
+    inject it -- giving tests a single, patchable, production-reachable
+    hook (`monkeypatch.setattr(bff_main, "_build_management_cockpit_payload",
+    ...)`) instead of a second cockpit implementation.
+    """
+    from .management_read_models.service import ManagementService
+    svc = ManagementService(get_read_store=lambda: read_store, utc_now=utc_now)
+    return svc.get_management_cockpit(*args, **kwargs)
+
 
 def _build_management_evidence_payload(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     from .management_read_models.service import ManagementService
@@ -4950,26 +4684,7 @@ async def _read_management_source_connector_registry(
             "reason": "read_timeout",
         }
 
-def _openclaw_client_error(exc: OpenClawOpsClientError) -> HTTPException:
-    status_code = exc.status_code or 502
-    if status_code == 404:
-        code = ErrorCode.RESOURCE_NOT_FOUND
-    elif status_code == 409:
-        code = ErrorCode.RESOURCE_CONFLICT
-    elif status_code == 403:
-        code = ErrorCode.PRECONDITION_FAILED
-    elif status_code >= 500:
-        code = ErrorCode.DEPENDENCY_UNAVAILABLE
-    else:
-        code = ErrorCode.VALIDATION_FAILED
-    return _bff_error(
-        status_code,
-        code,
-        exc.message,
-        exc.error_code,
-        precondition_failed="openclaw_adapter",
-        suggestion="Inspect GET /api/v1/operator/openclaw/ops for current adapter degradation state",
-    )
+from .assistant.management_service import _openclaw_client_error
 def _command_response_durable_meta(idempotency_key: str, *, replayed: bool) -> Dict[str, Any]:
     return {
         "durable": True,
@@ -6054,304 +5769,6 @@ from .pm12.service import (
     _pm12_performance_attribution_sources,
 )
 
-def _persona_fleet_runtime_matches(
-    runtime_binding: Dict[str, Any],
-    *,
-    binding_ids: set[str],
-    capital_pool_ids: set[str],
-    runtime_refs: set[str],
-) -> bool:
-    runtime_ids = {
-        str(runtime_binding.get(key) or "").strip()
-        for key in ("id", "binding_id", "runtime_binding_id", "runtime_id")
-    }
-    runtime_ids.discard("")
-    if runtime_ids.intersection(runtime_refs):
-        return True
-
-    persona_binding_id = str(runtime_binding.get("persona_capital_binding_id") or "").strip()
-    if persona_binding_id and persona_binding_id in binding_ids:
-        return True
-
-    capital_pool_id = str(runtime_binding.get("capital_pool_id") or "").strip()
-    if capital_pool_id and capital_pool_id in capital_pool_ids:
-        return True
-
-    plan_id = str(runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or "").strip()
-    if plan_id:
-        plan = read_store.get_deployment_plan(plan_id) or {}
-        plan_binding_ids = {
-            str(value).strip()
-            for value in (plan.get("binding_ids") or [])
-            if str(value).strip()
-        }
-        if plan_binding_ids.intersection(binding_ids):
-            return True
-        plan_pool_id = str(plan.get("capital_pool_id") or plan.get("target_pool_id") or "").strip()
-        if plan_pool_id and plan_pool_id in capital_pool_ids:
-            return True
-
-    return False
-def _project_persona_fleet_health(
-    *,
-    persona: Dict[str, Any],
-    runtime_bindings: List[Dict[str, Any]],
-    telemetry_summaries: List[Dict[str, Any]],
-    active_incidents: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    reasons: List[str] = []
-    lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
-    if lifecycle and not _is_persona_lifecycle_operational(lifecycle):
-        reasons.append("persona_lifecycle_not_active")
-    if not runtime_bindings:
-        reasons.append("no_runtime_binding")
-    if active_incidents:
-        reasons.append("active_incident")
-
-    latest_telemetry = telemetry_summaries[0] if telemetry_summaries else {}
-    drawdown = latest_telemetry.get("drawdown")
-    pnl = latest_telemetry.get("pnl")
-    try:
-        if drawdown is not None and float(drawdown) >= 0.10:
-            reasons.append("drawdown_threshold")
-    except (TypeError, ValueError):
-        pass
-    try:
-        if pnl is not None and float(pnl) <= -0.05:
-            reasons.append("negative_pnl")
-    except (TypeError, ValueError):
-        pass
-
-    runtime_statuses = {
-        str(binding.get("status") or "").strip().lower()
-        for binding in runtime_bindings
-        if str(binding.get("status") or "").strip()
-    }
-    unhealthy_runtime_statuses = sorted(runtime_statuses.difference({"active", "ready", "running", "idle"}))
-    if unhealthy_runtime_statuses:
-        reasons.append("runtime_status_attention")
-
-    status = "healthy"
-    severity = "low"
-    if active_incidents or "drawdown_threshold" in reasons:
-        status = "critical"
-        severity = "high"
-    elif reasons:
-        status = "degraded"
-        severity = "medium"
-
-    score = max(0, 100 - (35 if status == "critical" else 0) - (15 * max(len(reasons) - 1, 0)))
-    return {
-        "status": status,
-        "severity": severity,
-        "score": score,
-        "reasons": reasons,
-        "runtime_statuses": sorted(runtime_statuses),
-        "latest_telemetry_at": latest_telemetry.get("collected_at"),
-        "active_incident_count": len(active_incidents),
-    }
-def _project_persona_fleet_item(
-    raw_persona: Dict[str, Any],
-    *,
-    all_runtime_bindings: List[Dict[str, Any]],
-    all_incidents: List[Dict[str, Any]],
-    all_evolution_decisions: List[Dict[str, Any]],
-    telemetry_by_runtime_id: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]],
-    tenant_id: Optional[str] = None,
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
-    record_filter = lambda rows: _mgmt_nl_filter_tenant_records(rows, tenant_id)
-    strategies, strategies_obs = _management_ai_context_service.get_context_strategies_for_persona(
-        persona_id, record_filter=record_filter
-    )
-    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=len(strategies))
-
-    # Bindings and teaching sessions go through the same typed,
-    # exception-safe owner-projection accessor used for every other
-    # contributing owner: a raise here must degrade to a typed unavailable
-    # observation instead of unwinding the whole persona fleet surface and
-    # discarding every other persona/runtime/incident/evolution owner that
-    # already read successfully.
-    bindings, bindings_obs = _management_ai_context_service.get_context_bindings_for_persona(
-        persona_id, record_filter=record_filter
-    )
-    bindings = list(bindings or [])
-    binding_ids = {
-        str(binding.get("id") or binding.get("binding_id") or "").strip()
-        for binding in bindings
-        if str(binding.get("id") or binding.get("binding_id") or "").strip()
-    }
-    capital_pool_ids = {
-        str(binding.get("capital_pool_id") or "").strip()
-        for binding in bindings
-        if str(binding.get("capital_pool_id") or "").strip()
-    }
-
-    sessions, sessions_obs = _management_ai_context_service.get_context_sessions_for_persona(
-        persona_id, record_filter=record_filter
-    )
-    runtime_refs = {
-        str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
-        for session in sessions
-        if str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
-    }
-    runtime_bindings = [
-        binding
-        for binding in all_runtime_bindings
-        if _persona_fleet_runtime_matches(
-            binding,
-            binding_ids=binding_ids,
-            capital_pool_ids=capital_pool_ids,
-            runtime_refs=runtime_refs,
-        )
-    ]
-    runtime_ids = {
-        str(binding.get("runtime_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
-        for binding in runtime_bindings
-        if str(binding.get("runtime_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
-    }
-    artifact_ids = {
-        str(binding.get("artifact_id") or "").strip()
-        for binding in runtime_bindings
-        if str(binding.get("artifact_id") or "").strip()
-    }
-
-    # Reuse the same purpose-built telemetry read the caller already
-    # performed for owner-observation aggregation (telemetry_by_runtime_id),
-    # instead of issuing a second, independent read here: two separate reads
-    # of the same runtime can observe different outcomes (e.g. a flaky
-    # provider that fails once and recovers), which would let this snippet
-    # and the surface's owner_observations disagree about the same runtime.
-    matched_telemetry = [
-        telemetry_by_runtime_id[runtime_id]
-        for runtime_id in sorted(runtime_ids)
-        if runtime_id in telemetry_by_runtime_id
-    ]
-    telemetry_summaries = [summary for summary, _obs in matched_telemetry if summary]
-    telemetry_summaries = _sort_records_latest_first(telemetry_summaries, ("collected_at", "updated_at", "created_at"))
-    latest_telemetry = telemetry_summaries[0] if telemetry_summaries else None
-    telemetry_observations = [obs for _summary, obs in matched_telemetry]
-
-    teaching_sessions, teaching_sessions_obs = _management_ai_context_service.get_context_teaching_sessions_for_persona(
-        persona_id, record_filter=record_filter
-    )
-    teaching_sessions = _sort_records_latest_first(
-        list(teaching_sessions or []),
-        ("started_at", "created_at", "updated_at"),
-    )
-    latest_training = teaching_sessions[0] if teaching_sessions else None
-
-    active_incidents = [
-        incident
-        for incident in all_incidents
-        if str(incident.get("status") or "").lower() in {"open", "active", "investigating"}
-        and (
-            str(incident.get("persona_id") or "").strip() == persona_id
-            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
-            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
-            or str(incident.get("runtime_id") or "").strip() in runtime_ids
-        )
-    ]
-    incident_ids = {
-        str(incident.get("incident_id") or incident.get("id") or "").strip()
-        for incident in all_incidents
-        if str(incident.get("incident_id") or incident.get("id") or "").strip()
-        and (
-            str(incident.get("persona_id") or "").strip() == persona_id
-            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
-            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
-            or str(incident.get("runtime_id") or "").strip() in runtime_ids
-        )
-    }
-    evolution_decisions = [
-        decision
-        for decision in all_evolution_decisions
-        if str(decision.get("target_id") or "").strip() == persona_id
-        or str(decision.get("artifact_id") or "").strip() in artifact_ids
-        or str(decision.get("incident_ref") or decision.get("linked_incident_id") or "").strip() in incident_ids
-    ]
-    evolution_decisions = _sort_records_latest_first(evolution_decisions, ("updated_at", "created_at"))
-
-    # Each pool read supplies both enrichment and provenance, once.
-    pool_results = {
-        pool_id: _management_ai_context_service.get_context_capital_pool(
-            pool_id, record_filter=record_filter
-        )
-        for pool_id in sorted(capital_pool_ids)
-    }
-    capital_pools = [pool for pool, _obs in pool_results.values() if pool]
-    enriched_bindings = [
-        {
-            **binding,
-            "capital_pool": pool_results.get(str(binding.get("capital_pool_id") or "").strip(), (None, None))[0],
-        }
-        for binding in bindings
-    ]
-    health = _project_persona_fleet_health(
-        persona=raw_persona,
-        runtime_bindings=runtime_bindings,
-        telemetry_summaries=telemetry_summaries,
-        active_incidents=active_incidents,
-    )
-    allowed_actions, allowed_actions_obs = _management_ai_context_service.get_context_persona_allowed_actions(
-        persona_id, record_filter=record_filter
-    )
-
-    telemetry_summary = {
-        "latest": latest_telemetry,
-        "runtime_count": len(runtime_bindings),
-        "covered_runtime_count": len(telemetry_summaries),
-        "summaries": telemetry_summaries,
-    }
-    training_summary = {
-        "session_count": len(teaching_sessions),
-        "active_session_count": len([
-            session for session in teaching_sessions
-            if str(session.get("status") or "").lower() == "active"
-        ]),
-        "completed_session_count": len([
-            session for session in teaching_sessions
-            if str(session.get("status") or "").lower() == "completed"
-        ]),
-        "latest_session": latest_training,
-    }
-    evolution_summary = {
-        "decision_count": len(evolution_decisions),
-        "pending_decision_count": len([
-            decision for decision in evolution_decisions
-            if str(decision.get("status") or decision.get("decision_state") or "").lower()
-            in {"pending", "in_review", "reviewed", "under_review"}
-        ]),
-        "latest_decision": evolution_decisions[0] if evolution_decisions else None,
-        "decisions": evolution_decisions,
-    }
-
-    item = {
-        "id": persona_id,
-        "persona_id": persona_id,
-        "persona": persona_dto,
-        "health": health,
-        "bindings": enriched_bindings,
-        "capitalPools": capital_pools,
-        "capital_pools": capital_pools,
-        "runtimeBindings": runtime_bindings,
-        "runtime_bindings": runtime_bindings,
-        "telemetrySummary": telemetry_summary,
-        "telemetry_summary": telemetry_summary,
-        "training": training_summary,
-        "evolution": evolution_summary,
-        "sessions": sessions,
-        "activeIncidents": active_incidents,
-        "active_incidents": active_incidents,
-        "allowedActions": allowed_actions or {},
-    }
-    owner_observations = [
-        strategies_obs, bindings_obs, sessions_obs, teaching_sessions_obs,
-        allowed_actions_obs, *[obs for _pool, obs in pool_results.values()],
-        *telemetry_observations,
-    ]
-    item["owner_observations"] = owner_observations
-    return item, owner_observations
 from .governance.human_inbox import (
     _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES,
     _HUMAN_INBOX_OPEN_APPROVAL_STATES,
@@ -6435,402 +5852,22 @@ from .assistant.management_service import (
     _management_ai_event_matches,
     _management_ai_list_audit_events,
 )
-def _management_ai_number(value: Any) -> Optional[float]:
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        clean = str(value).strip()
-        return float(clean) if clean else None
-    except (TypeError, ValueError):
-        return None
-def _management_ai_usage_number(usage: Any, *keys: str) -> Optional[float]:
-    if not isinstance(usage, dict):
-        return None
-    for key in keys:
-        value = _management_ai_number(usage.get(key))
-        if value is not None:
-            return value
-    return None
-def _management_ai_provider_key(value: Any) -> str:
-    clean = str(value or "").strip().lower()
-    return clean or "unknown"
-def _management_ai_provider_display(provider: str) -> str:
-    labels = {
-        "codex": "Codex CLI",
-        "codex_cli": "Codex CLI",
-        "claude": "Claude CLI",
-        "claude_cli": "Claude CLI",
-        "openclaw": "OpenClaw",
-    }
-    return labels.get(provider, provider)
-def _management_ai_provider_route(provider: str, *, stream: bool = False) -> str:
-    normalized = _management_ai_provider_key(provider)
-    if normalized in {"claude", "claude_cli"}:
-        return "POST /api/openclaw-adapter/assistant/claude/invoke"
-    if normalized in {"openclaw", "openclaw_agent"}:
-        suffix = "/stream" if stream else ""
-        return f"POST /api/openclaw-adapter/assistant/providers/openclaw/invoke{suffix}"
-    return "POST /api/openclaw-adapter/assistant/providers/codex/invoke"
-def _management_ai_event_model(event: Dict[str, Any]) -> str:
-    output_summary = event.get("output_summary") if isinstance(event.get("output_summary"), dict) else {}
-    usage = output_summary.get("usage") if isinstance(output_summary.get("usage"), dict) else {}
-    for value in (
-        event.get("model"),
-        event.get("model_id"),
-        event.get("modelId"),
-        event.get("provider_model"),
-        event.get("providerModel"),
-        output_summary.get("model"),
-        output_summary.get("model_id"),
-        output_summary.get("modelId"),
-        usage.get("model"),
-        usage.get("model_id"),
-        usage.get("modelId"),
-    ):
-        clean = str(value or "").strip()
-        if clean:
-            return clean
-    return "default"
-def _management_ai_quota_snapshot(provider: Dict[str, Any]) -> Dict[str, Any]:
-    usage = provider.get("usage") if isinstance(provider.get("usage"), dict) else None
-    quota = provider.get("quota") if isinstance(provider.get("quota"), dict) else None
-    source = usage or quota or {}
-    return {
-        "status": str(source.get("status") or "unknown"),
-        "source": str(source.get("source") or "not_configured"),
-        "remaining": source.get("remaining"),
-        "remaining_percent": source.get("remaining_percent", source.get("remainingPercent")),
-        "limit": source.get("limit"),
-        "used": source.get("used"),
-        "unit": source.get("unit"),
-        "reset_at": source.get("reset_at", source.get("resetAt")),
-        "updated_at": source.get("updated_at", source.get("updatedAt")),
-        "checked_at": source.get("checked_at", source.get("checkedAt")),
-        "reason": source.get("reason") or (
-            "provider_usage_source_not_configured" if not source else None
-        ),
-    }
-def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
-    observed_usage = {
-        "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
-        "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
-        "truth_policy": "observed_bff_events_only",
-    }
-    return {
-        "provider": provider,
-        "provider_name": _management_ai_provider_display(provider),
-        "runtime": None,
-        "ready": None,
-        "auth_status": None,
-        "status": "unknown",
-        "live_auth": False,
-        "calls": 0,
-        "success_count": 0,
-        "failed_count": 0,
-        "started_count": 0,
-        "prompt_bytes": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "duration_ms": 0,
-        "average_duration_ms": None,
-        "last_used_at": None,
-        "last_status": None,
-        "last_error": None,
-        "quota": _management_ai_quota_snapshot({}),
-        "persona_dependencies": {
-            "status": "unavailable",
-            "count": None,
-            "personas": [],
-            "source": None,
-            "reason": "persona_dependency_inventory_unavailable",
-        },
-        "observed_usage": dict(observed_usage),
-        "models": {},
-    }
-def _management_ai_empty_model_row(model: str) -> Dict[str, Any]:
-    return {
-        "model": model,
-        "calls": 0,
-        "success_count": 0,
-        "failed_count": 0,
-        "prompt_bytes": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "duration_ms": 0,
-        "average_duration_ms": None,
-        "last_used_at": None,
-        "last_status": None,
-    }
-def _management_ai_touch_last(row: Dict[str, Any], event: Dict[str, Any], status: str) -> None:
-    recorded_at = str(event.get("recorded_at") or "")
-    current = _audit_datetime(row.get("last_used_at") or row.get("lastUsedAt"))
-    candidate = _audit_datetime(recorded_at)
-    if candidate is None or current is None or candidate >= current:
-        row["last_used_at"] = recorded_at
-        row["last_status"] = status
-def _management_ai_usage_age_hours(last_used_at: Any, now_dt: datetime) -> Optional[float]:
-    last_dt = _audit_datetime(last_used_at)
-    if last_dt is None:
-        return None
-    return round(max(0.0, (now_dt - last_dt).total_seconds() / 3600), 2)
-def _management_ai_finalize_usage_row(
-    row: Dict[str, Any],
-    *,
-    now_dt: datetime,
-    window_hours: Optional[int],
-    event_limit: int,
-    stale_after_hours: int = _MGMT_AI_USAGE_STALE_AFTER_HOURS,
-) -> Dict[str, Any]:
-    calls = int(row.get("calls") or 0)
-    duration = int(row.get("duration_ms") or row.get("durationMs") or 0)
-    avg = round(duration / calls) if calls else None
-    row["average_duration_ms"] = avg
-    age_hours = _management_ai_usage_age_hours(row.get("last_used_at") or row.get("lastUsedAt"), now_dt)
-    stale = bool(calls > 0 and age_hours is not None and age_hours > stale_after_hours)
-    observed = {
-        "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
-        "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
-        "coverage_label": "BFF observed",
-        "truth_policy": "observed_bff_events_only",
-        "calls": row["calls"],
-        "success_count": row["success_count"],
-        "failed_count": row["failed_count"],
-        "prompt_bytes": row["prompt_bytes"],
-        "input_tokens": row["input_tokens"],
-        "output_tokens": row["output_tokens"],
-        "total_tokens": row["total_tokens"],
-        "last_observed_at": row.get("last_used_at"),
-        "age_hours": age_hours,
-        "stale": stale,
-        "stale_after_hours": stale_after_hours,
-        "window_hours": window_hours,
-        "event_limit": event_limit,
-        "message": "Only Management AI calls observed by the BFF audit stream are counted; direct provider CLI usage is not included.",
-    }
-    row["observed_usage"] = observed
-    models = []
-    for model_row in row["models"].values():
-        model_calls = int(model_row.get("calls") or 0)
-        model_duration = int(model_row.get("duration_ms") or model_row.get("durationMs") or 0)
-        model_avg = round(model_duration / model_calls) if model_calls else None
-        model_row["average_duration_ms"] = model_avg
-        models.append(model_row)
-    row["models"] = sorted(models, key=lambda item: (-int(item.get("calls") or 0), str(item.get("model") or "")))
-    return row
-def _assistant_provider_usage_summary(
-    *,
-    auth_probe: bool = False,
-    limit: int = 500,
-    window_hours: Optional[int] = 168,
-) -> Dict[str, Any]:
-    event_limit = min(max(limit, 1), 500)
-    now_dt = datetime.now(timezone.utc)
-    since_dt = (
-        now_dt - timedelta(hours=max(1, int(window_hours)))
-        if window_hours is not None and int(window_hours) > 0
-        else None
-    )
-    rows: Dict[str, Dict[str, Any]] = {}
-
-    def ensure_provider(provider_value: Any) -> Dict[str, Any]:
-        provider = _management_ai_provider_key(provider_value)
-        if provider not in rows:
-            rows[provider] = _management_ai_empty_usage_row(provider)
-        return rows[provider]
-
-    def ensure_model(row: Dict[str, Any], model: str) -> Dict[str, Any]:
-        model_key = str(model or "default")
-        models = row["models"]
-        if model_key not in models:
-            models[model_key] = _management_ai_empty_model_row(model_key)
-        return models[model_key]
-
-    provider_list_payload = _assistant_provider_list(auth_probe=auth_probe)
-    provider_items = provider_list_payload.get("data") if isinstance(provider_list_payload, dict) else []
-    if not isinstance(provider_items, list):
-        provider_items = []
-    for item in provider_items:
-        if not isinstance(item, dict):
-            continue
-        row = ensure_provider(item.get("provider") or item.get("provider_id") or item.get("providerName"))
-        provider_name = str(item.get("provider_name") or item.get("providerName") or row["provider_name"])
-        row["provider_name"] = provider_name
-        row["runtime"] = item.get("runtime")
-        row["ready"] = item.get("ready")
-        auth_status = item.get("auth_status") or item.get("authStatus") or item.get("auth") or item.get("status")
-        row["auth_status"] = auth_status
-        row["status"] = item.get("status") or row["status"]
-        live_auth = bool(item.get("ready") is True and str(auth_status or "").lower() in {"ready", "account_session", "authorized"})
-        row["live_auth"] = live_auth
-        row["quota"] = _management_ai_quota_snapshot(item)
-        dependencies = item.get("persona_dependencies", item.get("personaDependencies"))
-        if isinstance(dependencies, dict):
-            dependency_personas = dependencies.get("personas")
-            if not isinstance(dependency_personas, list):
-                dependency_personas = []
-            dependency_status = str(dependencies.get("status") or "available")
-            row["persona_dependencies"] = {
-                "status": dependency_status,
-                "count": dependencies.get("count", len(dependency_personas)),
-                "personas": dependency_personas,
-                "source": dependencies.get("source") or "provider_inventory",
-                "reason": dependencies.get("reason"),
-            }
-        else:
-            dependency_personas = item.get("dependent_personas", item.get("dependentPersonas"))
-            if isinstance(dependency_personas, list):
-                row["persona_dependencies"] = {
-                    "status": "available",
-                    "count": len(dependency_personas),
-                    "personas": dependency_personas,
-                    "source": "provider_inventory",
-                    "reason": None,
-                }
-        smoke = item.get("live_smoke") if isinstance(item.get("live_smoke"), dict) else {}
-        reauth = item.get("reauth") if isinstance(item.get("reauth"), dict) else {}
-        row["provider_auth"] = {
-            "status": auth_status or "not_checked",
-            "authenticated": str(auth_status or "").lower() in {"ready", "account_session", "authorized"},
-            "source": item.get("auth_source") or item.get("authSource") or "provider_probe",
-        }
-        row["live_smoke"] = {
-            "status": smoke.get("status") or item.get("smoke_status") or "not_checked",
-            "passed": smoke.get("passed") is True,
-            "checked_at": smoke.get("checked_at") or smoke.get("checkedAt") or item.get("last_live_smoke_at"),
-            "reason": smoke.get("reason") or item.get("smoke_reason"),
-        }
-        row["reauth"] = {
-            "status": reauth.get("status") or item.get("reauth_status") or "not_started",
-            "code_entry_required": bool(reauth.get("code_entry_required", reauth.get("codeEntryRequired", False))),
-            "readiness_recheck_required": bool(reauth.get("readiness_recheck_required", reauth.get("readinessRecheckRequired", False))),
-        }
-        row["readiness"] = {
-            "ready": item.get("ready") is True,
-            "proof": item.get("readiness_proof") or "provider_probe",
-            "mount_ready_is_sufficient": False,
-            "reason": item.get("reason"),
-        }
-
-    started_by_run: Dict[str, Dict[str, Any]] = {}
-    events = _management_ai_list_audit_events(limit=event_limit)
-    considered_events = 0
-    for event in events:
-        if not isinstance(event, dict):
-            continue
-        event_dt = _audit_datetime(event.get("recorded_at"))
-        if since_dt is not None and event_dt is not None and event_dt < since_dt:
-            continue
-        event_type = str(event.get("event_type") or "")
-        if not event_type.startswith("management_ai.provider."):
-            continue
-        considered_events += 1
-        provider = event.get("provider") or "unknown"
-        run_id = str(event.get("provider_run_id") or event.get("trace_id") or event.get("message_id") or "")
-        row = ensure_provider(provider)
-        model = _management_ai_event_model(event)
-        model_row = ensure_model(row, model)
-        if event_type == "management_ai.provider.started":
-            if run_id:
-                started_by_run[run_id] = event
-            prompt_bytes = int(_management_ai_number(event.get("prompt_bytes")) or 0)
-            row["started_count"] += 1
-            row["prompt_bytes"] += prompt_bytes
-            model_row["prompt_bytes"] += prompt_bytes
-            _management_ai_touch_last(row, event, "started")
-            _management_ai_touch_last(model_row, event, "started")
-            continue
-
-        if event_type not in {"management_ai.provider.completed", "management_ai.provider.failed"}:
-            continue
-        source_started = started_by_run.get(run_id)
-        if source_started is not None:
-            prompt_bytes = int(_management_ai_number(source_started.get("prompt_bytes")) or 0)
-            if row["started_count"] == 0:
-                row["prompt_bytes"] += prompt_bytes
-                model_row["prompt_bytes"] += prompt_bytes
-        duration_ms = int(_management_ai_number(event.get("duration_ms")) or 0)
-        output_summary = event.get("output_summary") if isinstance(event.get("output_summary"), dict) else {}
-        usage = output_summary.get("usage") if isinstance(output_summary.get("usage"), dict) else {}
-        input_tokens = int(_management_ai_usage_number(usage, "input_tokens", "inputTokens", "prompt_tokens", "promptTokens") or 0)
-        output_tokens = int(_management_ai_usage_number(usage, "output_tokens", "outputTokens", "completion_tokens", "completionTokens") or 0)
-        total_tokens = int(_management_ai_usage_number(usage, "total_tokens", "totalTokens") or 0)
-        if total_tokens == 0:
-            total_tokens = input_tokens + output_tokens
-        failed = event_type == "management_ai.provider.failed"
-        status = "failed" if failed else str(event.get("provider_state") or "completed")
-        for target in (row, model_row):
-            target["calls"] += 1
-            target["duration_ms"] += duration_ms
-            target["input_tokens"] += input_tokens
-            target["output_tokens"] += output_tokens
-            target["total_tokens"] += total_tokens
-            if failed:
-                target["failed_count"] += 1
-            else:
-                target["success_count"] += 1
-            _management_ai_touch_last(target, event, status)
-        if failed:
-            row["last_error"] = event.get("error_code") or event.get("error_message")
-
-    provider_rows = [
-        _management_ai_finalize_usage_row(
-            row,
-            now_dt=now_dt,
-            window_hours=window_hours,
-            event_limit=event_limit,
-        )
-        for row in rows.values()
-    ]
-    provider_rows.sort(key=lambda item: (not bool(item.get("live_auth")), -int(item.get("calls") or 0), str(item.get("provider") or "")))
-    totals = {
-        "providers": len(provider_rows),
-        "live_auth_count": sum(1 for row in provider_rows if row.get("live_auth")),
-        "calls": sum(int(row.get("calls") or 0) for row in provider_rows),
-        "success_count": sum(int(row.get("success_count") or 0) for row in provider_rows),
-        "failed_count": sum(int(row.get("failed_count") or 0) for row in provider_rows),
-        "input_tokens": sum(int(row.get("input_tokens") or 0) for row in provider_rows),
-        "output_tokens": sum(int(row.get("output_tokens") or 0) for row in provider_rows),
-        "total_tokens": sum(int(row.get("total_tokens") or 0) for row in provider_rows),
-    }
-    return {
-        "status": "ok",
-        "data": {
-            "providers": provider_rows,
-            "totals": totals,
-            "quota": {
-                "truth_policy": "provider_snapshot_only",
-                "missing_source_means": "quota remaining is unknown, not zero",
-            },
-            "usage": {
-                "truth_policy": "observed_bff_events_only",
-                "coverage": _MGMT_AI_USAGE_OBSERVED_COVERAGE,
-                "source": _MGMT_AI_USAGE_OBSERVED_SOURCE,
-                "stale_after_hours": _MGMT_AI_USAGE_STALE_AFTER_HOURS,
-                "missing_source_means": "direct provider CLI usage is unknown unless a provider usage source is configured",
-            },
-        },
-        "meta": {
-            "auth_probe": auth_probe,
-            "event_limit": event_limit,
-            "event_count": considered_events,
-            "window_hours": window_hours,
-            "since": since_dt.isoformat().replace("+00:00", "Z") if since_dt is not None else None,
-            "provider_snapshot_status": provider_list_payload.get("status") if isinstance(provider_list_payload, dict) else None,
-        },
-    }
-def _management_ai_href(route: str, **params: Optional[str]) -> str:
-    clean_params = {
-        key: str(value)
-        for key, value in params.items()
-        if value not in (None, "")
-    }
-    if not clean_params:
-        return route
-    return f"{route}?{urlencode(clean_params)}"
+from .assistant.management_service import (
+    _management_ai_number,
+    _management_ai_usage_number,
+    _management_ai_provider_key,
+    _management_ai_provider_display,
+    _management_ai_provider_route,
+    _management_ai_event_model,
+    _management_ai_quota_snapshot,
+    _management_ai_empty_usage_row,
+    _management_ai_empty_model_row,
+    _management_ai_touch_last,
+    _management_ai_usage_age_hours,
+    _management_ai_finalize_usage_row,
+    _assistant_provider_usage_summary,
+    _management_ai_href,
+)
 from .assistant.management_service import _management_ai_audit_href
 from .assistant.management_service import (
     get_management_ai_conversation_store,
@@ -7004,134 +6041,13 @@ from .assistant.management_service import (
     bff_management_nl_ask_stream,
     _bff_management_nl_ask_stream_impl,
 )
-async def bff_management_ai_audit(
-    session_id: Optional[str] = None,
-    trace_id: Optional[str] = None,
-    message_id: Optional[str] = None,
-    event_type: Optional[str] = None,
-    limit: int = Query(default=50, ge=1, le=500),
-    authorization: Optional[str] = Header(default=None),
-):
-    """Read backend Management AI audit events for conversation/provider tracing."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    events = _management_ai_list_audit_events(
-        session_id=session_id,
-        trace_id=trace_id,
-        message_id=message_id,
-        event_type=event_type,
-        limit=limit,
-    )
-    canonical_events = _management_prune_camel_aliases(events)
-    return {
-        "data": {
-            "id": "management_ai_audit",
-            "items": canonical_events,
-            "summary": {
-                "total_events": len(canonical_events),
-                "returned_items": len(canonical_events),
-            },
-        },
-        "page_info": {
-            "next_page_token": None,
-            "total": len(canonical_events),
-            "page_size": limit,
-        },
-        "meta": {
-            "count": len(canonical_events),
-            "filters": {
-                "session_id": session_id,
-                "trace_id": trace_id,
-                "message_id": message_id,
-                "event_type": event_type,
-            },
-        },
-    }
-async def bff_assistant_provider_usage_summary(
-    auth_probe: bool = False,
-    limit: int = Query(default=500, ge=1, le=500),
-    window_hours: int = Query(default=168, ge=1, le=24 * 90),
-    authorization: Optional[str] = Header(default=None),
-):
-    """Return provider/model usage history plus provider-reported quota snapshots."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    return _assistant_provider_usage_summary(
-        auth_probe=auth_probe,
-        limit=limit,
-        window_hours=window_hours,
-    )
-async def bff_management_ai_conversations(
-    limit: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-):
-    """List visible server-side Management AI conversations for frontend resync."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    caller_tenant_id = _mgmt_nl_caller_tenant(
-        identity,
-        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
-    )
-    return _management_ai_list_conversations(
-        identity=identity,
-        caller_tenant_id=caller_tenant_id,
-        limit=limit,
-        conversation_href_fn=_management_ai_conversation_href,
-        session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
-        conversation_store=_management_ai_conversation_store(),
-    )
-async def bff_management_ai_conversation(
-    session_id: str,
-    trace_id: Optional[str] = None,
-    limit: int = Query(default=500, ge=1, le=1000),
-    authorization: Optional[str] = Header(default=None),
-    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-):
-    """Read full Management AI session turns from the server-side conversation store."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    clean_session_id = str(session_id or "").strip()
-    caller_tenant_id = _mgmt_nl_caller_tenant(
-        identity,
-        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
-    )
-    return _management_ai_get_conversation(
-        session_id=clean_session_id,
-        identity=identity,
-        caller_tenant_id=caller_tenant_id,
-        trace_id=trace_id,
-        limit=limit,
-        audit_href_fn=lambda s_id, t_id: _management_ai_audit_href(session_id=s_id, trace_id=t_id),
-        session_ttl_seconds=_MGMT_AI_SESSION_TTL_SECONDS,
-        conversation_store=_management_ai_conversation_store(),
-    )
-async def bff_management_ai_attachment(
-    attachment_id: str,
-    authorization: Optional[str] = Header(default=None),
-    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-):
-    """Return a BFF-proxied Management AI attachment object for visible sessions."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    caller_tenant_id = _mgmt_nl_caller_tenant(
-        identity,
-        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
-    )
-    content, mime_type, filename = _management_ai_get_attachment(
-        attachment_id=attachment_id,
-        identity=identity,
-        caller_tenant_id=caller_tenant_id,
-        conversation_store=_management_ai_conversation_store(),
-    )
-    return Response(
-        content=content,
-        media_type=mime_type,
-        headers={"Content-Disposition": f"inline; filename=\"{filename}\""},
-    )
+from .assistant.management_service import (
+    bff_management_ai_audit,
+    bff_assistant_provider_usage_summary,
+    bff_management_ai_conversations,
+    bff_management_ai_conversation,
+    bff_management_ai_attachment,
+)
 async def bff_management_readiness_ep5(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -7563,153 +6479,10 @@ def _v5_intervention_records(
             records_by_id[record_id] = dict(record)
 
     return list(records_by_id.values())
-async def _process_command(command_id: str, *, command_store: Optional[Any] = None):
-    """
-    Async command processor that dispatches to the Protected Internal API.
-    Records authoritative status, result, and audit data for every execution.
-    """
-    import asyncio
-
-    store = command_store if command_store is not None else globals().get("command_store")
-    if store is None:
-        log.error("Worker: command store unavailable for command %s", command_id)
-        return
-
-    record = store.get_command(command_id)
-    if not record:
-        log.error("Worker: command %s not found in store", command_id)
-        return
-
-    command_type = CommandType(record["type"])
-    params = record.get("params", {})
-    audit = record.get("audit", {})
-
-    # Runtime-only auth context avoids persisting bearer tokens in command audit records.
-    runtime_auth = _COMMAND_AUTH_CONTEXT.pop(command_id, {})
-    auth_token = runtime_auth.get("auth_token") or audit.get("auth_token")
-    mfa_token = runtime_auth.get("mfa_token") or audit.get("mfa_token")
-
-    # Mark processing
-    await asyncio.sleep(0.05)  # brief yield to event loop
-    store.update_status(command_id, CommandStatus.PROCESSING)
-
-    try:
-        execution_params = _resolve_execution_params_for_record(record)
-    except Exception as exc:
-        failed_at = utc_now()
-        error = {
-            "code": "TARGET_CONTEXT_UNAVAILABLE",
-            "message": f"Unable to route command {command_id}: {exc}",
-            "started_at": failed_at,
-            "failed_at": failed_at,
-            "suggestion": (
-                "Refresh Pantheon runtime/incident read surfaces or use the secondary control path "
-                "until the runtime target can be resolved."
-            ),
-        }
-        audit["execution_completed_at"] = failed_at
-        audit["executor"] = "command_executor"
-        audit["failure_reason"] = error["message"]
-        audit["failure_suggestion"] = error["suggestion"]
-        store.update_status(
-            command_id,
-            CommandStatus.FAILED,
-            error=error,
-            audit=audit,
-        )
-        log.warning("Worker: command %s failed during routing resolution: %s", command_id, exc)
-        return
-
-    if command_type == CommandType.RECORD_SPONSOR_DECISION:
-        try:
-            committee_id = str(execution_params.get("committee_id") or "").strip()
-            updated = read_store.record_sponsor_decision(
-                committee_id,
-                sponsor_decision=str(execution_params.get("sponsor_decision") or "").strip().lower(),
-                rationale_ref=str(execution_params.get("rationale_ref") or "").strip(),
-                actor_id=str(audit.get("operator_id") or "operator-command"),
-                recorded_at=utc_now(),
-            )
-            if updated is None:
-                raise ValueError(f"Committee {committee_id} could not be updated.")
-            result = {
-                "command_id": command_id,
-                "committee_id": updated.get("committee_id"),
-                "committee_ref": updated.get("committee_ref"),
-                "sponsor_decision": updated.get("sponsor_decision"),
-                "sponsor_decided_at": updated.get("sponsor_decided_at"),
-                "sponsor_decided_by": updated.get("sponsor_decided_by"),
-                "consensus_state": updated.get("consensus_state"),
-                "rationale_ref": (updated.get("synthesis_summary") or {}).get("rationale_ref"),
-                "service_handoff": updated.get("service_handoff") or {},
-                "execution_completed_at": utc_now(),
-            }
-            audit["execution_completed_at"] = result["execution_completed_at"]
-            audit["executor"] = "bff_read_store"
-            audit["downstream_verified"] = True
-            store.update_status(
-                command_id,
-                CommandStatus.EXECUTED,
-                result=result,
-                audit=audit,
-            )
-            log.info("Worker: command %s completed with status=%s", command_id, CommandStatus.EXECUTED.value)
-            return
-        except Exception as exc:
-            failed_at = utc_now()
-            error = {
-                "code": "COMMITTEE_UPDATE_FAILED",
-                "message": f"Unable to record sponsor decision: {exc}",
-                "started_at": failed_at,
-                "failed_at": failed_at,
-                "suggestion": "Refresh the committee board projection and retry once the committee surface is available.",
-            }
-            audit["execution_completed_at"] = failed_at
-            audit["executor"] = "bff_read_store"
-            audit["failure_reason"] = error["message"]
-            audit["failure_suggestion"] = error["suggestion"]
-            store.update_status(
-                command_id,
-                CommandStatus.FAILED,
-                error=error,
-                audit=audit,
-            )
-            log.warning("Worker: command %s failed during committee update: %s", command_id, exc)
-            return
-
-    # Execute via real executor with propagated auth headers
-    status, result, error = execute_command_with_status(
-        command_id, command_type, execution_params,
-        auth_token=auth_token, mfa_token=mfa_token,
-    )
-
-    # Enrich audit with execution timeline
-    audit["execution_completed_at"] = result.get("execution_completed_at") if result else error.get("failed_at") if error else None
-    audit["executor"] = "command_executor"
-    if result:
-        audit["downstream_verified"] = bool(
-            result.get("downstream_verified")
-            or result.get("authoritative_capital_readback")
-            or result.get("dispatch_path") != "bff_action_adapter"
-        )
-    if error:
-        audit["failure_reason"] = error.get("message", "")
-        audit["failure_suggestion"] = error.get("suggestion", "")
-
-    # Persist both result and enriched audit data
-    store.update_status(
-        command_id,
-        status,
-        result=result,
-        error=error,
-        audit=audit,
-    )
-
-    log.info(
-        "Worker: command %s completed with status=%s",
-        command_id, status.value,
-    )
-_process_command_stub = _process_command
+from .command_adapters.service import (
+    process_command as _process_command,
+    _process_command_stub,
+)
 _MAX_EVENTS = 500
 SSE_CHANNEL_CATALOG = (
     "approval",
@@ -8913,105 +7686,14 @@ _ASSISTANT_TRANSCRIPT_STORE: Any = None
 _ASSISTANT_CONTROL_MODE_STORE: Any = None
 def _assistant_ask_enabled() -> bool:
     return os.getenv("PANTHEON_ASSISTANT_ENABLED", "").strip().lower() in {"1", "true", "yes"}
-def _assistant_provider_readiness() -> Dict[str, Any]:
-    provider = _mgmt_nl_provider_name()
-    try:
-        return OpenClawOpsClient().get_assistant_readiness(provider=provider, auth_probe=True)
-    except OpenClawOpsClientError as exc:
-        return {
-            "provider": provider,
-            "runtime": "openclaw_gateway_cli_mount",
-            "ready": False,
-            "status": "unavailable",
-            "reason": exc.error_code,
-            "message": exc.message,
-            "httpStatus": exc.status_code,
-        }
-def _assistant_provider_list(auth_probe: bool = False) -> Dict[str, Any]:
-    provider = _mgmt_nl_provider_name()
-    try:
-        return OpenClawOpsClient().list_assistant_providers(auth_probe=auth_probe)
-    except OpenClawOpsClientError as exc:
-        return {
-            "status": "degraded",
-            "data": [
-                {
-                    "provider": provider,
-                    "runtime": "openclaw_gateway_cli_mount",
-                    "ready": False,
-                    "status": "unavailable",
-                    "auth": "unavailable" if auth_probe else "not_checked",
-                    "auth_status": "failed" if auth_probe else "not_checked",
-                    "reason": exc.error_code,
-                    "message": exc.message,
-                    "httpStatus": exc.status_code,
-                }
-            ],
-            "meta": {
-                "openclawAdapterStatus": "degraded",
-                "openclaw_adapter_status": "degraded",
-                "reason": exc.error_code,
-                "message": exc.message,
-            },
-        }
-def _assistant_provider_register(
-    payload: Dict[str, Any],
-    operator_id: str,
-    trace_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    try:
-        return OpenClawOpsClient().register_assistant_provider(
-            payload=payload,
-            operator_id=operator_id or "management-ai",
-            trace_id=trace_id,
-        )
-    except OpenClawOpsClientError as exc:
-        raise _openclaw_client_error(exc) from exc
-def _assistant_provider_reauth(
-    payload: Dict[str, Any],
-    operator_id: str,
-    trace_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    provider = str(payload.get("provider") or "codex").strip() or "codex"
-    try:
-        return OpenClawOpsClient().start_assistant_provider_reauth(
-            provider=provider,
-            payload=payload,
-            operator_id=operator_id or "management-ai",
-            trace_id=trace_id,
-        )
-    except OpenClawOpsClientError as exc:
-        raise _openclaw_client_error(exc) from exc
-def _assistant_provider_reauth_status(
-    provider: str,
-    session_id: str,
-    operator_id: str,
-) -> Dict[str, Any]:
-    try:
-        return OpenClawOpsClient().get_assistant_provider_reauth_status(
-            provider=provider or "codex",
-            session_id=session_id,
-            operator_id=operator_id or "management-ai",
-        )
-    except OpenClawOpsClientError as exc:
-        raise _openclaw_client_error(exc) from exc
-def _assistant_provider_reauth_code(
-    provider: str,
-    session_id: str,
-    code: str,
-    operator_id: str,
-    trace_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    try:
-        return OpenClawOpsClient().submit_assistant_provider_reauth_code(
-            provider=provider or "claude",
-            session_id=session_id,
-            code=code,
-            operator_id=operator_id or "management-ai",
-            trace_id=trace_id,
-        )
-    except OpenClawOpsClientError as exc:
-        raise _openclaw_client_error(exc) from exc
+from .assistant.management_service import (
+    _assistant_provider_readiness,
+    _assistant_provider_list,
+    _assistant_provider_register,
+    _assistant_provider_reauth,
+    _assistant_provider_reauth_status,
+    _assistant_provider_reauth_code,
+)
 from .ports.evolution_program_commands import (
     EvolutionServiceProgramCommandPort as _EvolutionServiceProgramCommandPort,
 )
@@ -9078,34 +7760,22 @@ auth_handlers = getattr(app.state, "auth_handlers", None)
 auth_facade_service = getattr(app.state, "auth_facade_service", None)
 _core_handlers = getattr(app.state, "core_handlers", None)
 
-from .assistant.management_service import (
-    set_build_operator_alerts_payload as _set_build_operator_alerts_payload,
-    set_build_management_anomalies_payload as _set_build_management_anomalies_payload,
-    set_human_inbox_payload as _set_human_inbox_payload,
-    set_list_persona_records as _set_list_persona_records,
-    set_project_persona_fleet_item as _set_project_persona_fleet_item,
-    set_project_operator_runtime_state_row as _set_project_operator_runtime_state_row,
-    set_management_telemetry_rollup as _set_management_telemetry_rollup,
-    set_dataset_surface_status as _set_dataset_surface_status,
-    set_assistant_collect_source as _set_assistant_collect_source,
-    set_agora_audit_store as _set_agora_audit_store,
-    set_assistant_control_mode_store as _set_assistant_control_mode_store,
-    register_sse_buffers as _register_sse_buffers,
-)
+from .assistant.management_service import wire_management_runtime_projections
 
-_set_build_operator_alerts_payload(_build_operator_alerts_payload)
-_set_build_management_anomalies_payload(_build_management_anomalies_payload)
-_set_human_inbox_payload(_human_inbox_payload)
-_set_list_persona_records(_list_persona_records)
-_set_project_persona_fleet_item(_project_persona_fleet_item)
-_set_project_operator_runtime_state_row(_project_operator_runtime_state_row)
-_set_management_telemetry_rollup(_management_telemetry_rollup)
-_set_dataset_surface_status(_dataset_surface_status)
-_set_assistant_collect_source(_assistant_collect_source)
-_set_agora_audit_store(agora_audit_store)
-if _ASSISTANT_CONTROL_MODE_STORE is not None:
-    _set_assistant_control_mode_store(_ASSISTANT_CONTROL_MODE_STORE)
-_register_sse_buffers(_sse_buffers, _sse_subscribers)
+wire_management_runtime_projections(
+    build_operator_alerts_payload=_build_operator_alerts_payload,
+    build_management_anomalies_payload=_build_management_anomalies_payload,
+    human_inbox_payload=_human_inbox_payload,
+    list_persona_records=_list_persona_records,
+    management_telemetry_rollup=_management_telemetry_rollup,
+    dataset_surface_status=_dataset_surface_status,
+    assistant_collect_source=_assistant_collect_source,
+    agora_audit_store=agora_audit_store,
+    assistant_control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
+    sse_buffers=_sse_buffers,
+    sse_subscribers=_sse_subscribers,
+    read_store=read_store,
+)
 
 from .deployment.router import create_deployment_router as _create_deployment_router
 # Composed via core.app_factory.compose_bff_app: create_management_router(...)
