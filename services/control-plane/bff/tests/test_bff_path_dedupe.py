@@ -7,13 +7,37 @@ from typing import Iterable
 
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
+# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: every test in this file exists
+# to prove the *fully assembled* Operator BFF app has no duplicate/shadowed
+# route registrations across its entire route table -- inherently a
+# whole-app property, not a single router's. `core.app_factory.compose_bff_app()`
+# (BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001) is now the real, standalone full-app
+# composition root: main.py itself calls nothing but
+# `compose_bff_app(app_deps=..., ...)` to build its own `app` and no longer
+# calls `include_router` at all, and `test_compose_bff_app_matches_main_route_set`
+# (tests/test_main_composition_seam_extraction_003.py) proves the standalone
+# composer's route set is byte-identical to main.py's. This file therefore
+# builds its own app via `compose_bff_app()` instead of importing main.py.
+#
+# `mount_bff_routers`'s `_dep` helper (`core/app_factory.py`) resolves
+# `_deprecated_bff_path_response` from an explicit keyword argument before
+# ever falling back to a loaded `main` module or the inert stub in
+# `_resolve_default_dependency`. The real, already-extracted production owner
+# of that response (`personas.service._deprecated_bff_path_response`) is
+# passed directly here instead, so this file needs no main.py reference at
+# all -- dynamic or static.
+from services.control_plane.bff.core.app_factory import compose_bff_app
+from services.control_plane.bff.personas.service import (
+    _deprecated_bff_path_response,
+)
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-path-dedupe:operator,admin"}
 
+_APP = compose_bff_app(_deprecated_bff_path_response=_deprecated_bff_path_response)
+
 
 def _client() -> TestClient:
-    return TestClient(bff_main.app)
+    return TestClient(_APP)
 
 
 def _assert_deprecated(response, replacement: str) -> None:
@@ -48,7 +72,7 @@ def _iter_all_routes(routes) -> list:
 
 def _route_paths_for_method(method: str) -> list[str]:
     paths: list[str] = []
-    for route in _iter_all_routes(bff_main.app.routes):
+    for route in _iter_all_routes(_APP.routes):
         methods = getattr(route, "methods", set()) or set()
         if method in methods:
             paths.append(getattr(route, "path", ""))
@@ -115,7 +139,7 @@ def test_deprecated_nested_action_families_return_410_with_headers() -> None:
 
 def test_path_parameter_dedupe_keeps_only_snake_case_canonical_templates() -> None:
     routes = set()
-    for route in _iter_all_routes(bff_main.app.routes):
+    for route in _iter_all_routes(_APP.routes):
         routes.add(getattr(route, "path", ""))
 
     canonical_templates = {

@@ -46,10 +46,217 @@ from .models import (
     PostmortemDetailEnvelope,
     PostmortemsEnvelope,
 )
+import concurrent.futures
 from .service import ManagementService
 
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope
+
+_HUMAN_INBOX_CONTRIBUTOR_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="mgmt_human_inbox_contributor"
+)
+
+
+def _get_human_inbox_surface_timeout() -> float:
+    try:
+        import sys
+        main_mod = sys.modules.get("services.control_plane.bff.main")
+        if main_mod is not None:
+            fn = getattr(main_mod, "_human_inbox_surface_timeout_seconds", None)
+            if fn is not None:
+                return float(fn())
+    except Exception:
+        pass
+    try:
+        from ..governance.service import human_inbox_surface_timeout_seconds
+        return float(human_inbox_surface_timeout_seconds())
+    except Exception:
+        pass
+    try:
+        val = float(os.getenv("PANTHEON_BFF_HUMAN_INBOX_TIMEOUT_SECONDS", "3.0").strip())
+        return max(0.1, val)
+    except (TypeError, ValueError):
+        return 3.0
+
+
+def _get_management_cockpit_read_timeout() -> float:
+    try:
+        import sys
+        main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        if main_mod is not None:
+            fn = getattr(main_mod, "_management_cockpit_read_timeout_seconds", None)
+            if fn is not None:
+                return float(fn())
+    except Exception:
+        pass
+    try:
+        return max(0.05, float(os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "0.6").strip()))
+    except (TypeError, ValueError):
+        return 0.6
+
+
+class _StoreTimeoutProxy:
+    def __init__(self, target: Any, timeout: float):
+        self._target = target
+        self._timeout = timeout
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._target, name)
+        if name in ("list_governance_review_queue_items", "list_approval_queue_items", "list_approval_records") and callable(attr):
+            def _timed_call(*args: Any, **kwargs: Any) -> Any:
+                fut = _HUMAN_INBOX_CONTRIBUTOR_EXECUTOR.submit(attr, *args, **kwargs)
+                try:
+                    return fut.result(timeout=self._timeout)
+                except concurrent.futures.TimeoutError:
+                    raise concurrent.futures.TimeoutError(f"{name} exceeded the Human Inbox surface budget")
+            return _timed_call
+        return attr
+
+
+def _get_evidence_degraded_payload(
+    self=None,
+    *,
+    page_size: int = 20,
+    snapshot_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    from .service import _management_evidence_degraded_payload
+    payload = _management_evidence_degraded_payload(page_size=page_size, snapshot_at=snapshot_at)
+    if isinstance(payload, dict) and "meta" in payload and isinstance(payload["meta"], dict):
+        surfaces = payload["meta"].get("surfaces")
+        if isinstance(surfaces, dict) and "management_evidence" in surfaces and isinstance(surfaces["management_evidence"], dict):
+            surfaces["management_evidence"]["reason"] = "read_timeout"
+    return payload
+
+
+def _get_management_cockpit_degraded_payload(
+    self=None,
+    snapshot_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    snap = snapshot_at or _utc_now_rfc3339()
+    cockpit_surface = {
+        "status": "degraded",
+        "reason": "read_timeout",
+        "source": "timeout_fallback",
+        "message": "Cockpit aggregation timed out under concurrent read fanout; degraded response returned.",
+        "snapshot_at": snap,
+    }
+    return {
+        "data": {
+            "id": "management-cockpit",
+            "snapshot_at": snap,
+            "operator_home": {},
+            "runtime_health": {},
+            "alerts": {"items": [], "summary": {}, "meta": {}},
+            "human_inbox": {"items": [], "summary": {}, "meta": {}},
+            "trading_pulse": {},
+            "anomalies": {},
+            "links": {
+                "self": "/bff/management/cockpit",
+                "operator_home": "/api/v1/operator/home",
+                "runtime_health": "/api/v1/operator/health-status",
+                "alerts": "/bff/alerts",
+                "human_inbox": "/bff/management/human-inbox",
+                "trading_pulse": "/bff/management/trading-pulse",
+            },
+        },
+        "meta": {
+            "snapshot_at": snap,
+            "surfaces": {
+                "management_cockpit": cockpit_surface,
+            },
+        },
+    }
+
+
+def _get_human_inbox_degraded_payload(
+    self=None,
+    *,
+    page_size: int = 20,
+    snapshot_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    snap = snapshot_at or _utc_now_rfc3339()
+    return {
+        "data": {
+            "id": "management-human-inbox",
+            "items": [],
+            "summary": {
+                "total_items": 0,
+                "by_source_type": {},
+                "by_status": {},
+                "by_priority": {},
+            },
+            "facets": {
+                "source_types": {},
+                "statuses": {},
+                "priorities": {},
+            },
+        },
+        "page_info": {"next_page_token": None, "total": 0, "page_size": page_size},
+        "meta": {
+            "snapshot_at": snap,
+            "surfaces": {
+                "human_inbox": {
+                    "status": "degraded",
+                    "reason": "read_timeout",
+                    "source": "timeout_fallback",
+                    "message": "Human inbox aggregation timed out under concurrent read fanout; degraded response returned.",
+                    "snapshot_at": snap,
+                },
+                "governance_review_queue": {
+                    "status": "degraded",
+                    "reason": "read_timeout",
+                    "source": "timeout_fallback",
+                    "message": "governance_review_queue exceeded the Human Inbox surface budget.",
+                    "snapshot_at": snap,
+                },
+            },
+        },
+    }
+
+
+if not hasattr(ManagementService, "get_evidence_degraded_payload"):
+    ManagementService.get_evidence_degraded_payload = _get_evidence_degraded_payload
+if not hasattr(ManagementService, "get_management_cockpit_degraded_payload"):
+    ManagementService.get_management_cockpit_degraded_payload = _get_management_cockpit_degraded_payload
+if not hasattr(ManagementService, "get_human_inbox_degraded_payload"):
+    ManagementService.get_human_inbox_degraded_payload = _get_human_inbox_degraded_payload
+
+_orig_get_human_inbox = ManagementService.get_human_inbox
+
+
+def _bounded_get_human_inbox(self: ManagementService, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+    timeout_budget = _get_human_inbox_surface_timeout()
+    orig_resolve_store = self._resolve_store
+
+    def _proxied_resolve_store() -> Any:
+        s = orig_resolve_store()
+        if s is not None:
+            return _StoreTimeoutProxy(s, timeout_budget)
+        return None
+
+    self._resolve_store = _proxied_resolve_store  # type: ignore[assignment]
+    try:
+        res = _orig_get_human_inbox(self, *args, **kwargs)
+    finally:
+        self._resolve_store = orig_resolve_store  # type: ignore[assignment]
+
+    if isinstance(res, dict) and "meta" in res and isinstance(res["meta"], dict):
+        surfaces = res["meta"].get("surfaces")
+        if isinstance(surfaces, dict):
+            snap = res["meta"].get("snapshot_at") or self._utc_now()
+            for key, surf in surfaces.items():
+                if isinstance(surf, dict) and surf.get("reason") == "contributor_read_error":
+                    msg = str(surf.get("message") or "")
+                    if "exceeded the Human Inbox surface budget" in msg or "TimeoutError" in msg:
+                        surf["status"] = "degraded"
+                        surf["source"] = "management_read_timeout"
+                        surf["reason"] = "read_timeout"
+                        surf["message"] = f"{key}_items exceeded the Human Inbox surface budget; completed contributors are returned as a partial result."
+                        surf["staleness"] = {"served_from": "timeout_degraded", "last_known_at": snap}
+    return res
+
+
+ManagementService.get_human_inbox = _bounded_get_human_inbox  # type: ignore[assignment]
 
 log = logging.getLogger(__name__)
 
@@ -1320,6 +1527,7 @@ def create_management_router(
     *,
     read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable] = None,
+    get_command_store: Optional[Callable] = None,
     extract_identity: Optional[Callable] = None,
     require_read_role: Optional[Callable] = None,
     snapshot_meta: Optional[Callable] = None,
@@ -1330,6 +1538,9 @@ def create_management_router(
     tenant_payload_fn: Optional[Callable] = None,
     ops_read_model_entry_fn: Optional[Callable] = None,
     service: Optional[ManagementService] = None,
+    run_management_read: Optional[Callable[..., Any]] = None,
+    build_evidence_payload: Optional[Callable[..., Any]] = None,
+    build_cockpit_payload: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Create the APIRouter for all 17 Management domain HTTP GET routes."""
     router = APIRouter()
@@ -1346,6 +1557,7 @@ def create_management_router(
         get_read_store=_store_getter,
         utc_now=_now,
         ops_read_model_entry_fn=ops_read_model_entry_fn,
+        get_promotion_review_command_log=get_command_store,
     )
 
     # -----------------------------------------------------------------------
@@ -1392,7 +1604,37 @@ def create_management_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
-        return svc.get_management_cockpit(snapshot_at=snap)
+
+        def _resolve_cockpit_composer() -> Callable[..., Any]:
+            # Prefer whatever composer this router was actually wired with
+            # (an explicit `build_cockpit_payload`, or the `svc` bound to
+            # this call's own injected read/command stores) over reaching
+            # into the `main` module singleton. main.py's production
+            # composition root always passes `build_cockpit_payload`
+            # explicitly (core/app_factory.py), so this order is a no-op
+            # there; it only matters for a standalone app (e.g. a test
+            # harness composing routers directly from the factories) that
+            # never touches `main.py`'s globals -- for that caller, falling
+            # through to `main._build_management_cockpit_payload` whenever
+            # `main` happens to be imported elsewhere in the process would
+            # silently swap in the real production read/command stores in
+            # place of the caller's own injected test doubles.
+            if build_cockpit_payload is not None:
+                return build_cockpit_payload
+            return svc.get_management_cockpit
+
+        cockpit_composer = _resolve_cockpit_composer()
+
+        if run_management_read is not None:
+            try:
+                return await run_management_read(
+                    cockpit_composer,
+                    snapshot_at=snap,
+                    timeout_seconds=_get_management_cockpit_read_timeout(),
+                )
+            except Exception:
+                return svc.get_management_cockpit_degraded_payload(snapshot_at=snap)
+        return cockpit_composer(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
     # 4. Trading Pulse
@@ -1555,6 +1797,20 @@ def create_management_router(
         """BFF: compose human-action inbox rows from governed human-review sources."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        snap = _now()
+        if run_management_read is not None:
+            try:
+                return await run_management_read(
+                    svc.get_human_inbox,
+                    source_type=source_type,
+                    status=status,
+                    priority=priority,
+                    page_token=page_token,
+                    page_size=page_size,
+                    identity=identity,
+                )
+            except Exception:
+                return svc.get_human_inbox_degraded_payload(page_size=page_size, snapshot_at=snap)
         return svc.get_human_inbox(
             source_type=source_type,
             status=status,
@@ -1669,8 +1925,23 @@ def create_management_router(
         """BFF: adapt knowledge evidence refs into the Management Evidence Explorer."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        try:
-            return svc.get_evidence(
+        snap = _now()
+
+        def _resolve_evidence_reader():
+            # See _resolve_cockpit_composer's comment above: prefer the
+            # composer this router was actually wired with over reaching
+            # into the `main` module singleton, so a standalone app that
+            # never touches main.py's globals does not silently swap in
+            # main.py's real production read/command stores in place of
+            # its own injected test doubles.
+            if build_evidence_payload is not None:
+                return build_evidence_payload
+            return svc.get_evidence
+
+        evidence_reader = _resolve_evidence_reader()
+
+        def _do_read():
+            return evidence_reader(
                 ref_id=ref_id,
                 linked_entity_type=linked_entity_type,
                 linked_entity_ref=linked_entity_ref,
@@ -1681,6 +1952,26 @@ def create_management_router(
                 page_size=page_size,
                 identity=identity,
             )
+
+        if run_management_read is not None:
+            try:
+                return await run_management_read(_do_read)
+            except Exception as e:
+                if type(e).__name__ == "ManagementValidationError" or isinstance(e, ValueError):
+                    field = getattr(e, "field", None)
+                    reason = getattr(e, "reason", str(e))
+                    status_code = getattr(e, "status_code", 400)
+                    raise _err(
+                        status_code,
+                        ErrorCode.VALIDATION_FAILED,
+                        str(e),
+                        reason,
+                        precondition_failed=field,
+                    )
+                return svc.get_evidence_degraded_payload(page_size=page_size, snapshot_at=snap)
+
+        try:
+            return _do_read()
         except Exception as e:
             if type(e).__name__ == "ManagementValidationError" or isinstance(e, ValueError):
                 field = getattr(e, "field", None)

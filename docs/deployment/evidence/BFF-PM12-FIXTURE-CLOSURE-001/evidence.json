@@ -1,0 +1,89 @@
+{
+  "task_id": "BFF-PM12-FIXTURE-CLOSURE-001",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "base_commit": "8d6ff21c32ac73f26832349cfa1f4c418164b24a",
+  "base_note": "This generation is a corrective follow-up on top of the prior generation's merged-to-branch commit 8d6ff21c (base 640ee7c15, the origin/dev tip at task start). That prior commit closed the last two non-allowlisted main.py importers (AC1/AC5/AC6/AC7 satisfied and unchanged by this generation) but did NOT implement AC3/AC4: it left test_management_nl_assistant_provider.py::_seeded_client hand-seeding personas/bindings without ever calling the canonical build_pm12_eligible_persona_records builder, and test_bff_b6_001_security_hardening.py::_seeded_client seeding no personas at all. Independent review at PR #5981 head 8d6ff21c rejected on exactly that gap. This generation closes AC3/AC4 without reopening or relitigating AC1/AC2/AC5/AC6/AC7.",
+  "summary": "Rebuilt both target fixtures' persona/binding/runtime-binding/session/telemetry seeding to reuse the canonical build_pm12_eligible_persona_records builder (test_bff_promotion_review_governance.py, already proven against the real production pipeline by test_pm12_eligibility_fixture_contract.py) instead of hand-rolled or absent persona data. Verified directly against the real, unmodified production pipeline (personas.service._pm12_persona_league_rows -> _pm12_quarterly_ranking_items) that each file's actual seeded store now produces a persona-alpha (tenant-alpha) with eligible=True, exclusion_reasons=[], overall_score>=85, risk_score>=70, execution_score>=65 -- and a persona-beta (tenant-beta) that is likewise genuinely eligible in its own tenant, while remaining invisible to a tenant-alpha caller (tenant isolation still enforced, per AC2/AC5's fail-closed gate). Extended tests/test_pm12_eligibility_fixture_contract.py with two new tests that import each file's real _seeded_client() and assert this end to end, per the reviewer's explicit request, rather than inventing a second/competing eligible-persona definition. Every pre-existing assertion in both rebuilt files, and in every other file in the combined run, still passes with the exact same values as before (see test_execution). No production source was edited.",
+  "acceptance_criteria_status": {
+    "ac1_starting_point_published": "Unchanged from the prior generation (commit 8d6ff21c, already merged onto this task branch): live-scan offenders before that edit were tests/test_bff_b6_001_security_hardening.py, tests/test_management_nl_assistant_provider.py, tests/test_management_read_timeout_and_capacity.py (3 offenders, 19 allowlist entries), matching the task brief's expected starting point. Not reopened or re-verified by this generation, which only touches persona/fixture data inside files already migrated off main.py.",
+    "ac2_ac5_finding_read_and_not_relitigated": "Re-read docs/deployment/evidence/BFF-MGMT-READ-DEFECT-REPAIR-001/evidence.json's defect_3_pm12_fixture_drift section before writing any code in this generation. The three production gates (tenant-scoped read admission in personas/service.py::_list_persona_records ~L2231/2288, league-row eligibility in _pm12_persona_league_ranking_item ~L6273, and the promote_to_canary_candidate score gates in _pm12_recommendation_action_ids ~L12371) were not touched, relaxed, or relitigated. No production source file was edited by this task. The fixture rebuild described below makes fixtures clear these real gates rather than working around them.",
+    "ac3_canonical_fixture_contract_used": "tests/test_pm12_eligibility_fixture_contract.py's existing coverage (build_pm12_eligible_persona_records, exercised via PromotionReviewTestReadPorts) already expressed everything a caller needs; nothing was changed in the builder itself, and no second/competing eligible-persona definition was introduced anywhere. What this generation adds: two new tests in that same file (test_b6_security_hardening_fixture_seeds_a_genuinely_eligible_persona, test_management_nl_assistant_provider_fixture_seeds_a_genuinely_eligible_persona) that import each rebuilt file's real _seeded_client() and drive it through the real _pm12_persona_league_rows/_pm12_quarterly_ranking_items pipeline, proving the actual seeded fixtures -- not a parallel double -- clear the gates. This directly answers the reviewer's 'extend the canonical contract coverage to prove both actual seeded fixtures clear the real eligibility and score gates' requirement. 6/6 passing (4 original + 2 new).",
+    "ac4_fixtures_rebuilt": {
+      "test_bff_b6_001_security_hardening.py": "_seeded_client() now calls test_bff_promotion_review_governance.build_pm12_eligible_persona_records('persona-alpha', 'runtime-b6-sec-alpha', 'binding-b6-sec-alpha', tenant_id='tenant-alpha') and the tenant-beta equivalent for persona-beta, merges the resulting persona/binding/runtime-binding/telemetry/session records into the store already used by every test in the file (create_in_memory_read_surface_ports with persona_capital_runtime_kwargs), and overrides get_sessions_for_persona to serve the builder's session records (the port stack has no persona_training wiring by default). The PM12 runtime-binding records are tagged with a sentinel tenant_id ('tenant-pm12-fixture-internal') that neither test tenant ever requests: personas.service._pm12_persona_league_rows reads read_store.list_runtime_bindings() with no tenant argument at all (PM12 tenant admission is enforced only on the persona record itself), so this file's real pipeline still sees the runtime bindings in full, while this file's own unrelated _mgmt_nl_filter_tenant_records-based nl/ask 'portfolio' snippet -- which has no bearing on PM12 eligibility -- excludes them, so its pre-existing exact total_pnl==1.25/total_trades==3 assertions are undisturbed. Verified directly (see test_execution): persona-alpha comes out eligible=True, exclusion_reasons=[], overall_score=85.9, risk_score=93.0, execution_score=98.6 against this file's real seeded store. 5/5 existing assertions still pass, unchanged.",
+      "test_management_nl_assistant_provider.py": "_seeded_client() previously hand-seeded persona-alpha/persona-beta with lifecycle_state 'active', no runtime binding, no session, and no telemetry -- inert fields that never called the canonical builder, exactly as the reviewer found. Replaced that seeding with the same build_pm12_eligible_persona_records calls (runtime ids runtime-asst-alpha/-beta, binding ids binding-asst-alpha/-beta), using the same sentinel-tenant-on-runtime-binding technique to keep test_provider_enabled_invokes_openclaw_with_tenant_scoped_context's hard-coded total_pnl==2.5 assertion intact, and adding a get_sessions_for_persona override plus a list_authoritative_paper_runtime_monitoring_sessions()->[] override (create_market_persona_projection_test_double's re-wrap of the composite ports drops create_in_memory_read_surface_ports()'s default empty paper-fleet-monitoring provider, which would otherwise raise RuntimeError('PANTHEON_PAPER_FLEET_RECONCILER_URL is not configured') the first time PM12's session-resolution path is exercised against a 'paper' deployment_mode runtime). Verified directly: persona-alpha comes out eligible=True, exclusion_reasons=[], overall_score=85.9 (tenant-alpha caller); persona-beta comes out eligible=True in its own tenant-beta and is correctly absent from the tenant-alpha caller's rows (tenant isolation intact). 64/65 existing assertions still pass unchanged; the 65th (test_assistant_provider_usage_summary_aggregates_history_and_quota) is the pre-existing, already-documented cross-run audit-path flakiness described below -- reproduced identically against the unmodified pre-this-generation baseline, so it predates and is unrelated to this fixture rebuild."
+    },
+    "ac4_no_assertion_genuinely_failed": "No pre-existing assertion in either rebuilt file failed as a result of this fixture rebuild. The one failure observed in test_management_nl_assistant_provider.py (test_assistant_provider_usage_summary_aggregates_history_and_quota) is the same pre-existing PANTHEON_MANAGEMENT_AI_AUDIT_PATH cross-run flakiness already documented by the prior generation's evidence in this same file (see pre_existing_unrelated_failures below) -- reproduced identically on the unmodified generation-1 baseline before this generation's edits, confirming it is not caused by this change and is deterministically avoided with PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off.",
+    "ac5_one_new_allowlist_entry_authorized": "Unchanged from the prior generation, already merged onto this task branch: services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py is the sole new composition_allowlist entry, with its rationale recorded inline in tests/test_bff_test_architecture.py's WHOLE_APP_ALLOWLIST and tests/bff_test_architecture_inventory.json. This generation adds no further allowlist entries.",
+    "ac6_target_end_state": "Unchanged and re-verified: live-scan non-allowlisted importers after this generation's edits remain 0, composition_allowlist size remains 20, ceiling remains 0 (`.venv-pantheon/bin/python3 -m pytest -q tests/test_bff_test_architecture.py -k non_whitelisted` => 1 passed). The importlib/dunder-import/call-graph detectors in tests/test_bff_test_architecture.py were not touched by this generation.",
+    "ac7_no_production_edits": "Confirmed by `git status --short` at this generation's HEAD: only test files (tests/test_bff_b6_001_security_hardening.py, tests/test_management_nl_assistant_provider.py, tests/test_pm12_eligibility_fixture_contract.py) plus this evidence artifact were changed. No production source (main.py, assistant/management_service.py, personas/service.py, management_read_models/service.py, core/app_factory.py, governance/human_inbox.py) was edited in this generation.",
+    "ac8_terminal_results_published": "see test_execution below",
+    "ac9_delivery": "clean branch task/BFF-PM12-FIXTURE-CLOSURE-001 (unchanged from prior generation); delivery via PR + independent reviewer validation + required CI + merge to dev + canonical closeout, per standard task flow. This generation's commit is a fresh exact-head delivery superseding the rejected PR #5981 head."
+  },
+  "test_execution": {
+    "environment": "PANTHEON_DEPENDENCY_PYTHON=/tmp/venv-bff-test/bin/python3 scripts/dev/provision_python_distribution.py (via scripts/dev/provision_python_distribution.py's documented dependency-interpreter fallback chain); ran via repo-root .venv-pantheon/bin/python3 -m pytest with full repo-relative test paths (services/control-plane/bff/...). PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off used for the deterministic combined run to avoid the pre-existing, already-documented cross-run flakiness of test_assistant_provider_usage_summary_aggregates_history_and_quota (see pre_existing_unrelated_failures).",
+    "eligibility_pipeline_probe": {
+      "command": "Ad hoc pytest module driving personas.service._pm12_persona_league_rows(tenant_id=...) -> personas.service._pm12_quarterly_ranking_items(...) against each rebuilt file's real _seeded_client() store (not a stub); superseded by the permanent versions of this check added to tests/test_pm12_eligibility_fixture_contract.py.",
+      "test_bff_b6_001_security_hardening.py": "persona-alpha (tenant-alpha): eligible=True, exclusion_reasons=[], overall_score=85.9",
+      "test_management_nl_assistant_provider.py": "persona-alpha (tenant-alpha): eligible=True, exclusion_reasons=[], overall_score=85.9; persona-beta (tenant-beta): eligible=True, exclusion_reasons=[], and correctly absent from the tenant-alpha caller's rows"
+    },
+    "per_file_before_and_after_this_generation": [
+      {
+        "file": "tests/test_pm12_eligibility_fixture_contract.py",
+        "before": "4 passed",
+        "after": "6 passed (added the two fixture-integration tests described in ac3 above)",
+        "command": "cd /path/to/pantheon && .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py"
+      },
+      {
+        "file": "tests/test_bff_b6_001_security_hardening.py",
+        "before": "5 passed (personas seeded: none)",
+        "after": "5 passed, unchanged assertions (personas seeded: persona-alpha/persona-beta, both genuinely PM12-eligible in their own tenant)",
+        "command": "cd /path/to/pantheon && .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py"
+      },
+      {
+        "file": "tests/test_management_nl_assistant_provider.py",
+        "before": "65 passed (personas seeded: persona-alpha/persona-beta, inert fields only, never eligible)",
+        "after": "64 passed, 1 pre-existing-flaky (unchanged assertions; personas now genuinely PM12-eligible)",
+        "command": "cd /path/to/pantheon && PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
+      },
+      {
+        "file": "tests/test_management_read_timeout_and_capacity.py",
+        "before": "4 passed",
+        "after": "4 passed, unchanged (not touched by this generation)"
+      },
+      {
+        "file": "tests/test_bff_test_architecture.py",
+        "before": "14 passed (0 offenders / 20 allowlist / ceiling 0)",
+        "after": "14 passed, unchanged"
+      },
+      {
+        "file": "test_bff_promotion_review_governance.py",
+        "before": "23 passed, 4 failed (pre-existing, documented in docs/deployment/evidence/BFF-MGMT-READ-DEFECT-REPAIR-001/evidence.json's unrelated_pre_existing_issues_found_but_not_fixed)",
+        "after": "23 passed, 4 failed (identical failing test names; unaffected by this generation's changes, which touch none of this file's collaborators)"
+      }
+    ],
+    "combined_run_command": "cd /path/to/pantheon && PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/test_bff_promotion_review_governance.py services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "combined_run_result": "117 passed, 4 failed (the same 4 pre-existing test_bff_promotion_review_governance.py failures listed below; total count is +2 over the prior generation's 115/4 because of the two new tests added to test_pm12_eligibility_fixture_contract.py)"
+  },
+  "pre_existing_unrelated_failures": {
+    "test_bff_promotion_review_governance.py::test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one": "Pre-existing drift documented in BFF-MGMT-READ-DEFECT-REPAIR-001/evidence.json; a KeyError on items[0]['blocking_reasons']. Not touched by this task.",
+    "test_bff_promotion_review_governance.py::test_human_inbox_filtered_local_snapshot_empty_remains_degraded": "Pre-existing approval_queue surface 'source' field mismatch, documented in the same evidence file. Not touched by this task.",
+    "test_bff_promotion_review_governance.py::test_promotion_review_approve_submits_human_gate_command": "Pre-existing: record['audit']['live_capital_side_effects'] is never populated for HumanGateApprove commands in production. Documented in the same evidence file. Not touched by this task.",
+    "test_bff_promotion_review_governance.py::test_command_store_caching": "Pre-existing: CommandStore._cache no longer exists (removed in a prior refactor; store._cache is now [] not None). Documented in the same evidence file. Not touched by this task.",
+    "test_assistant_provider_usage_summary_aggregates_history_and_quota_flakiness": "Confirmed pre-existing, already documented by the prior generation of this same evidence file, and reproduced identically against the unmodified generation-1 baseline (git stash) before making any edit in this generation (assert 12 == 2, assert 14 == 2, assert 10 == 2 across separate re-runs): management_service.py's _management_ai_audit_path() default writes to a fixed on-disk path (not tmp_path-scoped), so repeated local pytest invocations across process runs accumulate audit events on disk and make totals['calls'] assertions flaky outside a fresh container or with PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off set. Setting PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off makes the test pass deterministically; not a production or test-logic change, just an environment isolation flag."
+  },
+  "changed_files": [
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+    "services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+    "docs/deployment/evidence/BFF-PM12-FIXTURE-CLOSURE-001/evidence.json"
+  ],
+  "changed_files_note": "No production source under services/control-plane/bff was edited in this generation. tests/rebalance_authority_test_support.py, tests/test_bff_test_architecture.py, and tests/bff_test_architecture_inventory.json (changed by the prior, already-merged generation) are unchanged by this generation.",
+  "production_changes_summary": [],
+  "delivery": {
+    "branch": "task/BFF-PM12-FIXTURE-CLOSURE-001",
+    "base": "prior generation commit 8d6ff21c32ac73f26832349cfa1f4c418164b24a (dev @ 640ee7c15f11e160179371cb6f1d0ebc859b8e30)",
+    "merge_target": "dev",
+    "superseded_pr": "https://github.com/ajoe734/pantheon/pull/5981 (head 8d6ff21c32ac73f26832349cfa1f4c418164b24a; independent review rejected AC3/AC4 -- see the task's canonical row `next` field for the exact rejection text)"
+  }
+}

@@ -2574,6 +2574,99 @@ EOF
         command = run_command.call_args.args[0]
         self.assertEqual(command[command.index("--model") + 1], "gemini-3.6-flash-low")
 
+    def test_antigravity_capacity_probe_reads_zero_token_usage_and_clears_stale_cooldown(self) -> None:
+        import model_rotation
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._rotation_probe_config(tmpdir)
+            model_rotation.cool_slot(config, "antigravity", model_rotation.SLOT_PRIMARY)
+            usage = {
+                "status": "SUCCESS",
+                "command": {"data": {"groups": [
+                    {"name": "Gemini Models", "buckets": [
+                        {"window": "weekly", "remaining_fraction": 0.4, "reset_time": "2026-09-24T00:00:00Z"},
+                        {"window": "5h", "remaining_fraction": 0.5},
+                    ]},
+                    {"name": "Claude and GPT models", "buckets": [
+                        {"window": "weekly", "remaining_fraction": 0.2},
+                        {"window": "5h", "remaining_fraction": 0.2},
+                    ]},
+                ]}},
+            }
+            response = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout=json.dumps(usage), stderr="")
+            run_command = mock.Mock(return_value=response)
+            p1, p2 = self._probe_patches(run_command)
+            with p1, p2:
+                record = provider_permissions._antigravity_auth_probe(
+                    config, "antigravity", "/usr/bin/agy", check_capacity=True
+                )
+
+            self.assertTrue(record["ready"])
+            self.assertEqual(record["method"], "agy_usage")
+            self.assertEqual(record["metadata"]["rotation_slot"], model_rotation.SLOT_PRIMARY)
+            self.assertFalse(model_rotation.slot_cooling(config, "antigravity", model_rotation.SLOT_PRIMARY))
+            command = run_command.call_args.args[0]
+            self.assertEqual(command[command.index("--prompt") + 1], "/usage")
+            self.assertNotIn("--model", command)
+
+    def test_antigravity_capacity_probe_uses_usage_reset_horizon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._rotation_probe_config(tmpdir)
+            usage = {
+                "status": "SUCCESS",
+                "command": {"data": {"groups": [
+                    {"name": "Gemini Models", "buckets": [
+                        {"window": "weekly", "remaining_fraction": 0, "reset_time": "2026-09-23T02:29:52Z"},
+                        {"window": "5h", "disabled": True, "remaining_fraction": 0.6},
+                    ]},
+                    {"name": "Claude and GPT models", "buckets": [
+                        {"window": "weekly", "remaining_fraction": 0.2},
+                        {"window": "5h", "remaining_fraction": 0, "reset_time": "2026-09-21T15:17:25Z"},
+                    ]},
+                ]}},
+            }
+            response = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout=json.dumps(usage), stderr="")
+            run_command = mock.Mock(return_value=response)
+            p1, p2 = self._probe_patches(run_command)
+            with p1, p2:
+                record = provider_permissions._antigravity_auth_probe(
+                    config, "antigravity", "/usr/bin/agy", check_capacity=True
+                )
+
+            self.assertFalse(record["ready"])
+            self.assertEqual(record["status"], "quota_reached")
+            self.assertEqual(record["quota_reset_at"], "2026-09-21T15:17:25Z")
+
+    def test_antigravity_capacity_probe_rotates_to_the_available_usage_family(self) -> None:
+        import model_rotation
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._rotation_probe_config(tmpdir)
+            usage = {
+                "status": "SUCCESS",
+                "command": {"data": {"groups": [
+                    {"name": "Gemini Models", "buckets": [
+                        {"window": "weekly", "remaining_fraction": 0, "reset_time": "2026-09-23T02:29:52Z"},
+                        {"window": "5h", "disabled": True, "remaining_fraction": 0.6},
+                    ]},
+                    {"name": "Claude and GPT models", "buckets": [
+                        {"window": "weekly", "remaining_fraction": 0.2},
+                        {"window": "5h", "remaining_fraction": 0.5},
+                    ]},
+                ]}},
+            }
+            response = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout=json.dumps(usage), stderr="")
+            run_command = mock.Mock(return_value=response)
+            p1, p2 = self._probe_patches(run_command)
+            with p1, p2:
+                record = provider_permissions._antigravity_auth_probe(
+                    config, "antigravity", "/usr/bin/agy", check_capacity=True
+                )
+
+            self.assertTrue(record["ready"])
+            self.assertEqual(record["metadata"]["rotation_slot"], model_rotation.SLOT_FALLBACK)
+            self.assertTrue(model_rotation.slot_cooling(config, "antigravity", model_rotation.SLOT_PRIMARY))
+
     def _rotation_probe_config(self, tmpdir: str) -> dict:
         return {
             "paths": {"state_file": str(Path(tmpdir) / "state.json")},

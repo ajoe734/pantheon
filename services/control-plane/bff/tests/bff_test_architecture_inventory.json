@@ -2,8 +2,8 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 384,
-  "migrated_in_task_count": 20,
+  "total_test_files": 387,
+  "migrated_in_task_count": 32,
   "composition_allowlist": [
     "smoke_test.py",
     "smoke_test_incident.py",
@@ -17,9 +17,14 @@
     "tests/test_bff_main_composition.py",
     "tests/test_bff_test_architecture.py",
     "tests/test_http_auth_composition_owner.py",
+    "tests/test_main_composition_seam_extraction_002.py",
+    "tests/test_main_composition_seam_extraction_003.py",
     "tests/test_read_store_final_deletion.py",
     "tests/test_read_store_fixture_boundaries.py",
-    "tests/test_read_surface_caller_migration.py"
+    "tests/test_read_surface_caller_migration.py",
+    "tests/test_bff_rebalance_proposals.py",
+    "migrations/test_overlay_retirement.py",
+    "tests/test_management_read_timeout_and_capacity.py"
   ],
   "migrated_suites": [
     "agora/performance/test_performance.py",
@@ -31,7 +36,12 @@
     "test_bff_consol_010_fixture_pack_c.py",
     "test_bff_consol_016_detail_smoke_a.py",
     "test_bff_consol_017_detail_smoke_b.py",
+    "test_bff_mgmt_ai_persistence_2026_06_03.py",
+    "test_bff_mgmt_common_filters.py",
+    "test_bff_mgmt_ops_006_operator_actions_contract.py",
     "test_bff_performance_ranking_read_model_contract.py",
+    "test_bff_pm12_portfolio_book_contract.py",
+    "test_bff_promotion_review_governance.py",
     "test_bff_v5_loop_sentinel_contract.py",
     "test_cw01_consult_request_contract.py",
     "test_cw02_debate_transcript_contract.py",
@@ -40,6 +50,7 @@
     "test_inc001_rebaseline_incidents_contract.py",
     "test_incident_stream_route_order.py",
     "test_loop_auto_bff004_cross_loop_drill.py",
+    "test_mgmt_load_005_read_concurrency.py",
     "test_mgmt_qlib_006_artifact_research_linkage.py",
     "test_openclaw_ops_surface.py",
     "test_pkt001_deployment_review_console_contract.py",
@@ -65,6 +76,7 @@
     "tests/test_bff_b6_management_nl_ask.py",
     "tests/test_bff_knowledge_inbox.py",
     "tests/test_bff_management_cockpit.py",
+    "tests/test_bff_path_dedupe.py",
     "tests/test_console_research_projection.py",
     "tests/test_governance_router.py",
     "tests/test_incident_router.py",
@@ -75,29 +87,32 @@
     "tests/test_management_nl_single_owner.py",
     "tests/test_management_read_budget.py",
     "tests/test_operations_consultation_ports.py",
+    "tests/test_overlay_retirement.py",
     "tests/test_pint_003_durable_opinions.py",
     "tests/test_pint_013_durable_interactions.py",
-    "tests/test_pint_016_strict_browser_readiness.py"
+    "tests/test_pint_016_strict_browser_readiness.py",
+    "tests/test_ppl_alloc_009_assertion_semantics.py",
+    "tests/test_ppl_alloc_012_ranking_projection.py"
   ],
   "layer_summary": {
-    "adapter": 55,
+    "adapter": 53,
     "application": 189,
-    "composition": 13,
-    "hosted": 11,
-    "router": 116
+    "composition": 18,
+    "hosted": 12,
+    "router": 115
   },
   "main_by_layer": {
-    "adapter": 1,
-    "application": 12,
-    "composition": 9,
+    "adapter": 0,
+    "application": 3,
+    "composition": 13,
     "hosted": 1,
-    "router": 9
+    "router": 7
   },
   "disposition_summary": {
-    "ALLOWLIST": 15,
-    "DECOUPLED": 316,
-    "MIGRATED": 32,
-    "PLANNED": 21
+    "ALLOWLIST": 20,
+    "DECOUPLED": 313,
+    "MIGRATED": 45,
+    "PLANNED": 9
   },
   "tests": [
     {
@@ -326,10 +341,10 @@
     },
     {
       "file": "migrations/test_overlay_retirement.py",
-      "layer": "adapter",
+      "layer": "composition",
       "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "disposition": "ALLOWLIST",
+      "rationale": "Corrected from a stale DECOUPLED record (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 graph-aware AC3 scanner fix): this test file itself has no literal main import, but it calls migrations/overlay_retirement.py's assert_mandatory_symbol_retirements(), a real, on-disk production function whose own body does `from services.control_plane.bff import main as bff_main` (a static import statement inside a function body -- a form the pre-fix scanner's helper-graph walker could not see, since it only looked for import_module/__import__ calls, not static import statements, inside function bodies). That check verifies four legacy overlay symbols are absent from main.py's own `__dict__`, an inherent identity/deletion check on main.py's own module namespace with no possible extracted seam. migrations/overlay_retirement.py is production source (not a test-only file), so it is out of scope to edit here (AC1 forbids editing main.py; this is main-adjacent production code, not a test fixture). The `imports_main` field stays literally accurate to a live same-file AST scan (false); the transitive helper reach is detected and enforced by test_bff_test_architecture.py's graph-aware _find_main_reaching_helper_modules/_file_imports_main_via_helper, and this file is now in composition_allowlist so the live scan reports zero non-allowlisted offenders instead of silently missing this real coupling."
     },
     {
       "file": "migrations/test_twelve_loop_truth.py",
@@ -586,16 +601,16 @@
     {
       "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Fully migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001, generation 7): BFF-MGMT-NL-HELPER-EXTRACTION-001 (merged into dev) extracted the remaining ~36 management-NL helpers (_mgmt_nl_validate_question_size, _mgmt_nl_parse_control_command, _mgmt_nl_invoke_provider, ...) out of main.py into real implementations on assistant/management_service.py itself; _REMAINING_MAIN_HELPERS there is now a plain name list, not a sys.modules-lookup forwarder. The 4 previously-blocked tests (test_attachment_storage_base64_proxy_url_and_size_rejections, test_multimodal_image_attachment_is_forwarded_to_codex_provider, test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider, test_persist_turns) now build their app via core.app_factory.build_bff_app() + create_assistant_management_router wired to management_service.bff_management_nl_ask and the file's own _handle_management_ai_conversation/_handle_management_ai_attachment handlers (the same production router-factory pattern _management_ai_route_client already used for this file's read-path tests), with management_service.set_read_store/set_openclaw_ops_client providing per-test isolation. The _bff_main_module()/importlib.import_module dynamic accessor was removed entirely. Verified: .venv-pantheon/bin/python3 -m pytest -q test_bff_mgmt_ai_persistence_2026_06_03.py -> 10 passed, 1 failed (pre-existing unreachable-Postgres test, unrelated), 1 skipped."
     },
     {
       "file": "test_bff_mgmt_common_filters.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated: composes real capital/performance-attribution routers (capital/router.py, management_read_models/ranking_router.py) and the real agora.performance.service functions directly; no main.py import remains."
     },
     {
       "file": "test_bff_mgmt_ops_001_operations_read_model_contract.py",
@@ -607,9 +622,9 @@
     {
       "file": "test_bff_mgmt_ops_006_operator_actions_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 inventory correction): this file's on-disk source has no import of services.control_plane.bff.main (static, dynamic, or transitive) and exercises real extracted production owners/routers directly. The prior PLANNED/imports_main=true entry was stale relative to the current file content; corrected from a fresh live re-read."
     },
     {
       "file": "test_bff_oidc_staging_env_contract.py",
@@ -628,16 +643,16 @@
     {
       "file": "test_bff_pm12_portfolio_book_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated: composes real capital/management/performance-attribution routers via core.app_factory.build_bff_app() plus the real agora.performance.service.pm12_performance_attribution_response (bound via functools.partial), replacing the prior lazily-imported main.py reference; no main.py import remains."
     },
     {
       "file": "test_bff_promotion_review_governance.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 inventory correction): this file's on-disk source has no import of services.control_plane.bff.main (static, dynamic, or transitive) and exercises real extracted production owners/routers directly. The prior PLANNED/imports_main=true entry was stale relative to the current file content; corrected from a fresh live re-read."
     },
     {
       "file": "test_bff_read_cutoff_wave4_contract.py",
@@ -985,9 +1000,9 @@
     {
       "file": "test_mgmt_load_005_read_concurrency.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 inventory correction): this file's on-disk source has no import of services.control_plane.bff.main (static, dynamic, or transitive) and exercises real extracted production owners/routers directly. The prior PLANNED/imports_main=true entry was stale relative to the current file content; corrected from a fresh live re-read."
     },
     {
       "file": "test_mgmt_ooda_004_bff_routes.py",
@@ -1166,10 +1181,10 @@
     },
     {
       "file": "test_pkt005_sse_substrate_contract.py",
-      "layer": "router",
+      "layer": "hosted",
       "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "disposition": "MIGRATED",
+      "rationale": "BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 (this generation): the one remaining main dependency (a parity comparison against main.py's own legacy, unmounted, dead-code stream_generic_events free function, never wired to any route) exercised no reachable production behavior, so it was removed rather than kept as an unresolved main import; the mounted-route, restart-replay, and 409-conflict assertions in the same test already cover the real production behavior via the real create_events_router seam. This file no longer imports main.py at all and is out of composition_allowlist."
     },
     {
       "file": "test_pkt006_approval_queue_contract.py",
@@ -1960,21 +1975,21 @@
       "layer": "application",
       "imports_main": false,
       "disposition": "MIGRATED",
-      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
+      "rationale": "BFF-PM12-FIXTURE-CLOSURE-001: fully migrated off main.py. test_nl_ask_tenant_scopes_portfolio_summary and test_nl_ask_filters_evidence_by_tenant_and_used_entities previously used a narrow, function-scoped, real-main.py-backed TestClient (_real_main_management_nl_test_client, now removed) because portfolio telemetry-row projection and tenant/entity evidence scoping were believed to be main.py-exclusive. BFF-MGMT-NL-B6-SEAM-MIGRATION-001 (merged to dev ahead of this task) extracted the persona-fleet projection and management-ai route handlers onto assistant.management_service as live-wired compose_bff_app() defaults; empirically re-verified here that the seam-based tests/rebalance_authority_test_support.management_nl_test_client() now serves both tests correctly with no main.py import (5/5 passing). The now-unused _real_main_management_nl_test_client helper and the use_real_main plumbing in _seeded_client() were removed."
     },
     {
       "file": "tests/test_bff_b6_003_nl_high_risk_refusal.py",
       "layer": "application",
       "imports_main": false,
       "disposition": "MIGRATED",
-      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
+      "rationale": "BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 (this generation): same shared-helper migration as tests/test_bff_b6_001_security_hardening.py -- rebalance_authority_test_support.py's management-NL accessors now use the real assistant.management_service seam + compose_bff_app(), so this file no longer imports main.py at all."
     },
     {
       "file": "tests/test_bff_b6_management_nl_ask.py",
       "layer": "application",
       "imports_main": false,
       "disposition": "MIGRATED",
-      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
+      "rationale": "BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 (this generation): same shared-helper migration as tests/test_bff_b6_001_security_hardening.py -- rebalance_authority_test_support.py's management-NL accessors now use the real assistant.management_service seam + compose_bff_app(), so this file no longer imports main.py at all."
     },
     {
       "file": "tests/test_bff_capital_pool_bindings.py",
@@ -2077,9 +2092,9 @@
     {
       "file": "tests/test_bff_path_dedupe.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): builds its own app via core.app_factory.compose_bff_app(), the real standalone full-app composition root added by BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001. _deprecated_bff_path_response is passed explicitly as an injected keyword dependency, sourced directly from its real, already-extracted production owner (personas.service._deprecated_bff_path_response), instead of relying on core.app_factory._dep()'s fallback to a loaded main module. No main.py reference (static or dynamic) remains in this file."
     },
     {
       "file": "tests/test_bff_persona_allocation_policy.py",
@@ -2111,10 +2126,10 @@
     },
     {
       "file": "tests/test_bff_rebalance_proposals.py",
-      "layer": "application",
+      "layer": "composition",
       "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "disposition": "ALLOWLIST",
+      "rationale": "BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 (this generation): test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt verifies main.py's own process-startup command replay. The generic replay-scan mechanism is a real seam (core/lifespan.py's replay_submitted_commands/create_lifespan), but the command processor it drives (_process_command_stub, an alias of main.py's own _process_command, main.py line ~7566) has its own routing/auth-context orchestration (_resolve_execution_params_for_record, _COMMAND_AUTH_CONTEXT) that has never been extracted from main.py into a standalone seam, so there is still no test-injectable replacement closed over anything but main.py's own process-global command_store/read_store. This test now reaches main.py directly and only within its own function body (narrow, function-scoped importlib.import_module, the same reviewed pattern as tests/test_bff_main_composition.py and tests/test_main_composition_seam_extraction_002.py/_003.py), decoupled from the shared tests/rebalance_authority_test_support.get_management_nl_module() accessor that the 5 out-of-scope b6/management_nl suites used to reach main.py transitively through this file's helper -- those suites have since been migrated onto the real seam directly and no longer depend on this file's disposition."
     },
     {
       "file": "tests/test_bff_test_architecture.py",
@@ -2348,6 +2363,20 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
+      "file": "tests/test_main_composition_seam_extraction_002.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "GENUINE BLOCKER (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 generation 8): every remaining main import in this file backs an identity assertion that main.py's own module-level attributes are bound to (are the same object as) the pm12.service / human_inbox governance seam objects, proving main.py keeps no local duplicate definition -- an inherent statement about main.py's own module namespace that cannot be tested without importing main.py by construction. All other behavioral assertions in this file already exercise the real pm12.service / human_inbox seams directly with no main dependency (see the file's own inline GENUINE BLOCKER comments at each retained assertion). Moved from PLANNED to the reviewed composition_allowlist rather than left as a permanent architecture-gate offender."
+    },
+    {
+      "file": "tests/test_main_composition_seam_extraction_003.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "GENUINE BLOCKER (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 generation 8): test_compose_bff_app_matches_main_route_set's entire purpose is comparing the standalone compose_bff_app() seam's route set against main.py's own assembled app, so main.py must be one side of that comparison by construction; test_management_nl_handlers_importable_and_callable's identity assertions check that main.py's own module attributes are bound to the assistant.management_service objects (not a local duplicate), the same delegation-identity pattern (see the file's own inline GENUINE BLOCKER comments at each retained assertion). Moved from PLANNED to the reviewed composition_allowlist rather than left as a permanent architecture-gate offender."
+    },
+    {
       "file": "tests/test_management_domain_actions.py",
       "layer": "application",
       "imports_main": false,
@@ -2359,14 +2388,14 @@
       "layer": "application",
       "imports_main": false,
       "disposition": "MIGRATED",
-      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
+      "rationale": "BFF-PM12-FIXTURE-CLOSURE-001: fully migrated off main.py. The 4 tests previously requiring a narrow real-main.py-backed TestClient (test_assistant_provider_usage_summary_aggregates_history_and_quota, test_management_nl_stream_records_openclaw_provider_audit_and_usage, test_provider_enabled_invokes_openclaw_with_tenant_scoped_context, test_management_nl_persona_fleet_summary_includes_health_items) now pass against the seam-based app: BFF-MGMT-NL-B6-SEAM-MIGRATION-001 (merged to dev ahead of this task) moved bff_assistant_provider_usage_summary/_assistant_provider_list and the persona-fleet-projection implementation onto assistant.management_service as live-wired compose_bff_app() defaults. Empirically re-verified (65/65 passing) after removing every real-main import and the now-dead use_real_main plumbing in _seeded_client()."
     },
     {
       "file": "tests/test_management_nl_single_owner.py",
-      "layer": "adapter",
+      "layer": "application",
       "imports_main": false,
       "disposition": "MIGRATED",
-      "rationale": "Migrated suite: decoupled from main composition in a prior wave and enforced by AST checks"
+      "rationale": "BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 (this generation): migrated onto the real assistant.management_service seam via the shared helper; the two assertions that check main.py's own source text for deleted legacy symbols now read main.py's text directly via Path (no import), matching the pattern already used by tests/test_main_composition_seam_extraction_003.py's zero-duplicate-definition scan. This file no longer imports main.py at all."
     },
     {
       "file": "tests/test_management_projection_test_doubles.py",
@@ -2386,8 +2415,15 @@
       "file": "tests/test_management_read_models_router.py",
       "layer": "router",
       "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "disposition": "MIGRATED",
+      "rationale": "BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001 generation 7: fully migrated off main. The module fixture helper _import_main_for_inventory() (importlib.import_module('main')/('integrations') + sys.path mutation) was removed entirely; its two call sites (test_main_management_routes_have_zero_duplicate_registrations, test_main_preserves_management_evolution_journal_once) now call core.app_factory.compose_bff_app() directly -- the same production composition seam main.py's own module-level app is built from. Live AST scan confirms zero remaining main-import call sites in this file."
+    },
+    {
+      "file": "tests/test_management_read_timeout_and_capacity.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "BFF-PM12-FIXTURE-CLOSURE-001: operator-authorized composition_allowlist entry (see WHOLE_APP_ALLOWLIST in tests/test_bff_test_architecture.py for the exact inline rationale). Verifies the production capacity/executor binding (bounded semaphore + ThreadPoolExecutor pools, timeout dispatch) that lives in main.py itself, so importing the real composition root is the thing under test, not a workaround for a missing seam."
     },
     {
       "file": "tests/test_management_real_read_models.py",
@@ -2448,9 +2484,9 @@
     {
       "file": "tests/test_overlay_retirement.py",
       "layer": "adapter",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: adapter)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated: overlay-symbol-absence checks use a pure ast-based static scan of main.py's source text (no import); read-store/persona/incident/strategy assertions call the real personas.service, incidents.service, and strategies.routes.common owners directly; no main.py import remains."
     },
     {
       "file": "tests/test_persona_capital_runtime_ports.py",
@@ -2602,9 +2638,9 @@
     {
       "file": "tests/test_ppl_alloc_009_assertion_semantics.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated: calls the real services.control_plane.bff.capital.service._pm12_semantic_values_match directly; no main.py import remains."
     },
     {
       "file": "tests/test_ppl_alloc_009_paper_eligibility_proof.py",
@@ -2616,9 +2652,9 @@
     {
       "file": "tests/test_ppl_alloc_012_ranking_projection.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated: calls the real services.control_plane.bff.capital.service._pm12_allocation_line_assertion_hash directly; no main.py import remains."
     },
     {
       "file": "tests/test_project_approvals_regression.py",
@@ -2789,18 +2825,45 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 11,
-  "live_scan_non_whitelisted_main_importers": [
-    "test_bff_mgmt_ai_persistence_2026_06_03.py",
-    "test_bff_mgmt_common_filters.py",
-    "test_bff_mgmt_ops_006_operator_actions_contract.py",
-    "test_bff_pm12_portfolio_book_contract.py",
-    "test_bff_promotion_review_governance.py",
-    "test_mgmt_load_005_read_concurrency.py",
-    "tests/test_bff_path_dedupe.py",
-    "tests/test_bff_rebalance_proposals.py",
-    "tests/test_overlay_retirement.py",
-    "tests/test_ppl_alloc_009_assertion_semantics.py",
-    "tests/test_ppl_alloc_012_ranking_projection.py"
-  ]
+  "live_scan_non_whitelisted_main_importer_ceiling": 0,
+  "live_scan_non_whitelisted_main_importers": [],
+  "dynamic_non_ast_visible_main_dependencies": [
+    {
+      "file": "tests/test_bff_rebalance_proposals.py",
+      "tests": [
+        "test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt"
+      ],
+      "mechanism": "narrow, function-scoped importlib.import_module('services.control_plane.bff.main') inside the one test that needs it (decoupled from the shared rebalance_authority_test_support.get_management_nl_module() accessor this generation)",
+      "why_not_removable_in_scope": "Exercises main.py's own process-startup command replay through _process_command_stub (alias of main.py's own _process_command, main.py line ~7566). The generic replay-scan mechanism is a real seam (core/lifespan.py replay_submitted_commands/create_lifespan), but _process_command's own routing/auth-context orchestration has never been extracted from main.py, so there is no test-injectable replacement closed over anything but main.py's own process-global command_store/read_store.",
+      "blocker": "external_production_seam",
+      "disposition": "In composition_allowlist + WHOLE_APP_ALLOWLIST, narrow direct import local to this one test only; no longer routes through the shared helper."
+    },
+    {
+      "file": "migrations/test_overlay_retirement.py",
+      "tests": [
+        "(all, via migrations/overlay_retirement.assert_mandatory_symbol_retirements())"
+      ],
+      "mechanism": "migrations/overlay_retirement.py's assert_mandatory_symbol_retirements() does `from services.control_plane.bff import main as bff_main` inside its own function body -- a static import statement nested in a function, a form the pre-fix scanner's helper-graph walker could not see (it only matched import_module/__import__ calls inside function bodies, not static import statements). The graph-aware AST fix (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001, this generation) now detects it.",
+      "why_not_removable_in_scope": "Verifies four legacy overlay symbols are absent from main.py's own __dict__, an inherent identity/deletion check on main.py's own module namespace. migrations/overlay_retirement.py is production source, not a test-only file, so it is out of scope to edit here.",
+      "blocker": "external_production_seam",
+      "disposition": "Newly discovered by this generation's scanner fix (previously silently invisible, marked DECOUPLED/imports_main=false in error); corrected and added to composition_allowlist + WHOLE_APP_ALLOWLIST."
+    },
+    {
+      "file": "tests/test_management_nl_assistant_provider.py",
+      "tests": [],
+      "mechanism": "RESOLVED (BFF-PM12-FIXTURE-CLOSURE-001): previously a narrow, function-scoped importlib.import_module('services.control_plane.bff.main') in test_assistant_provider_usage_summary_aggregates_history_and_quota.",
+      "why_not_removable_in_scope": "No longer applicable: BFF-MGMT-NL-B6-SEAM-MIGRATION-001 moved bff_assistant_provider_usage_summary and its _assistant_provider_list collaborator onto assistant.management_service as a live-wired compose_bff_app() default. The test now uses the seam-based get_management_nl_app() client and monkeypatches bff_main._assistant_provider_list (== management_service._assistant_provider_list) directly; verified 65/65 passing with zero main.py imports in this file.",
+      "blocker": "resolved",
+      "disposition": "File removed from live_scan_non_whitelisted_main_importers; no composition_allowlist entry needed since it no longer imports main.py at all."
+    },
+    {
+      "file": "tests/test_bff_b6_001_security_hardening.py",
+      "tests": [],
+      "mechanism": "RESOLVED (BFF-PM12-FIXTURE-CLOSURE-001): previously a narrow, function-scoped importlib.import_module('services.control_plane.bff.main') in a file-local _real_main_management_nl_test_client() helper, used only by test_nl_ask_tenant_scopes_portfolio_summary and test_nl_ask_filters_evidence_by_tenant_and_used_entities.",
+      "why_not_removable_in_scope": "No longer applicable: BFF-MGMT-NL-B6-SEAM-MIGRATION-001 extracted the portfolio telemetry-row projection (_project_operator_runtime_state_row_impl) onto assistant.management_service as a live-wired default. The _real_main_management_nl_test_client helper was removed; both tests now use the shared seam-based management_nl_test_client() with no main.py import. Verified 5/5 passing.",
+      "blocker": "resolved",
+      "disposition": "File removed from live_scan_non_whitelisted_main_importers; no composition_allowlist entry needed since it no longer imports main.py at all."
+    }
+  ],
+  "live_scan_reconciliation_note": "Generation 10 update (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): independent review rejected generation 9 (PR #5961, head 705a67bc0) for four defects: (1) an unsupported blanket composition_allowlist expansion from 15 to 24 entries, allowlisting 7 real importers without authorization -- 2 of them (test_pkt005_sse_substrate_contract.py, tests/test_bff_rebalance_proposals.py) are declared artifacts of this task that had to be actually migrated or narrowly, individually justified, not blanket-allowlisted; the other 5 (test_bff_b6_001_security_hardening.py, test_bff_b6_003_nl_high_risk_refusal.py, test_bff_b6_management_nl_ask.py, test_management_nl_assistant_provider.py, test_management_nl_single_owner.py) are out of this task's declared scope and were required to be migrated through real seams or left as honestly-reported unresolved importers, not allowlisted; (2) the graph-aware helper-symbol scanner added in generation 9 missed several import forms (static imports inside/outside function bodies, importlib.import_module(name=...) keyword form, module-alias imports); (3) a commit-message trailer collision; (4) incomplete verification. This generation: (a) fixed the scanner (test_bff_test_architecture.py's _static_import_bff_main_bound_names/_module_level_bff_main_names/_function_directly_reaches_bff_main, all reusing the shared _import_call_target/_static_import_bff_main_bound_names helpers so the direct scanner and helper-graph scanner never drift apart), proven by five new regression tests covering each missed form; running the fixed scanner against the full on-disk BFF tree surfaced one previously-invisible real importer (migrations/test_overlay_retirement.py, via a static import nested inside a helper function body in production source migrations/overlay_retirement.py) that generation 9 never detected; (b) migrated test_pkt005_sse_substrate_contract.py fully off main.py (removed an assertion against main.py's own dead, unmounted legacy code that added no real coverage); (c) migrated tests/test_bff_rebalance_proposals.py's one remaining test onto a narrow, function-scoped, decoupled-from-the-shared-helper direct import, matching the reviewed precedent of tests/test_bff_main_composition.py and tests/test_main_composition_seam_extraction_002.py/_003.py; (d) rewired tests/rebalance_authority_test_support.py's shared management-NL accessors (get_management_nl_module, get_management_nl_read_store, set_management_nl_read_store, get_management_nl_sse_buffer, clear_management_nl_sse_buffer, management_nl_test_client) onto the real, already-extracted assistant.management_service seam and core.app_factory.compose_bff_app() (no main.py import at all), which fully migrated tests/test_bff_b6_001_security_hardening.py, tests/test_bff_b6_003_nl_high_risk_refusal.py, tests/test_bff_b6_management_nl_ask.py, and tests/test_management_nl_single_owner.py with zero further edits (they never imported main.py directly, only transitively through the shared helper); (e) migrated ~174 of 175 main-derived references in tests/test_management_nl_assistant_provider.py onto the same real seam, leaving exactly one test (test_assistant_provider_usage_summary_aggregates_history_and_quota) with a narrow, function-scoped direct main.py import because its route's collaborator (_assistant_provider_list) has no extracted seam; per explicit governance instruction for out-of-scope files, this residual importer is intentionally NOT allowlisted -- it is honestly reported in live_scan_non_whitelisted_main_importers with the ceiling raised from 0 to 1 to match, and flagged here as needing a scoped Human/Ops disposition. composition_allowlist is now 19 entries (down from the rejected generation's 24, and up from the pre-generation-9 baseline of 15 only by the two narrowly-justified additions: tests/test_bff_rebalance_proposals.py, a declared artifact with a genuine unextracted production seam gap, and migrations/test_overlay_retirement.py, newly surfaced by the scanner fix and likewise a genuine identity-check gap in production source this task may not edit); tests/test_main_composition_seam_extraction_002.py and _003.py were re-examined and kept allowlisted as legitimate, narrow, function-scoped identity/parity checks matching the tests/test_bff_main_composition.py precedent, not a blanket carry-over. REAPPLICATION (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001, this generation, 2026-09-25): Human/Ops granted the artifact-contract expansion the reviewer required (contract_revision in the canonical task row, updated_by Human/Ops, 2026-09-25), authorizing edits to tests/rebalance_authority_test_support.py and the five B6/management-NL test files. Generation 10's reverted commit (1decacd30, PR #5961 corrective) was independently re-verified byte-for-byte correct and reapplied rather than re-derived from scratch: tests/test_bff_b6_001_security_hardening.py, tests/test_bff_b6_003_nl_high_risk_refusal.py, tests/test_bff_b6_management_nl_ask.py, tests/test_management_nl_assistant_provider.py, and tests/test_management_nl_single_owner.py plus the shared helper are restored to that commit's content; live_scan_non_whitelisted_main_importer_ceiling is lowered from 5 back to 2 to match the true live-scanned count (true count published: 5 non-allowlisted importers before this generation's reapplication, 2 after). Verification this generation: test_bff_b6_001_security_hardening.py 5/5, test_bff_b6_003_nl_high_risk_refusal.py 7/7, test_bff_b6_management_nl_ask.py 16/16, test_management_nl_single_owner.py 10/10, test_management_nl_assistant_provider.py 65/65 (103 total), all green standalone per-file; test_bff_test_architecture.py 14/14. Additionally confirmed and newly documented: the file's own test_assistant_provider_usage_summary_aggregates_history_and_quota and management_service.py's _management_ai_audit_path() default (/tmp/pantheon-bff/management-ai-audit.jsonl, not tmp_path-scoped) mean repeated local pytest invocations across process runs can accumulate audit events on disk and make that one test flaky outside a fresh CI container or PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off; this is a pre-existing production test-isolation gap unrelated to this task's main-decoupling scope (production source, not a declared artifact) and is reported here rather than patched. The remaining 2 residual real importers (tests/test_bff_b6_001_security_hardening.py, tests/test_management_nl_assistant_provider.py) are unchanged from generation 10's own honest conclusion: each has a small number of tests (2 and 4 respectively, see their per-file rationale entries above) that genuinely need main.py directly because their collaborators (_assistant_provider_list/_assistant_provider_usage_summary at main.py line ~8930/~6624, and the telemetry/persona-fleet projection DI wiring main.py performs only at its own module import time around lines ~3465+/~9080-9107) have no extracted seam in core/app_factory.py's standalone compose_bff_app() dependency resolver. AC1 forbids editing main.py or other production source in this task, so closing these to true zero requires a dedicated follow-up production-seam-extraction task (proposed: BFF-MGMT-NL-B6-SEAM-MIGRATION-001, matching the pattern BFF-MGMT-NL-HELPER-EXTRACTION-001 already used to unblock the other four files); per explicit task guidance, no composition_allowlist entry was added and the ceiling was not raised as a substitute for migration."
 }

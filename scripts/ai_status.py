@@ -71,6 +71,7 @@ from dispatch_policy import (
     ALLOWLISTED_EXECUTION_RESOURCES,
     normalize_execution_resources,
     task_execution_resources,
+    task_review_requeue_record,
 )
 import task_archive as task_archive_module
 from task_archive import (
@@ -1184,6 +1185,10 @@ def validate_status_root_binding() -> None:
     assert_task_archive_root_binding()
 
 KNOWN_AGENTS = {
+    "PiAstra": {
+        "capability_lane": ["integration", "status-system", "schema", "acceptance"],
+        "default_branch": "feat/pi-astra-collab-system",
+    },
     "Claude": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude-execution-control",
@@ -5236,6 +5241,25 @@ def _dependency_contract_validate_worker_recovery(
         raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
 
 
+def _dependency_contract_validate_materialized_review_requeue(
+    task_id: str, task: Mapping[str, Any]
+) -> None:
+    """Allow only a settled reopen outbox record on an operator-held task.
+
+    A review reopen is materialized before the owner receives the queue event.
+    When that owner later records a real blocker, the completed outbox record is
+    historical state rather than live dispatch authority.  The runtime fence
+    above still rejects active workers, queued events, leases, and off-lock
+    reservations; this narrow exception only lets Human/Ops revise the blocked
+    task's dependency contract.
+    """
+    if task.get("status") != "blocked":
+        raise DependencyContractBusy(f"{task_id} has pending {REVIEW_REQUEUE_INTENT_KEY}")
+    record = task_review_requeue_record(task)
+    if record is None or record.get("status") != "materialized":
+        raise DependencyContractBusy(f"{task_id} has pending {REVIEW_REQUEUE_INTENT_KEY}")
+
+
 
 def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any], runtime: Mapping[str, Any]) -> dict[str, Any]:
     """Validate detached prospective rows before one canonical/outbox commit."""
@@ -5275,6 +5299,9 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
             if value not in (None, {}, []):
                 if field == "worker_recovery":
                     _dependency_contract_validate_worker_recovery(task_id, task)
+                    continue
+                if field == REVIEW_REQUEUE_INTENT_KEY:
+                    _dependency_contract_validate_materialized_review_requeue(task_id, task)
                     continue
                 raise DependencyContractBusy(f"{task_id} has pending {field}")
         bridge = task.get("dev_bridge")

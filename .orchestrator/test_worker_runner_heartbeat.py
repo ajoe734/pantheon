@@ -1409,6 +1409,8 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             local_cache = fake_local / "cache"
             local_bin = fake_local / "bin"
             custom_claude_dir = root / "custom-claude-config"
+            pi_agent_dir = fake_home / ".pi" / "pantheon-astra"
+            pi_agent_dir.mkdir(parents=True)
 
             for d in (local_state, local_share, local_cache, local_bin, custom_claude_dir):
                 d.mkdir(parents=True, exist_ok=True)
@@ -1421,6 +1423,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             cmd = ["python3", "-c", "pass"]
             env = {
                 "CLAUDE_CONFIG_DIR": str(custom_claude_dir),
+                "PI_CODING_AGENT_DIR": str(pi_agent_dir),
             }
             with (
                 mock.patch.object(Path, "home", return_value=fake_home),
@@ -1438,6 +1441,9 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             self.assertIn(str(custom_claude_dir.resolve()), sandbox_args)
             claude_idx = sandbox_args.index(str(custom_claude_dir.resolve()))
             self.assertEqual(sandbox_args[claude_idx - 1], "--bind-try")
+            pi_idx = sandbox_args.index(str(pi_agent_dir.resolve()))
+            self.assertEqual(sandbox_args[pi_idx - 1], "--bind-try")
+            self.assertNotIn(str(pi_agent_dir.parent.resolve()), sandbox_args)
 
             # 2. Narrowed ~/.local subdirectories (state, share, cache) are mounted writable with --bind-try
             for sub_dir in (local_state, local_share, local_cache):

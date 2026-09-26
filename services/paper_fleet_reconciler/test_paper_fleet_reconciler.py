@@ -1658,6 +1658,7 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         bindings: List[Dict[str, Any]],
         *,
         source_snapshot: Optional[Dict[str, Any]] = None,
+        market_input_bootstrap_grace_seconds: Optional[float] = None,
     ) -> Tuple[Any, Any]:
         from services.runtime_manager.runtime_binding import RuntimeBinding, RuntimeBindingStore
         from services.paper_fleet_reconciler.paper_fleet_reconciler import PaperFleetReconciler
@@ -1725,6 +1726,7 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
             poll_interval_seconds=999,
             restart_backoff_seconds=0,
             drain_timeout_seconds=1,
+            market_input_bootstrap_grace_seconds=market_input_bootstrap_grace_seconds,
         )
         return store, recon
 
@@ -2101,6 +2103,107 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         self.assertEqual(snap["worker_count"], 0)
         self.assertEqual(snap["running_count"], 0)
         self.assertEqual(store.get("b-restart-paused").status, "paused")
+
+    def test_missing_market_input_defers_pause_within_grace_period(self) -> None:
+        """Never-ingested first-run: a binding whose connector has not yet
+        produced any snapshot is deferred, not paused, while still inside the
+        market-input bootstrap grace window."""
+        now = datetime.now(timezone.utc)
+        b = _make_binding(
+            "b-missing-grace",
+            symbol="AAPL.US",
+            effective_at=now.isoformat().replace("+00:00", "Z"),
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+        )
+        store, recon = self._make_store_and_recon(
+            [b], market_input_bootstrap_grace_seconds=120.0,
+        )
+
+        snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 0)
+        self.assertEqual(store.get("b-missing-grace").status, "active")
+
+    def test_missing_market_input_transitions_active_to_paused_with_reason_code(self) -> None:
+        """Outside the grace window, a never-provisioned connector's binding
+        pauses with the specific market_input_missing reason, not a generic
+        market_input_stale label."""
+        now = datetime.now(timezone.utc)
+        old_effective = (now - timedelta(seconds=600)).isoformat().replace("+00:00", "Z")
+        b = _make_binding(
+            "b-missing-paused",
+            symbol="AAPL.US",
+            effective_at=old_effective,
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+        )
+        store, recon = self._make_store_and_recon(
+            [b], market_input_bootstrap_grace_seconds=0.0,
+        )
+
+        snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(self.transitions[0]["new_status"], "pending_pause")
+        self.assertEqual(self.transitions[1]["new_status"], "paused")
+
+        saved = store.get("b-missing-paused")
+        self.assertEqual(saved.status, "paused")
+        adm = saved.metadata.get("session_admission")
+        self.assertIsNotNone(adm)
+        self.assertEqual(adm["reason_code"], "market_input_missing")
+        self.assertIsNone(adm["source_snapshot_id"])
+        self.assertIsNone(adm["resume_snapshot_id"])
+        self.assertIsNone(adm["resumed_at"])
+
+    def test_missing_market_input_paused_binding_resumes_on_first_admitted_snapshot(self) -> None:
+        """Regression for the market_input_missing resume gap: a binding
+        paused because its connector had never produced any snapshot (no
+        prior source_snapshot_id/source_event_time to compare against) must
+        still auto-resume once the connector delivers its first admissible
+        snapshot -- not stay paused forever because the resume check only
+        recognized market_input_stale."""
+        now = datetime.now(timezone.utc)
+        first_ever_snap = {
+            "snapshot_id": "snap-first-ever-001",
+            "symbol": "AAPL.US",
+            "event_time": (now - timedelta(seconds=60)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ingest://normalized/us-price/AAPL",
+            "lineage": {"source": "dev-paper-us-equity-simulation"},
+            "closes": [150.0, 151.0],
+        }
+        b = _make_binding(
+            "b-missing-resume",
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={
+                "session_admission": {
+                    "reason_code": "market_input_missing",
+                    "source_snapshot_id": None,
+                    "source_event_time": None,
+                    "observed_at": (now - timedelta(seconds=600)).isoformat().replace("+00:00", "Z"),
+                    "max_age_seconds": 86400,
+                    "pause_command_ref": "cmd-missing-001",
+                    "resume_snapshot_id": None,
+                    "resumed_at": None,
+                }
+            },
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=first_ever_snap)
+
+        snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 1)
+        self.assertEqual(snap["running_count"], 1)
+
+        self.assertEqual(len(self.transitions), 1)
+        self.assertEqual(self.transitions[0]["new_status"], "active")
+
+        saved = store.get("b-missing-resume")
+        self.assertEqual(saved.status, "active")
+        adm = saved.metadata["session_admission"]
+        self.assertEqual(adm["reason_code"], "market_input_missing")
+        self.assertEqual(adm["resume_snapshot_id"], "snap-first-ever-001")
+        self.assertIsNotNone(adm["resumed_at"])
 
     def test_operator_pause_is_never_auto_resumed(self) -> None:
         now = datetime.now(timezone.utc)

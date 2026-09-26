@@ -289,17 +289,23 @@ class V2StartupCacheTests(unittest.TestCase):
             mock.patch.object(supervisor, "pid_is_alive", return_value=False),
             mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
             mock.patch.object(supervisor, "canonical_worker_terminal_status", return_value=None),
+            mock.patch.object(
+                supervisor,
+                "record_delivery_health_for_reaped_worker",
+                return_value="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 39h.",
+            ) as record_failure,
             mock.patch.object(supervisor, "recover_lost_worker_lease", return_value=True) as recover,
             mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
         ):
             self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
 
+        record_failure.assert_called_once_with(config, state, worker)
         recover.assert_called_once_with(
             config,
             state,
             worker,
             reason_kind="worker_process_missing",
-            reason="Worker process missing during supervisor boot reconciliation.",
+            reason="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 39h.",
             status=status,
         )
 
@@ -1174,7 +1180,12 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
                 "title": "Keep task briefs clean",
                 "summary_zh": "brief hygiene",
                 "next": "owner implementation",
+                "acceptance": [
+                    "Preserve the canonical task contract.",
+                    "Do not create a test-only fallback.",
+                ],
                 "artifacts": [".orchestrator/supervisor.py"],
+                "depends_on": ["UPSTREAM-BRIEF-CONTRACT-001"],
             }
         )
         return config, task, status_root, source_root
@@ -1323,7 +1334,15 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             self.assertIn(f"- {generated_path}", owner_request.message)
             self.assertNotIn(f"- {self.BRIEF_PATH}", owner_request.message)
             self.assertTrue(generated_file.is_file())
-            self.assertIn("Status: todo", generated_file.read_text(encoding="utf-8"))
+            generated_text = generated_file.read_text(encoding="utf-8")
+            self.assertIn("Status: todo", generated_text)
+            self.assertIn("## Acceptance", generated_text)
+            self.assertIn("1. Preserve the canonical task contract.", generated_text)
+            self.assertIn("2. Do not create a test-only fallback.", generated_text)
+            self.assertIn("## Scoped Artifacts", generated_text)
+            self.assertIn("- .orchestrator/supervisor.py", generated_text)
+            self.assertIn("## Prerequisites", generated_text)
+            self.assertIn("- UPSTREAM-BRIEF-CONTRACT-001", generated_text)
             self.assertEqual(
                 self._git(workspace, "check-ignore", generated_path),
                 generated_path,
@@ -2143,15 +2162,16 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                 for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
                     self.assertNotIn("max_parallel", config["agents"][slot_id])
 
-    def test_repo_claude_quota_pause_survives_healthy_auth_probe(self) -> None:
+    def test_repo_claude_dispatch_uses_the_shared_account_cap(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         account = supervisor.agent_account_id(config, "claude")
         self.assertTrue(bool(account) and account == supervisor.agent_account_id(config, "claude2"))
         self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 3)
-        for agent_id in ("claude", "claude2"):
-            with self.subTest(agent_id=agent_id):
+        expected_capacity = {"claude": 3, "claude2": 0}
+        for agent_id, capacity in expected_capacity.items():
+            with self.subTest(agent_id=agent_id, capacity=capacity):
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
-                self.assertEqual(lane.max_parallel, 0)
+                self.assertEqual(lane.max_parallel, capacity)
                 self.assertTrue(all(endpoint.account_id == account for endpoint in lane.endpoints))
                 health = supervisor.rewrite_provider_health.apply_probe(
                     {}, endpoint_id=agent_id, account_id=account,
@@ -2161,7 +2181,7 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                     supervisor.assignment_terminal_unavailability(
                         config, {"delivery_health": health}, agent_id,
                     ),
-                    "configured_zero_capacity",
+                    None if capacity else "configured_zero_capacity",
                 )
 
     def test_retired_capacity_fields_fail_closed(self) -> None:
@@ -5496,6 +5516,40 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertEqual(len(observations), 1)
         self.assertEqual(observations[0]["endpoint_id"], "claude")
         probe.assert_called_once_with(self.config, "claude", force=True, check_capacity=True)
+
+    def test_probe_demanded_delivery_health_uses_antigravity_zero_token_capacity_probe(self) -> None:
+        self.config["agents"]["antigravity"] = {
+            "display_name": "Antigravity",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["antigravity"] = {
+            "delivery_mode": "antigravity",
+            "account": "antigravity-shared",
+        }
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {"antigravity": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"}},
+                "accounts": {"antigravity_shared": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"}},
+            },
+        }
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live", "method": "agy_usage"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config,
+                [{"scope": "endpoint", "id": "antigravity"}],
+                quiet=True,
+                state=state,
+            )
+        self.assertEqual(len(observations), 1)
+        probe.assert_called_once_with(self.config, "antigravity", force=True, check_capacity=True)
 
     def test_bootstrap_cold_start_refresh_to_admission_probes_capacity(self) -> None:
         """Cold-start lane with no account health probes capacity before admission."""
@@ -13721,10 +13775,22 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             "state": "expired",
             "valid_until": expired_at,
         }
-        # Only Codex has an active task and is healthy; Codex2 has no tasks/workers/fallback demand
+        # Codex2 must not be reachable through the zero-fleet fallback scan
+        # either, or it would be legitimately (and separately) demanded as
+        # Codex's configured owner fallback the moment the fleet has zero
+        # live workers -- see ``zero_fleet_assignment_refresh_targets`` and
+        # OPS-ZERO-WORKER-HEALTH-REFRESH-SELFLOCK-001. Clearing the fallback
+        # graph here isolates this test to what it actually asserts: idle
+        # refresh probes are restricted to active delivery lanes only.
+        self.config["worker_reassignment"]["owner_fallbacks"] = {}
+        self.config["worker_reassignment"]["reviewer_fallbacks"] = {}
+        # Only Codex has an active task and is healthy; Codex2 has no tasks/workers/fallback demand.
+        # The reviewer is an explicit Human/Ops gate so the zero-fleet scan's
+        # unconditional incumbent-reviewer refresh (needed to pair a real
+        # owner reassignment with a viable reviewer) also stays silent here.
         status_snapshot = {
             "tasks": [
-                task_fixture("TASK-CODEX", owner="Codex", status="todo"),
+                task_fixture("TASK-CODEX", owner="Codex", reviewer="Human/Ops", status="todo"),
             ]
         }
         targets = supervisor.idle_delivery_health_refresh_targets(
@@ -13759,6 +13825,314 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         )
         all_target_ids = {t["id"] for t in all_targets}
         self.assertEqual(all_target_ids, {"codex", "codex2"})
+
+    def _worker_recovery_pointer(
+        self, *, task_generation: int = 1, status: str = "pending"
+    ) -> dict[str, object]:
+        return {
+            "receipt_id": "receipt-1",
+            "status": status,
+            "task_generation": task_generation,
+            "fence_generation": task_generation,
+            "replacement_generation": None,
+        }
+
+    def test_zero_fleet_assignment_refresh_targets_covers_pending_recovery_fallback(
+        self,
+    ) -> None:
+        """OPS-ZERO-WORKER-HEALTH-REFRESH-SELFLOCK-001: with zero active
+        workers, a task fenced behind a pending worker-recovery receipt must
+        demand a refresh for its configured owner/reviewer fallback
+        candidates too, not only the incumbent -- otherwise
+        ``worker_recovery_assignment_pair`` keeps reading stale evidence for
+        the exact candidates it needs and the receipt can never resolve on
+        its own.
+        """
+
+        expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        for identity in ("codex", "codex2"):
+            self.state["delivery_health"]["endpoints"][identity] = {
+                "state": "expired",
+                "valid_until": expired_at,
+            }
+        task = task_fixture("TASK-RECOVERY", status="in_progress", owner="Codex", reviewer="Codex2")
+        task[supervisor.WORKER_RECOVERY_TASK_KEY] = self._worker_recovery_pointer()
+        status_snapshot = {"tasks": [task]}
+
+        targets = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=0
+        )
+        target_ids = {t["id"] for t in targets}
+        self.assertEqual(target_ids, {"codex", "codex2"})
+
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            self.state,
+            status_snapshot,
+            queue_snapshot=[],
+            live_total=0,
+        )
+        plan_target_ids = {t["id"] for t in plan.get("health_refresh_targets", [])}
+        self.assertIn("codex2", plan_target_ids)
+
+    def test_zero_fleet_assignment_refresh_targets_noop_with_active_workers(self) -> None:
+        """The widened fallback scan must add nothing while a worker is live:
+        a running fleet already regenerates this demand through its own
+        dispatch/recovery cycles, so this path must not add extra probes.
+        """
+
+        expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        for identity in ("codex", "codex2"):
+            self.state["delivery_health"]["endpoints"][identity] = {
+                "state": "expired",
+                "valid_until": expired_at,
+            }
+        task = task_fixture("TASK-RECOVERY", status="in_progress", owner="Codex", reviewer="Codex2")
+        task[supervisor.WORKER_RECOVERY_TASK_KEY] = self._worker_recovery_pointer()
+        status_snapshot = {"tasks": [task]}
+
+        targets = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=1
+        )
+        self.assertEqual(targets, [])
+
+    def test_zero_fleet_assignment_refresh_targets_skips_already_fresh_candidates(
+        self,
+    ) -> None:
+        """Never probe a provider that is already fresh (bounded demand)."""
+
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        task = task_fixture("TASK-RECOVERY", status="in_progress", owner="Codex", reviewer="Codex2")
+        task[supervisor.WORKER_RECOVERY_TASK_KEY] = self._worker_recovery_pointer()
+        status_snapshot = {"tasks": [task]}
+
+        targets = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=0
+        )
+        self.assertEqual(targets, [])
+
+    def test_zero_fleet_assignment_refresh_targets_covers_ready_dispatch_owner_chain(
+        self,
+    ) -> None:
+        """A plain ready ``todo`` task with zero workers also demands its
+        owner's fallback chain, not only the incumbent -- covering the
+        "ready work" half of the zero-worker self-lock. The reviewer is an
+        explicit Human/Ops gate here so the owner's only configured fallback
+        (Codex2) is not simultaneously excluded as the incumbent reviewer.
+        """
+
+        expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        for identity in ("codex", "codex2"):
+            self.state["delivery_health"]["endpoints"][identity] = {
+                "state": "expired",
+                "valid_until": expired_at,
+            }
+        status_snapshot = {
+            "tasks": [task_fixture("TASK-READY", status="todo", owner="Codex", reviewer="Human/Ops")]
+        }
+
+        targets = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=0
+        )
+        target_ids = {t["id"] for t in targets}
+        self.assertEqual(target_ids, {"codex", "codex2"})
+
+    def test_zero_fleet_assignment_refresh_targets_covers_candidate_owner_reviewer_chain(
+        self,
+    ) -> None:
+        """OPS-ZERO-WORKER-HEALTH-REFRESH-SELFLOCK-001 (review-rejected PR
+        #5959, head ea39fdbfa9fb9c79251e6a62c7fccccdf8a1239f): the widened
+        scan must also walk the reviewer fallback chain rooted at each
+        *candidate* owner it discovers -- exactly what
+        ``plan_task_assignment_pair``/``reviewer_fallback_search_order`` do
+        -- and at the pending receipt's previous owner/reviewer, not only the
+        incumbent reviewer.
+
+        Deterministic isolated repro from the independent review:
+        owner_fallbacks Codex->[Codex2], reviewer_fallbacks Codex2->[Claude2]
+        (no chain rooted at Claude itself). Scanning reviewer fallbacks only
+        from the incumbent reviewer (Claude) never reaches Claude2, even
+        though ``plan_task_assignment_pair`` reaches it as soon as Codex2
+        becomes the candidate owner: three ``build_dispatch_plan`` passes
+        would return ``refresh_targets=[]`` for Claude2 and a viable recovery
+        (Codex2, Claude2) stayed self-locked behind stale evidence.
+        """
+
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["agents"]["claude2"] = {
+            "display_name": "Claude2",
+            "provider": "claude2",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-account",
+        }
+        self.config["providers"]["claude2"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude2-account",
+        }
+        self.config["worker_reassignment"]["owner_fallbacks"] = {"Codex": ["Codex2"]}
+        self.config["worker_reassignment"]["reviewer_fallbacks"] = {"Codex2": ["Claude2"]}
+
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        self.state["delivery_health"]["endpoints"]["claude2"] = {
+            "state": "expired",
+            "valid_until": expired_at,
+        }
+
+        task = task_fixture(
+            "TASK-RECOVERY", status="in_progress", owner="Codex", reviewer="Claude"
+        )
+        task[supervisor.WORKER_RECOVERY_TASK_KEY] = self._worker_recovery_pointer()
+        status_snapshot = {
+            "tasks": [task],
+            "worker_recovery_receipts": {
+                "receipt-1": {
+                    "receipt_id": "receipt-1",
+                    "task_id": "TASK-RECOVERY",
+                    "status": "pending",
+                    "task_generation": 1,
+                    "recovery_role": "owner",
+                    "worker": {"agent": "Codex"},
+                    "previous": {"owner": "Codex", "reviewer": "Claude"},
+                }
+            },
+        }
+
+        targets = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=0
+        )
+        target_ids = {t["id"] for t in targets}
+        self.assertIn("claude2", target_ids)
+
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            self.state,
+            status_snapshot,
+            queue_snapshot=[],
+            live_total=0,
+        )
+        plan_target_ids = {t["id"] for t in plan.get("health_refresh_targets", [])}
+        self.assertIn("claude2", plan_target_ids)
+
+        # A running fleet must gain no extra probes from this path.
+        no_extra = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=1
+        )
+        self.assertEqual(no_extra, [])
+
+    def test_zero_fleet_assignment_refresh_targets_covers_ready_work_no_receipt(
+        self,
+    ) -> None:
+        """OPS-ZERO-WORKER-HEALTH-REFRESH-SELFLOCK-001 (independent review
+        rejection of PR #5959, head f4747870551b4b1dc0a0ea90918104aeaeac57dc):
+        AC1/AC4 for *ready work with no pending recovery receipt* -- a plain
+        ``todo`` task whose incumbent reviewer is also the only configured
+        owner fallback.
+
+        Deterministic isolated repro from the independent review: zero
+        workers, todo task owner Codex / reviewer Codex2, owner_fallbacks
+        Codex->[Codex2], reviewer_fallbacks Codex2->[Claude], healthy Claude
+        and accounts except ``codex-account`` (``retry_after`` /
+        ``quota_terminal``, so Codex itself is durably not viable) and an
+        expired codex2 endpoint.
+
+        Two compounding bugs previously made this self-lock unrecoverable:
+        excluding the incumbent *reviewer* from the owner-candidate scan
+        (``owner_exclude = {owner, reviewer}``) silently dropped Codex2 --
+        the only configured owner fallback -- even though
+        ``plan_task_assignment_pair`` explicitly permits pairing an
+        incumbent reviewer in as the new owner; and gating the reviewer
+        fallback chain behind ``review_statuses`` skipped it entirely for an
+        ordinary ``todo``/``in_progress`` task, so even a widened owner scan
+        would never have reached Claude as Codex2's replacement reviewer.
+        Both together meant three ``build_dispatch_plan`` calls kept
+        returning ``health_refresh_targets=[]`` and
+        ``plan_task_assignment_pair`` kept returning ``None`` forever, even
+        though refreshing only the codex2 endpoint immediately yields the
+        viable pair (Codex2, Claude).
+        """
+
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude-account",
+        }
+        self.config["worker_reassignment"]["owner_fallbacks"] = {"Codex": ["Codex2"]}
+        self.config["worker_reassignment"]["reviewer_fallbacks"] = {"Codex2": ["Claude"]}
+
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        far_future = "2999-01-01T00:00:00Z"
+        self.state["delivery_health"]["endpoints"]["codex2"] = {
+            "state": "expired",
+            "valid_until": expired_at,
+        }
+        self.state["delivery_health"]["accounts"]["codex_account"] = {
+            "state": "retry_after",
+            "reason_kind": "quota_terminal",
+            "retry_at": far_future,
+        }
+
+        status_snapshot = {
+            "tasks": [task_fixture("TASK-READY", status="todo", owner="Codex", reviewer="Codex2")]
+        }
+
+        # Bug 1 + bug 2 together previously self-locked this case: neither
+        # the incumbent owner (durably not viable) nor the incumbent
+        # reviewer (silently excluded as an owner candidate, and never
+        # reviewer-chain-refreshed for an ordinary ``todo`` task) produced
+        # any refresh demand, so the only viable owner fallback (Codex2) and
+        # its replacement reviewer (Claude) both stayed stale forever.
+        targets = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=0
+        )
+        target_ids = {t["id"] for t in targets}
+        self.assertEqual(target_ids, {"codex2"})
+
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            self.state,
+            status_snapshot,
+            queue_snapshot=[],
+            live_total=0,
+        )
+        plan_target_ids = {t["id"] for t in plan.get("health_refresh_targets", [])}
+        self.assertIn("codex2", plan_target_ids)
+
+        # A running fleet must gain no extra probes from this path.
+        no_extra = supervisor.zero_fleet_assignment_refresh_targets(
+            self.config, self.state, status_snapshot, live_total=1
+        )
+        self.assertEqual(no_extra, [])
+
+        # Once the demanded refresh lands (codex2 becomes healthy again),
+        # the real planner reaches exactly the viable pair the review
+        # expected -- proving bounded, self-triggered recovery end to end.
+        self.state["delivery_health"]["endpoints"]["codex2"] = {
+            "state": "healthy",
+            "valid_until": far_future,
+        }
+        pair = supervisor.plan_task_assignment_pair(
+            self.config, status_snapshot["tasks"][0], state=self.state
+        )
+        self.assertEqual(pair, ("Codex2", "Claude"))
 
     def test_large_queue_records_reconciliation_is_bounded(self) -> None:
         """Reconciliation and queue scanning remain bounded with 1600+ historic records."""
@@ -20383,6 +20757,80 @@ class QueueRecordReconciliationUnsettledWorkerTests(unittest.TestCase):
                 self.assertTrue(supervisor.reconcile_queue_records(config, state))
                 self.assertEqual(state["queue"]["events"]["evt-1"]["status"], expected)
                 self.assertIn("key-evt-1", state["seen_event_keys"])
+
+
+class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
+    """Guard the shipped reviewer-fallback policy the whole fleet plans from.
+
+    ``plan_task_assignment_pair`` will not assign a task without a reviewer, so
+    ``reviewer_fallbacks`` is the list that decides whether any work can be
+    dispatched at all.  When every lane listed only ``Codex``/``Codex2`` and
+    both Codex accounts went ``quota_terminal``, no open task could be paired
+    and the fleet sat at zero dispatch for hours with a healthy supervisor --
+    the outage looked like a scheduler fault because nothing reported that the
+    reviewer side of every candidate pair was simply unreachable.
+    """
+
+    CODEX_ACCOUNTS = frozenset({"codex1", "codex2"})
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        config_path = Path(__file__).resolve().parent / "config.json"
+        cls.config = json.loads(config_path.read_text(encoding="utf-8"))
+        cls.fallbacks = cls.config["worker_reassignment"]["reviewer_fallbacks"]
+        providers = cls.config.get("providers") or {}
+        cls.account_of = {}
+        for agent in (cls.config.get("agents") or {}).values():
+            lane = str(agent.get("display_name") or "")
+            provider = providers.get(str(agent.get("provider") or "")) or {}
+            account = str(provider.get("account") or "")
+            if lane and account:
+                cls.account_of.setdefault(lane, account)
+
+    def test_every_lane_offers_a_reviewer_outside_the_codex_accounts(self) -> None:
+        # The regression itself: a Codex-only chain makes the two Codex
+        # accounts a single point of failure for the entire fleet.
+        for lane, chain in self.fallbacks.items():
+            with self.subTest(lane=lane):
+                outside = [
+                    name
+                    for name in chain
+                    if self.account_of.get(name) not in self.CODEX_ACCOUNTS
+                ]
+                self.assertTrue(
+                    outside,
+                    f"lane {lane} can only be reviewed by the Codex accounts; "
+                    "a Codex quota exhaustion would stop all dispatch",
+                )
+
+    def test_codex_lanes_keep_first_refusal_for_non_codex_owners(self) -> None:
+        # Widening the chain must not quietly re-route review away from Codex
+        # while Codex is healthy: the added lanes are a degradation path.
+        for lane, chain in self.fallbacks.items():
+            if self.account_of.get(lane) in self.CODEX_ACCOUNTS:
+                continue
+            with self.subTest(lane=lane):
+                self.assertEqual(
+                    chain[:2],
+                    ["Codex", "Codex2"],
+                    f"lane {lane} no longer prefers the Codex reviewers first",
+                )
+
+    def test_no_lane_falls_back_to_a_reviewer_on_its_own_account(self) -> None:
+        # Independence here is about upstream account, not display name:
+        # Claude/Claude2 and Antigravity/Antigravity2 are one account each, so
+        # pairing siblings would buy availability with a self-review.
+        for lane, chain in self.fallbacks.items():
+            lane_account = self.account_of.get(lane)
+            self.assertIsNotNone(lane_account, f"lane {lane} has no account")
+            for name in chain:
+                with self.subTest(lane=lane, reviewer=name):
+                    self.assertNotEqual(
+                        self.account_of.get(name),
+                        lane_account,
+                        f"lane {lane} may fall back to {name} on the same "
+                        f"account {lane_account}",
+                    )
 
 
 if __name__ == "__main__":

@@ -362,7 +362,7 @@ _SESSION_COLS = [
     "openclaw_session_id", "strategy_id", "active_strategy_spec_registry_id",
     "selected_version_id", "active_workshop_version_id",
     "final_strategy_spec_registry_id", "final_workshop_version_id",
-    "status", "lock_version", "created_at", "updated_at", "concluded_at",
+    "status", "lock_version", "created_at", "updated_at", "concluded_at", "title",
 ]
 _EVENT_COLS = [
     "event_id", "workshop_id", "sequence_no", "actor_type", "event_type",
@@ -454,6 +454,7 @@ class MemoryWorkshopStore:
                 "workshop_id": session["workshop_id"],
                 "tenant_id": session["tenant_id"],
                 "user_id": session["user_id"],
+                "title": session.get("title"),
                 "servant_persona_id": session.get("servant_persona_id"),
                 "openclaw_session_id": session.get("openclaw_session_id"),
                 "strategy_id": session.get("strategy_id"),
@@ -1584,6 +1585,7 @@ class PostgresWorkshopStore:
                     workshop_id                      TEXT PRIMARY KEY,
                     tenant_id                        TEXT NOT NULL,
                     user_id                          TEXT NOT NULL,
+                    title                            TEXT,
                     servant_persona_id               TEXT,
                     openclaw_session_id              TEXT,
                     strategy_id                      TEXT,
@@ -1606,6 +1608,7 @@ class PostgresWorkshopStore:
             # needs repair while still enforcing the status boundary for writes.
             conn.execute(f"""
                 ALTER TABLE {self._st}
+                    ADD COLUMN IF NOT EXISTS title TEXT,
                     ADD COLUMN IF NOT EXISTS active_workshop_version_id TEXT,
                     ADD COLUMN IF NOT EXISTS final_strategy_spec_registry_id TEXT,
                     ADD COLUMN IF NOT EXISTS final_workshop_version_id TEXT,
@@ -1871,6 +1874,7 @@ class PostgresWorkshopStore:
             "workshop_id": session["workshop_id"],
             "tenant_id": session["tenant_id"],
             "user_id": session["user_id"],
+            "title": session.get("title"),
             "servant_persona_id": session.get("servant_persona_id"),
             "openclaw_session_id": session.get("openclaw_session_id"),
             "strategy_id": session.get("strategy_id"),
@@ -1898,8 +1902,8 @@ class PostgresWorkshopStore:
                      active_strategy_spec_registry_id, selected_version_id,
                      active_workshop_version_id, final_strategy_spec_registry_id,
                      final_workshop_version_id, status, lock_version, created_at,
-                     updated_at, concluded_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     updated_at, concluded_at, title)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     row["workshop_id"], row["tenant_id"], row["user_id"],
@@ -1909,7 +1913,7 @@ class PostgresWorkshopStore:
                     row["final_strategy_spec_registry_id"],
                     row["final_workshop_version_id"], row["status"],
                     row["lock_version"], row["created_at"], row["updated_at"],
-                    row["concluded_at"],
+                    row["concluded_at"], row["title"],
                 ),
             )
         return row
@@ -1937,7 +1941,7 @@ class PostgresWorkshopStore:
                        active_workshop_version_id,
                        final_strategy_spec_registry_id, final_workshop_version_id,
                        status, lock_version, created_at::text, updated_at::text,
-                       concluded_at::text
+                       concluded_at::text, title
                 FROM {self._st} WHERE workshop_id = %s
                 """,
                 (workshop_id,),
@@ -2087,7 +2091,7 @@ class PostgresWorkshopStore:
                        active_workshop_version_id,
                        final_strategy_spec_registry_id, final_workshop_version_id,
                        status, lock_version, created_at::text, updated_at::text,
-                       concluded_at::text
+                       concluded_at::text, title
                 FROM {self._st}
                 WHERE {where}
                 ORDER BY created_at ASC

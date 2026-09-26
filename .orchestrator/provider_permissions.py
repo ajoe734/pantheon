@@ -11,6 +11,7 @@ import subprocess
 import threading
 
 import model_rotation
+import pi_runtime
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -1262,6 +1263,7 @@ def _antigravity_auth_probe(
     binary: str | None,
     *,
     force: bool = False,
+    check_capacity: bool = False,
 ) -> dict[str, Any]:
     # See _codex_auth_probe: this is always a live observation.
     _ = force
@@ -1295,6 +1297,134 @@ def _antigravity_auth_probe(
     prompt = str(settings.get("probe_prompt") or AUTH_PROBE_PROMPT)
     timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
     print_timeout = str(settings.get("print_timeout") or provider_settings.get("probe_print_timeout") or "90s").strip()
+
+    if check_capacity:
+        # AGY supports `/usage` as a non-turn, zero-token command.  Prefer its
+        # server-supplied quota state to a synthetic model prompt: a prompt can
+        # wait behind provider retries and used to be misclassified as capacity
+        # exhaustion when the local health timeout fired first.
+        usage_command = [
+            binary,
+            "--output-format",
+            "json",
+            "--print-timeout",
+            print_timeout,
+            "--prompt",
+            "/usage",
+        ]
+        try:
+            usage_result = run_command(usage_command, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=False,
+                method="agy_usage",
+                error=f"Antigravity usage probe timed out after {timeout:g}s.",
+                status="probe_timeout",
+                metadata=metadata,
+            )
+        except OSError as exc:
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=False,
+                method="agy_usage",
+                error=f"{type(exc).__name__}: {exc}",
+                status="probe_error",
+                metadata=metadata,
+            )
+        usage_output = "\n".join(part for part in (usage_result.stdout, usage_result.stderr) if part)
+        try:
+            usage_payload = json.loads((usage_result.stdout or "").strip())
+        except json.JSONDecodeError:
+            usage_payload = None
+        if usage_result.returncode != 0 or not isinstance(usage_payload, dict) or usage_payload.get("status") != "SUCCESS":
+            ready, error, status = _antigravity_probe_ready(
+                usage_result.returncode,
+                (usage_result.stdout or "").strip(),
+                usage_output,
+            )
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=False,
+                method="agy_usage",
+                error=error or "Antigravity usage probe did not return a usable payload.",
+                status=status if status != "ready" else "usage_unparseable",
+                metadata=metadata,
+            )
+
+        usage_data = ((usage_payload.get("command") or {}).get("data") or {})
+        groups = usage_data.get("groups") if isinstance(usage_data, dict) else None
+        groups = groups if isinstance(groups, list) else []
+
+        def capacity_for_model(model_name: str) -> tuple[bool | None, str | None]:
+            family = "claude and gpt models" if any(token in model_name.lower() for token in ("claude", "gpt")) else "gemini models"
+            group = next(
+                (item for item in groups if isinstance(item, dict) and str(item.get("name") or "").strip().lower() == family),
+                None,
+            )
+            buckets = group.get("buckets") if isinstance(group, dict) else None
+            if not isinstance(buckets, list):
+                return None, None
+            weekly = next((item for item in buckets if isinstance(item, dict) and item.get("window") == "weekly"), None)
+            five_hour = next((item for item in buckets if isinstance(item, dict) and item.get("window") == "5h"), None)
+            if not isinstance(weekly, dict) or not isinstance(five_hour, dict):
+                return None, None
+            try:
+                weekly_remaining = float(weekly.get("remaining_fraction") or 0)
+                five_hour_remaining = float(five_hour.get("remaining_fraction") or 0)
+            except (TypeError, ValueError):
+                return None, None
+            if weekly_remaining <= 0:
+                return False, str(weekly.get("reset_time") or "").strip() or None
+            if bool(five_hour.get("disabled")):
+                return True, None
+            if five_hour_remaining <= 0:
+                return False, str(five_hour.get("reset_time") or "").strip() or None
+            return True, None
+
+        rotation = model_rotation.rotation_settings(config, provider_id)
+        primary_model = str(rotation.get("primary") or provider_settings.get("model") or "").strip()
+        candidates: list[tuple[str | None, str]] = [(model_rotation.SLOT_PRIMARY if rotation.get("enabled") else None, primary_model)]
+        fallback_model = str(rotation.get("fallback") or "").strip()
+        if rotation.get("enabled") and fallback_model:
+            candidates.append((model_rotation.SLOT_FALLBACK, fallback_model))
+        reset_times: list[str] = []
+        unavailable_slots: list[str] = []
+        for slot, candidate_model in candidates:
+            available, reset_at = capacity_for_model(candidate_model)
+            if reset_at:
+                reset_times.append(reset_at)
+            if available is not True:
+                if slot is not None and available is False:
+                    unavailable_slots.append(slot)
+                continue
+            for unavailable_slot in unavailable_slots:
+                model_rotation.cool_slot(config, provider_id, unavailable_slot)
+            if slot is not None:
+                model_rotation.clear_slot(config, provider_id, slot)
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=True,
+                method="agy_usage",
+                metadata={**metadata, "probe_model": candidate_model, "rotation_slot": slot},
+            )
+
+        record = _auth_probe_record(
+            provider_id,
+            "antigravity",
+            ready=False,
+            method="agy_usage",
+            error="No configured Antigravity model currently has usable quota.",
+            status="quota_reached",
+            metadata=metadata,
+        )
+        if reset_times:
+            record["quota_reset_at"] = min(reset_times)
+        return record
 
     # The probe must exercise the same model the dispatch adapter would pick:
     # auth (the OAuth token) and per-model-family quota are separate failure
@@ -1483,6 +1613,59 @@ def _configured_provider_binary(config: dict[str, Any], provider: str, section: 
     return command_exists(provider_settings.get("cli") or default)
 
 
+def _pi_auth_probe(config: dict[str, Any], provider_id: str) -> dict[str, Any]:
+    profile = pi_runtime.settings(config, provider_id)
+    cli = pi_runtime.binary(profile)
+    env = pi_runtime.environment(profile)
+    metadata = {"model": profile.get("model", "gpt-6-astra"),
+                "agent_dir": env["PI_CODING_AGENT_DIR"]}
+
+    def record(ready: bool, status: str, error: str | None = None) -> dict[str, Any]:
+        return _auth_probe_record(provider_id, "pi", ready=ready, status=status,
+                                  method="pi_model_request", error=error, metadata=metadata)
+
+    if not cli:
+        return record(False, "cli_missing", "Configured Pi CLI is not installed.")
+    auth_path = Path(env["PI_CODING_AGENT_DIR"]) / "auth.json"
+    if not auth_path.is_file() and not env.get("OPENAI_API_KEY"):
+        return record(False, "auth_material_missing", "Pi login is missing for this agent directory.")
+    probe = _auth_probe_settings(config, provider_id)
+    expected = str(probe.get("probe_expected_output") or AUTH_PROBE_EXPECTED_OUTPUT)
+    argv = pi_runtime.command(cli, profile, str(probe.get("probe_prompt") or AUTH_PROBE_PROMPT), probe=True)
+    try:
+        result = run_command(argv, timeout=float(probe["probe_timeout_seconds"]), env=env)
+    except subprocess.TimeoutExpired:
+        return record(False, "probe_timeout", "Pi model access probe timed out.")
+    except OSError as exc:
+        return record(False, "probe_error", str(exc))
+    state = pi_runtime.stream_state(result.stdout)
+    if result.returncode == 0 and state["settled"] and not state["error"] and state["text"].strip() == expected:
+        return record(True, "ready")
+    error = _compact_auth_error(state["error"] or result.stderr) or "Pi did not return the expected settled model response."
+    # This provider uses the same OpenAI authentication/quota error vocabulary.
+    _, _, status = _codex_probe_ready(1, "", error, expected_output=expected)
+    return record(False, status, error)
+
+
+def _pi_provider_report(config: dict[str, Any], provider_id: str) -> dict[str, Any]:
+    profile = pi_runtime.settings(config, provider_id)
+    cli = pi_runtime.binary(profile)
+    probe = _pi_auth_probe(config, provider_id)
+    ready = bool(probe["ready"])
+    return {
+        "installed": bool(cli), "host_layer": "CLI", "delivery_mode": "pi",
+        "approval_mode": "worker_sandbox", "supports_auto_approve": ready,
+        "supports_defer_resume": False, "local_cli_worker_supported": ready,
+        "vscode_link_supported": False, "cloud_agent_supported": False,
+        "auth_ready": ready, "auth_error": probe.get("error"), "auth_probe": probe,
+        "auth_method": probe["method"], "last_auth_probe_at": probe["checked_at"],
+        "selected_model": profile.get("model", "gpt-6-astra"), "applied": bool(cli),
+        "verified": "verified" if ready else "partial" if cli else "unavailable",
+        "paths": {"binary": cli, "home": pi_runtime.environment(profile)["PI_CODING_AGENT_DIR"]},
+        "notes": ["Task/worktree boundaries are enforced by worker_runner's sandbox."],
+    }
+
+
 def probe_provider_auth(
     config: dict[str, Any],
     provider_id: str,
@@ -1507,6 +1690,8 @@ def probe_provider_auth(
     provider = (config.get("providers", {}).get(provider_key, {}) or {})
     delivery_mode = str(provider.get("delivery_mode") or provider_key).strip().lower()
 
+    if delivery_mode == "pi":
+        return _pi_auth_probe(config, provider_key)
     if delivery_mode == "codex":
         binary = _configured_provider_binary(config, provider_key, "codex", "codex")
         return _codex_auth_probe(
@@ -1528,7 +1713,13 @@ def probe_provider_auth(
         )
     if delivery_mode == "antigravity":
         binary = _configured_provider_binary(config, provider_key, "antigravity", "agy")
-        return _antigravity_auth_probe(config, provider_key, binary, force=force)
+        return _antigravity_auth_probe(
+            config,
+            provider_key,
+            binary,
+            force=force,
+            check_capacity=check_capacity,
+        )
     if delivery_mode == "gemini":
         settings = _gemini_settings(config, provider_key)
         oauth_creds_path = _gemini_oauth_creds_path(config, provider_key)
@@ -2314,6 +2505,9 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             },
             **_antigravity_provider_reports(config, antigravity_provider_ids),
             **{provider_id: codex_provider_report(provider_id) for provider_id in codex_provider_ids},
+            **{provider_id: _pi_provider_report(config, provider_id)
+               for provider_id, provider in config.get("providers", {}).items()
+               if provider.get("delivery_mode") == "pi"},
             "copilot": {
                 "installed": copilot_installed,
                 "host_layer": "CLI + VS Code extension + GitHub CLI"

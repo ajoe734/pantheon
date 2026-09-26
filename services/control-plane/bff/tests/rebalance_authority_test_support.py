@@ -17,12 +17,13 @@ from typing import Any, Dict, Iterator, Optional
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
-from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
 from services.control_plane.bff import command_executor
+from services.control_plane.bff.management_ai_store import ManagementAiAttachmentStore
 from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.auth.policy import (
     bff_error,
@@ -991,62 +992,270 @@ class CapitalBffAuthorityHarness:
 
 
 def get_management_nl_module() -> ModuleType:
-    """Dynamic accessor for the BFF management NL composition module.
+    """Real-seam accessor for BFF management NL composition state.
 
-    Avoids direct static AST import of the composition root while preserving
-    runtime access to management NL handlers and single-owner definitions.
+    Returns ``services.control_plane.bff.assistant.management_service``
+    directly instead of dynamically loading ``main.py``. main.py's own
+    module proxy (``_BffMainModule.__getattr__``/``__setattr__`` at the
+    bottom of main.py) already delegates every management-NL-related
+    attribute (``read_store``, ``OpenClawOpsClient``, ``_MGMT_AI_*``,
+    ``_MANAGEMENT_NL_USE_CASE``, ``bff_management_nl_ask`` and friends) onto
+    this exact module, because BFF-MGMT-NL-HELPER-EXTRACTION-001 extracted
+    all 37 management NL helpers' real implementations into
+    ``management_service.py`` and retired main.py's own copies. Reading or
+    writing state here therefore has the identical runtime effect as poking
+    main.py's proxy, with no import of main.py at all (AC3).
     """
-    return importlib.import_module("services.control_plane.bff.main")
+    from services.control_plane.bff.assistant import management_service
+
+    return management_service
+
+
+async def _seam_bff_management_ai_conversations(
+    limit: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+) -> Any:
+    """Real-seam route handler for GET /bff/management/ai/conversations,
+    reproducing main.py's own thin wrapper (main.py line ~7064) purely from
+    already-extracted assistant.management_service functions -- no main.py
+    business logic, only glue/parameter-passing, same as main.py's own
+    handler body."""
+    from services.control_plane.bff.assistant import management_service as ms
+
+    identity = ms._extract_identity(authorization)
+    ms._require_read_role(identity)
+    caller_tenant_id = ms._mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=x_tenant_id or x_pantheon_tenant,
+    )
+    return ms.management_ai_list_conversations(
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        limit=limit,
+    )
+
+
+async def _seam_bff_management_ai_conversation(
+    session_id: str,
+    trace_id: Optional[str] = None,
+    limit: int = Query(default=500, ge=1, le=1000),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+) -> Any:
+    """Real-seam route handler for GET /bff/management/ai/conversations/
+    {session_id}, reproducing main.py's own thin wrapper (main.py line
+    ~7085) purely from already-extracted assistant.management_service
+    functions -- no main.py business logic, only glue/parameter-passing."""
+    from services.control_plane.bff.assistant import management_service as ms
+
+    identity = ms._extract_identity(authorization)
+    ms._require_read_role(identity)
+    clean_session_id = str(session_id or "").strip()
+    caller_tenant_id = ms._mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=x_tenant_id or x_pantheon_tenant,
+    )
+    return ms.management_ai_get_conversation(
+        session_id=clean_session_id,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        trace_id=trace_id,
+        limit=limit,
+        audit_href_fn=lambda s_id, t_id: ms._management_ai_audit_href(session_id=s_id, trace_id=t_id),
+    )
+
+
+async def _seam_bff_management_ai_attachment(
+    attachment_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+) -> Any:
+    """Real-seam route handler for GET /bff/management/ai/attachments/
+    {attachment_id}, reproducing main.py's own thin wrapper (main.py line
+    ~7111) purely from already-extracted assistant.management_service
+    functions -- no main.py business logic, only glue/parameter-passing."""
+    from fastapi import Response
+
+    from services.control_plane.bff.assistant import management_service as ms
+
+    identity = ms._extract_identity(authorization)
+    ms._require_read_role(identity)
+    caller_tenant_id = ms._mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=x_tenant_id or x_pantheon_tenant,
+    )
+    content, mime_type, filename = ms.management_ai_get_attachment(
+        attachment_id=attachment_id,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+    )
+    return Response(
+        content=content,
+        media_type=mime_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+async def _seam_bff_management_ai_audit(
+    session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    authorization: Optional[str] = Header(default=None),
+) -> Any:
+    """Real-seam route handler for GET /bff/management/ai/audit, reproducing
+    main.py's own thin wrapper (main.py line ~7007) purely from already-
+    extracted functions -- no main.py business logic, only glue. The
+    camelCase-pruning helper is a generic, stateless utility that also lives
+    verbatim in personas/service.py (not main.py-specific business logic)."""
+    from services.control_plane.bff.assistant import management_service as ms
+    from services.control_plane.bff.personas.service import _management_prune_camel_aliases
+
+    identity = ms._extract_identity(authorization)
+    ms._require_read_role(identity)
+    events = ms._management_ai_list_audit_events(
+        session_id=session_id,
+        trace_id=trace_id,
+        message_id=message_id,
+        event_type=event_type,
+        limit=limit,
+    )
+    canonical_events = _management_prune_camel_aliases(events)
+    return {
+        "data": {
+            "id": "management_ai_audit",
+            "items": canonical_events,
+            "summary": {
+                "total_events": len(canonical_events),
+                "returned_items": len(canonical_events),
+            },
+        },
+        "page_info": {
+            "next_page_token": None,
+            "total": len(canonical_events),
+            "page_size": limit,
+        },
+        "meta": {
+            "count": len(canonical_events),
+            "filters": {
+                "session_id": session_id,
+                "trace_id": trace_id,
+                "message_id": message_id,
+                "event_type": event_type,
+            },
+        },
+    }
+
+
+_SEAM_APP: Optional[FastAPI] = None
+
+
+def get_management_nl_app() -> FastAPI:
+    """Build (once, then cache) the real, fully composed BFF app via the
+    ``compose_bff_app`` seam (AC3) -- the same 37-router composition main.py
+    itself assembles, but reachable without importing main.py. All routes
+    used by the management NL suites (``/bff/management/nl/ask`` and
+    ``/bff/management/nl/ask/stream``) are mounted by this composer straight
+    from ``assistant.management_service`` (see ``core/app_factory.py``'s
+    ``_dep``/``mount_bff_routers``), so this is main.py's real production
+    composition, not a stand-in."""
+    global _SEAM_APP
+    if _SEAM_APP is None:
+        from services.control_plane.bff.core.app_factory import compose_bff_app
+        from services.control_plane.bff.assistant.management_service import (
+            get_management_ai_conversation_store,
+        )
+
+        # core/app_factory.py's standalone dependency resolver falls back to a
+        # no-op stub for "_management_ai_conversation_store" when main.py is
+        # not loaded, even though a real seam exists
+        # (assistant.management_service.get_management_ai_conversation_store,
+        # the exact function main.py's own `_management_ai_conversation_store`
+        # wrapper delegates to). mount_bff_routers/_dep() honors an explicit
+        # keyword override before falling back to that stub, so pass the real
+        # seam through explicitly rather than accepting the stub.
+        _SEAM_APP = compose_bff_app(
+            _management_ai_conversation_store=get_management_ai_conversation_store,
+            bff_management_ai_conversations=_seam_bff_management_ai_conversations,
+            bff_management_ai_conversation=_seam_bff_management_ai_conversation,
+            bff_management_ai_attachment=_seam_bff_management_ai_attachment,
+            bff_management_ai_audit=_seam_bff_management_ai_audit,
+        )
+    return _SEAM_APP
 
 
 def get_management_nl_read_store() -> Any:
-    """Retrieve the current active read_store on the management NL module."""
-    main_mod = get_management_nl_module()
-    return getattr(main_mod, "read_store", None)
+    """Retrieve the current active read_store for the management NL seam."""
+    management_service = get_management_nl_module()
+    return management_service.get_read_store()
 
 
 def set_management_nl_read_store(store: Any) -> None:
-    """Set the active read_store on BFF composition, persona service, and context service."""
-    main_mod = get_management_nl_module()
+    """Set the active read_store on the management NL seam and persona service.
+
+    Also syncs main.py's own read_store proxy and its _management_ai_
+    context_service, but only if main.py happens to already be imported in
+    this process (via sys.modules, never forcing an import) -- some test
+    files elsewhere in this suite import main.py directly for collaborators
+    with no extracted seam, and without this sync a test's own cleanup call
+    to this function would restore the seam's read_store but leave main.py's
+    proxy/context-service pointed at stale test data, leaking state into
+    whichever real-main-backed test runs next.
+    """
+    import sys
+
+    management_service = get_management_nl_module()
     import services.control_plane.bff.personas.service as personas_service
-    setattr(main_mod, "read_store", store)
+    management_service.set_read_store(store)
     setattr(personas_service, "read_store", store)
-    context_svc = getattr(main_mod, "_management_ai_context_service", None)
+    context_svc = getattr(management_service, "_management_ai_context_service", None)
     if context_svc is not None:
         context_svc._get_read_store = (lambda: store) if store is not None else None
+
+    real_main = sys.modules.get("services.control_plane.bff.main")
+    if real_main is not None:
+        setattr(real_main, "read_store", store)
+        real_main_context_svc = getattr(real_main, "_management_ai_context_service", None)
+        if real_main_context_svc is not None:
+            real_main_context_svc._get_read_store = (lambda: store) if store is not None else None
 
 
 def get_management_nl_sse_buffer(channel: str = "ask") -> list:
     """Read events from the management NL SSE buffer safely."""
-    main_mod = get_management_nl_module()
-    return list(main_mod._sse_buffers.get(channel, []))
+    management_service = get_management_nl_module()
+    return list(management_service._sse_buffers.get(channel, []))
 
 
 def clear_management_nl_sse_buffer(channel: str = "ask") -> None:
     """Clear events in the management NL SSE buffer safely."""
-    main_mod = get_management_nl_module()
-    if channel in main_mod._sse_buffers:
-        main_mod._sse_buffers[channel].clear()
+    management_service = get_management_nl_module()
+    if channel in management_service._sse_buffers:
+        management_service._sse_buffers[channel].clear()
 
 
 @contextmanager
 def bound_management_nl_store(read_surface: Any) -> Iterator[Any]:
-    """Context manager to scope active read_store on BFF main and personas."""
-    main_mod = get_management_nl_module()
+    """Context manager to scope active read_store on the management NL seam and personas."""
+    management_service = get_management_nl_module()
     import services.control_plane.bff.personas.service as personas_service
 
-    old_main_store = getattr(main_mod, "read_store", None)
+    old_main_store = management_service.get_read_store()
     old_persona_store = getattr(personas_service, "read_store", None)
-    context_svc = getattr(main_mod, "_management_ai_context_service", None)
+    context_svc = getattr(management_service, "_management_ai_context_service", None)
     old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
     try:
-        setattr(main_mod, "read_store", read_surface)
+        management_service.set_read_store(read_surface)
         setattr(personas_service, "read_store", read_surface)
         if context_svc is not None:
             context_svc._get_read_store = (lambda: read_surface) if read_surface is not None else None
         yield read_surface
     finally:
-        setattr(main_mod, "read_store", old_main_store)
+        management_service.set_read_store(old_main_store)
         setattr(personas_service, "read_store", old_persona_store)
         if context_svc is not None:
             context_svc._get_read_store = old_context_fn
@@ -1059,35 +1268,36 @@ def management_nl_test_client(
     raise_server_exceptions: bool = False,
     reset_conversation_store: bool = True,
 ) -> Iterator[TestClient]:
-    """Provide a TestClient wired to the management NL app with clean store/SSE."""
-    main_mod = get_management_nl_module()
+    """Provide a TestClient wired to the real seam-composed management NL app
+    (``compose_bff_app``) with clean store/SSE state -- no main.py import."""
+    management_service = get_management_nl_module()
     import services.control_plane.bff.personas.service as personas_service
 
-    old_main_store = getattr(main_mod, "read_store", None)
+    old_main_store = management_service.get_read_store()
     old_persona_store = getattr(personas_service, "read_store", None)
-    context_svc = getattr(main_mod, "_management_ai_context_service", None)
+    context_svc = getattr(management_service, "_management_ai_context_service", None)
     old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
     store = read_surface if read_surface is not None else old_main_store
 
     if reset_conversation_store:
-        main_mod._MGMT_AI_CONVERSATION_STORE = main_mod.ManagementAiConversationStore(
+        management_service._MGMT_AI_CONVERSATION_STORE = management_service.ManagementAiConversationStore(
             storage_path="off",
-            attachment_store=main_mod.ManagementAiAttachmentStore(storage_path="off"),
+            attachment_store=ManagementAiAttachmentStore(storage_path="off"),
         )
-    if "ask" in main_mod._sse_buffers:
-        main_mod._sse_buffers["ask"].clear()
+    if "ask" in management_service._sse_buffers:
+        management_service._sse_buffers["ask"].clear()
 
     try:
-        setattr(main_mod, "read_store", store)
+        management_service.set_read_store(store)
         setattr(personas_service, "read_store", store)
         if context_svc is not None:
             context_svc._get_read_store = (lambda: store) if store is not None else None
-        client = TestClient(main_mod.app, raise_server_exceptions=raise_server_exceptions)
+        client = TestClient(get_management_nl_app(), raise_server_exceptions=raise_server_exceptions)
         yield client
     finally:
-        setattr(main_mod, "read_store", old_main_store)
+        management_service.set_read_store(old_main_store)
         setattr(personas_service, "read_store", old_persona_store)
         if context_svc is not None:
             context_svc._get_read_store = old_context_fn
-        if "ask" in main_mod._sse_buffers:
-            main_mod._sse_buffers["ask"].clear()
+        if "ask" in management_service._sse_buffers:
+            management_service._sse_buffers["ask"].clear()

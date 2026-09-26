@@ -22,6 +22,18 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
     set_management_nl_read_store,
 )
 
+# BFF-PM12-FIXTURE-CLOSURE-001: `bff_main` is bound to the real
+# `assistant.management_service` module (get_management_nl_module() no longer
+# loads main.py -- see rebalance_authority_test_support.py). main.py's own
+# module proxy already delegates every one of these attributes onto
+# management_service (BFF-MGMT-NL-HELPER-EXTRACTION-001), so every
+# `bff_main.<attr>` access below reads/writes the exact real seam object.
+# BFF-MGMT-NL-B6-SEAM-MIGRATION-001 additionally extracted the persona-fleet
+# projection and the management-ai route handlers (including
+# `bff_assistant_provider_usage_summary`/`_assistant_provider_list`) onto
+# this same module, so this file no longer needs a direct main.py import at
+# all -- see `_seeded_client()` and `test_assistant_provider_usage_summary_
+# aggregates_history_and_quota` below.
 bff_main = get_management_nl_module()
 from services.control_plane.bff.assistant.control_mode import ControlModeStore
 from services.control_plane.bff.assistant.models import AssistantMode
@@ -32,11 +44,13 @@ from services.control_plane.bff.management_nl_command_idempotency import (
     ManagementNlCommandScope,
     ManagementNlCommandStorageError,
 )
+from services.control_plane.bff.management_ai_store import ManagementAiAttachmentStore
 from services.control_plane.bff.models import OperatorIdentity
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     create_market_persona_projection_test_double,
 )
+from services.control_plane.bff import test_bff_promotion_review_governance as gov_test
 
 
 @pytest.fixture(autouse=True)
@@ -266,58 +280,95 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
                 "collected_at": "2026-06-02T00:00:00Z",
             },
         },
-        "personas": {
-            "persona-alpha": {
-                "persona_id": "persona-alpha",
-                "name": "Alpha Persona",
-                "tenant_id": "tenant-alpha",
-                "lifecycle_state": "active",
-                "created_at": "2026-06-01T00:00:00Z",
-            },
-            "persona-beta": {
-                "persona_id": "persona-beta",
-                "name": "Beta Persona",
-                "tenant_id": "tenant-beta",
-                "lifecycle_state": "active",
-                "created_at": "2026-06-01T00:00:00Z",
-            },
-        },
-        "persona_bindings": {
-            "binding-alpha": {
-                "binding_id": "binding-alpha",
-                "persona_id": "persona-alpha",
-                "tenant_id": "tenant-alpha",
-                "capital_pool_id": "pool-alpha",
-                "status": "active",
-            },
-            "binding-beta": {
-                "binding_id": "binding-beta",
-                "persona_id": "persona-beta",
-                "tenant_id": "tenant-beta",
-                "capital_pool_id": "pool-beta",
-                "status": "active",
-            },
-        },
+        "personas": {},
+        "persona_bindings": {},
         "agora_audit_events": {},
         "agora_sessions": {},
     }
+
+    # BFF-PM12-FIXTURE-CLOSURE-001: reuse the canonical eligible-persona
+    # builder (test_bff_promotion_review_governance.py::
+    # build_pm12_eligible_persona_records, proven against the real
+    # production pipeline by test_pm12_eligibility_fixture_contract.py)
+    # instead of hand-seeding inert persona/binding fields. persona-alpha
+    # (tenant-alpha) genuinely clears every PM12 league/eligibility gate;
+    # persona-beta (tenant-beta) does too, so cross-tenant admission has a
+    # real eligible record to exclude rather than an inert one.
+    pm12_alpha = gov_test.build_pm12_eligible_persona_records(
+        "persona-alpha",
+        "runtime-asst-alpha",
+        "binding-asst-alpha",
+        tenant_id="tenant-alpha",
+    )
+    pm12_beta = gov_test.build_pm12_eligible_persona_records(
+        "persona-beta",
+        "runtime-asst-beta",
+        "binding-asst-beta",
+        tenant_id="tenant-beta",
+    )
+    seeded_surfaces["personas"] = {
+        "persona-alpha": pm12_alpha["personas"]["persona-alpha"],
+        "persona-beta": pm12_beta["personas"]["persona-beta"],
+    }
+    seeded_surfaces["persona_bindings"] = {
+        "binding-asst-alpha": pm12_alpha["bindings"]["binding-asst-alpha"],
+        "binding-asst-beta": pm12_beta["bindings"]["binding-asst-beta"],
+    }
+    # `personas.service._pm12_persona_league_rows` reads
+    # `read_store.list_runtime_bindings()` with no tenant argument at all
+    # (tenant admission for PM12 is enforced only on the persona record
+    # itself), so these runtime bindings must stay visible there
+    # unfiltered. But this file's own `/bff/management/nl/ask` "portfolio"
+    # snippet passes every runtime binding through
+    # `_mgmt_nl_filter_tenant_records`, and
+    # test_provider_enabled_invokes_openclaw_with_tenant_scoped_context
+    # hard-codes `total_pnl == 2.5`, computed only from rt-alpha/rt-beta.
+    # Tag the PM12 fixture's own runtime bindings with a tenant id neither
+    # test tenant ever requests, so that unrelated nl/ask tenant filter
+    # (which has no bearing on PM12 eligibility) excludes them from that
+    # aggregate while `_pm12_persona_league_rows` still sees them in full.
+    _PM12_FIXTURE_ONLY_TENANT_ID = "tenant-pm12-fixture-internal"
+    persona_runtime_bindings = [
+        {**pm12_alpha["runtime_bindings"]["runtime-asst-alpha"], "tenant_id": _PM12_FIXTURE_ONLY_TENANT_ID},
+        {**pm12_beta["runtime_bindings"]["runtime-asst-beta"], "tenant_id": _PM12_FIXTURE_ONLY_TENANT_ID},
+    ]
+    persona_telemetry_summaries = {
+        **pm12_alpha["telemetry_summaries"],
+        **pm12_beta["telemetry_summaries"],
+    }
+    persona_sessions_by_persona = {
+        "persona-alpha": [pm12_alpha["sessions"]["sess-persona-alpha"]],
+        "persona-beta": [pm12_beta["sessions"]["sess-persona-beta"]],
+    }
+
     _write_json(read_surface_path, seeded_surfaces)
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
     monkeypatch.setenv("PANTHEON_MANAGEMENT_AI_AUDIT_PATH", str(tmp_path / "management-ai-audit.jsonl"))
+    all_telemetry_summaries = dict(seeded_surfaces["telemetry_summaries"])
+    all_telemetry_summaries.update(persona_telemetry_summaries)
     store = create_market_persona_projection_test_double(
         persona_capital_runtime_kwargs={
             "capital_pools": list(seeded_surfaces["capital_pools"].values()),
-            "runtime_bindings": list(seeded_surfaces["runtime_bindings"].values()),
+            "runtime_bindings": list(seeded_surfaces["runtime_bindings"].values()) + persona_runtime_bindings,
             "personas": list(seeded_surfaces["personas"].values()),
             "bindings": list(seeded_surfaces["persona_bindings"].values()),
         },
         lifecycle_telemetry_governance_kwargs={
-            "telemetry_summaries": seeded_surfaces["telemetry_summaries"],
+            "telemetry_summaries": all_telemetry_summaries,
         },
     )
     store._data = json.loads(json.dumps(seeded_surfaces))
     store.get_agora_session = lambda session_id: store._data["agora_sessions"].get(session_id)
+    store.get_sessions_for_persona = lambda persona_id: json.loads(
+        json.dumps(persona_sessions_by_persona.get(str(persona_id), []))
+    )
+    # create_market_persona_projection_test_double() re-wraps the composite
+    # ports without carrying over create_in_memory_read_surface_ports()'s
+    # default empty paper-fleet-monitoring provider, so an unconfigured
+    # PANTHEON_PAPER_FLEET_RECONCILER_URL would otherwise raise instead of
+    # falling back to the persona-session-store path PM12 eligibility uses.
+    store.list_authoritative_paper_runtime_monitoring_sessions = lambda: []
     def _record_agora_audit_event(event: dict) -> dict:
         event_id = str(event.get("auditId") or event.get("eventId") or f"aud-agora-{uuid.uuid4().hex[:12]}")
         record = {
@@ -334,9 +385,10 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
     bff_main._sse_buffers["ask"].clear()
     bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
         storage_path="off",
-        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+        attachment_store=ManagementAiAttachmentStore(storage_path="off"),
     )
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    from services.control_plane.bff.tests.rebalance_authority_test_support import get_management_nl_app
+    return TestClient(get_management_nl_app(), raise_server_exceptions=False)
 
 
 def _clear_provider_env(monkeypatch) -> None:
@@ -394,7 +446,7 @@ def test_management_ai_conversation_store_persists_sessions_and_turns_to_json(tm
     store_path = str(tmp_path / "management-ai.json")
     store = bff_main.ManagementAiConversationStore(
         storage_path=store_path,
-        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+        attachment_store=ManagementAiAttachmentStore(storage_path="off"),
     )
     store.upsert_session(
         session_id="mgmt-json-session",
@@ -415,7 +467,7 @@ def test_management_ai_conversation_store_persists_sessions_and_turns_to_json(tm
 
     reloaded = bff_main.ManagementAiConversationStore(
         storage_path=store_path,
-        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+        attachment_store=ManagementAiAttachmentStore(storage_path="off"),
     )
     assert reloaded.get_session("mgmt-json-session")["ownerId"] == "asst-bff-002"
     turns = reloaded.list_turns("mgmt-json-session")
@@ -1913,7 +1965,7 @@ def test_management_nl_stream_preserves_filtered_actions_after_durable_reload(
     def fresh_store():
         return bff_main.ManagementAiConversationStore(
             storage_path=store_path,
-            attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+            attachment_store=ManagementAiAttachmentStore(storage_path="off"),
         )
     monkeypatch.setattr(bff_main, "_MGMT_AI_CONVERSATION_STORE", fresh_store())
     response = client.post(
@@ -2270,10 +2322,24 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
 
 
 def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path, monkeypatch) -> None:
+    """BFF-PM12-FIXTURE-CLOSURE-001: GET /bff/assistant/providers/usage-summary
+    is now a live-wired default of ``compose_bff_app()`` (BFF-MGMT-NL-B6-SEAM-
+    MIGRATION-001 moved the route handler and its ``_assistant_provider_list``
+    collaborator onto ``assistant.management_service`` itself), so this test
+    no longer needs to load main.py: the seam-composed app (``bff_main`` ==
+    ``assistant.management_service``, reached via ``get_management_nl_app()``)
+    reaches the exact same real implementation.
+    """
+    import datetime as _datetime
+
+    from services.control_plane.bff.tests.rebalance_authority_test_support import (
+        get_management_nl_app,
+    )
+
     fake = FakeProviderClient()
     _clear_provider_env(monkeypatch)
     monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
-    client = _seeded_client(tmp_path, monkeypatch)
+    client = TestClient(get_management_nl_app(), raise_server_exceptions=False)
     original_provider_list = bff_main._assistant_provider_list
 
     def provider_list_with_openclaw(*, auth_probe=False):
@@ -2292,10 +2358,10 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
 
     monkeypatch.setattr(bff_main, "_assistant_provider_list", provider_list_with_openclaw)
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
-    now = bff_main.datetime.now(bff_main.timezone.utc).replace(microsecond=0)
-    started_at = (now - bff_main.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
-    completed_at = (now - bff_main.timedelta(minutes=4, seconds=57)).isoformat().replace("+00:00", "Z")
-    failed_at = (now - bff_main.timedelta(minutes=4)).isoformat().replace("+00:00", "Z")
+    now = _datetime.datetime.now(_datetime.timezone.utc).replace(microsecond=0)
+    started_at = (now - _datetime.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    completed_at = (now - _datetime.timedelta(minutes=4, seconds=57)).isoformat().replace("+00:00", "Z")
+    failed_at = (now - _datetime.timedelta(minutes=4)).isoformat().replace("+00:00", "Z")
 
     bff_main._management_ai_record_event(
         {
@@ -2673,7 +2739,7 @@ def test_management_ai_idempotency_replay_survives_store_restart_without_duplica
         client = _seeded_client(tmp_path, monkeypatch)
         bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
             storage_path=conversation_path,
-            attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+            attachment_store=ManagementAiAttachmentStore(storage_path="off"),
         )
         payload = {
             "question": "Will restart replay preserve one correlated assistant turn?",
@@ -2690,7 +2756,7 @@ def test_management_ai_idempotency_replay_survives_store_restart_without_duplica
         # mirroring a BFF restart between the original request and its replay.
         bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
             storage_path=conversation_path,
-            attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+            attachment_store=ManagementAiAttachmentStore(storage_path="off"),
         )
         replay = client.post("/bff/management/nl/ask", json=payload, headers=headers)
 

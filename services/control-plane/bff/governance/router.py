@@ -127,10 +127,18 @@ def create_governance_router(
     read_surface_state: Optional[Callable[[], str]] = None,
     governance_service: Optional[GovernanceService] = None,
     reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
+    command_store: Optional[Any] = None,
+    run_management_read: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Build the exact 35-route Governance domain router."""
 
     router = APIRouter()
+    if run_management_read is None:
+        try:
+            from ..personas.routes.common import run_management_read as _default_rmr
+            run_management_read = _default_rmr
+        except Exception:
+            run_management_read = None
     _get_store = (
         (lambda: read_surface() if callable(read_surface) else read_surface)
         if read_surface is not None
@@ -180,6 +188,7 @@ def create_governance_router(
                 redact_evidence_refs=_redact,
                 capabilities_for_identity=_capabilities,
                 read_surface_state=_read_surface_state,
+                command_store=command_store,
             )
         return resolved_service
 
@@ -887,8 +896,31 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _identity(authorization)
-        items = _service().list_pending_approvals()
-        return {"items": items, "count": len(items), "generated_at": _now()}
+        snapshot_at = _now()
+        if run_management_read is not None:
+            try:
+                items = await run_management_read(lambda: _service().list_pending_approvals())
+            except Exception:
+                return {
+                    "items": [],
+                    "count": 0,
+                    "generated_at": snapshot_at,
+                    "meta": {
+                        "surfaces": {
+                            "approvals": {
+                                "status": "degraded",
+                                "dataset": "approvals",
+                                "source": "management_read_timeout",
+                                "reason": "read_timeout",
+                                "message": "Approval queue read timed out under concurrent read fanout; degraded empty response returned.",
+                                "staleness": {"served_from": "timeout_degraded", "last_known_at": snapshot_at},
+                            },
+                        },
+                    },
+                }
+        else:
+            items = _service().list_pending_approvals()
+        return {"items": items, "count": len(items), "generated_at": snapshot_at}
 
     @router.get("/bff/management/governance-ledger")
     async def bff_management_governance_ledger(
