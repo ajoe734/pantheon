@@ -30,6 +30,7 @@ from services.control_plane.bff.command_adapters.service import CommandAdapterSe
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.management_read_models.service import ManagementService
 from services.control_plane.bff.models import (
+    CommandStatus,
     CommandType,
     ObjectType,
     OperatorIdentity,
@@ -184,3 +185,83 @@ def test_command_store_cache_is_lazily_initialized_and_kept_in_sync(tmp_path: An
 
     assert len(store._cache) == 1
     assert store._cache[0]["command_id"] == "cmd-defect-four"
+
+
+def test_command_store_missing_file_read_returns_empty_and_resets_cache(tmp_path: Any) -> None:
+    """A CommandStore whose backing file disappears after a read must
+    treat that as "no commands" rather than serving its last in-memory
+    snapshot -- serving the snapshot is what let PR #5983 resurrect
+    already-completed commands (see the multi-instance test below)."""
+    path = tmp_path / "commands.jsonl"
+    store = CommandStore(str(path))
+    assert store._get_all_commands() == []
+
+    target = TargetObject(type=ObjectType.RANKING, id="rec-missing-file")
+    store.submit_command(
+        command_id="cmd-missing-file",
+        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        target=target,
+        submitted_at=utc_now(),
+        params={},
+        audit_context={},
+    )
+    assert len(store._cache) == 1
+
+    path.unlink()
+
+    assert store._get_all_commands() == []
+    assert store._cache == []
+    assert store.get_command("cmd-missing-file") is None
+    assert store.update_status("cmd-missing-file", CommandStatus.PROCESSING) is False
+    assert not path.exists()
+
+
+def test_command_store_multi_instance_completion_survives_peer_stale_cache(
+    tmp_path: Any,
+) -> None:
+    """Reproduces the PR #5983 P1 regression: instance A caches a
+    submitted command; instance B independently marks that same command
+    executed with a result. If the backing file then becomes
+    momentarily unavailable, A's stale cache must not resurrect the
+    submitted record or overwrite B's completed result once the file
+    is readable again."""
+    path = tmp_path / "commands.jsonl"
+    store_a = CommandStore(str(path))
+    store_b = CommandStore(str(path))
+    assert store_a._get_all_commands() == []
+
+    target = TargetObject(type=ObjectType.RANKING, id="rec-multi-instance")
+    store_a.submit_command(
+        command_id="cmd-multi-instance",
+        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        target=target,
+        submitted_at=utc_now(),
+        params={},
+        audit_context={},
+    )
+    # store_a's per-instance cache now holds the SUBMITTED record.
+    assert store_a._cache[0]["status"] == CommandStatus.SUBMITTED.value
+
+    updated = store_b.update_status(
+        "cmd-multi-instance",
+        CommandStatus.EXECUTED,
+        result={"status": "ok"},
+    )
+    assert updated is True
+
+    # Simulate the backing file becoming transiently unavailable while
+    # store_a still holds its now-stale SUBMITTED snapshot in memory.
+    aside = tmp_path / "commands.jsonl.aside"
+    path.rename(aside)
+
+    assert store_a.get_active_commands_for_target("ranking", "rec-multi-instance") == []
+    assert (
+        store_a.update_status("cmd-multi-instance", CommandStatus.PROCESSING) is False
+    )
+    assert not path.exists()
+
+    # Restore the file: B's completed record must be exactly what survives.
+    aside.rename(path)
+    records = store_a.get_command("cmd-multi-instance")
+    assert records["status"] == CommandStatus.EXECUTED.value
+    assert records["result"] == {"status": "ok"}

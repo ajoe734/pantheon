@@ -24,12 +24,13 @@ class CommandStore:
         self.lock_path = f"{os.path.abspath(self.file_path)}.lock"
         self._thread_lock = threading.RLock()
         self._local = threading.local()
-        # Lazily populated on first read. Re-read from disk on every call
-        # while the file exists (so concurrent CommandStore instances on the
-        # same file never see stale data -- see
-        # test_command_store_multi_instance_cache_coherence); only falls
-        # back to this in-memory snapshot when the file is transiently
-        # unreadable/missing.
+        # Lazily populated on first read and re-read from disk on every
+        # call while the file exists, so concurrent CommandStore instances
+        # on the same file never see stale data. A missing file always
+        # resets the cache to empty rather than serving a prior in-memory
+        # snapshot -- serving that snapshot would let one instance
+        # resurrect or overwrite a command another instance already
+        # completed once the file disappears.
         self._cache: Optional[List[Dict[str, Any]]] = None
         parent = os.path.dirname(os.path.abspath(self.file_path))
         os.makedirs(parent, exist_ok=True)
@@ -78,8 +79,7 @@ class CommandStore:
     def _get_all_commands(self) -> List[Dict[str, Any]]:
         with self.serialized_transaction():
             if not os.path.exists(self.file_path):
-                if self._cache is None:
-                    self._cache = []
+                self._cache = []
                 return self._cache
             commands = []
             with open(self.file_path, "r", encoding="utf-8") as f:
