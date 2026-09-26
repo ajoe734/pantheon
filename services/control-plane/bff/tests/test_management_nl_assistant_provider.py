@@ -2338,6 +2338,7 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
 
     fake = FakeProviderClient()
     _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_AI_AUDIT_PATH", str(tmp_path / "management-ai-audit.jsonl"))
     monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
     client = TestClient(get_management_nl_app(), raise_server_exceptions=False)
     original_provider_list = bff_main._assistant_provider_list
