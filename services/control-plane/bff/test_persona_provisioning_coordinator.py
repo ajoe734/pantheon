@@ -1048,9 +1048,11 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
     assert owner_approval_decision["decision"] == "approved"
     assert owner_approval_decision["target_id"] == ids.strategy_artifact_id
 
-    governance_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "governance"))
-    pass
-    from deployment_plan import DeploymentScale, RollbackRef, StagePlanner
+    from services.control_plane.governance.deployment_plan import (
+        DeploymentScale,
+        RollbackRef,
+        StagePlanner,
+    )
 
     domain_plan = StagePlanner().create_plan(
         plan_id=plan.plan_id,

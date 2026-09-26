@@ -68,8 +68,8 @@ def test_strategy_reconstruction_nbq_uniqueness_and_completeness_derivation() ->
 def test_reconstruct_endpoint_integration(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi.testclient import TestClient
     from fastapi import FastAPI, HTTPException
-    from agora.strategy_workshop.router import create_strategy_workshop_router
-    from agora.strategy_workshop.store import MemoryWorkshopStore
+    from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
+    from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
     from types import SimpleNamespace
 
     store = MemoryWorkshopStore()
@@ -93,7 +93,7 @@ def test_reconstruct_endpoint_integration(monkeypatch: pytest.MonkeyPatch) -> No
         return "2026-08-13T12:00:00Z"
 
     # Patch scope resolution to avoid top-level models import dependency in unit test
-    import agora.identity.scope as scope_module
+    import services.control_plane.bff.agora.identity.scope as scope_module
     monkeypatch.setattr(
         scope_module,
         "resolve_agora_user_scope",

@@ -174,7 +174,7 @@ class TestKernelCapabilityGateWhenEnabled:
         monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
 
     def test_kernel_observe_requires_capability(self):
-        from assistant.mode_policy import validate_session_request
+        from services.control_plane.bff.assistant.mode_policy import validate_session_request
         with pytest.raises(ModePolicyViolation) as exc_info:
             validate_session_request(
                 mode=AssistantMode.KERNEL_OBSERVE,
@@ -185,7 +185,7 @@ class TestKernelCapabilityGateWhenEnabled:
         assert exc_info.value.field == "capabilities"
 
     def test_kernel_debug_requires_reason(self):
-        from assistant.mode_policy import validate_session_request
+        from services.control_plane.bff.assistant.mode_policy import validate_session_request
         with pytest.raises(ModePolicyViolation) as exc_info:
             validate_session_request(
                 mode=AssistantMode.KERNEL_DEBUG,

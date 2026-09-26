@@ -490,7 +490,7 @@
     },
     {
       "path": "services/control-plane/bff/agora/strategy_workshop/test_reconstruction.py",
-      "git_blob_sha": "92fa21a2b827e7e70eaf636664dedf1eaec5a867",
+      "git_blob_sha": "65348d8519f2bc2cc579c373334cb22899da1215",
       "status": "modified_by_this_task",
       "role": "Decoupled test suite or support helper canonicalized to package imports"
     },
@@ -508,7 +508,7 @@
     },
     {
       "path": "services/control-plane/bff/assistant/tests/test_user_mode_regression.py",
-      "git_blob_sha": "9e44df9969a13c1118e022725329d1ad5f6fb123",
+      "git_blob_sha": "2f92b21ab0cb72d676c64cd4f380b08694a07962",
       "status": "modified_by_this_task",
       "role": "Decoupled test suite or support helper canonicalized to package imports"
     },
@@ -646,7 +646,8 @@
       ],
       "satisfied_by_this_task": [
         "Published complete bounded per-file collection measurements for all 395 test files on disk (4,778 total tests collected, 0 collection failures, avg 6,582ms).",
-        "Corrected this generation: the prior claim here (394/395 modules, 4,784 passed tests, predecessor evidence mapping to BFF-TEST-ARCH-001 for 195 rows) was independently found false -- BFF-TEST-ARCH-001's own evidence never ran those 195 files. This generation actually executed all 195 previously-miscited files in 5 real bounded pytest batches (see execution_measurements and per_file_measurements_summary.runtime_failures_breakdown) and corrected their citation to this task's own real run: 372 modules passed cleanly, 21 modules have genuine pre-existing failures unrelated to this task's scoped changes (itemized in runtime_failures_breakdown, requiring separate governed defect-repair), plus the 1 already-governed test_command_store_caching stale-test disposition below. Per-test aggregate counts are intentionally left unrecorded (module-level pass/fail was what was actually measured for the batch re-run).",
+        "Corrected this generation: the prior claim here (394/395 modules, 4,784 passed tests, predecessor evidence mapping to BFF-TEST-ARCH-001 for 195 rows) was independently found false -- BFF-TEST-ARCH-001's own evidence never ran those 195 files. This generation actually executed all 195 previously-miscited files in 5 real bounded pytest batches (see execution_measurements and per_file_measurements_summary.runtime_failures_breakdown). 376 modules pass cleanly, 18 modules have genuine pre-existing failures unrelated to this task's scoped changes (itemized in runtime_failures_breakdown, requiring separate governed defect-repair), plus the 1 already-governed test_command_store_caching stale-test disposition below. Per-test aggregate counts are intentionally left unrecorded at this summary level (module-level pass/fail was what was actually measured for the batch re-run; per-file counts are recorded on each entry in per_file_measurements).",
+        "Regression repair (this generation, head 44cc149c0 -> current): 4 of the modules previously misclassified as 'genuine pre-existing failures' -- agora/strategy_workshop/test_reconstruction.py, assistant/tests/test_user_mode_regression.py, test_persona_provisioning_coordinator.py, tests/test_agora_route_ownership.py -- were actually regressions this task introduced: each contained a bare (non-canonical) import that only resolved through the root conftest.py's per-test service-local sys.path shim, not a real package path, and each was inside this task's own edited/scoped files. Fixed by converting every bare import in these 4 files to its canonical services.control_plane.* package path (services.control_plane.bff.agora.*, services.control_plane.bff.assistant.*, services.control_plane.governance.deployment_plan, services.control_plane.privacy.private_content_store). Verified with bounded individual runs against both the current head and a git-archive checkout of base commit c06786377: side-by-side per-file counts are identical -- test_reconstruction.py 3 passed/3 passed, test_user_mode_regression.py 22 passed/22 passed, test_persona_provisioning_coordinator.py 15 passed/15 passed, test_agora_route_ownership.py 8 passed/8 passed (base/head, exit 0 both sides). The remaining 18 listed pre-existing-failure modules were also re-verified individually at both base c06786377 and current head with identical failing-test counts on both sides, confirming they are genuinely pre-existing and unrelated to this task.",
         "Governed production prerequisite BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001 (PR #5983 merged to dev at c06786377) repaired 3 of the 4 promotion review failures in production: blocking_reasons and research_context now propagate to the human inbox item; degraded approval_queue surface now reports source local_snapshot; and command audits now carry live_capital_side_effects.",
         "For the fourth failure, test_command_store_caching (services/control-plane/bff/test_bff_promotion_review_governance.py:1764-1800), independent reviewer accepted the conclusion that it is a stale test: it requires an unsafe missing-file fallback that allows a stale CommandStore snapshot to resurrect and overwrite a completed command across multiple instances. That test was left byte-identical to base (git hash-object 36702b77185379a3ae2a775d721c9bcb47ca250d) without assertion weakening and recorded as a governed stale-test disposition citing BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001 rather than as a pass.",
         "Published bounded execution measurements for key suites and gates:",
@@ -929,7 +930,8 @@
         "Batch 3 (39 files): 7 failed, 481 passed, 8 skipped in 365.90s, command exit 1",
         "Batch 4 (36 files): 5 failed, 317 passed, 18 skipped in 216.90s, command exit 1",
         "36 individual test failures span 21 distinct files (see per_file_measurements_summary.runtime_failures_breakdown); spot-verified test_main_composition_seam_extraction_004.py::test_true_live_scan_non_whitelisted_importer_count fails identically (found 0 offenders, expected a stale hardcoded 15) against the unmodified pre-task scanner, confirming these are pre-existing failures unrelated to this task's scoped code changes, not regressions introduced here",
-        "None of the 21 genuinely-failing files are in this task's Scoped Artifacts; fixing them would be a production-source or test-content change outside this task's declared scope and requires a separate governed defect-repair task per file/root-cause"
+        "None of the 21 genuinely-failing files are in this task's Scoped Artifacts; fixing them would be a production-source or test-content change outside this task's declared scope and requires a separate governed defect-repair task per file/root-cause",
+        "Corrected this generation: this batch-run claim was itself wrong for 4 of the 21 files listed above -- agora/strategy_workshop/test_reconstruction.py, assistant/tests/test_user_mode_regression.py, test_persona_provisioning_coordinator.py, tests/test_agora_route_ownership.py -- which ARE covered by this task's own Scoped Artifacts glob (services/control-plane/bff/**/test_*.py, services/control-plane/bff/test_*.py) and were failing because of a bare-import regression this task itself introduced while removing sys.path mutation, not a genuine pre-existing defect. Fixed in this generation by converting each bare import to its canonical services.control_plane.* package path; each now passes with the same count as base c06786377 (see per_file_measurements and per_file_measurements_summary.runtime_failures_root_cause). The remaining 18 files in this batch's failure list are genuinely pre-existing and outside this task's scope, as originally stated."
       ]
     }
   ],
@@ -1183,11 +1185,11 @@
       "predecessor_task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
       "predecessor_evidence_file": "docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json",
       "runtime_budget_seconds": 10.0,
-      "runtime_status": "FAILED",
+      "runtime_status": "PASSED",
       "tests_passed": 3,
       "tests_failed": 0,
-      "runtime_terminal_exit_code": 1,
-      "runtime_notes": "Corrected this generation (P1 AC4): the prior citation of BFF-TEST-ARCH-001 as predecessor verification was false -- that task's own evidence only ran 9 suites and never executed this file. Actually executed in bounded batch 00 this generation: timeout 540 .venv-pantheon/bin/python3 -m pytest -q <40-file batch 00> --tb=line (15 failed, 443 passed, 6 skipped across the batch, wall clock 264.72s, batch command exit code 1). This specific file had a genuine test failure, pre-existing and independent of this task's scoped changes (verified not introduced by this task's edits); it requires a separate governed defect-repair task, matching the disposition already established for test_command_store_caching/BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001. Not masked, skipped, or silently marked passing."
+      "runtime_terminal_exit_code": 0,
+      "runtime_notes": "Corrected this generation (regression repair): this file was flagged as a genuine pre-existing failure, but it actually regressed at head 44cc149c0 because this task's own sys.path removal left a bare (non-canonical) import that only resolved via the root conftest.py service-local sys.path shim, not via a real package path. Converted the bare import(s) to the canonical services.control_plane.bff (or services.control_plane.privacy / services.control_plane.governance) package path. Verified individually: timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/<file> --tb=no, exit 0, matching the base commit c06786377 pass count exactly (side-by-side run confirmed identical counts at base and head via git archive c06786377 checkout)."
     },
     {
       "file": "agora/strategy_workshop/test_reconstruction_worker.py",
@@ -1436,11 +1438,11 @@
       "predecessor_task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
       "predecessor_evidence_file": "docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json",
       "runtime_budget_seconds": 10.0,
-      "runtime_status": "FAILED",
+      "runtime_status": "PASSED",
       "tests_passed": 22,
       "tests_failed": 0,
-      "runtime_terminal_exit_code": 1,
-      "runtime_notes": "Corrected this generation (P1 AC4): the prior citation of BFF-TEST-ARCH-001 as predecessor verification was false -- that task's own evidence only ran 9 suites and never executed this file. Actually executed in bounded batch 00 this generation: timeout 540 .venv-pantheon/bin/python3 -m pytest -q <40-file batch 00> --tb=line (15 failed, 443 passed, 6 skipped across the batch, wall clock 264.72s, batch command exit code 1). This specific file had a genuine test failure, pre-existing and independent of this task's scoped changes (verified not introduced by this task's edits); it requires a separate governed defect-repair task, matching the disposition already established for test_command_store_caching/BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001. Not masked, skipped, or silently marked passing."
+      "runtime_terminal_exit_code": 0,
+      "runtime_notes": "Corrected this generation (regression repair): this file was flagged as a genuine pre-existing failure, but it actually regressed at head 44cc149c0 because this task's own sys.path removal left a bare (non-canonical) import that only resolved via the root conftest.py service-local sys.path shim, not via a real package path. Converted the bare import(s) to the canonical services.control_plane.bff (or services.control_plane.privacy / services.control_plane.governance) package path. Verified individually: timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/<file> --tb=no, exit 0, matching the base commit c06786377 pass count exactly (side-by-side run confirmed identical counts at base and head via git archive c06786377 checkout)."
     },
     {
       "file": "auth/test_browser_session.py",
@@ -4219,11 +4221,11 @@
       "predecessor_task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
       "predecessor_evidence_file": "docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json",
       "runtime_budget_seconds": 10.0,
-      "runtime_status": "FAILED",
+      "runtime_status": "PASSED",
       "tests_passed": 15,
       "tests_failed": 0,
-      "runtime_terminal_exit_code": 1,
-      "runtime_notes": "Corrected this generation (P1 AC4): the prior citation of BFF-TEST-ARCH-001 as predecessor verification was false -- that task's own evidence only ran 9 suites and never executed this file. Actually executed in bounded batch 01 this generation: timeout 540 .venv-pantheon/bin/python3 -m pytest -q <40-file batch 01> --tb=line (8 failed, 234 passed, 2 skipped across the batch, wall clock 132.19s, batch command exit code 1). This specific file had a genuine test failure, pre-existing and independent of this task's scoped changes (verified not introduced by this task's edits); it requires a separate governed defect-repair task, matching the disposition already established for test_command_store_caching/BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001. Not masked, skipped, or silently marked passing."
+      "runtime_terminal_exit_code": 0,
+      "runtime_notes": "Corrected this generation (regression repair): this file was flagged as a genuine pre-existing failure, but it actually regressed at head 44cc149c0 because this task's own sys.path removal left a bare (non-canonical) import that only resolved via the root conftest.py service-local sys.path shim, not via a real package path. Converted the bare import(s) to the canonical services.control_plane.bff (or services.control_plane.privacy / services.control_plane.governance) package path. Verified individually: timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/<file> --tb=no, exit 0, matching the base commit c06786377 pass count exactly (side-by-side run confirmed identical counts at base and head via git archive c06786377 checkout)."
     },
     {
       "file": "test_persona_provisioning_postgres_integration.py",
@@ -6243,11 +6245,11 @@
       "predecessor_task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
       "predecessor_evidence_file": "docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json",
       "runtime_budget_seconds": 10.0,
-      "runtime_status": "FAILED",
+      "runtime_status": "PASSED",
       "tests_passed": 8,
       "tests_failed": 0,
-      "runtime_terminal_exit_code": 1,
-      "runtime_notes": "Corrected this generation (P1 AC4): the prior citation of BFF-TEST-ARCH-001 as predecessor verification was false -- that task's own evidence only ran 9 suites and never executed this file. Actually executed in bounded batch 03 this generation: timeout 540 .venv-pantheon/bin/python3 -m pytest -q <40-file batch 03> --tb=line (7 failed, 481 passed, 8 skipped across the batch, wall clock 365.9s, batch command exit code 1). This specific file had a genuine test failure, pre-existing and independent of this task's scoped changes (verified not introduced by this task's edits); it requires a separate governed defect-repair task, matching the disposition already established for test_command_store_caching/BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001. Not masked, skipped, or silently marked passing."
+      "runtime_terminal_exit_code": 0,
+      "runtime_notes": "Corrected this generation (regression repair): this file was flagged as a genuine pre-existing failure, but it actually regressed at head 44cc149c0 because this task's own sys.path removal left a bare (non-canonical) import that only resolved via the root conftest.py service-local sys.path shim, not via a real package path. Converted the bare import(s) to the canonical services.control_plane.bff (or services.control_plane.privacy / services.control_plane.governance) package path. Verified individually: timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/<file> --tb=no, exit 0, matching the base commit c06786377 pass count exactly (side-by-side run confirmed identical counts at base and head via git archive c06786377 checkout)."
     },
     {
       "file": "tests/test_agora_router.py",
@@ -10036,8 +10038,8 @@
     "avg_collection_time_ms": 6582.47,
     "max_collection_time_ms": 20280.04,
     "total_runtime_modules_measured": 395,
-    "runtime_passed_modules": 372,
-    "runtime_failed_modules": 23,
+    "runtime_passed_modules": 376,
+    "runtime_failed_modules": 19,
     "total_runtime_tests_passed": null,
     "total_runtime_tests_failed": null,
     "runtime_failures_breakdown": {
@@ -10045,8 +10047,6 @@
         "test_bff_promotion_review_governance.py"
       ],
       "genuine_pre_existing_failures_requiring_separate_governed_defect_repair": [
-        "agora/strategy_workshop/test_reconstruction.py",
-        "assistant/tests/test_user_mode_regression.py",
         "http_smoke_test.py",
         "test_action_catalog_safety_invariants.py",
         "test_bff_strategy_persona_contract.py",
@@ -10057,11 +10057,9 @@
         "test_final_command_execution_bridge.py",
         "test_mgmt_ooda_005_control_room_card.py",
         "test_no_undefined_call_symbols.py",
-        "test_persona_provisioning_coordinator.py",
         "test_staging_read_store_cutoff_contract.py",
         "tests/test_agora_locale_contract.py",
         "tests/test_agora_research_candidate_governed.py",
-        "tests/test_agora_route_ownership.py",
         "tests/test_bff_capital_pool_bindings.py",
         "tests/test_command_replay_conflict.py",
         "tests/test_main_composition_seam_extraction_004.py",
@@ -10069,6 +10067,6 @@
         "tests/test_ppl_alloc_009_paper_eligibility_proof.py"
       ]
     },
-    "runtime_failures_root_cause": "Corrected this generation (P1 AC4): the prior summary claimed 394/395 modules and 4784/4785 individual tests passed, citing BFF-TEST-ARCH-001 as the verifying predecessor for 195 of these modules. BFF-TEST-ARCH-001's own evidence only ran 9 suites and never executed those 195 files, so that citation was false and the aggregate pass claim was unsupported. This generation actually executed all 195 previously-miscited files in 5 bounded batches (see execution_measurements) and found 21 modules with genuine pre-existing test failures (independent of this task's scoped code changes -- spot-verified at least one, test_main_composition_seam_extraction_004.py, fails identically against the unmodified pre-task scanner), plus the 1 already-governed stale-test disposition for test_command_store_caching (BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001, PR #5983). Per-test pass/fail counts are intentionally left unrecorded (None) rather than restated as a single precise aggregate, since only module-level pass/fail was measured for the 195-file batch re-run; a future task should give each of the 21 genuine failures its own governed defect-repair or test-fix disposition rather than leave them file-listed here indefinitely."
+    "runtime_failures_root_cause": "Corrected this generation (regression repair, head 44cc149c0 -> current): 4 of the previously-listed 22 runtime failures (agora/strategy_workshop/test_reconstruction.py, assistant/tests/test_user_mode_regression.py, test_persona_provisioning_coordinator.py, tests/test_agora_route_ownership.py) were not genuine pre-existing failures -- they were regressions this task introduced by removing sys.path mutation and leaving a bare import that happened to resolve only through the root conftest.py's per-test service-local sys.path shim (which inserts the owning service directory, e.g. services/control-plane/bff, but not sibling directories like services/control-plane/privacy or services/control-plane/governance). Fixed by converting each bare import to its canonical services.control_plane.* package path; each file now passes individually with the same test count as the base commit c06786377 (verified via a git-archive checkout of c06786377 run with the identical bounded per-file pytest command). The remaining 18 modules listed below fail identically at base c06786377 and at the current head when run individually, confirming they are genuinely pre-existing and independent of this task's scoped changes; each requires its own governed defect-repair disposition, matching test_command_store_caching/BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001. Per-test pass/fail counts for the 18-file batch re-run remain intentionally unrecorded (None) at the aggregate level; per-file counts are recorded on each entry above."
   }
 }
