@@ -736,7 +736,7 @@ def test_sse_streaming_done_token_termination(monkeypatch: Any) -> None:
     import importlib.util
     _adapter_dir = str(Path(__file__).resolve().parents[3] / "services" / "openclaw-gateway-adapter")
     if _adapter_dir not in sys.path:
-        sys.path.insert(0, _adapter_dir)
+        pass
     _spec = importlib.util.spec_from_file_location("openclaw_adapter_main", Path(_adapter_dir) / "main.py")
     adapter_main = importlib.util.module_from_spec(_spec)
     sys.modules["openclaw_adapter_main"] = adapter_main

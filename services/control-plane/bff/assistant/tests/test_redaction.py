@@ -8,7 +8,7 @@ import pytest
 
 BFF_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if BFF_DIR not in sys.path:
-    sys.path.insert(0, BFF_DIR)
+    pass
 
 from assistant.redaction import (  # noqa: E402
     RedactionError,

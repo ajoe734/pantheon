@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 BFF_DIR = Path(__file__).resolve().parent.parent
 if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
+    pass
 
 from ports import (
     # Operations & Consultation

@@ -21,7 +21,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from agora.strategy_workshop.router import create_strategy_workshop_router
 from agora.strategy_workshop.routes.execution import build_execution_router
@@ -129,7 +128,7 @@ def test_session_versions_execution_stream_subrouters_are_disjoint():
         bff_error=bff_error,
         utc_now=utc_now,
     )
-    sys.path.insert(0, str(_BFF_DIR.parent))
+    pass
     from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
 
     private_content_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())

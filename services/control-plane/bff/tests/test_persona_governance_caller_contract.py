@@ -55,7 +55,7 @@ _GOVERNANCE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "governance")
 )
 if _GOVERNANCE_DIR not in sys.path:
-    sys.path.insert(0, _GOVERNANCE_DIR)
+    pass
 from approval_decision import ApprovalDecision, EvidenceRef  # noqa: E402
 
 

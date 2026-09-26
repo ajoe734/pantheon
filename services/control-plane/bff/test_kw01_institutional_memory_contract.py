@@ -11,7 +11,6 @@ import json
 from fastapi.testclient import TestClient
 
 _MODULE_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_MODULE_DIR / "tests"))
 from knowledge_read_port_fixtures import (  # noqa: E402
     create_environment_knowledge_read_ports,
     create_seeded_knowledge_read_ports,
@@ -26,7 +25,7 @@ def _load_module(name: str, path: Path):
     sys.modules[name] = module
     previous_main = sys.modules.get("main")
     sys.modules["main"] = module
-    sys.path.insert(0, str(path.parent))
+    pass
     try:
         spec.loader.exec_module(module)
     finally:

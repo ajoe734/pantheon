@@ -13,7 +13,7 @@ from typing import Any
 BFF_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BFF_DIR.parents[2]
 if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
+    pass
 
 from assistant.routes import create_assistant_router  # noqa: E402
 

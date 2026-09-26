@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 BFF_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(BFF_ROOT))
 
 from training.router import create_training_router
 

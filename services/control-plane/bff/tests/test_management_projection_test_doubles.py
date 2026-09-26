@@ -20,11 +20,11 @@ import unittest
 
 BFF_DIR = Path(__file__).resolve().parent.parent
 if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
+    pass
 
 TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
-    sys.path.insert(0, str(TESTS_DIR))
+    pass
 
 from management_projection_test_doubles import (
     KNOWN_SEM_DATASETS,

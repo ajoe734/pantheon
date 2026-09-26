@@ -132,16 +132,56 @@ def _static_import_bff_main_bound_names(node: ast.AST) -> Set[str]:
     return names
 
 
-def _file_imports_bff_main(path: Path) -> bool:
-    """AST-scan a single file for an import of the BFF composition root (main.py).
+def _call_has_subprocess_main_import(node: ast.Call) -> bool:
+    """Detect subprocess execution that imports BFF main via -c or -m (AC2)."""
+    args_to_check: List[ast.AST] = list(node.args)
+    for kw in node.keywords:
+        if kw.arg in ("args", "cmd", "command"):
+            args_to_check.append(kw.value)
 
-    Matches: ``import main`` / ``import <pkg>.main``; ``from main import ...`` /
-    ``from <pkg>.main import ...``; the absolute
-    ``from services.control_plane.bff import main`` form; and dynamic imports
-    via ``importlib.import_module``, ``__import__``, etc. (AC5).
-    Excludes other services' own ``main`` modules (for example ``services.research.main``).
-    """
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for arg in args_to_check:
+        if isinstance(arg, (ast.List, ast.Tuple)):
+            str_items = [
+                elt.value for elt in arg.elts
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+            ]
+            for i, item in enumerate(str_items):
+                if item == "-c" and i + 1 < len(str_items):
+                    code_snippet = str_items[i + 1]
+                    try:
+                        code_tree = ast.parse(code_snippet)
+                        if _ast_imports_bff_main(code_tree):
+                            return True
+                    except SyntaxError:
+                        if "import main" in code_snippet or "from main" in code_snippet or ".main" in code_snippet:
+                            return True
+                elif item == "-m" and i + 1 < len(str_items):
+                    mod_name = str_items[i + 1]
+                    if _is_bff_main_module_name(mod_name):
+                        return True
+        elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            val = arg.value
+            if "-c" in val:
+                idx = val.find("-c")
+                snippet = val[idx + 2:].strip()
+                if (snippet.startswith('"') and snippet.endswith('"')) or (snippet.startswith("'") and snippet.endswith("'")):
+                    snippet = snippet[1:-1].strip()
+                try:
+                    code_tree = ast.parse(snippet)
+                    if _ast_imports_bff_main(code_tree):
+                        return True
+                except Exception:
+                    if "import main" in snippet or "from main" in snippet or ".main" in snippet:
+                        return True
+            elif "-m" in val:
+                idx = val.find("-m")
+                rest = val[idx + 2:].strip().split()
+                if rest and _is_bff_main_module_name(rest[0]):
+                    return True
+    return False
+
+
+def _ast_imports_bff_main(tree: ast.AST) -> bool:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             if _static_import_bff_main_bound_names(node):
@@ -150,38 +190,61 @@ def _file_imports_bff_main(path: Path) -> bool:
             target = _import_call_target(node)
             if target and _is_bff_main_module_name(target):
                 return True
+            if _call_has_subprocess_main_import(node):
+                return True
     return False
 
 
-def _discover_test_files() -> List[Path]:
+def _file_imports_bff_main(path: Path) -> bool:
+    """AST-scan a single file for an import of the BFF composition root (main.py).
+
+    Matches: ``import main`` / ``import <pkg>.main``; ``from main import ...`` /
+    ``from <pkg>.main import ...``; the absolute
+    ``from services.control_plane.bff import main`` form; dynamic imports
+    via ``importlib.import_module``, ``__import__``, etc. (AC5); and subprocess
+    python -c / -m invocations (AC2).
+    Excludes other services' own ``main`` modules (for example ``services.research.main``).
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except Exception:
+        return False
+    return _ast_imports_bff_main(tree)
+
+
+def _discover_test_files(root_dir: Path = BFF_DIR) -> List[Path]:
     """Live scan of every test module on disk under the BFF tree.
 
     Deliberately independent of the inventory file's own ``tests`` list, so a
     newly added test file cannot silently import ``main`` without being
-    counted. Matches pytest's own default test-module discovery convention.
+    counted. Matches pytest's own default test-module discovery convention,
+    including conftest.py suites (AC2).
     """
     files: List[Path] = []
-    for path in BFF_DIR.rglob("*.py"):
+    for path in root_dir.rglob("*.py"):
         if ".venv" in path.parts:
             continue
         name = path.name
         if name.startswith("test_") or name.startswith("smoke_test"):
-            files.append(path.relative_to(BFF_DIR))
-    return files
+            files.append(path.relative_to(root_dir))
+    return sorted(files)
 
 
-def _discover_all_py_files() -> List[Path]:
+def _discover_all_py_files(root_dir: Path = BFF_DIR) -> List[Path]:
     """Every ``.py`` file under the BFF tree, test or not."""
     files: List[Path] = []
-    for path in BFF_DIR.rglob("*.py"):
+    for path in root_dir.rglob("*.py"):
         if ".venv" in path.parts:
             continue
-        files.append(path.relative_to(BFF_DIR))
-    return files
+        files.append(path.relative_to(root_dir))
+    return sorted(files)
 
 
-def _module_dotted_path(rel_path: Path) -> str:
-    return "services.control_plane.bff." + ".".join(rel_path.with_suffix("").parts)
+def _module_dotted_path(rel_path: Path, root_dir: Path = BFF_DIR) -> str:
+    dotted = ".".join(rel_path.with_suffix("").parts)
+    if root_dir == BFF_DIR:
+        return "services.control_plane.bff." + dotted
+    return dotted
 
 
 def _module_level_bff_main_names(tree: ast.Module) -> Set[str]:
@@ -290,46 +353,125 @@ def _reaches_main_symbols(path: Path) -> Set[str]:
     return reaching
 
 
-def _find_main_reaching_helper_modules() -> Dict[str, Set[str]]:
-    """Non-test support modules under the BFF tree that expose symbols
+def _find_main_reaching_helper_modules(root_dir: Path = BFF_DIR) -> Dict[str, Set[str]]:
+    """Non-test support modules under the tree that expose symbols
     reaching the composition root (directly or transitively), keyed by their
-    absolute dotted module path (AC3: account for transitive helper imports,
-    not just literal same-file ``import main`` statements)."""
-    test_names = {str(p) for p in _discover_test_files()}
+    absolute dotted module path (AC2/AC3)."""
+    test_names = {str(p) for p in _discover_test_files(root_dir)}
     helpers: Dict[str, Set[str]] = {}
-    for rel in _discover_all_py_files():
+    for rel in _discover_all_py_files(root_dir):
         if str(rel) in test_names:
             continue
-        symbols = _reaches_main_symbols(BFF_DIR / rel)
+        symbols = _reaches_main_symbols(root_dir / rel)
         if symbols:
-            helpers[_module_dotted_path(rel)] = symbols
+            helpers[_module_dotted_path(rel, root_dir=root_dir)] = symbols
     return helpers
 
 
-def _file_imports_main_via_helper(path: Path, helper_symbols: Dict[str, Set[str]]) -> bool:
+def _file_imports_main_via_helper(
+    path: Path, helper_symbols: Dict[str, Set[str]], root_dir: Path = BFF_DIR
+) -> bool:
     """True if ``path`` imports a name from a helper module that itself
-    reaches BFF main, i.e. a transitive (AST-invisible-in-this-file) import."""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    reaches BFF main, i.e. a transitive import. Resolves both absolute and
+    relative imports (AC2)."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except Exception:
+        return False
+    try:
+        rel = path.relative_to(root_dir)
+        pkg_parts = list(rel.parent.parts)
+    except ValueError:
+        pkg_parts = []
+
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module in helper_symbols:
-            reaching = helper_symbols[node.module]
+        if isinstance(node, ast.ImportFrom):
+            candidates: List[str] = []
+            if node.level == 0:
+                if node.module:
+                    candidates.append(node.module)
+            else:
+                base = pkg_parts[: max(0, len(pkg_parts) - (node.level - 1))]
+                mod_parts = list(base)
+                if node.module:
+                    mod_parts.extend(node.module.split("."))
+                rel_mod = ".".join(mod_parts)
+                if rel_mod:
+                    if root_dir == BFF_DIR:
+                        candidates.append("services.control_plane.bff." + rel_mod)
+                    candidates.append(rel_mod)
+
+            for cand in candidates:
+                if cand in helper_symbols:
+                    reaching = helper_symbols[cand]
+                    for alias in node.names:
+                        if alias.name == "*" or alias.name in reaching:
+                            return True
+
+            if node.level > 0 and not node.module:
+                base = pkg_parts[: max(0, len(pkg_parts) - (node.level - 1))]
+                for alias in node.names:
+                    cand = ".".join(base + [alias.name]) if base else alias.name
+                    cands = ["services.control_plane.bff." + cand, cand] if root_dir == BFF_DIR else [cand]
+                    for c in cands:
+                        if c in helper_symbols:
+                            reaching = helper_symbols[c]
+                            if alias.name == "*" or alias.name in reaching:
+                                return True
+        elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name in reaching:
+                if alias.name in helper_symbols:
                     return True
     return False
 
 
-def _live_scan_non_whitelisted_main_importers(allowlist: Set[str]) -> List[str]:
-    helper_symbols = _find_main_reaching_helper_modules()
-    offenders = [
-        str(rel)
-        for rel in _discover_test_files()
-        if str(rel) not in allowlist
-        and (
-            _file_imports_bff_main(BFF_DIR / rel)
-            or _file_imports_main_via_helper(BFF_DIR / rel, helper_symbols)
-        )
+def _ancestor_conftests_import_main(
+    rel_path: Path, helper_symbols: Dict[str, Set[str]], root_dir: Path = BFF_DIR
+) -> bool:
+    """True if any ancestor directory contains a conftest.py that reaches main (AC2)."""
+    current = rel_path.parent
+    while True:
+        conftest_path = root_dir / (current / "conftest.py" if str(current) not in (".", "") else "conftest.py")
+        if conftest_path.is_file():
+            rel_conftest = conftest_path.relative_to(root_dir)
+            if rel_conftest != rel_path:
+                if _file_imports_bff_main(conftest_path) or _file_imports_main_via_helper(
+                    conftest_path, helper_symbols, root_dir=root_dir
+                ):
+                    return True
+        if str(current) in (".", ""):
+            break
+        current = current.parent
+    return False
+
+
+def _live_scan_non_whitelisted_main_importers(
+    allowlist: Set[str], root_dir: Path = BFF_DIR
+) -> List[str]:
+    helper_symbols = _find_main_reaching_helper_modules(root_dir=root_dir)
+    conftest_files = [
+        p.relative_to(root_dir)
+        for p in root_dir.rglob("conftest.py")
+        if ".venv" not in p.parts
     ]
+    test_files = _discover_test_files(root_dir)
+
+    offenders: Set[str] = set()
+    for rel in conftest_files:
+        if str(rel) not in allowlist:
+            if _file_imports_bff_main(root_dir / rel) or _file_imports_main_via_helper(
+                root_dir / rel, helper_symbols, root_dir=root_dir
+            ):
+                offenders.add(str(rel))
+
+    for rel in test_files:
+        if str(rel) not in allowlist:
+            if (
+                _file_imports_bff_main(root_dir / rel)
+                or _file_imports_main_via_helper(root_dir / rel, helper_symbols, root_dir=root_dir)
+                or _ancestor_conftests_import_main(rel, helper_symbols, root_dir=root_dir)
+            ):
+                offenders.add(str(rel))
     return sorted(offenders)
 
 
@@ -439,10 +581,15 @@ def test_migrated_suites_do_not_import_main() -> None:
 
 def test_migrated_suites_do_not_mutate_sys_path() -> None:
     data = _load_inventory()
-    migrated_suites = data["migrated_suites"]
+    allowlist = set(data["composition_allowlist"])
+    non_composition_suites = [
+        rel for rel in _discover_test_files()
+        if str(rel) not in allowlist
+    ]
+    assert len(non_composition_suites) >= 300
 
     offenders: List[str] = []
-    for rel_path in migrated_suites:
+    for rel_path in non_composition_suites:
         file_path = BFF_DIR / rel_path
         tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
         for node in ast.walk(tree):
@@ -455,7 +602,7 @@ def test_migrated_suites_do_not_mutate_sys_path() -> None:
                             offenders.append(f"{rel_path}:{node.lineno}: sys.path.{func.attr}")
 
     msg = "\n".join(f"  {o}" for o in offenders)
-    assert not offenders, f"Migrated suites must not mutate sys.path:\n{msg}"
+    assert not offenders, f"Non-composition suites must not mutate sys.path:\n{msg}"
 
 
 def test_no_global_monkeypatching_in_migrated_suites() -> None:
@@ -672,3 +819,54 @@ def test_scanner_detects_module_alias_import_transitively(tmp_path: Path) -> Non
     assert reaching == {"get_main"}
     assert "unrelated_helper" not in reaching
 
+
+def test_scanner_detects_conftest_main_import_and_implicit_loading(tmp_path: Path) -> None:
+    """AC2 regression: direct conftest main import & implicit conftest loading on child tests."""
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text("import services.control_plane.bff.main\n", encoding="utf-8")
+
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    child_test = sub / "test_child.py"
+    child_test.write_text("def test_ok(): pass\n", encoding="utf-8")
+
+    offenders = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
+    assert "conftest.py" in offenders
+    assert "sub/test_child.py" in offenders
+
+
+def test_scanner_detects_subprocess_main_import(tmp_path: Path) -> None:
+    """AC2 regression: test files invoking subprocess python -c or -m importing main."""
+    f1 = tmp_path / "test_subp_c.py"
+    f1.write_text("import subprocess\nsubprocess.run(['python3', '-c', 'import main'])\n", encoding="utf-8")
+    assert _file_imports_bff_main(f1) is True
+
+    f2 = tmp_path / "test_subp_m.py"
+    f2.write_text("import subprocess\nsubprocess.check_call(['python', '-m', 'services.control_plane.bff.main'])\n", encoding="utf-8")
+    assert _file_imports_bff_main(f2) is True
+
+    f3 = tmp_path / "test_subp_safe.py"
+    f3.write_text("import subprocess\nsubprocess.run(['python3', '-c', 'import sys; print(sys.version)'])\n", encoding="utf-8")
+    assert _file_imports_bff_main(f3) is False
+
+
+def test_scanner_detects_relative_helper_main_import(tmp_path: Path) -> None:
+    """AC2 regression: test files importing helper via relative import where helper reaches main."""
+    sub = tmp_path / "pkg"
+    sub.mkdir()
+    helper = sub / "helper.py"
+    helper.write_text("import services.control_plane.bff.main as bm\ndef reach(): return bm.read_store\n", encoding="utf-8")
+
+    test_file = sub / "test_rel.py"
+    test_file.write_text("from .helper import reach\ndef test_fn(): reach()\n", encoding="utf-8")
+
+    offenders = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
+    assert "pkg/test_rel.py" in offenders
+
+    safe_helper = sub / "safe_helper.py"
+    safe_helper.write_text("def safe_fn(): return 1\n", encoding="utf-8")
+    safe_test = sub / "test_safe.py"
+    safe_test.write_text("from .safe_helper import safe_fn\ndef test_safe_fn(): safe_fn()\n", encoding="utf-8")
+
+    offenders_after = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
+    assert "pkg/test_safe.py" not in offenders_after

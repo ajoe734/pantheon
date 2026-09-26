@@ -21,9 +21,9 @@ from pathlib import Path
 BFF_DIR = Path(__file__).resolve().parent.parent
 OODA_DIR = BFF_DIR.parent / "ooda"
 if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
+    pass
 if str(OODA_DIR) not in sys.path:
-    sys.path.insert(0, str(OODA_DIR))
+    pass
 
 from ports.ooda_management import (
     InterventionsPort,
