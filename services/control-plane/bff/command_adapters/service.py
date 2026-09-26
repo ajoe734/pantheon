@@ -814,6 +814,8 @@ class CommandAdapterService:
         }
         if trusted_evidence_producer:
             audit_ctx["trusted_evidence_producer"] = trusted_evidence_producer
+        if "live_capital_mutation" in payload:
+            audit_ctx["live_capital_side_effects"] = bool(payload.get("live_capital_mutation"))
 
         if store is None:
             raise self._raise_error(

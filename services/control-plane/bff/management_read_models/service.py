@@ -3692,12 +3692,23 @@ class ManagementService:
                         if hasattr(store, "list_approval_queue_items")
                         else store.list_approval_records()
                     ) or []
+                    approval_queue_source = "read_store"
+                    if hasattr(store, "dataset_source"):
+                        try:
+                            approval_queue_source = str(store.dataset_source("approval_queue_items"))
+                        except Exception:
+                            approval_queue_source = "read_store"
                     surfaces["approval_queue"] = {
                         "status": "ok" if records else "unavailable",
-                        "source": "read_store",
+                        "source": approval_queue_source,
                         "snapshot_at": snap,
                         **({"message": "Approval queue has no readable source records."} if not records else {}),
                     }
+                    if approval_queue_source == "local_snapshot":
+                        surfaces["approval_queue"]["status"] = "degraded"
+                        surfaces["approval_queue"]["note"] = (
+                            "Served from local BFF snapshot fallback instead of a backend-owned read store."
+                        )
                     for r in records:
                         if isinstance(r, dict):
                             dec_id = str(r.get("decision_id") or r.get("id") or r.get("approval_decision_id") or "")
@@ -3922,10 +3933,29 @@ class ManagementService:
                             "source": "bff_composed",
                             "snapshot_at": snap,
                         }
+                        try:
+                            from services.control_plane.bff.governance.human_inbox import (
+                                _human_inbox_persona_blocking_reasons,
+                            )
+                        except ImportError:
+                            from governance.human_inbox import (  # type: ignore[no-redef]
+                                _human_inbox_persona_blocking_reasons,
+                            )
                         for p in personas:
                             if isinstance(p, dict) and bool(p.get("human_needed") or p.get("humanNeeded")):
                                 p_id = str(p.get("persona_id") or p.get("id") or "")
                                 if p_id:
+                                    blocking_reasons = _human_inbox_persona_blocking_reasons(p)
+                                    research_status = (
+                                        p.get("research_status")
+                                        if isinstance(p.get("research_status"), dict)
+                                        else {}
+                                    )
+                                    current_projects = (
+                                        p.get("current_research_projects")
+                                        if isinstance(p.get("current_research_projects"), list)
+                                        else []
+                                    )
                                     all_items.append({
                                         "id": f"readiness_blocker:persona:{p_id}",
                                         "item_id": p_id,
@@ -3941,6 +3971,14 @@ class ManagementService:
                                         "summary": str(p.get("current_work") or "Persona readiness is blocked on human governance review."),
                                         "created_at": str(p.get("updated_at") or snap),
                                         "updated_at": str(p.get("updated_at") or snap),
+                                        "blocking_reasons": list(blocking_reasons),
+                                        "research_context": {
+                                            "research_status": _management_json_clone(research_status),
+                                            "current_research_projects": _management_json_clone(current_projects),
+                                            "recommendation": p.get("recommendation"),
+                                            "current_work": p.get("current_work"),
+                                            "data_source_status": _management_json_clone(p.get("data_source_status") or {}),
+                                        },
                                         "details": p,
                                     })
                 except Exception as exc:
