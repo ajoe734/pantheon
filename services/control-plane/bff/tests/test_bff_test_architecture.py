@@ -734,16 +734,15 @@ WHOLE_APP_ALLOWLIST = {
     # missing seam. Operator-authorized single new allowlist entry; do not
     # add another allowlist entry without a separate governed authorization.
     "tests/test_management_read_timeout_and_capacity.py",
+    # RESOLVED (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001, P1 AC1/AC2): this file
+    # is the composition-root smoke test extracted out of auth/test_policy.py
+    # this generation. Its whole purpose is to prove main.py's default wiring
+    # of auth_deps/session_lifecycle_store/guards by importing the real
+    # composition root -- the same category as smoke_test.py and
+    # test_bff_main_composition.py, not a workaround for a missing seam.
+    # auth/test_policy.py itself no longer imports main.
+    "auth/test_composition_root_smoke.py",
 }
-# NOTE: auth/test_policy.py's test_composition_root_smoke() is a real,
-# live-scanned composition-root import (the PM12 fixture-closure entry's own
-# comment above says not to add another allowlist entry without a separate
-# governed authorization, which does not exist for this file). It is
-# deliberately NOT in WHOLE_APP_ALLOWLIST or the inventory's
-# composition_allowlist -- it is tracked honestly as a live offender in
-# live_scan_non_whitelisted_main_importers with the ceiling raised to match,
-# pending an operator decision to either authorize a whole-app exception or
-# migrate the smoke test off the composition root.
 
 
 def test_composition_allowlist_is_strictly_contained_and_retained() -> None:

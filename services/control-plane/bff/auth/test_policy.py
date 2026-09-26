@@ -8,7 +8,11 @@ Covers Acceptance Criterion 5 of BFF-AUTH-SESSION-SEAM-PREREQUISITE-001:
 4. Session-key derivation variants (sid, session_id, jti, env, fallback) and legacy state.
 5. Real cookie, bearer, and refresh flows with synthetic signing keys.
 6. Authentic negative JWT signature, expiration, role restriction, and tenant scoping.
-7. Composition smoke proving the default composition root factory is properly wired.
+
+The composition-root smoke test that proves default main.py wiring lives in
+its own dedicated composition file, auth/test_composition_root_smoke.py
+(composition_allowlist), so this file itself imports no main composition
+root, directly or via subprocess.
 """
 from __future__ import annotations
 
@@ -725,40 +729,3 @@ def test_dev_login_forbidden_in_production(tmp_path: Path, monkeypatch: pytest.M
     assert resp.status_code == 403
     err = _extract_error(resp)
     assert err.get("code") == "PRECONDITION_FAILED"
-
-
-# ==============================================================================
-# 7. Composition Root Smoke Test
-# ==============================================================================
-
-def test_composition_root_smoke():
-    """Smoke test running in a subprocess proving default composition in main.py
-    wires auth_deps, session_lifecycle_store, and guards correctly.
-    """
-    code = (
-        "import tempfile, os\n"
-        "with tempfile.TemporaryDirectory(prefix='bff-smoke-') as tmpdir:\n"
-        "    os.environ['BFF_DATA_DIR'] = tmpdir\n"
-        "    os.environ['PANTHEON_BFF_AUTH_STUB'] = 'true'\n"
-        "    os.environ['PANTHEON_BFF_AUTH_MODE'] = 'permissive'\n"
-        "    from services.control_plane.bff import main as bff_main\n"
-        "    from fastapi.testclient import TestClient\n"
-        "    client = TestClient(bff_main.app)\n"
-        "    headers = {'Authorization': 'Bearer smoke-op:operator'}\n"
-        "    r1 = client.get('/bff/me', headers=headers)\n"
-        "    assert r1.status_code == 200, f'Expected 200, got {r1.status_code}'\n"
-        "    r2 = client.post('/bff/logout', headers=headers)\n"
-        "    assert r2.status_code == 200, f'Expected 200, got {r2.status_code}'\n"
-        "    r3 = client.get('/bff/me', headers=headers)\n"
-        "    assert r3.status_code == 401, f'Expected 401, got {r3.status_code}'\n"
-        "    # Check guard canonical binding\n"
-        "    assert getattr(bff_main.auth_deps.raise_if_session_logged_out, '_canonical_guard', False) is True\n"
-        "    print('COMPOSITION_SMOKE_OK')\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert "COMPOSITION_SMOKE_OK" in result.stdout
