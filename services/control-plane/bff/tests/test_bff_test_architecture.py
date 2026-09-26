@@ -383,6 +383,13 @@ WHOLE_APP_ALLOWLIST = {
     # identity/deletion check on main.py's own namespace. Discovered by this
     # generation's graph-aware scanner fix (previously invisible).
     "migrations/test_overlay_retirement.py",
+    # AUTHORIZED (BFF-PM12-FIXTURE-CLOSURE-001): verifies the production
+    # capacity/executor binding (bounded semaphore + ThreadPoolExecutor pools,
+    # timeout dispatch) that lives in main.py itself -- importing the real
+    # composition root is the thing under test, not a workaround for a
+    # missing seam. Operator-authorized single new allowlist entry; do not
+    # add another allowlist entry without a separate governed authorization.
+    "tests/test_management_read_timeout_and_capacity.py",
 }
 
 

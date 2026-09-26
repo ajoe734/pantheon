@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -11,63 +10,13 @@ from typing import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff import test_bff_promotion_review_governance as gov_test
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     get_management_nl_read_store,
     get_management_nl_sse_buffer,
     management_nl_test_client,
 )
-
-
-@contextmanager
-def _real_main_management_nl_test_client(read_surface, *, raise_server_exceptions=False):
-    """BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: GENUINE BLOCKER, narrow
-    and function-scoped. The seam-based tests/rebalance_authority_test_
-    support.management_nl_test_client() (built on assistant.management_
-    service + core.app_factory.compose_bff_app()) correctly serves this
-    file's other tests, but test_nl_ask_tenant_scopes_portfolio_summary and
-    test_nl_ask_filters_evidence_by_tenant_and_used_entities exercise
-    portfolio telemetry-row projection and tenant/entity evidence scoping
-    that main.py only wires with real business logic (not stub defaults) at
-    its own module import time (main.py's _project_operator_runtime_state_
-    row and related context-service collaborators, main.py lines ~3465+,
-    ~9080-9107) -- collaborator seams exist on assistant.management_service
-    (get_/set_/reset_project_operator_runtime_state_row) but their real
-    implementations are main.py-exclusive, with no extracted seam standing
-    in for them when compose_bff_app() composes without main.py. Not a
-    declared artifact of this task; per explicit governance instruction,
-    this narrow, real, main.py-backed client is used only for these two
-    tests rather than weakening their assertions or faking the app, and
-    this file remains a real, reported (not allowlisted) main.py importer.
-    """
-    import importlib
-
-    real_main = importlib.import_module("services.control_plane.bff.main")
-    import services.control_plane.bff.personas.service as personas_service
-
-    from services.control_plane.bff.tests.rebalance_authority_test_support import (
-        restore_real_main_read_surface,
-        sync_real_main_read_surface,
-    )
-
-    old_main_store = getattr(real_main, "read_store", None)
-    old_persona_store = getattr(personas_service, "read_store", None)
-    context_svc = getattr(real_main, "_management_ai_context_service", None)
-    old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
-    previous_sub_ports = sync_real_main_read_surface(real_main, read_surface)
-    try:
-        setattr(real_main, "read_store", read_surface)
-        setattr(personas_service, "read_store", read_surface)
-        if context_svc is not None:
-            context_svc._get_read_store = (lambda: read_surface) if read_surface is not None else None
-        client = TestClient(real_main.app, raise_server_exceptions=raise_server_exceptions)
-        yield client
-    finally:
-        setattr(real_main, "read_store", old_main_store)
-        setattr(personas_service, "read_store", old_persona_store)
-        if context_svc is not None:
-            context_svc._get_read_store = old_context_fn
-        restore_real_main_read_surface(real_main, previous_sub_ports)
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +45,6 @@ def _seeded_client(
     monkeypatch,
     *,
     evidence_refs: dict | None = None,
-    use_real_main: bool = False,
 ) -> Iterator[TestClient]:
     read_surface_path = tmp_path / "read_surfaces.json"
     seeded_data = {
@@ -162,16 +110,81 @@ def _seeded_client(
         monkeypatch.delenv("PANTHEON_BFF_EVIDENCE_REF_STORE", raising=False)
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
-    store = create_in_memory_read_surface_ports()
+
+    # BFF-PM12-FIXTURE-CLOSURE-001: this file used to seed no personas at
+    # all. Reuse the canonical eligible-persona builder
+    # (test_bff_promotion_review_governance.py::build_pm12_eligible_persona_records,
+    # proven against the real production pipeline by
+    # test_pm12_eligibility_fixture_contract.py) so the seeded tenant-alpha
+    # persona genuinely clears every PM12 league/eligibility gate instead of
+    # only carrying inert fields. persona-beta stays tenant-beta and
+    # non-eligible so tenant-scoped read admission still has something to
+    # exclude.
+    pm12_alpha = gov_test.build_pm12_eligible_persona_records(
+        "persona-alpha",
+        "runtime-b6-sec-alpha",
+        "binding-b6-sec-alpha",
+        tenant_id="tenant-alpha",
+    )
+    pm12_beta = gov_test.build_pm12_eligible_persona_records(
+        "persona-beta",
+        "runtime-b6-sec-beta",
+        "binding-b6-sec-beta",
+        tenant_id="tenant-beta",
+        lifecycle_state="active",
+    )
+    personas = [pm12_alpha["personas"]["persona-alpha"], pm12_beta["personas"]["persona-beta"]]
+    persona_bindings = [
+        pm12_alpha["bindings"]["binding-b6-sec-alpha"],
+        pm12_beta["bindings"]["binding-b6-sec-beta"],
+    ]
+    # `personas.service._pm12_persona_league_rows` reads
+    # `read_store.list_runtime_bindings()` with no tenant argument at all
+    # (tenant admission for PM12 is enforced only on the persona record
+    # itself, per AC5/BFF-MGMT-READ-DEFECT-REPAIR-001), so these runtime
+    # bindings must be visible there unfiltered. But this file's own
+    # `/bff/management/nl/ask` "portfolio"/"trading_pulse"/"persona_fleet"
+    # snippets pass every runtime binding through
+    # `_mgmt_nl_filter_tenant_records`, and this file's existing assertions
+    # hard-code exact `total_pnl`/`total_trades` values computed only from
+    # rt-alpha/rt-beta. Tag the PM12 fixture's own runtime bindings with a
+    # tenant id neither test tenant ever requests, so the unrelated nl/ask
+    # tenant filter (which has no bearing on PM12 eligibility) excludes them
+    # from those aggregates while `_pm12_persona_league_rows` still sees
+    # them in full.
+    _PM12_FIXTURE_ONLY_TENANT_ID = "tenant-pm12-fixture-internal"
+    persona_runtime_bindings = [
+        {**pm12_alpha["runtime_bindings"]["runtime-b6-sec-alpha"], "tenant_id": _PM12_FIXTURE_ONLY_TENANT_ID},
+        {**pm12_beta["runtime_bindings"]["runtime-b6-sec-beta"], "tenant_id": _PM12_FIXTURE_ONLY_TENANT_ID},
+    ]
+    persona_telemetry_summaries = {
+        **pm12_alpha["telemetry_summaries"],
+        **pm12_beta["telemetry_summaries"],
+    }
+    persona_sessions_by_persona = {
+        "persona-alpha": [pm12_alpha["sessions"]["sess-persona-alpha"]],
+        "persona-beta": [pm12_beta["sessions"]["sess-persona-beta"]],
+    }
+
+    store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "personas": personas,
+            "bindings": persona_bindings,
+        },
+    )
     capital_pools = list(seeded_data["capital_pools"].values())
-    runtime_bindings = list(seeded_data["runtime_bindings"].values())
-    telemetry_summaries = seeded_data["telemetry_summaries"]
+    runtime_bindings = list(seeded_data["runtime_bindings"].values()) + persona_runtime_bindings
+    telemetry_summaries = dict(seeded_data["telemetry_summaries"])
+    telemetry_summaries.update(persona_telemetry_summaries)
     evidence_records = list((evidence_refs or {}).values())
     store.list_capital_pools = lambda *args, **kwargs: json.loads(json.dumps(capital_pools))
     store.list_runtime_bindings = lambda *args, **kwargs: json.loads(json.dumps(runtime_bindings))
     store.get_telemetry_summary = lambda runtime_id: json.loads(
         json.dumps(telemetry_summaries.get(str(runtime_id)))
     ) if telemetry_summaries.get(str(runtime_id)) is not None else None
+    store.get_sessions_for_persona = lambda persona_id: json.loads(
+        json.dumps(persona_sessions_by_persona.get(str(persona_id), []))
+    )
     store.record_agora_audit_event = lambda event: event
     store.get_agora_session = lambda session_id: None
 
@@ -221,17 +234,12 @@ def _seeded_client(
         ]
 
     store.list_evidence_refs = list_evidence_refs
-    client_cm = (
-        _real_main_management_nl_test_client(store, raise_server_exceptions=False)
-        if use_real_main
-        else management_nl_test_client(store, raise_server_exceptions=False)
-    )
-    with client_cm as client:
+    with management_nl_test_client(store, raise_server_exceptions=False) as client:
         yield client
 
 
 def test_nl_ask_tenant_scopes_portfolio_summary(tmp_path, monkeypatch) -> None:
-    with _seeded_client(tmp_path, monkeypatch, use_real_main=True) as client:
+    with _seeded_client(tmp_path, monkeypatch) as client:
         resp = client.post(
             "/bff/management/nl/ask",
             json={"question": "What is the scoped portfolio?", "focus": "portfolio"},
@@ -278,7 +286,7 @@ def test_nl_ask_filters_evidence_by_tenant_and_used_entities(tmp_path, monkeypat
             "linked_object_summary": {"entity_type": "runtime", "entity_ref": "rt-other"},
         },
     }
-    with _seeded_client(tmp_path, monkeypatch, evidence_refs=evidence_refs, use_real_main=True) as client:
+    with _seeded_client(tmp_path, monkeypatch, evidence_refs=evidence_refs) as client:
         resp = client.post(
             "/bff/management/nl/ask",
             json={"question": "How is the alpha runtime?", "focus": "trading_pulse"},
