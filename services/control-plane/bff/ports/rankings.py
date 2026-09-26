@@ -9,7 +9,7 @@ the sole entrypoint that used to be a local-overlay mutation method on
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from services.rankings.store import (
     RankingConflictError,
@@ -52,6 +52,21 @@ class RankingSnapshotWriteOwnerPort:
                 raise
             created = existing
         return created.to_canonical_dict()
+
+    def get_ranking_snapshot(self, ranking_snapshot_id: str) -> Optional[Dict[str, Any]]:
+        """Read back a previously admitted snapshot from the same canonical
+        write-owner store ``put_ranking_snapshot`` persists to.
+
+        This is the read counterpart callers (e.g. quarterly recommendation
+        submission validation) need to re-admit a caller-asserted
+        ``ranking_snapshot_id`` against durable, canonical state -- rather
+        than the retired ``ReadSurfacePorts`` local overlay, which is a
+        different store and would never see snapshots written here.
+        """
+        record = self._store.get_ranking_snapshot(str(ranking_snapshot_id or ""))
+        if record is None:
+            return None
+        return record.to_canonical_dict()
 
 
 def create_ranking_write_owner() -> RankingSnapshotWriteOwnerPort:

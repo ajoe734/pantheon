@@ -76,6 +76,27 @@ from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surfa
 HEADERS = {"Authorization": "Bearer op-mgmt-load-005:operator,admin:mfa"}
 
 
+class _EmptyCommandLog:
+    """No-op command log for a router build with no CommandStore under test.
+
+    Without this, ManagementService's promotion_reviews contributor
+    (BFF-MGMT-READ-DEFECT-REPAIR-001 defect 1) falls back to a lazy
+    ``from ..main import command_store`` the first time any test in this
+    file hits it, which -- because this file deliberately builds its app
+    from router factories rather than importing ``main.py`` -- pays a
+    one-time full ``main.py`` import/composition cost inside the read's
+    timed budget instead of at process/module load time, producing a
+    spurious ``read_timeout`` unrelated to this file's actual MGMT-LOAD-005
+    concurrency contract. An explicit (empty) command log sidesteps the
+    fallback entirely, matching how the real composition root
+    (``core/app_factory.py``) and the promotion-review test file already
+    wire an explicit command store.
+    """
+
+    def _get_all_commands(self) -> list:
+        return []
+
+
 def _build_app(
     store: ReadSurfacePorts,
     *,
@@ -94,6 +115,7 @@ def _build_app(
             utc_now=_utc_now_rfc3339,
             bff_error=_default_bff_error,
             run_management_read=run_management_read,
+            get_command_store=lambda: _EmptyCommandLog(),
         )
     )
     app.include_router(

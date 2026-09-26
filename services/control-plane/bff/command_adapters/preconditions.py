@@ -2707,6 +2707,7 @@ def _validate_quarterly_ranking_recommendation_submit(
     params: Dict[str, Any],
     identity: OperatorIdentity,
     *,
+    read_surface: Optional[Any] = None,
     bff_error_fn: Optional[Callable[..., Any]] = None,
 ) -> None:
     _err = bff_error_fn or _resolve_bff_error()
@@ -2727,7 +2728,15 @@ def _validate_quarterly_ranking_recommendation_submit(
         from pm12.service import _pm12_resolve_quarterly_recommendation_submit_params, _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
 
     _raise_if_promotion_review_direct_mutation_requested(params)
-    resolved = _pm12_resolve_quarterly_recommendation_submit_params(params)
+    # ``read_surface`` is the same request-scoped read store every other
+    # command validator here uses (see build_default_validators below); it
+    # must be threaded into the ranking-snapshot re-admission check instead
+    # of letting it fall back to the ``main`` module singleton, otherwise a
+    # composed app that injects its own read surface (rather than mutating
+    # main.py's module globals) can never admit a real snapshot here.
+    resolved = _pm12_resolve_quarterly_recommendation_submit_params(
+        params, read_store=_resolve_read_surface(read_surface)
+    )
     params.clear()
     params.update(resolved)
 
@@ -3131,7 +3140,7 @@ def build_default_validators(
         CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
         CommandType.HUMAN_GATE_REVOKE: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
         CommandType.HUMAN_GATE_EXTEND_TTL: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
-        CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: lambda p, i: _validate_quarterly_ranking_recommendation_submit(p, i, bff_error_fn=bff_error_fn),
+        CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: lambda p, i: _validate_quarterly_ranking_recommendation_submit(p, i, read_surface=read_surface, bff_error_fn=bff_error_fn),
         CommandType.OBSERVE: lambda p, i: _validate_observe(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
         CommandType.REQUEST_REVIEW: lambda p, i: _validate_request_review(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
         CommandType.PAUSE_PAPER_RUNTIME: lambda p, i: _validate_pause_paper_runtime(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
