@@ -117,9 +117,6 @@ from .models import (
 )
 from .command_queue import CommandStore
 
-if not hasattr(CommandStore, "_cache"):
-    CommandStore._cache = []
-
 try:
     from . import assistant_conversation_store as _acs_mod
     sys.modules.setdefault("assistant_conversation_store", _acs_mod)
