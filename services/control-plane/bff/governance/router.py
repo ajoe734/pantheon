@@ -633,14 +633,15 @@ def create_governance_router(
             risk_levels=split_csv(risk_level),
             statuses=split_csv(status),
         )
-        redacted_items, total_redacted = _redact_review_queue_items(identity, items)
         response = _paged(
-            redacted_items,
+            items,
             page_token=page_token,
             page_size=page_size,
             surface_key="governance_review_queue",
             dataset="governance_review_queue_items",
         )
+        redacted_page, total_redacted = _redact_review_queue_items(identity, response["items"])
+        response["items"] = redacted_page
         response["meta"]["redacted_evidence_count"] = total_redacted
         return response
 
@@ -981,8 +982,9 @@ def create_governance_router(
             risk_levels=split_csv(risk_level),
             statuses=split_csv(status),
         )
-        redacted_items, total_redacted = _redact_review_queue_items(identity, items)
-        response = _paged(redacted_items, page_token=page_token, page_size=page_size, surface_key="review_queue", dataset="governance_review_queue_items")
+        response = _paged(items, page_token=page_token, page_size=page_size, surface_key="review_queue", dataset="governance_review_queue_items")
+        redacted_page, total_redacted = _redact_review_queue_items(identity, response["items"])
+        response["items"] = redacted_page
         response["meta"]["redacted_evidence_count"] = total_redacted
         return response
 

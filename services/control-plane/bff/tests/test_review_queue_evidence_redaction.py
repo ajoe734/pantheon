@@ -64,6 +64,64 @@ class _ReviewQueueStore:
         return "service_store" if dataset == "governance_review_queue_items" else "missing"
 
 
+_ALERT_ONLY_ITEM: Dict[str, Any] = {
+    "item_id": "gov-review-redaction-002",
+    "item_type": "DeploymentPlan",
+    "risk_level": "low",
+    "status": "pending",
+    "submitted_at": "2026-09-24T10:05:00Z",
+    "submitted_by": "orchestrator",
+    "governance_outcome": "pending",
+    "allowedActions": {
+        "canReview": True,
+        "canForwardToApproval": False,
+        "canRequestChanges": True,
+        "canEscalate": False,
+    },
+    "review_summary": {
+        "risk_assessment": "Alert-only fixture for review-queue pagination redaction",
+        "evidence_refs": [
+            {"ref_id": "ref-alert-only-ev", "type": "alert"},
+        ],
+        "linked_approval_decision_id": None,
+    },
+}
+
+
+class _TwoItemReviewQueueStore:
+    """Read-store double with two pages: item 1 alert-only, item 2 metric/job."""
+
+    def list_governance_review_queue_items(self, **_: Any) -> List[Dict[str, Any]]:
+        import copy
+
+        return [copy.deepcopy(_ALERT_ONLY_ITEM), copy.deepcopy(_REVIEW_ITEM)]
+
+    def dataset_source(self, dataset: str) -> str:
+        return "service_store" if dataset == "governance_review_queue_items" else "missing"
+
+
+class _EmptyReviewQueueStore:
+    """Read-store double returning no review-queue items."""
+
+    def list_governance_review_queue_items(self, **_: Any) -> List[Dict[str, Any]]:
+        return []
+
+    def dataset_source(self, dataset: str) -> str:
+        return "service_store" if dataset == "governance_review_queue_items" else "missing"
+
+
+class _UnavailableReviewQueueStore:
+    """Read-store double whose dataset source is always unavailable."""
+
+    def list_governance_review_queue_items(self, **_: Any) -> List[Dict[str, Any]]:
+        import copy
+
+        return [copy.deepcopy(_REVIEW_ITEM)]
+
+    def dataset_source(self, dataset: str) -> str:
+        return "missing"
+
+
 def _build_app(store: _ReviewQueueStore) -> FastAPI:
     app = FastAPI()
     register_error_handlers(app)
@@ -229,3 +287,88 @@ def test_review_queue_redaction_fails_closed_when_capabilities_unresolvable() ->
         assert len(ev_refs) == 3
         assert all(ref["redacted"] is True for ref in ev_refs)
         assert payload["meta"]["redacted_evidence_count"] == 3
+
+
+def test_operator_governance_review_queue_redacted_count_scoped_to_returned_page() -> None:
+    """Regression for the PR #5985 pagination defect: redaction/count must be
+    computed on the returned page, not the entire filtered queue. Page 1
+    holds only the alert-only item (nothing withheld); page 2 holds the
+    metric/job item (two refs withheld)."""
+    with _stub_auth_env():
+        client = TestClient(_build_app(_TwoItemReviewQueueStore()))
+
+        page1 = client.get(
+            "/api/v1/operator/governance/review-queue",
+            params={"page_size": 1},
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert page1.status_code == 200, page1.text
+        page1_payload = page1.json()
+        assert len(page1_payload["items"]) == 1
+        assert page1_payload["items"][0]["item_id"] == _ALERT_ONLY_ITEM["item_id"]
+        assert page1_payload["meta"]["redacted_evidence_count"] == 0
+        assert page1_payload["page_info"]["total"] == 2
+        next_token = page1_payload["page_info"]["next_page_token"]
+        assert next_token
+
+        page2 = client.get(
+            "/api/v1/operator/governance/review-queue",
+            params={"page_size": 1, "page_token": next_token},
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert page2.status_code == 200, page2.text
+        page2_payload = page2.json()
+        assert len(page2_payload["items"]) == 1
+        assert page2_payload["items"][0]["item_id"] == _REVIEW_ITEM["item_id"]
+        assert page2_payload["meta"]["redacted_evidence_count"] == 2
+        assert page2_payload["page_info"]["total"] == 2
+
+
+def test_bff_reviews_redacted_count_scoped_to_returned_page() -> None:
+    """Same pagination-scoping regression as above, exercised through the
+    /bff/reviews compatibility alias."""
+    with _stub_auth_env():
+        client = TestClient(_build_app(_TwoItemReviewQueueStore()))
+
+        page1 = client.get(
+            "/bff/reviews",
+            params={"page_size": 1},
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert page1.status_code == 200, page1.text
+        page1_payload = page1.json()
+        assert len(page1_payload["items"]) == 1
+        assert page1_payload["items"][0]["item_id"] == _ALERT_ONLY_ITEM["item_id"]
+        assert page1_payload["meta"]["redacted_evidence_count"] == 0
+        assert page1_payload["page_info"]["total"] == 2
+
+
+def test_operator_governance_review_queue_empty_result_has_zero_redacted_count() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app(_EmptyReviewQueueStore()))
+        response = client.get(
+            "/api/v1/operator/governance/review-queue",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["items"] == []
+        assert payload["meta"]["redacted_evidence_count"] == 0
+        assert payload["page_info"]["total"] == 0
+
+
+def test_operator_governance_review_queue_unavailable_surface_has_zero_redacted_count() -> None:
+    """When the dataset surface is unavailable, _paged withholds every item
+    from the page; the redaction count must not still reflect items that
+    were never returned to the caller."""
+    with _stub_auth_env():
+        client = TestClient(_build_app(_UnavailableReviewQueueStore()))
+        response = client.get(
+            "/api/v1/operator/governance/review-queue",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["items"] == []
+        assert payload["meta"]["redacted_evidence_count"] == 0
+        assert payload["meta"]["surfaces"]["governance_review_queue"]["status"] == "unavailable"
