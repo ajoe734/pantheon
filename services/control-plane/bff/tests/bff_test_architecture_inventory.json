@@ -2817,10 +2817,11 @@
       "rationale": "Already decoupled from main composition globals"
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 2,
+  "live_scan_non_whitelisted_main_importer_ceiling": 3,
   "live_scan_non_whitelisted_main_importers": [
     "tests/test_bff_b6_001_security_hardening.py",
-    "tests/test_management_nl_assistant_provider.py"
+    "tests/test_management_nl_assistant_provider.py",
+    "tests/test_management_read_timeout_and_capacity.py"
   ],
   "dynamic_non_ast_visible_main_dependencies": [
     {

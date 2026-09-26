@@ -45,10 +45,136 @@ from services.control_plane.bff.governance.service import (
     human_inbox_surface_timeout_seconds as _human_inbox_surface_timeout_seconds,
 )
 
-
 OPERATOR_HEADERS = {"Authorization": "Bearer op-promo:operator"}
 APPROVER_HEADERS = {"Authorization": "Bearer op-promo-approver:approver"}
 ADMIN_HEADERS = {"Authorization": "Bearer op-promo-admin:admin"}
+
+# The default caller tenant this BFF resolves an operator identity to when no
+# tenant claim is present on the token (see
+# ``personas/service.py::_bff_me_tenant_payload``'s ``default_tenant``
+# fallback chain, which ends in the literal "pantheon-dev"). A tenant-scoped
+# persona read (``personas/service.py::_list_persona_records``, ~L2288)
+# admits only records whose explicit ``tenant_id`` matches this value;
+# tenantless rows are treated as catalog/malformed data and fail closed by
+# design. Fixtures that want a persona to be readable through
+# ``/bff/management/promotion-reviews`` must set this tenant_id explicitly.
+_PM12_ELIGIBLE_TENANT_ID = "pantheon-dev"
+
+
+def build_pm12_eligible_persona_records(
+    persona_id: str,
+    runtime_id: str,
+    binding_id: str,
+    *,
+    tenant_id: str = _PM12_ELIGIBLE_TENANT_ID,
+    lifecycle_state: str = "paper_running",
+    pnl: float = 0.85,
+    drawdown: float = 0.01,
+    sharpe_ratio: float = 3.2,
+    fill_rate: float = 0.99,
+    avg_slippage_bps: float = 0.2,
+) -> dict[str, dict[str, Any]]:
+    """Canonical fixture builder for a persona that clears every PM12
+    promotion-review eligibility gate.
+
+    A promotion-review-eligible persona must simultaneously satisfy three
+    independent production gates (see ``services/control-plane/bff/personas/service.py``):
+
+    1. Tenant-scoped read admission (``_list_persona_records``, ~L2288):
+       the record's ``tenant_id`` must match the caller's resolved tenant.
+    2. League-row eligibility (``_pm12_persona_league_ranking_item``,
+       ~L6270-6350, referenced in the task brief as ~L6033): requires an
+       operational ``lifecycle_state`` (e.g. "paper_running"), a resolved
+       active RuntimeBinding, a resolved active session joined to that
+       RuntimeBinding, and non-empty telemetry coverage -- otherwise the row
+       is marked ``eligible: False`` with explicit ``exclusion_reasons``.
+    3. PM12 recommendation score gates (``_pm12_recommendation_action_ids``,
+       ~L12344): a "promote_to_canary_candidate" recommendation requires
+       overall_score >= 85, risk_score >= 70 (when present), and
+       execution_score >= 65 (when present); those component scores are
+       themselves derived from telemetry (pnl/drawdown/sharpe/fill_rate/
+       slippage), so the default telemetry values here are tuned to clear
+       that bar with headroom.
+
+    Returns per-dataset record dicts ready to be merged into
+    ``PromotionReviewTestReadPorts._data``.
+    """
+    return {
+        "personas": {
+            persona_id: {
+                "id": persona_id,
+                "persona_id": persona_id,
+                "name": f"{persona_id} Persona",
+                "lifecycle_state": lifecycle_state,
+                "tenant_id": tenant_id,
+                "mandate": "alpha_research_and_paper_execution",
+                "strategy_family": "momentum",
+                "created_at": "2026-03-01T00:00:00Z",
+                "last_active_at": "2026-04-11T10:00:00Z",
+                "metadata": {
+                    "archetype": "momentum",
+                    "risk_level": "low",
+                    "success_rate": 0.95,
+                },
+            },
+        },
+        "bindings": {
+            binding_id: {
+                "id": binding_id,
+                "persona_id": persona_id,
+                "capital_pool_id": "pool-main",
+                "runtime_binding_id": runtime_id,
+                "status": "active",
+                "validity": "active",
+                "allowed_deployment_scope": "paper",
+                "deployment_stage": "paper",
+            },
+        },
+        "runtime_bindings": {
+            runtime_id: {
+                "id": runtime_id,
+                "runtime_id": runtime_id,
+                "persona_id": persona_id,
+                "binding_id": binding_id,
+                "persona_capital_binding_id": binding_id,
+                "deployment_stage": "paper",
+                "deployment_mode": "paper",
+                "status": "running",
+                "plan_id": f"plan-{persona_id}",
+            },
+        },
+        "telemetry_summaries": {
+            runtime_id: {
+                "runtime_id": runtime_id,
+                "window": "1h",
+                "pnl": pnl,
+                "drawdown": drawdown,
+                "sharpe_ratio": sharpe_ratio,
+                "total_trades": 120,
+                "fill_rate": fill_rate,
+                "avg_slippage_bps": avg_slippage_bps,
+                "collected_at": "2026-04-10T15:00:00Z",
+            },
+        },
+        "sessions": {
+            f"sess-{persona_id}": {
+                "id": f"sess-{persona_id}",
+                "session_id": f"sess-{persona_id}",
+                "persona_id": persona_id,
+                "status": "active",
+                "deployment_stage": "paper",
+                "runtime_binding_id": runtime_id,
+            },
+        },
+        "capability_snapshots": {
+            f"cap-{persona_id}": {
+                "id": f"cap-{persona_id}",
+                "snapshot_id": f"cap-{persona_id}",
+                "persona_id": persona_id,
+                "status": "verified",
+            },
+        },
+    }
 
 
 class PromotionReviewTestReadPorts(ReadSurfacePorts):
@@ -116,72 +242,25 @@ class PromotionReviewTestReadPorts(ReadSurfacePorts):
             "persona_id": "persona-alpha",
             "status": "verified",
         }
+        # persona-us-equity / persona-crypto-perp are seeded as PM12-eligible,
+        # tenant-scoped personas via the canonical builder above. Several
+        # tests (e.g. test_human_inbox_ignores_decision_with_mismatched_target_aliases)
+        # require *two* independently eligible promotion-review candidates
+        # driven off exactly these runtime ids
+        # ("runtime-us-equity-paper" / "runtime-crypto-paper"), so both stay
+        # eligible rather than collapsing to a single fixture persona.
         for pid, rid, bid in (
             ("persona-us-equity", "runtime-us-equity-paper", "binding-us-equity-paper"),
             ("persona-crypto-perp", "runtime-crypto-paper", "binding-crypto-paper"),
         ):
-            self._data.setdefault("personas", {})[pid] = {
-                "id": pid,
-                "persona_id": pid,
-                "name": f"{pid} Persona",
-                "lifecycle_state": "active",
-                "mandate": "alpha_research_and_paper_execution",
-                "strategy_family": "momentum",
-                "created_at": "2026-03-01T00:00:00Z",
-                "last_active_at": "2026-04-11T10:00:00Z",
-                "metadata": {
-                    "archetype": "momentum",
-                    "risk_level": "low",
-                    "success_rate": 0.95,
-                },
-            }
-            self._data.setdefault("bindings", {})[bid] = {
-                "id": bid,
-                "persona_id": pid,
-                "capital_pool_id": "pool-main",
-                "runtime_binding_id": rid,
-                "status": "active",
-                "validity": "active",
-                "allowed_deployment_scope": "paper",
-                "deployment_stage": "paper",
-            }
-            self._data.setdefault("runtime_bindings", {})[rid] = {
-                "id": rid,
-                "runtime_id": rid,
-                "persona_id": pid,
-                "binding_id": bid,
-                "persona_capital_binding_id": bid,
-                "deployment_stage": "paper",
-                "deployment_mode": "paper",
-                "status": "running",
-                "plan_id": f"plan-{pid}",
-            }
-            self._data.setdefault("telemetry_summaries", {})[rid] = {
-                "runtime_id": rid,
-                "window": "1h",
-                "pnl": 0.85,
-                "drawdown": 0.01,
-                "sharpe_ratio": 3.2,
-                "total_trades": 120,
-                "fill_rate": 0.99,
-                "avg_slippage_bps": 0.2,
-                "collected_at": "2026-04-10T15:00:00Z",
-            }
-            self._data.setdefault("sessions", {})[f"sess-{pid}"] = {
-                "id": f"sess-{pid}",
-                "session_id": f"sess-{pid}",
-                "persona_id": pid,
-                "status": "active",
-                "deployment_stage": "paper",
-                "runtime_binding_id": rid,
-            }
-            self._data.setdefault("capability_snapshots", {})[f"cap-{pid}"] = {
-                "id": f"cap-{pid}",
-                "snapshot_id": f"cap-{pid}",
-                "persona_id": pid,
-                "status": "verified",
-            }
+            records = build_pm12_eligible_persona_records(pid, rid, bid)
+            for collection, entries in records.items():
+                self._data.setdefault(collection, {}).update(entries)
         self.allow_fallback = allow_fallback
+        # Note: ReadSurfacePorts.__setattr__ retired the name "_ranking_snapshots"
+        # (canonical ranking write owner/projection ports replaced it in
+        # production). This fixture keeps its own test-local snapshot store
+        # under a non-colliding name.
         self._promo_ranking_snapshots: dict[str, Any] = {}
 
     def dataset_source(self, dataset: str, **kwargs: Any) -> str:
@@ -386,6 +465,7 @@ def _build_promotion_review_app(
     app.include_router(
         create_management_router(
             get_read_store=lambda: store,
+            get_command_store=lambda: command_store,
             extract_identity=auth_policy.extract_identity,
             require_read_role=auth_policy.require_read_role,
             bff_error=auth_policy.bff_error,

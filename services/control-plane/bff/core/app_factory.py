@@ -746,6 +746,7 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     if name in {"_build_operator_alerts_payload", "build_operator_alerts_payload"}:
         return lambda s: {}
     if name in {
+        "_build_management_cockpit_payload", "build_cockpit_payload",
         "_build_management_evidence_payload", "build_evidence_payload",
         "_project_operator_runtime_state_row", "_read_surface_state",
         "_ooda_packet_list_payload", "ooda_packet_list_payload",
@@ -811,7 +812,17 @@ def mount_bff_routers(
         from ..bootstrap.dependencies import AppDependencies
         app_deps = AppDependencies.create_default()
 
-    main_mod = sys.modules.get("services.control_plane.bff.main")
+    # Production always imports this module under its fully-qualified name
+    # (see the Dockerfile's `uvicorn services.control_plane.bff.main:app`),
+    # so that key is checked first. A long-standing, repo-wide test
+    # convention (dozens of test_*.py files under services/control-plane/bff)
+    # instead does `sys.path.insert(0, os.path.dirname(__file__)); import
+    # main as bff_main`, which registers the identical module object under
+    # the bare name "main" in sys.modules. Falling back to that name keeps
+    # such tests resolving dependencies from the real, already-imported
+    # main.py module scope (its actual production functions) instead of
+    # silently degrading to the standalone safe-default stubs below.
+    main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
 
     def _dep(name: str, fallback_factory: Optional[Callable[[], Any]] = None) -> Any:
         if name in dependencies and dependencies[name] is not None:
@@ -930,9 +941,31 @@ def mount_bff_routers(
             utc_now=_dep("utc_now"),
         )
     )
+
+    def _resolve_command_store_for_management_router() -> Any:
+        # This module intentionally does not statically import main.py
+        # (see module docstring). main.py aliases its own module-level
+        # `command_store` global from `app_deps.command_store` once at
+        # import time (`command_store = app_deps.command_store`); a test
+        # that swaps `main.command_store` afterwards (to inject a test
+        # double against the real composed app, mirroring how
+        # `main.read_store` is already swapped elsewhere) only reassigns
+        # that module attribute, not `app_deps.command_store`. Resolve
+        # through the live `main` module when it is already present in
+        # sys.modules (true for every real request, since main.py is the
+        # sole entrypoint that calls this composition function) so such a
+        # swap is observed; fall back to `app_deps.command_store` for any
+        # caller that composes this app without going through main.py.
+        import sys
+        main_mod = sys.modules.get("services.control_plane.bff.main")
+        if main_mod is not None and hasattr(main_mod, "command_store"):
+            return main_mod.command_store
+        return app_deps.command_store
+
     app.include_router(
         create_management_router(
             read_surface=app_deps.read_surface,
+            get_command_store=_resolve_command_store_for_management_router,
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             snapshot_meta=_dep("_snapshot_meta"),
@@ -942,6 +975,7 @@ def mount_bff_routers(
             tenant_payload_fn=_dep("_bff_me_tenant_payload"),
             run_management_read=_dep("run_management_read"),
             build_evidence_payload=_dep("_build_management_evidence_payload"),
+            build_cockpit_payload=_dep("_build_management_cockpit_payload"),
         )
     )
 
