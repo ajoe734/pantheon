@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -17,57 +16,6 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
     get_management_nl_sse_buffer,
     management_nl_test_client,
 )
-
-
-@contextmanager
-def _real_main_management_nl_test_client(read_surface, *, raise_server_exceptions=False):
-    """BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: GENUINE BLOCKER, narrow
-    and function-scoped. The seam-based tests/rebalance_authority_test_
-    support.management_nl_test_client() (built on assistant.management_
-    service + core.app_factory.compose_bff_app()) correctly serves this
-    file's other tests, but test_nl_ask_tenant_scopes_portfolio_summary and
-    test_nl_ask_filters_evidence_by_tenant_and_used_entities exercise
-    portfolio telemetry-row projection and tenant/entity evidence scoping
-    that main.py only wires with real business logic (not stub defaults) at
-    its own module import time (main.py's _project_operator_runtime_state_
-    row and related context-service collaborators, main.py lines ~3465+,
-    ~9080-9107) -- collaborator seams exist on assistant.management_service
-    (get_/set_/reset_project_operator_runtime_state_row) but their real
-    implementations are main.py-exclusive, with no extracted seam standing
-    in for them when compose_bff_app() composes without main.py. Not a
-    declared artifact of this task; per explicit governance instruction,
-    this narrow, real, main.py-backed client is used only for these two
-    tests rather than weakening their assertions or faking the app, and
-    this file remains a real, reported (not allowlisted) main.py importer.
-    """
-    import importlib
-
-    real_main = importlib.import_module("services.control_plane.bff.main")
-    import services.control_plane.bff.personas.service as personas_service
-
-    from services.control_plane.bff.tests.rebalance_authority_test_support import (
-        restore_real_main_read_surface,
-        sync_real_main_read_surface,
-    )
-
-    old_main_store = getattr(real_main, "read_store", None)
-    old_persona_store = getattr(personas_service, "read_store", None)
-    context_svc = getattr(real_main, "_management_ai_context_service", None)
-    old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
-    previous_sub_ports = sync_real_main_read_surface(real_main, read_surface)
-    try:
-        setattr(real_main, "read_store", read_surface)
-        setattr(personas_service, "read_store", read_surface)
-        if context_svc is not None:
-            context_svc._get_read_store = (lambda: read_surface) if read_surface is not None else None
-        client = TestClient(real_main.app, raise_server_exceptions=raise_server_exceptions)
-        yield client
-    finally:
-        setattr(real_main, "read_store", old_main_store)
-        setattr(personas_service, "read_store", old_persona_store)
-        if context_svc is not None:
-            context_svc._get_read_store = old_context_fn
-        restore_real_main_read_surface(real_main, previous_sub_ports)
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +44,6 @@ def _seeded_client(
     monkeypatch,
     *,
     evidence_refs: dict | None = None,
-    use_real_main: bool = False,
 ) -> Iterator[TestClient]:
     read_surface_path = tmp_path / "read_surfaces.json"
     seeded_data = {
@@ -221,17 +168,12 @@ def _seeded_client(
         ]
 
     store.list_evidence_refs = list_evidence_refs
-    client_cm = (
-        _real_main_management_nl_test_client(store, raise_server_exceptions=False)
-        if use_real_main
-        else management_nl_test_client(store, raise_server_exceptions=False)
-    )
-    with client_cm as client:
+    with management_nl_test_client(store, raise_server_exceptions=False) as client:
         yield client
 
 
 def test_nl_ask_tenant_scopes_portfolio_summary(tmp_path, monkeypatch) -> None:
-    with _seeded_client(tmp_path, monkeypatch, use_real_main=True) as client:
+    with _seeded_client(tmp_path, monkeypatch) as client:
         resp = client.post(
             "/bff/management/nl/ask",
             json={"question": "What is the scoped portfolio?", "focus": "portfolio"},
@@ -278,7 +220,7 @@ def test_nl_ask_filters_evidence_by_tenant_and_used_entities(tmp_path, monkeypat
             "linked_object_summary": {"entity_type": "runtime", "entity_ref": "rt-other"},
         },
     }
-    with _seeded_client(tmp_path, monkeypatch, evidence_refs=evidence_refs, use_real_main=True) as client:
+    with _seeded_client(tmp_path, monkeypatch, evidence_refs=evidence_refs) as client:
         resp = client.post(
             "/bff/management/nl/ask",
             json={"question": "How is the alpha runtime?", "focus": "trading_pulse"},

@@ -22,19 +22,18 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
     set_management_nl_read_store,
 )
 
-# BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: `bff_main` is bound to the real
+# BFF-PM12-FIXTURE-CLOSURE-001: `bff_main` is bound to the real
 # `assistant.management_service` module (get_management_nl_module() no longer
 # loads main.py -- see rebalance_authority_test_support.py). main.py's own
 # module proxy already delegates every one of these attributes onto
 # management_service (BFF-MGMT-NL-HELPER-EXTRACTION-001), so every
 # `bff_main.<attr>` access below reads/writes the exact real seam object.
-# The single exception is `test_assistant_provider_usage_summary_aggregates_
-# history_and_quota`, which hits GET /bff/assistant/providers/usage-summary:
-# that route's `_assistant_provider_list` dependency has no extracted seam
-# (core/app_factory.py's standalone `_dep()` resolver stubs it to `[]` when
-# compose_bff_app() is built without main.py), so that one test still loads
-# main.py directly and narrowly, out of this task's declared scope to fully
-# close (see its own inline comment).
+# BFF-MGMT-NL-B6-SEAM-MIGRATION-001 additionally extracted the persona-fleet
+# projection and the management-ai route handlers (including
+# `bff_assistant_provider_usage_summary`/`_assistant_provider_list`) onto
+# this same module, so this file no longer needs a direct main.py import at
+# all -- see `_seeded_client()` and `test_assistant_provider_usage_summary_
+# aggregates_history_and_quota` below.
 bff_main = get_management_nl_module()
 from services.control_plane.bff.assistant.control_mode import ControlModeStore
 from services.control_plane.bff.assistant.models import AssistantMode
@@ -216,7 +215,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _seeded_client(tmp_path: Path, monkeypatch, *, use_real_main: bool = False) -> TestClient:
+def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
     for env_name in (
         "PANTHEON_CAPITAL_API_URL",
         "PANTHEON_CAPITAL_SERVICE_URL",
@@ -350,33 +349,6 @@ def _seeded_client(tmp_path: Path, monkeypatch, *, use_real_main: bool = False) 
         storage_path="off",
         attachment_store=ManagementAiAttachmentStore(storage_path="off"),
     )
-    if use_real_main:
-        # BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: GENUINE BLOCKER, narrow
-        # and function-scoped (see test_assistant_provider_usage_summary_
-        # aggregates_history_and_quota's docstring for the same pattern).
-        # These callers need portfolio telemetry-row projection, persona
-        # fleet health projection, and/or _assistant_provider_list -- main.
-        # py-exclusive collaborators wired into assistant.management_
-        # service's DI seams only at main.py's own module import time, with
-        # no extracted seam standing in for the real implementation when
-        # compose_bff_app() composes without main.py.
-        import importlib
-
-        real_main = importlib.import_module("services.control_plane.bff.main")
-        import services.control_plane.bff.personas.service as personas_service
-
-        from services.control_plane.bff.tests.rebalance_authority_test_support import (
-            sync_real_main_read_surface,
-        )
-
-        setattr(real_main, "read_store", store)
-        setattr(personas_service, "read_store", store)
-        context_svc = getattr(real_main, "_management_ai_context_service", None)
-        if context_svc is not None:
-            context_svc._get_read_store = (lambda: store) if store is not None else None
-        sync_real_main_read_surface(real_main, store)
-        return TestClient(real_main.app, raise_server_exceptions=False)
-
     from services.control_plane.bff.tests.rebalance_authority_test_support import get_management_nl_app
     return TestClient(get_management_nl_app(), raise_server_exceptions=False)
 
@@ -1301,7 +1273,7 @@ def test_provider_enabled_invokes_openclaw_with_tenant_scoped_context(tmp_path, 
         monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
         monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
         monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
-        client = _seeded_client(tmp_path, monkeypatch, use_real_main=True)
+        client = _seeded_client(tmp_path, monkeypatch)
 
         resp = client.post(
             "/bff/management/nl/ask",
@@ -1344,7 +1316,7 @@ def test_management_nl_persona_fleet_summary_includes_health_items(tmp_path, mon
         monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
         monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
         monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
-        client = _seeded_client(tmp_path, monkeypatch, use_real_main=True)
+        client = _seeded_client(tmp_path, monkeypatch)
 
         resp = client.post(
             "/bff/management/nl/ask",
@@ -1811,7 +1783,7 @@ def test_management_nl_stream_records_openclaw_provider_audit_and_usage(tmp_path
         _clear_provider_env(monkeypatch)
         monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
         monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
-        client = _seeded_client(tmp_path, monkeypatch, use_real_main=True)
+        client = _seeded_client(tmp_path, monkeypatch)
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
 
         resp = client.post(
@@ -2312,29 +2284,25 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
 
 
 def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path, monkeypatch) -> None:
-    """BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001: GENUINE BLOCKER, narrowly
-    scoped to this one test. GET /bff/assistant/providers/usage-summary is
-    main.py's own route: its `_assistant_provider_list` collaborator (main.py
-    line ~8930) has no extracted seam, so core/app_factory.py's standalone
-    dependency resolver stubs it to a no-op when compose_bff_app() composes
-    an app without main.py (verified: the resolver's generic fallback for
-    this name returns `[]`, not the real implementation). Every other test in
-    this file runs against the real `assistant.management_service` seam via
-    the shared `bff_main`/`_seeded_client` fixtures with no main.py
-    dependency; only this test still needs the real, fully composed
-    `main.app` to reach `_assistant_provider_list`. Not a declared artifact
-    of this task, so the underlying seam gap in main.py itself is out of
-    scope to close here (AC1 forbids editing main.py); see final report.
+    """BFF-PM12-FIXTURE-CLOSURE-001: GET /bff/assistant/providers/usage-summary
+    is now a live-wired default of ``compose_bff_app()`` (BFF-MGMT-NL-B6-SEAM-
+    MIGRATION-001 moved the route handler and its ``_assistant_provider_list``
+    collaborator onto ``assistant.management_service`` itself), so this test
+    no longer needs to load main.py: the seam-composed app (``bff_main`` ==
+    ``assistant.management_service``, reached via ``get_management_nl_app()``)
+    reaches the exact same real implementation.
     """
-    import importlib
+    import datetime as _datetime
 
-    real_main = importlib.import_module("services.control_plane.bff.main")
+    from services.control_plane.bff.tests.rebalance_authority_test_support import (
+        get_management_nl_app,
+    )
 
     fake = FakeProviderClient()
     _clear_provider_env(monkeypatch)
-    monkeypatch.setattr(real_main, "OpenClawOpsClient", lambda: fake)
-    client = TestClient(real_main.app, raise_server_exceptions=False)
-    original_provider_list = real_main._assistant_provider_list
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+    client = TestClient(get_management_nl_app(), raise_server_exceptions=False)
+    original_provider_list = bff_main._assistant_provider_list
 
     def provider_list_with_openclaw(*, auth_probe=False):
         payload = original_provider_list(auth_probe=auth_probe)
@@ -2350,12 +2318,12 @@ def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path,
         )
         return payload
 
-    monkeypatch.setattr(real_main, "_assistant_provider_list", provider_list_with_openclaw)
+    monkeypatch.setattr(bff_main, "_assistant_provider_list", provider_list_with_openclaw)
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
-    now = real_main.datetime.now(real_main.timezone.utc).replace(microsecond=0)
-    started_at = (now - real_main.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
-    completed_at = (now - real_main.timedelta(minutes=4, seconds=57)).isoformat().replace("+00:00", "Z")
-    failed_at = (now - real_main.timedelta(minutes=4)).isoformat().replace("+00:00", "Z")
+    now = _datetime.datetime.now(_datetime.timezone.utc).replace(microsecond=0)
+    started_at = (now - _datetime.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    completed_at = (now - _datetime.timedelta(minutes=4, seconds=57)).isoformat().replace("+00:00", "Z")
+    failed_at = (now - _datetime.timedelta(minutes=4)).isoformat().replace("+00:00", "Z")
 
     bff_main._management_ai_record_event(
         {

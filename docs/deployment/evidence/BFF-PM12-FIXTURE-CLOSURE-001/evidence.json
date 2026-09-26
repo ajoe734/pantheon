@@ -1,0 +1,105 @@
+{
+  "task_id": "BFF-PM12-FIXTURE-CLOSURE-001",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "base_commit": "640ee7c15f11e160179371cb6f1d0ebc859b8e30",
+  "base_note": "origin/dev tip at task start; this branch was forked from it with no further dev advance during this task's work.",
+  "summary": "Closed the last two non-allowlisted, real (not stale) BFF main.py test importers by using production seams that a concurrently-merged task (BFF-MGMT-NL-B6-SEAM-MIGRATION-001, PR #5979, merged to dev just before this task started) had already extracted onto assistant/management_service.py. Verified empirically that tests/test_bff_b6_001_security_hardening.py and tests/test_management_nl_assistant_provider.py no longer need any main.py import at all -- their previously-documented 'genuine blocker' rationale (portfolio telemetry-row projection, persona-fleet health projection, and _assistant_provider_list all being main.py-exclusive) is now stale relative to dev. Removed the narrow real-main test-client helpers and use_real_main plumbing, re-ran both files against the seam-based client, and all previously-passing assertions still pass with no relaxation. Registered the one operator-authorized new composition_allowlist entry (tests/test_management_read_timeout_and_capacity.py) with an inline rationale in tests/test_bff_test_architecture.py's WHOLE_APP_ALLOWLIST and in the inventory JSON. No production source was edited.",
+  "acceptance_criteria_status": {
+    "ac1_starting_point_published": {
+      "before_this_task_live_scan": {
+        "command": "cd services/control-plane/bff && .venv-pantheon/bin/python3 -m pytest -q tests/test_bff_test_architecture.py -k non_whitelisted",
+        "result": "1 passed (test asserted the recorded set matched the live scan at the pre-edit inventory state)",
+        "recorded_offenders_before_edit": [
+          "tests/test_bff_b6_001_security_hardening.py",
+          "tests/test_management_nl_assistant_provider.py",
+          "tests/test_management_read_timeout_and_capacity.py"
+        ],
+        "ceiling_before_edit": 3,
+        "composition_allowlist_size_before_edit": 19
+      },
+      "matches_task_brief_expected_starting_point": "yes: three offenders, nineteen allowlist entries"
+    },
+    "ac2_ac5_finding_read_and_not_relitigated": "Read docs/deployment/evidence/BFF-MGMT-READ-DEFECT-REPAIR-001/evidence.json's defect_3_pm12_fixture_drift section before writing any code. The three production gates (tenant-scoped read admission in personas/service.py::_list_persona_records ~L2231, league-row eligibility in _pm12_persona_league_ranking_item ~L6273, and the promote_to_canary_candidate score gates in _pm12_recommendation_action_ids ~L12371) were not touched, relaxed, or relitigated. No production source file was edited by this task.",
+    "ac3_canonical_fixture_contract_used": "tests/test_pm12_eligibility_fixture_contract.py's existing coverage (build_pm12_eligible_persona_records, exercised via PromotionReviewTestReadPorts) already expressed everything needed; nothing was added to it. No second/competing eligible-persona definition was introduced. 4/4 passing, unchanged.",
+    "ac4_fixtures_rebuilt": {
+      "test_bff_b6_001_security_hardening.py": "Removed the now-unnecessary _real_main_management_nl_test_client() helper and the use_real_main branch in _seeded_client(). Both tests that previously required it (test_nl_ask_tenant_scopes_portfolio_summary, test_nl_ask_filters_evidence_by_tenant_and_used_entities) now use the existing seam-based management_nl_test_client() (tests/rebalance_authority_test_support.py), reaching assistant.management_service's real _project_operator_runtime_state_row_impl -- extracted from main.py by the concurrently-merged BFF-MGMT-NL-B6-SEAM-MIGRATION-001. Every existing assertion preserved verbatim; none were rewritten or weakened. 5/5 passing (was 5/5 passing before, now with zero main.py imports instead of 2 narrow real-main tests).",
+      "test_management_nl_assistant_provider.py": "Removed the use_real_main branch/parameter from _seeded_client() (used by test_provider_enabled_invokes_openclaw_with_tenant_scoped_context, test_management_nl_persona_fleet_summary_includes_health_items, test_management_nl_stream_records_openclaw_provider_audit_and_usage) and rewrote test_assistant_provider_usage_summary_aggregates_history_and_quota to use the seam-based get_management_nl_app() client and monkeypatch bff_main._assistant_provider_list (== assistant.management_service._assistant_provider_list) instead of importlib-loading main.py. All four now reach real, non-stubbed production logic: bff_assistant_provider_usage_summary/_assistant_provider_list and the persona-fleet-projection implementation were moved onto assistant.management_service by BFF-MGMT-NL-B6-SEAM-MIGRATION-001 and are live-wired compose_bff_app() defaults, not stubs. Every existing assertion preserved verbatim. 65/65 passing (unchanged pass count, now with zero main.py imports instead of 4 narrow real-main tests)."
+    },
+    "ac4_no_assertion_failed_once_fixture_corrected": "No assertion failed as a result of these fixture rebuilds. Every test in both files passes with the exact same assertions as before.",
+    "ac5_one_new_allowlist_entry_authorized": {
+      "entry": "services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py",
+      "rationale_recorded_inline": "tests/test_bff_test_architecture.py's WHOLE_APP_ALLOWLIST set (adjacent to the existing tests/test_bff_rebalance_proposals.py and migrations/test_overlay_retirement.py entries) plus a matching tests[] entry in tests/bff_test_architecture_inventory.json.",
+      "no_other_allowlist_entries_added": true
+    },
+    "ac6_target_end_state": {
+      "non_whitelisted_live_scan_importers_after": [],
+      "composition_allowlist_size_after": 20,
+      "ceiling_after": 0,
+      "detection_mechanisms_intact": "test_bff_test_architecture.py's importlib/dunder-import/call-graph detectors (_static_import_bff_main_bound_names, _find_main_reaching_helper_modules, _live_scan_non_whitelisted_main_importers, etc.) were not modified; only the WHOLE_APP_ALLOWLIST set and inventory JSON data were updated. All 14 architecture tests pass, including the 6 scanner self-tests (test_scanner_detects_*).",
+      "count_did_not_fall_because_detection_weakened": "Confirmed: the live scan itself (function bodies unchanged) now returns zero non-allowlisted offenders because the two files' source no longer contains any main.py import path (static, dynamic, or transitive) -- not because the scanner was narrowed."
+    },
+    "ac7_no_production_edits": "Confirmed by `git status --short`: only test files (tests/bff_test_architecture_inventory.json, tests/rebalance_authority_test_support.py, tests/test_bff_b6_001_security_hardening.py, tests/test_bff_test_architecture.py, tests/test_management_nl_assistant_provider.py) plus this evidence artifact were changed. No production source (main.py, assistant/management_service.py, personas/service.py, management_read_models/service.py, core/app_factory.py, governance/human_inbox.py) was edited -- those files were only read to verify the seams BFF-MGMT-NL-B6-SEAM-MIGRATION-001 had already landed on dev.",
+    "ac8_terminal_results_published": "see test_execution below",
+    "ac9_delivery": "clean branch task/BFF-PM12-FIXTURE-CLOSURE-001 forked from dev tip 640ee7c15; delivery via PR + independent reviewer validation + CI + merge to dev + canonical closeout, per standard task flow."
+  },
+  "test_execution": {
+    "environment": "PANTHEON_DEPENDENCY_PYTHON=/tmp/venv-bff-test/bin/python3 scripts/dev/provision_python_distribution.py; ran via services/control-plane/bff-relative .venv-pantheon/bin/python3 -m pytest, with RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 PANTHEON_BFF_AUTH_STUB=true PANTHEON_BFF_AUTH_MODE=permissive PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off (the audit-path override avoids the pre-existing, already-documented cross-run flakiness of test_assistant_provider_usage_summary_aggregates_history_and_quota; see known_pre_existing_flakiness below).",
+    "per_file_before_and_after": [
+      {
+        "file": "tests/test_bff_test_architecture.py",
+        "before": "14 passed (pre-edit inventory state; live scan matched recorded 3 offenders / 19 allowlist)",
+        "after": "14 passed (post-edit inventory state; live scan matches recorded 0 offenders / 20 allowlist / ceiling 0)"
+      },
+      {
+        "file": "tests/test_pm12_eligibility_fixture_contract.py",
+        "before": "4 passed (untouched by this task)",
+        "after": "4 passed"
+      },
+      {
+        "file": "tests/test_bff_b6_001_security_hardening.py",
+        "before": "5 passed (2 tests via a narrow real-main.py import, 3 via the seam)",
+        "after": "5 passed (all 5 via the seam, zero main.py imports)"
+      },
+      {
+        "file": "tests/test_management_nl_assistant_provider.py",
+        "before": "65 passed (4 tests via a narrow real-main.py import, 61 via the seam)",
+        "after": "65 passed (all 65 via the seam, zero main.py imports)"
+      },
+      {
+        "file": "tests/test_management_read_timeout_and_capacity.py",
+        "before": "4 passed (legitimately imports main.py; was a live-scan offender)",
+        "after": "4 passed (unchanged; now an authorized composition_allowlist entry instead of a reported offender)"
+      },
+      {
+        "file": "test_bff_promotion_review_governance.py",
+        "before": "23 passed, 4 failed (pre-existing, documented in docs/deployment/evidence/BFF-MGMT-READ-DEFECT-REPAIR-001/evidence.json's unrelated_pre_existing_issues_found_but_not_fixed)",
+        "after": "23 passed, 4 failed (identical failing test names; unaffected by this task's changes, which touch none of this file's collaborators)"
+      }
+    ],
+    "combined_run_command": "cd services/control-plane/bff && .venv-pantheon/bin/python3 -m pytest -q tests/test_pm12_eligibility_fixture_contract.py tests/test_bff_b6_001_security_hardening.py tests/test_management_nl_assistant_provider.py test_bff_promotion_review_governance.py tests/test_management_read_timeout_and_capacity.py tests/test_bff_test_architecture.py",
+    "combined_run_result": "115 passed, 4 failed (the same 4 pre-existing test_bff_promotion_review_governance.py failures listed above)"
+  },
+  "pre_existing_unrelated_failures": {
+    "test_bff_promotion_review_governance.py::test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one": "Pre-existing drift documented in BFF-MGMT-READ-DEFECT-REPAIR-001/evidence.json; a KeyError on items[0]['blocking_reasons']. Not touched by this task.",
+    "test_bff_promotion_review_governance.py::test_human_inbox_filtered_local_snapshot_empty_remains_degraded": "Pre-existing approval_queue surface 'source' field mismatch, documented in the same evidence file. Not touched by this task.",
+    "test_bff_promotion_review_governance.py::test_promotion_review_approve_submits_human_gate_command": "Pre-existing: record['audit']['live_capital_side_effects'] is never populated for HumanGateApprove commands in production. Documented in the same evidence file. Not touched by this task.",
+    "test_bff_promotion_review_governance.py::test_command_store_caching": "Pre-existing: CommandStore._cache no longer exists (removed in a prior refactor; store._cache is now [] not None). Documented in the same evidence file. Not touched by this task.",
+    "test_assistant_provider_usage_summary_aggregates_history_and_quota_flakiness": "Confirmed pre-existing and already documented in tests/bff_test_architecture_inventory.json's live_scan_reconciliation_note: management_service.py's _management_ai_audit_path() default writes to /tmp/pantheon-bff/management-ai-audit.jsonl (not tmp_path-scoped), so repeated local pytest invocations across process runs accumulate audit events on disk and make totals['calls'] assertions flaky outside a fresh container or with PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off set. Reproduced this flakiness (assert 8 == 2, assert 6 == 2, assert 4 == 2 across runs) BEFORE making any edit to this test (i.e. against the original real-main-backed version), confirming it predates and is unrelated to the seam migration performed here. Setting PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off makes the test pass deterministically; not a production or test-logic change, just an environment isolation flag already documented as the workaround."
+  },
+  "changed_files": [
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+    "services/control-plane/bff/tests/rebalance_authority_test_support.py",
+    "services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "docs/deployment/evidence/BFF-PM12-FIXTURE-CLOSURE-001/evidence.json"
+  ],
+  "changed_files_note": "No production source under services/control-plane/bff was edited. tests/rebalance_authority_test_support.py's only change is removing two now-dead helper functions (sync_real_main_read_surface, restore_real_main_read_surface) that only existed to support the real-main test clients removed from the two target files, plus a stale docstring update on set_management_nl_read_store.",
+  "production_changes_summary": [],
+  "delivery": {
+    "branch": "task/BFF-PM12-FIXTURE-CLOSURE-001",
+    "base": "dev @ 640ee7c15f11e160179371cb6f1d0ebc859b8e30",
+    "merge_target": "dev"
+  }
+}
