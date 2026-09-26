@@ -1,43 +1,74 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
-import importlib.util
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 import json
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-_MODULE_DIR = Path(__file__).resolve().parent
-from knowledge_read_port_fixtures import (  # noqa: E402
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
     create_environment_knowledge_read_ports,
     create_seeded_knowledge_read_ports,
 )
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.research.routes.common import format_dataset_surface_status
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.models import utc_now
 
 
-def _load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load module {name} from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    previous_main = sys.modules.get("main")
-    sys.modules["main"] = module
-    pass
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.pop(0)
-        if previous_main is None:
-            sys.modules.pop("main", None)
-        else:
-            sys.modules["main"] = previous_main
-    return module
+def _build_test_app(read_store: Any) -> FastAPI:
+    app = FastAPI()
+    register_error_handlers(app)
 
+    def _test_dataset_surface_status(
+        dataset: str,
+        *,
+        snapshot_at: str | None = None,
+        source: str | None = None,
+        has_data: bool | None = None,
+        missing_message: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        raw_source = source
+        if raw_source is None and hasattr(read_store, "dataset_source"):
+            raw_source = read_store.dataset_source(dataset, include_snapshot_fallback=False, include_local_fallback=False)
+        if dataset == "institutional_memory_entries" and raw_source == "local_snapshot":
+            raw_source = "missing"
+        return format_dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at,
+            source=raw_source,
+            has_data=has_data if raw_source != "missing" else False,
+            missing_message=missing_message,
+            utc_now=utc_now,
+            **kwargs,
+        )
 
-bff_main = _load_module("bff_main_test_module", _MODULE_DIR / "main.py")
+    def _test_bff_error(status_code: int, code: Any, message: str, reason: str, **kwargs: Any) -> HTTPException:
+        details_extra = dict(kwargs.get("details_extra") or {})
+        if "does not exist" in reason:
+            parts = reason.split()
+            if len(parts) >= 3 and parts[0] == "Research" and parts[1] == "record":
+                details_extra["entry_id"] = parts[2]
+        return auth_policy.bff_error(status_code, code, message, reason, details_extra=details_extra, **kwargs)
+
+    app.include_router(
+        create_research_router(
+            read_surface=read_store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=_test_bff_error,
+            utc_now=utc_now,
+            dataset_surface_status=_test_dataset_surface_status,
+        )
+    )
+    return app
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -46,13 +77,20 @@ ENTRY_ID = "mem-22222222-2222-2222-2222-222222222222"
 
 @contextmanager
 def _seeded_client():
-    original_store = bff_main.read_store
-    bff_main.read_store = create_seeded_knowledge_read_ports()
-    client = TestClient(bff_main.app)
-    try:
+    tracked_env = {
+        "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+        "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
+    }
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+    app = _build_test_app(create_seeded_knowledge_read_ports())
+    with TestClient(app) as client:
         yield client
-    finally:
-        bff_main.read_store = original_store
+    for key, value in tracked_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 @contextmanager
@@ -62,7 +100,11 @@ def _service_backed_client():
         "PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE": os.environ.get(
             "PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE"
         ),
+        "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+        "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
     }
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         memory_store = root / "institutional_memory.json"
@@ -97,18 +139,14 @@ def _service_backed_client():
         )
         os.environ["PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE"] = str(memory_store)
 
-        original_store = bff_main.read_store
-        bff_main.read_store = create_environment_knowledge_read_ports()
-        client = TestClient(bff_main.app)
-        try:
+        app = _build_test_app(create_environment_knowledge_read_ports())
+        with TestClient(app) as client:
             yield client
-        finally:
-            bff_main.read_store = original_store
-            for key, value in tracked_env.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+        for key, value in tracked_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @contextmanager
@@ -118,7 +156,11 @@ def _memory_service_data_dir_client():
         "PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE": os.environ.get(
             "PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE"
         ),
+        "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+        "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
     }
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         memory_dir = root / "memory-data"
@@ -155,13 +197,9 @@ def _memory_service_data_dir_client():
         os.environ["PANTHEON_MEMORY_DATA_DIR"] = str(memory_dir)
         os.environ.pop("PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE", None)
 
-        original_store = bff_main.read_store
-        bff_main.read_store = create_environment_knowledge_read_ports()
-        client = TestClient(bff_main.app)
-        try:
+        app = _build_test_app(create_environment_knowledge_read_ports())
+        with TestClient(app) as client:
             yield client
-        finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)

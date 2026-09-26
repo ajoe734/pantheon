@@ -607,17 +607,29 @@ def test_migrated_suites_do_not_mutate_sys_path() -> None:
 
 def test_no_global_monkeypatching_in_migrated_suites() -> None:
     data = _load_inventory()
-    migrated_suites = data["migrated_suites"]
+    allowlist = set(data["composition_allowlist"])
+    non_composition_suites = [
+        rel for rel in _discover_test_files()
+        if str(rel) not in allowlist
+    ]
+    assert len(non_composition_suites) >= 300
 
     offenders: List[str] = []
-    for rel_path in migrated_suites:
-        content = (BFF_DIR / rel_path).read_text(encoding="utf-8")
-        for bad_pattern in ("bff_main.read_store", "main.read_store", "app_deps.read_surface ="):
-            if bad_pattern in content:
-                offenders.append(f"{rel_path} contains {bad_pattern}")
+    for rel_path in non_composition_suites:
+        file_path = BFF_DIR / rel_path
+        tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Attribute) and target.attr in ("read_store", "read_surface"):
+                        val = target.value
+                        if isinstance(val, ast.Name) and val.id in ("bff_main", "main", "app_deps"):
+                            offenders.append(f"{rel_path}:{node.lineno}: {val.id}.{target.attr} = ...")
+                        elif isinstance(val, ast.Attribute) and val.attr in ("app_deps",):
+                            offenders.append(f"{rel_path}:{node.lineno}: ...{val.attr}.{target.attr} = ...")
 
     msg = "\n".join(f"  {o}" for o in offenders)
-    assert not offenders, f"Migrated suites must not patch global read_store:\n{msg}"
+    assert not offenders, f"Non-composition suites must not patch global read_store:\n{msg}"
 
 
 def test_non_whitelisted_main_importers_is_live_scanned_and_bounded() -> None:

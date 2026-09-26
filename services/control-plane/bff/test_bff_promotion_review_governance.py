@@ -1417,7 +1417,14 @@ def test_cockpit_timeout_degrades_without_blocking_health() -> None:
             return []
 
         store.list_personas = slow_list_personas
-        with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05",
+                "PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS": "0.05",
+                "PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS": "0.05",
+            },
+        ):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 cockpit_future = pool.submit(
                     client.get, "/bff/management/cockpit", headers=OPERATOR_HEADERS

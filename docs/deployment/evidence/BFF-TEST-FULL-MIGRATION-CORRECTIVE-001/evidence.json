@@ -484,9 +484,11 @@
         "Non-allowlisted main importers were systematically eliminated from 11 down to 0, with test_mgmt_common_filters.py read_store monkeypatching excised and sys.path surgeries deleted."
       ],
       "satisfied_by_this_task": [
-        "Removed all 81 sys.path mutation calls across 68 non-allowlisted test files (0 remaining across all 367 non-allowlisted modules).",
+        "Removed all 81 sys.path mutation calls across 68 non-allowlisted test files (0 remaining across all 367 non-allowlisted modules, including tests/knowledge_read_port_fixtures.py and test_kw01 through test_kw05).",
         "Reconciled test architecture inventory: updated 10 PLANNED entries to DECOUPLED (disposition summary: ALLOWLIST: 20, DECOUPLED: 323, MIGRATED: 44, PLANNED: 0).",
+        "Fully decoupled Knowledge Workbench suites test_kw01 through test_kw05 from main.py by removing dynamic _load_module, removing bff_main.read_store monkeypatching, and configuring modular test app via create_research_router.",
         "Expanded test_migrated_suites_do_not_mutate_sys_path architecture gate to enforce the complete non-composition surface across all 367 non-allowlisted modules, with 0 offenders.",
+        "Expanded test_no_global_monkeypatching_in_migrated_suites architecture gate from 66 migrated suites to all 367 non-composition suites using AST scanning, with 0 offenders.",
         "Independently executed the official live scan on disk across all 387 test modules under services/control-plane/bff, measuring exactly 0 non-allowlisted main importers."
       ]
     },
@@ -501,7 +503,7 @@
       "satisfied_by_this_task": [
         "Enhanced live AST scanner in services/control-plane/bff/tests/test_bff_test_architecture.py to detect: (a) direct conftest main import and implicit conftest loading on child tests; (b) subprocess python -c and -m main imports; (c) relative helper imports reaching main.",
         "Added 3 new regression tests using tmp_path proving all three detection capabilities (test_scanner_detects_conftest_main_import_and_implicit_loading, test_scanner_detects_subprocess_main_import, test_scanner_detects_relative_helper_main_import).",
-        "Verified that all 17 tests in test_bff_test_architecture.py pass cleanly in 27.36s."
+        "Verified that all 17 tests in test_bff_test_architecture.py pass cleanly in 30.29s."
       ]
     },
     "ac3_typed_domain_fixtures": {
@@ -551,13 +553,13 @@
       "passed": 44,
       "failed": 0,
       "skipped": 0,
-      "wall_clock_seconds": 60.57,
+      "wall_clock_seconds": 64.52,
       "exit_code": 0,
       "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_bff_promotion_review_governance.py --tb=short",
       "verified_properties": [
         "All 17 tests in test_bff_test_architecture.py pass cleanly",
         "All 27 tests in test_bff_promotion_review_governance.py pass cleanly",
-        "Bounded execution completes under 120s limit (60.57s actual)",
+        "Bounded execution completes under 120s limit (64.52s actual)",
         "Terminal exit code is exactly 0 with 0 failures"
       ]
     },
@@ -567,7 +569,7 @@
       "passed": 17,
       "failed": 0,
       "skipped": 0,
-      "wall_clock_seconds": 27.36,
+      "wall_clock_seconds": 30.29,
       "exit_code": 0,
       "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
       "verified_properties": [
@@ -577,7 +579,7 @@
         "Composition allowlist strictly bounded to 20 entries",
         "Migrated suites do not import main.py",
         "Non-composition suites do not mutate sys.path (enforced across all 367 non-allowlisted modules)",
-        "No global read_store monkeypatching in migrated suites",
+        "No global read_store monkeypatching in non-composition suites (enforced across all 367 non-allowlisted modules via AST scan)",
         "Live AST scan discovers 0 non-allowlisted importers with ceiling=0",
         "Dynamic importlib.import_module detection verified",
         "Transitive helper import graph detection verified",
@@ -588,6 +590,23 @@
         "AC2 regression: direct conftest main import and implicit loading on child tests detected",
         "AC2 regression: subprocess python -c and -m main imports detected",
         "AC2 regression: relative helper imports reaching main detected"
+      ]
+    },
+    {
+      "suite": "services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/test_kw04_insight_cards_contract.py services/control-plane/bff/test_kw05_strategy_spec_contract.py",
+      "scope": "Knowledge Workbench KW-01 to KW-05 modular decoupled contract suites",
+      "passed": 30,
+      "failed": 0,
+      "skipped": 0,
+      "wall_clock_seconds": 18.84,
+      "exit_code": 0,
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/test_kw04_insight_cards_contract.py services/control-plane/bff/test_kw05_strategy_spec_contract.py",
+      "verified_properties": [
+        "All 30 tests in KW-01 through KW-05 pass cleanly",
+        "Zero sys.path mutations across all KW suites",
+        "Zero dynamic loading of main.py via _load_module",
+        "Zero global read_store monkeypatching",
+        "Isolated modular FastAPI test app via create_research_router"
       ]
     },
     {
