@@ -59,10 +59,122 @@ production functions -- not a second/parallel eligibility implementation.
 """
 from __future__ import annotations
 
+import contextvars
+
 from services.control_plane.bff import test_bff_promotion_review_governance as gov_test
 from services.control_plane.bff.personas import service as persona_service_module
 
 _TENANT_ID = gov_test._PM12_ELIGIBLE_TENANT_ID
+
+
+def _run_league_rows_and_ranking(tenant_id: str):
+    """Drive the exact same real, unmodified production pipeline this file's
+    other tests use (`_pm12_persona_league_rows` -> `_pm12_quarterly_ranking_items`)
+    against whatever store is currently active on `personas.service`."""
+    ctx = contextvars.copy_context()
+
+    def _run():
+        rows = persona_service_module._pm12_persona_league_rows(tenant_id=tenant_id)
+        quarter_window = persona_service_module._pm12_quarter_window(
+            "2026-Q1", "2026-01-15T00:00:00Z"
+        )
+        return persona_service_module._pm12_quarterly_ranking_items(
+            rows, quarter_window=quarter_window
+        )
+
+    return ctx.run(_run)
+
+
+def test_b6_security_hardening_fixture_seeds_a_genuinely_eligible_persona() -> None:
+    """BFF-PM12-FIXTURE-CLOSURE-001: `test_bff_b6_001_security_hardening.py`
+    used to seed no personas at all. Its `_seeded_client()` now reuses this
+    file's canonical builder to seed a tenant-alpha persona-alpha and a
+    tenant-beta persona-beta; prove both actually clear the real PM12
+    league/eligibility/score gates end to end, using the exact real seeded
+    store the security-hardening suite's own tests run against (not a
+    parallel/duplicate fixture)."""
+    from services.control_plane.bff.tests.test_bff_b6_001_security_hardening import (
+        _seeded_client,
+    )
+
+    class _Monkeypatch:
+        def setenv(self, *_args, **_kwargs) -> None:
+            return None
+
+        def delenv(self, *_args, **_kwargs) -> None:
+            return None
+
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with _seeded_client(Path(tmp_dir), _Monkeypatch()):
+            alpha_items = {
+                item.get("persona_id"): item
+                for item in _run_league_rows_and_ranking("tenant-alpha")
+            }
+            beta_items = {
+                item.get("persona_id"): item
+                for item in _run_league_rows_and_ranking("tenant-beta")
+            }
+
+    alpha = alpha_items["persona-alpha"]
+    assert alpha["eligible"] is True, alpha["exclusion_reasons"]
+    assert alpha["exclusion_reasons"] == []
+    assert alpha["overall_score"] >= 85.0
+    assert alpha["components"]["risk_score"] >= 70.0
+    assert alpha["components"]["execution_score"] >= 65.0
+    assert "persona-alpha" not in beta_items
+
+    beta = beta_items["persona-beta"]
+    assert beta["eligible"] is True, beta["exclusion_reasons"]
+    assert "persona-beta" not in alpha_items
+
+
+def test_management_nl_assistant_provider_fixture_seeds_a_genuinely_eligible_persona() -> None:
+    """BFF-PM12-FIXTURE-CLOSURE-001: `test_management_nl_assistant_provider.py`
+    used to hand-seed persona-alpha/persona-beta with inert fields (no
+    resolved runtime/session/telemetry) and never called the canonical
+    builder. Its `_seeded_client()` now does; prove both seeded personas
+    actually clear the real PM12 league/eligibility/score gates end to end,
+    using the exact real seeded store the provider suite's own tests run
+    against."""
+    from services.control_plane.bff.tests.test_management_nl_assistant_provider import (
+        _seeded_client,
+    )
+
+    class _Monkeypatch:
+        def setenv(self, *_args, **_kwargs) -> None:
+            return None
+
+        def delenv(self, *_args, **_kwargs) -> None:
+            return None
+
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _seeded_client(Path(tmp_dir), _Monkeypatch())
+        alpha_items = {
+            item.get("persona_id"): item
+            for item in _run_league_rows_and_ranking("tenant-alpha")
+        }
+        beta_items = {
+            item.get("persona_id"): item
+            for item in _run_league_rows_and_ranking("tenant-beta")
+        }
+
+    alpha = alpha_items["persona-alpha"]
+    assert alpha["eligible"] is True, alpha["exclusion_reasons"]
+    assert alpha["exclusion_reasons"] == []
+    assert alpha["overall_score"] >= 85.0
+    assert alpha["components"]["risk_score"] >= 70.0
+    assert alpha["components"]["execution_score"] >= 65.0
+    assert "persona-alpha" not in beta_items
+
+    beta = beta_items["persona-beta"]
+    assert beta["eligible"] is True, beta["exclusion_reasons"]
+    assert "persona-beta" not in alpha_items
 
 
 def _build_and_project(persona_id: str = "persona-fixture-contract"):

@@ -991,59 +991,6 @@ class CapitalBffAuthorityHarness:
         return response.json()
 
 
-_REAL_MAIN_READ_SURFACE_SUB_PORTS = (
-    "operations_consultation",
-    "persona_capital_runtime",
-    "ooda_management",
-    "research_knowledge_source",
-    "lifecycle_telemetry_governance",
-    "persona_training",
-    "job_read",
-)
-
-
-def sync_real_main_read_surface(real_main: ModuleType, read_surface: Any) -> Dict[str, Any]:
-    """Swap main.py's own composed ``app_deps.read_surface`` proxy's typed
-    sub-ports to point at ``read_surface``'s sub-ports directly, in addition
-    to ``_active_delegate``.
-
-    ``ReadSurfacePorts.__getattribute__``'s ``_active_delegate`` forwarding
-    only forwards a method name it finds directly in the delegate's own
-    ``__dict__`` (``name in delegate.__dict__``) or its exact class's own
-    ``__dict__`` (``name in delegate_cls.__dict__``) -- it does not walk the
-    MRO, so a delegate whose method is *inherited* from ``ReadSurfacePorts``
-    itself (true of most typed test doubles, e.g. this file's
-    ``MarketPersonaProjectionTestDouble``, which does not override
-    ``get_telemetry_summary``) silently falls through to the proxy's own
-    default sub-ports instead of the delegate's. Setting the proxy's typed
-    sub-port attributes directly sidesteps that gap regardless of which
-    concrete class ``read_surface`` is. Returns the previous sub-port values
-    so a caller can restore them; a caller that does not need to restore
-    (values are naturally overwritten by the next real-main test) may ignore
-    the return value.
-    """
-    read_surface_proxy = getattr(getattr(real_main, "app_deps", None), "read_surface", None)
-    previous: Dict[str, Any] = {}
-    if read_surface_proxy is None:
-        return previous
-    for attr in _REAL_MAIN_READ_SURFACE_SUB_PORTS:
-        previous[attr] = getattr(read_surface_proxy, attr, None)
-        sub_port = getattr(read_surface, attr, None)
-        if sub_port is not None:
-            setattr(read_surface_proxy, attr, sub_port)
-    return previous
-
-
-def restore_real_main_read_surface(real_main: ModuleType, previous: Dict[str, Any]) -> None:
-    """Undo :func:`sync_real_main_read_surface`."""
-    read_surface_proxy = getattr(getattr(real_main, "app_deps", None), "read_surface", None)
-    if read_surface_proxy is None:
-        return
-    for attr, value in previous.items():
-        if value is not None:
-            setattr(read_surface_proxy, attr, value)
-
-
 def get_management_nl_module() -> ModuleType:
     """Real-seam accessor for BFF management NL composition state.
 
@@ -1253,13 +1200,12 @@ def set_management_nl_read_store(store: Any) -> None:
 
     Also syncs main.py's own read_store proxy and its _management_ai_
     context_service, but only if main.py happens to already be imported in
-    this process (via sys.modules, never forcing an import) -- some tests in
-    this task use a narrow, real-main.py-backed client for collaborators
-    with no extracted seam (see e.g. test_bff_b6_001_security_hardening.py's
-    _real_main_management_nl_test_client), and without this sync a test's
-    own cleanup call to this function would restore the seam's read_store
-    but leave main.py's proxy/context-service pointed at stale test data,
-    leaking state into whichever real-main-backed test runs next.
+    this process (via sys.modules, never forcing an import) -- some test
+    files elsewhere in this suite import main.py directly for collaborators
+    with no extracted seam, and without this sync a test's own cleanup call
+    to this function would restore the seam's read_store but leave main.py's
+    proxy/context-service pointed at stale test data, leaking state into
+    whichever real-main-backed test runs next.
     """
     import sys
 
