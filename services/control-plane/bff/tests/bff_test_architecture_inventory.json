@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 387,
+  "total_test_files": 388,
   "migrated_in_task_count": 32,
   "composition_allowlist": [
     "smoke_test.py",
@@ -96,7 +96,7 @@
   ],
   "layer_summary": {
     "adapter": 53,
-    "application": 189,
+    "application": 190,
     "composition": 18,
     "hosted": 12,
     "router": 115
@@ -110,7 +110,7 @@
   },
   "disposition_summary": {
     "ALLOWLIST": 20,
-    "DECOUPLED": 313,
+    "DECOUPLED": 314,
     "MIGRATED": 45,
     "PLANNED": 9
   },
@@ -2823,6 +2823,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_promotion_review_production_defects.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001 regression coverage exercising live imported ManagementService/CommandAdapterService/CommandStore instances directly; never imports main."
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,
