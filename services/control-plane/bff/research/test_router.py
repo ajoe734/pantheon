@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 
-from research.router import create_research_experiments_router  # noqa: E402
+from services.control_plane.bff.research.router import create_research_experiments_router  # noqa: E402
 
 
 class _FakeIdentity:

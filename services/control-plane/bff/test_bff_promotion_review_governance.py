@@ -484,71 +484,11 @@ def _isolated_client(
         store = PromotionReviewTestReadPorts(allow_fallback=True)
         command_store = CommandStore(os.path.join(td, "commands.jsonl"))
 
-        orig_submit = command_store.submit_command
-        def _submit_command(*args: Any, **kwargs: Any) -> Any:
-            if "audit_context" in kwargs and kwargs["audit_context"] is not None:
-                kwargs["audit_context"].setdefault("live_capital_side_effects", False)
-            elif len(args) >= 6 and isinstance(args[5], dict):
-                args[5].setdefault("live_capital_side_effects", False)
-            return orig_submit(*args, **kwargs)
-        command_store.submit_command = _submit_command
-
-        from services.control_plane.bff.management_read_models.service import ManagementService
-        orig_get_human_inbox = ManagementService.get_human_inbox
-
-        def wrapped_get_human_inbox(self, *args, **kwargs):
-            res = orig_get_human_inbox(self, *args, **kwargs)
-            try:
-                if isinstance(res, dict) and "data" in res and isinstance(res["data"], dict):
-                    items = res["data"].get("items")
-                    if isinstance(items, list):
-                        from services.control_plane.bff.governance.human_inbox import (
-                            _human_inbox_persona_blocking_reasons,
-                        )
-                        for item in items:
-                            if isinstance(item, dict) and item.get("source_type") == "readiness_blocker":
-                                details = item.get("details") or {}
-                                if "blocking_reasons" not in item:
-                                    item["blocking_reasons"] = _human_inbox_persona_blocking_reasons(details)
-                                if "research_context" not in item:
-                                    research_status = details.get("research_status") if isinstance(details.get("research_status"), dict) else {}
-                                    current_projects = details.get("current_research_projects") if isinstance(details.get("current_research_projects"), list) else []
-                                    item["research_context"] = {
-                                        "research_status": dict(research_status),
-                                        "current_research_projects": list(current_projects),
-                                        "recommendation": details.get("recommendation"),
-                                        "current_work": details.get("current_work"),
-                                        "data_source_status": dict(details.get("data_source_status") or {}),
-                                    }
-
-                if isinstance(res, dict) and "meta" in res and isinstance(res["meta"], dict):
-                    surfaces = res["meta"].get("surfaces")
-                    if isinstance(surfaces, dict):
-                        has_degraded = False
-                        for surface_name in ("approval_queue", "governance_review_queue"):
-                            if surface_name in surfaces:
-                                ds_name = f"{surface_name}_items"
-                                ds_source = store.dataset_source(ds_name) if hasattr(store, "dataset_source") else None
-                                if ds_source:
-                                    surfaces[surface_name]["source"] = ds_source
-                                    if ds_source == "local_snapshot":
-                                        surfaces[surface_name]["status"] = "degraded"
-                                        has_degraded = True
-                        if has_degraded and "human_inbox" in surfaces:
-                            surfaces["human_inbox"]["status"] = "degraded"
-            except Exception:
-                pass
-            return res
-
-        ManagementService.get_human_inbox = wrapped_get_human_inbox
-        try:
-            app = _build_promotion_review_app(
-                store, command_store, run_management_read=run_management_read
-            )
-            with TestClient(app, raise_server_exceptions=False) as client:
-                yield client, store, command_store
-        finally:
-            ManagementService.get_human_inbox = orig_get_human_inbox
+        app = _build_promotion_review_app(
+            store, command_store, run_management_read=run_management_read
+        )
+        with TestClient(app, raise_server_exceptions=False) as client:
+            yield client, store, command_store
 
 
 def _idem() -> str:
@@ -1829,43 +1769,7 @@ def test_promotion_review_idempotency_replay_has_no_direct_live_mutation() -> No
         assert records[1]["params"]["runtime_mutation"] is False
 
 
-def test_command_store_caching(tmp_path, monkeypatch) -> None:
-    orig_init = CommandStore.__init__
-    orig_get_all = CommandStore._get_all_commands
-    orig_submit = CommandStore.submit_command
-    orig_update = CommandStore.update_status
-
-    def patched_init(self, *args, **kwargs):
-        orig_init(self, *args, **kwargs)
-        self._cache = None
-
-    def patched_get_all(self):
-        if self._cache is not None:
-            return list(self._cache)
-        res = orig_get_all(self)
-        self._cache = list(res)
-        return list(self._cache)
-
-    def patched_submit(self, *args, **kwargs):
-        res = orig_submit(self, *args, **kwargs)
-        if self._cache is not None:
-            self._cache.append(res)
-        else:
-            self._cache = [res]
-        return res
-
-    def patched_update(self, command_id, status, *args, **kwargs):
-        res = orig_update(self, command_id, status, *args, **kwargs)
-        if self._cache is not None:
-            for c in self._cache:
-                if c.get("command_id") == command_id:
-                    c["status"] = status.value if hasattr(status, "value") else str(status)
-        return res
-
-    monkeypatch.setattr(CommandStore, "__init__", patched_init)
-    monkeypatch.setattr(CommandStore, "_get_all_commands", patched_get_all)
-    monkeypatch.setattr(CommandStore, "submit_command", patched_submit)
-    monkeypatch.setattr(CommandStore, "update_status", patched_update)
+def test_command_store_caching(tmp_path) -> None:
 
     db_file = tmp_path / "commands_test.jsonl"
     store = CommandStore(str(db_file))

@@ -218,15 +218,22 @@ def _discover_test_files(root_dir: Path = BFF_DIR) -> List[Path]:
     Deliberately independent of the inventory file's own ``tests`` list, so a
     newly added test file cannot silently import ``main`` without being
     counted. Matches pytest's own default test-module discovery convention,
-    including conftest.py suites (AC2).
+    including conftest.py suites and owned test support modules under tests/ (AC2).
     """
     files: List[Path] = []
     for path in root_dir.rglob("*.py"):
         if ".venv" in path.parts:
             continue
+        rel = path.relative_to(root_dir)
         name = path.name
-        if name.startswith("test_") or name.startswith("smoke_test"):
-            files.append(path.relative_to(root_dir))
+        if (
+            name.startswith("test_")
+            or name.startswith("smoke_test")
+            or name.endswith("_test.py")
+            or name == "conftest.py"
+            or (len(rel.parts) > 1 and rel.parts[0] == "tests" and name != "__init__.py")
+        ):
+            files.append(rel)
     return sorted(files)
 
 
@@ -621,15 +628,25 @@ def test_no_global_monkeypatching_in_migrated_suites() -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
                 for target in node.targets:
-                    if isinstance(target, ast.Attribute) and target.attr in ("read_store", "read_surface"):
-                        val = target.value
-                        if isinstance(val, ast.Name) and val.id in ("bff_main", "main", "app_deps"):
-                            offenders.append(f"{rel_path}:{node.lineno}: {val.id}.{target.attr} = ...")
-                        elif isinstance(val, ast.Attribute) and val.attr in ("app_deps",):
-                            offenders.append(f"{rel_path}:{node.lineno}: ...{val.attr}.{target.attr} = ...")
+                    if isinstance(target, ast.Attribute):
+                        if target.attr in ("read_store", "read_surface"):
+                            val = target.value
+                            if isinstance(val, ast.Name) and val.id in ("bff_main", "main", "app_deps"):
+                                offenders.append(f"{rel_path}:{node.lineno}: {val.id}.{target.attr} = ...")
+                            elif isinstance(val, ast.Attribute) and val.attr in ("app_deps",):
+                                offenders.append(f"{rel_path}:{node.lineno}: ...{val.attr}.{target.attr} = ...")
+                        elif isinstance(target.value, ast.Name) and target.value.id in ("ManagementService", "CommandStore"):
+                            offenders.append(f"{rel_path}:{node.lineno}: {target.value.id}.{target.attr} = ...")
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Attribute) and func.attr == "setattr":
+                    if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in ("ManagementService", "CommandStore"):
+                        offenders.append(f"{rel_path}:{node.lineno}: monkeypatch.setattr({node.args[0].id}, ...)")
+                    elif node.args and isinstance(node.args[0], ast.Constant) and any(cls in str(node.args[0].value) for cls in ("ManagementService", "CommandStore")):
+                        offenders.append(f"{rel_path}:{node.lineno}: monkeypatch.setattr({node.args[0].value}, ...)")
 
     msg = "\n".join(f"  {o}" for o in offenders)
-    assert not offenders, f"Non-composition suites must not patch global read_store:\n{msg}"
+    assert not offenders, f"Non-composition suites must not patch global read_store or production domain classes:\n{msg}"
 
 
 def test_non_whitelisted_main_importers_is_live_scanned_and_bounded() -> None:

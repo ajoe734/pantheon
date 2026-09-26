@@ -17,8 +17,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 
-from evolution.router import create_evolution_programs_router  # noqa: E402
-from ports.evolution_program_commands import (  # noqa: E402
+from services.control_plane.bff.evolution.router import create_evolution_programs_router  # noqa: E402
+from services.control_plane.bff.ports.evolution_program_commands import (  # noqa: E402
     EvolutionProgramCommandError,
     EvolutionProgramConflictError,
     EvolutionProgramNotFoundError,

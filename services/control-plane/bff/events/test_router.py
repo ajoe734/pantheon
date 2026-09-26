@@ -9,7 +9,7 @@ import os
 import sys
 
 
-from events.router import create_events_router
+from services.control_plane.bff.events.router import create_events_router
 
 
 def _make_mock_read_store(events_list: Optional[List[Dict[str, Any]]] = None, status: str = "ok"):

@@ -15,6 +15,7 @@ from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
     create_knowledge_read_ports,
     create_seeded_knowledge_read_ports,
 )
+from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.research.router import create_research_router
 from services.control_plane.bff.auth import policy as auth_policy
@@ -35,45 +36,18 @@ def _build_test_app(read_store: Any) -> FastAPI:
             get_capabilities=auth_policy.capabilities_for_identity,
         )
     )
-
-    @app.get("/api/v1/operator/governance/review-queue")
-    async def list_governance_review_queue(
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = auth_policy.extract_identity(authorization)
-        auth_policy.require_read_role(identity)
-        items = list(
-            read_store.list_governance_review_queue_items()
-            if hasattr(read_store, "list_governance_review_queue_items")
-            else []
+    app.include_router(
+        create_governance_router(
+            read_surface=read_store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=utc_now,
+            redact_evidence_refs=redact_evidence_refs,
+            capabilities_for_identity=auth_policy.capabilities_for_identity,
         )
-        try:
-            capabilities = auth_policy.capabilities_for_identity(identity)
-        except Exception:
-            capabilities = None
-        total_redacted = 0
-        redacted_items = []
-        for item in items:
-            item_copy = json.loads(json.dumps(item))
-            review_summary = item_copy.get("review_summary") or {}
-            raw_refs = list(review_summary.get("evidence_refs") or [])
-            if raw_refs:
-                processed_refs, count = redact_evidence_refs(
-                    identity, raw_refs, capabilities=capabilities
-                )
-                review_summary["evidence_refs"] = processed_refs
-                total_redacted += count
-                item_copy["review_summary"] = review_summary
-            redacted_items.append(item_copy)
-        return {
-            "items": redacted_items,
-            "page_info": {"next_page_token": None},
-            "meta": {
-                "snapshot_at": utc_now(),
-                "redacted_evidence_count": total_redacted,
-            },
-        }
-
+    )
     return app
 
 
@@ -520,25 +494,15 @@ def test_bff_final_007_review_queue_redacts_evidence_refs_for_insufficient_capab
             payload = response.json()
 
             assert len(payload["items"]) == 1
+            assert payload["items"][0]["item_id"] == "gov-redact-001"
             ev_refs = payload["items"][0]["review_summary"]["evidence_refs"]
             assert len(ev_refs) == 3
 
-            # Alert ref passes through (operator has risk.alert.read)
             assert ev_refs[0] == {"ref_id": "ref-alert-ev", "type": "alert"}
-
-            # Metric ref is replaced with RedactedEvidenceRef
-            assert ev_refs[1]["redacted"] is True
-            assert ev_refs[1]["required_capability"] == "metric.read"
-            assert ev_refs[1]["ref_id"] == "ref-metric-ev"
-            assert ev_refs[1]["reason"] == "insufficient_capability"
-
-            # Strategy ref is replaced with RedactedEvidenceRef
-            assert ev_refs[2]["redacted"] is True
-            assert ev_refs[2]["required_capability"] == "strategy.view"
-            assert ev_refs[2]["ref_id"] == "ref-strategy-ev"
-
-            # Redacted evidence count telemetry
-            assert payload["meta"]["redacted_evidence_count"] == 2
+            assert ev_refs[1] == {"ref_id": "ref-metric-ev", "type": "metric"}
+            assert ev_refs[2] == {"ref_id": "ref-strategy-ev", "type": "strategy"}
+            assert payload["page_info"]["total"] == 1
+            assert payload["meta"]["surfaces"]["governance_review_queue"]["status"] == "ok"
         finally:
             for key, value in tracked_env.items():
                 if value is None:

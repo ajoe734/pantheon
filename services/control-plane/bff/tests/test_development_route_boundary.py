@@ -15,7 +15,7 @@ REPO_ROOT = BFF_DIR.parents[2]
 if str(BFF_DIR) not in sys.path:
     pass
 
-from assistant.routes import create_assistant_router  # noqa: E402
+from services.control_plane.bff.assistant.routes import create_assistant_router  # noqa: E402
 
 
 RETIRED_PRODUCT_PATHS = {
