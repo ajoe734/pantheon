@@ -7,6 +7,7 @@ slice switches to this router.
 """
 from __future__ import annotations
 
+import copy
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -170,6 +171,26 @@ def create_governance_router(
             return _redact(identity, refs, capabilities=caps)
         except Exception:
             return GovernanceService._fail_closed_redact_evidence_refs(identity, refs, capabilities=[])
+
+    def _redact_review_queue_items(
+        identity: Any, items: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        total_redacted = 0
+        redacted_items: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                redacted_items.append(item)
+                continue
+            item_copy = copy.deepcopy(item)
+            review_summary = dict(item_copy.get("review_summary") or {})
+            raw_refs = list(review_summary.get("evidence_refs") or [])
+            if raw_refs:
+                processed_refs, count = _safe_redact(identity, raw_refs)
+                review_summary["evidence_refs"] = processed_refs
+                total_redacted += count
+                item_copy["review_summary"] = review_summary
+            redacted_items.append(item_copy)
+        return redacted_items, total_redacted
 
     resolved_service = governance_service
 
@@ -606,19 +627,22 @@ def create_governance_router(
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         items = _service().list_review_queue(
             item_types=split_csv(item_type),
             risk_levels=split_csv(risk_level),
             statuses=split_csv(status),
         )
-        return _paged(
-            items,
+        redacted_items, total_redacted = _redact_review_queue_items(identity, items)
+        response = _paged(
+            redacted_items,
             page_token=page_token,
             page_size=page_size,
             surface_key="governance_review_queue",
             dataset="governance_review_queue_items",
         )
+        response["meta"]["redacted_evidence_count"] = total_redacted
+        return response
 
     @router.get("/api/v1/operator/governance/approval-queue")
     async def list_governance_approval_queue(
@@ -951,13 +975,16 @@ def create_governance_router(
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         items = _service().list_review_queue(
             item_types=split_csv(item_type),
             risk_levels=split_csv(risk_level),
             statuses=split_csv(status),
         )
-        return _paged(items, page_token=page_token, page_size=page_size, surface_key="review_queue", dataset="governance_review_queue_items")
+        redacted_items, total_redacted = _redact_review_queue_items(identity, items)
+        response = _paged(redacted_items, page_token=page_token, page_size=page_size, surface_key="review_queue", dataset="governance_review_queue_items")
+        response["meta"]["redacted_evidence_count"] = total_redacted
+        return response
 
     @router.post("/bff/reviews", status_code=202)
     async def bff_create_review(
@@ -985,11 +1012,21 @@ def create_governance_router(
         review_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         review = _service().get_review(review_id.strip())
         if review is None:
             _not_found("Review item", review_id)
-        return {"data": review, "meta": {"snapshot_at": _now(), "correlation_id": review_id, "staleness": _staleness()}}
+        redacted_reviews, total_redacted = _redact_review_queue_items(identity, [review])
+        review = redacted_reviews[0]
+        return {
+            "data": review,
+            "meta": {
+                "snapshot_at": _now(),
+                "correlation_id": review_id,
+                "staleness": _staleness(),
+                "redacted_evidence_count": total_redacted,
+            },
+        }
 
     @router.post("/bff/reviews/{review_id}/actions/{action_id}", status_code=202)
     async def bff_review_action(
