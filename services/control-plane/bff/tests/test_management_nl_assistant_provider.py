@@ -50,6 +50,7 @@ from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, Op
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     create_market_persona_projection_test_double,
 )
+from services.control_plane.bff import test_bff_promotion_review_governance as gov_test
 
 
 @pytest.fixture(autouse=True)
@@ -279,58 +280,95 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
                 "collected_at": "2026-06-02T00:00:00Z",
             },
         },
-        "personas": {
-            "persona-alpha": {
-                "persona_id": "persona-alpha",
-                "name": "Alpha Persona",
-                "tenant_id": "tenant-alpha",
-                "lifecycle_state": "active",
-                "created_at": "2026-06-01T00:00:00Z",
-            },
-            "persona-beta": {
-                "persona_id": "persona-beta",
-                "name": "Beta Persona",
-                "tenant_id": "tenant-beta",
-                "lifecycle_state": "active",
-                "created_at": "2026-06-01T00:00:00Z",
-            },
-        },
-        "persona_bindings": {
-            "binding-alpha": {
-                "binding_id": "binding-alpha",
-                "persona_id": "persona-alpha",
-                "tenant_id": "tenant-alpha",
-                "capital_pool_id": "pool-alpha",
-                "status": "active",
-            },
-            "binding-beta": {
-                "binding_id": "binding-beta",
-                "persona_id": "persona-beta",
-                "tenant_id": "tenant-beta",
-                "capital_pool_id": "pool-beta",
-                "status": "active",
-            },
-        },
+        "personas": {},
+        "persona_bindings": {},
         "agora_audit_events": {},
         "agora_sessions": {},
     }
+
+    # BFF-PM12-FIXTURE-CLOSURE-001: reuse the canonical eligible-persona
+    # builder (test_bff_promotion_review_governance.py::
+    # build_pm12_eligible_persona_records, proven against the real
+    # production pipeline by test_pm12_eligibility_fixture_contract.py)
+    # instead of hand-seeding inert persona/binding fields. persona-alpha
+    # (tenant-alpha) genuinely clears every PM12 league/eligibility gate;
+    # persona-beta (tenant-beta) does too, so cross-tenant admission has a
+    # real eligible record to exclude rather than an inert one.
+    pm12_alpha = gov_test.build_pm12_eligible_persona_records(
+        "persona-alpha",
+        "runtime-asst-alpha",
+        "binding-asst-alpha",
+        tenant_id="tenant-alpha",
+    )
+    pm12_beta = gov_test.build_pm12_eligible_persona_records(
+        "persona-beta",
+        "runtime-asst-beta",
+        "binding-asst-beta",
+        tenant_id="tenant-beta",
+    )
+    seeded_surfaces["personas"] = {
+        "persona-alpha": pm12_alpha["personas"]["persona-alpha"],
+        "persona-beta": pm12_beta["personas"]["persona-beta"],
+    }
+    seeded_surfaces["persona_bindings"] = {
+        "binding-asst-alpha": pm12_alpha["bindings"]["binding-asst-alpha"],
+        "binding-asst-beta": pm12_beta["bindings"]["binding-asst-beta"],
+    }
+    # `personas.service._pm12_persona_league_rows` reads
+    # `read_store.list_runtime_bindings()` with no tenant argument at all
+    # (tenant admission for PM12 is enforced only on the persona record
+    # itself), so these runtime bindings must stay visible there
+    # unfiltered. But this file's own `/bff/management/nl/ask` "portfolio"
+    # snippet passes every runtime binding through
+    # `_mgmt_nl_filter_tenant_records`, and
+    # test_provider_enabled_invokes_openclaw_with_tenant_scoped_context
+    # hard-codes `total_pnl == 2.5`, computed only from rt-alpha/rt-beta.
+    # Tag the PM12 fixture's own runtime bindings with a tenant id neither
+    # test tenant ever requests, so that unrelated nl/ask tenant filter
+    # (which has no bearing on PM12 eligibility) excludes them from that
+    # aggregate while `_pm12_persona_league_rows` still sees them in full.
+    _PM12_FIXTURE_ONLY_TENANT_ID = "tenant-pm12-fixture-internal"
+    persona_runtime_bindings = [
+        {**pm12_alpha["runtime_bindings"]["runtime-asst-alpha"], "tenant_id": _PM12_FIXTURE_ONLY_TENANT_ID},
+        {**pm12_beta["runtime_bindings"]["runtime-asst-beta"], "tenant_id": _PM12_FIXTURE_ONLY_TENANT_ID},
+    ]
+    persona_telemetry_summaries = {
+        **pm12_alpha["telemetry_summaries"],
+        **pm12_beta["telemetry_summaries"],
+    }
+    persona_sessions_by_persona = {
+        "persona-alpha": [pm12_alpha["sessions"]["sess-persona-alpha"]],
+        "persona-beta": [pm12_beta["sessions"]["sess-persona-beta"]],
+    }
+
     _write_json(read_surface_path, seeded_surfaces)
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
     monkeypatch.setenv("PANTHEON_MANAGEMENT_AI_AUDIT_PATH", str(tmp_path / "management-ai-audit.jsonl"))
+    all_telemetry_summaries = dict(seeded_surfaces["telemetry_summaries"])
+    all_telemetry_summaries.update(persona_telemetry_summaries)
     store = create_market_persona_projection_test_double(
         persona_capital_runtime_kwargs={
             "capital_pools": list(seeded_surfaces["capital_pools"].values()),
-            "runtime_bindings": list(seeded_surfaces["runtime_bindings"].values()),
+            "runtime_bindings": list(seeded_surfaces["runtime_bindings"].values()) + persona_runtime_bindings,
             "personas": list(seeded_surfaces["personas"].values()),
             "bindings": list(seeded_surfaces["persona_bindings"].values()),
         },
         lifecycle_telemetry_governance_kwargs={
-            "telemetry_summaries": seeded_surfaces["telemetry_summaries"],
+            "telemetry_summaries": all_telemetry_summaries,
         },
     )
     store._data = json.loads(json.dumps(seeded_surfaces))
     store.get_agora_session = lambda session_id: store._data["agora_sessions"].get(session_id)
+    store.get_sessions_for_persona = lambda persona_id: json.loads(
+        json.dumps(persona_sessions_by_persona.get(str(persona_id), []))
+    )
+    # create_market_persona_projection_test_double() re-wraps the composite
+    # ports without carrying over create_in_memory_read_surface_ports()'s
+    # default empty paper-fleet-monitoring provider, so an unconfigured
+    # PANTHEON_PAPER_FLEET_RECONCILER_URL would otherwise raise instead of
+    # falling back to the persona-session-store path PM12 eligibility uses.
+    store.list_authoritative_paper_runtime_monitoring_sessions = lambda: []
     def _record_agora_audit_event(event: dict) -> dict:
         event_id = str(event.get("auditId") or event.get("eventId") or f"aud-agora-{uuid.uuid4().hex[:12]}")
         record = {

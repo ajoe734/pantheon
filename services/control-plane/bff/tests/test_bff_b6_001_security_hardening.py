@@ -10,6 +10,7 @@ from typing import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff import test_bff_promotion_review_governance as gov_test
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     get_management_nl_read_store,
@@ -109,16 +110,81 @@ def _seeded_client(
         monkeypatch.delenv("PANTHEON_BFF_EVIDENCE_REF_STORE", raising=False)
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
-    store = create_in_memory_read_surface_ports()
+
+    # BFF-PM12-FIXTURE-CLOSURE-001: this file used to seed no personas at
+    # all. Reuse the canonical eligible-persona builder
+    # (test_bff_promotion_review_governance.py::build_pm12_eligible_persona_records,
+    # proven against the real production pipeline by
+    # test_pm12_eligibility_fixture_contract.py) so the seeded tenant-alpha
+    # persona genuinely clears every PM12 league/eligibility gate instead of
+    # only carrying inert fields. persona-beta stays tenant-beta and
+    # non-eligible so tenant-scoped read admission still has something to
+    # exclude.
+    pm12_alpha = gov_test.build_pm12_eligible_persona_records(
+        "persona-alpha",
+        "runtime-b6-sec-alpha",
+        "binding-b6-sec-alpha",
+        tenant_id="tenant-alpha",
+    )
+    pm12_beta = gov_test.build_pm12_eligible_persona_records(
+        "persona-beta",
+        "runtime-b6-sec-beta",
+        "binding-b6-sec-beta",
+        tenant_id="tenant-beta",
+        lifecycle_state="active",
+    )
+    personas = [pm12_alpha["personas"]["persona-alpha"], pm12_beta["personas"]["persona-beta"]]
+    persona_bindings = [
+        pm12_alpha["bindings"]["binding-b6-sec-alpha"],
+        pm12_beta["bindings"]["binding-b6-sec-beta"],
+    ]
+    # `personas.service._pm12_persona_league_rows` reads
+    # `read_store.list_runtime_bindings()` with no tenant argument at all
+    # (tenant admission for PM12 is enforced only on the persona record
+    # itself, per AC5/BFF-MGMT-READ-DEFECT-REPAIR-001), so these runtime
+    # bindings must be visible there unfiltered. But this file's own
+    # `/bff/management/nl/ask` "portfolio"/"trading_pulse"/"persona_fleet"
+    # snippets pass every runtime binding through
+    # `_mgmt_nl_filter_tenant_records`, and this file's existing assertions
+    # hard-code exact `total_pnl`/`total_trades` values computed only from
+    # rt-alpha/rt-beta. Tag the PM12 fixture's own runtime bindings with a
+    # tenant id neither test tenant ever requests, so the unrelated nl/ask
+    # tenant filter (which has no bearing on PM12 eligibility) excludes them
+    # from those aggregates while `_pm12_persona_league_rows` still sees
+    # them in full.
+    _PM12_FIXTURE_ONLY_TENANT_ID = "tenant-pm12-fixture-internal"
+    persona_runtime_bindings = [
+        {**pm12_alpha["runtime_bindings"]["runtime-b6-sec-alpha"], "tenant_id": _PM12_FIXTURE_ONLY_TENANT_ID},
+        {**pm12_beta["runtime_bindings"]["runtime-b6-sec-beta"], "tenant_id": _PM12_FIXTURE_ONLY_TENANT_ID},
+    ]
+    persona_telemetry_summaries = {
+        **pm12_alpha["telemetry_summaries"],
+        **pm12_beta["telemetry_summaries"],
+    }
+    persona_sessions_by_persona = {
+        "persona-alpha": [pm12_alpha["sessions"]["sess-persona-alpha"]],
+        "persona-beta": [pm12_beta["sessions"]["sess-persona-beta"]],
+    }
+
+    store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "personas": personas,
+            "bindings": persona_bindings,
+        },
+    )
     capital_pools = list(seeded_data["capital_pools"].values())
-    runtime_bindings = list(seeded_data["runtime_bindings"].values())
-    telemetry_summaries = seeded_data["telemetry_summaries"]
+    runtime_bindings = list(seeded_data["runtime_bindings"].values()) + persona_runtime_bindings
+    telemetry_summaries = dict(seeded_data["telemetry_summaries"])
+    telemetry_summaries.update(persona_telemetry_summaries)
     evidence_records = list((evidence_refs or {}).values())
     store.list_capital_pools = lambda *args, **kwargs: json.loads(json.dumps(capital_pools))
     store.list_runtime_bindings = lambda *args, **kwargs: json.loads(json.dumps(runtime_bindings))
     store.get_telemetry_summary = lambda runtime_id: json.loads(
         json.dumps(telemetry_summaries.get(str(runtime_id)))
     ) if telemetry_summaries.get(str(runtime_id)) is not None else None
+    store.get_sessions_for_persona = lambda persona_id: json.loads(
+        json.dumps(persona_sessions_by_persona.get(str(persona_id), []))
+    )
     store.record_agora_audit_event = lambda event: event
     store.get_agora_session = lambda session_id: None
 
