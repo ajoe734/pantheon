@@ -502,11 +502,22 @@ def test_bff_final_007_review_queue_redacts_evidence_refs_for_insufficient_capab
             ev_refs = payload["items"][0]["review_summary"]["evidence_refs"]
             assert len(ev_refs) == 3
 
+            # Alert ref passes through (operator has risk.alert.read)
             assert ev_refs[0] == {"ref_id": "ref-alert-ev", "type": "alert"}
-            assert ev_refs[1] == {"ref_id": "ref-metric-ev", "type": "metric"}
-            assert ev_refs[2] == {"ref_id": "ref-strategy-ev", "type": "strategy"}
-            assert payload["page_info"]["total"] == 1
-            assert payload["meta"]["surfaces"]["governance_review_queue"]["status"] == "ok"
+
+            # Metric ref is replaced with RedactedEvidenceRef
+            assert ev_refs[1]["redacted"] is True
+            assert ev_refs[1]["required_capability"] == "metric.read"
+            assert ev_refs[1]["ref_id"] == "ref-metric-ev"
+            assert ev_refs[1]["reason"] == "insufficient_capability"
+
+            # Strategy ref is replaced with RedactedEvidenceRef
+            assert ev_refs[2]["redacted"] is True
+            assert ev_refs[2]["required_capability"] == "strategy.view"
+            assert ev_refs[2]["ref_id"] == "ref-strategy-ev"
+
+            # Redacted evidence count telemetry
+            assert payload["meta"]["redacted_evidence_count"] == 2
         finally:
             for key, value in tracked_env.items():
                 if value is None:

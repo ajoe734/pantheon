@@ -5,7 +5,6 @@
   "total_test_files": 388,
   "migrated_in_task_count": 32,
   "composition_allowlist": [
-    "auth/test_policy.py",
     "migrations/test_overlay_retirement.py",
     "smoke_test.py",
     "smoke_test_incident.py",
@@ -110,10 +109,10 @@
     "router": 7
   },
   "disposition_summary": {
-    "ALLOWLIST": 21,
+    "ALLOWLIST": 20,
     "DECOUPLED": 323,
     "MIGRATED": 44,
-    "PLANNED": 0
+    "PLANNED": 1
   },
   "tests": [
     {
@@ -288,8 +287,8 @@
       "file": "auth/test_policy.py",
       "layer": "adapter",
       "imports_main": true,
-      "disposition": "ALLOWLIST",
-      "rationale": "Corrected from a stale DECOUPLED record (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 subprocess-variable scanner fix): test_composition_root_smoke() builds a python -c snippet in a local \"code\" variable (not an inline string literal) and runs it via subprocess.run([sys.executable, \"-c\", code]); that snippet does \"from services.control_plane.bff import main as bff_main\" to prove the default composition wires auth_deps/session_lifecycle_store/guards correctly end to end. The pre-fix scanner only resolved -c snippets that were literal string constants, not a variable assigned earlier in the same file, so this real composition-root import was invisible to the live scan. It runs in an isolated subprocess specifically so the importing pytest process itself never loads main, which is why the other six tests in this file (including test_standalone_auth_policy_imports_no_main) still prove no main import leaks into the shared test process. This is exactly the reviewed \"smoke/subprocess imports\" exception AC2 anticipates, so it is now recorded honestly in composition_allowlist rather than left misclassified as DECOUPLED."
+      "disposition": "PLANNED",
+      "rationale": "GENUINE offender, pending governed decision (not operator-authorized): test_composition_root_smoke() runs an isolated subprocess.run([sys.executable, '-c', code]) where 'code' (a same-function local variable, not an inline literal) imports services.control_plane.bff.main to prove default composition wiring. The prior generation's subprocess-variable scanner fix (P2 AC2) correctly surfaced this real import; adding it to composition_allowlist/WHOLE_APP_ALLOWLIST without a separate governed authorization was itself a defect (the PM12 allowlist entry's own comment says not to add another entry without separate authorization). Left as a live-scanned, honestly-tracked offender (not DECOUPLED, not silently allowlisted) pending an operator decision: either authorize a whole-app allowlist exception, or migrate the smoke test to an isolated fixture that does not require this file to be in the allowlist."
     },
     {
       "file": "events/test_router.py",
@@ -2833,8 +2832,10 @@
       "rationale": "BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001 regression coverage exercising live imported ManagementService/CommandAdapterService/CommandStore instances directly; never imports main."
     }
   ],
-  "live_scan_non_whitelisted_main_importer_ceiling": 0,
-  "live_scan_non_whitelisted_main_importers": [],
+  "live_scan_non_whitelisted_main_importer_ceiling": 1,
+  "live_scan_non_whitelisted_main_importers": [
+    "auth/test_policy.py"
+  ],
   "dynamic_non_ast_visible_main_dependencies": [
     {
       "file": "tests/test_bff_rebalance_proposals.py",

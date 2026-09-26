@@ -447,12 +447,24 @@ def _find_main_reaching_helper_modules(root_dir: Path = BFF_DIR) -> Dict[str, Se
     file. Production application/service modules are deliberately excluded
     from this cross-file propagation -- see the comment below.
     """
-    test_names = {str(p) for p in _discover_test_files(root_dir)}
     trees: Dict[str, ast.Module] = {}
     pkg_parts_map: Dict[str, List[str]] = {}
     test_support_dotted: Set[str] = set()
     for rel in _discover_all_py_files(root_dir):
-        if str(rel) in test_names:
+        name = rel.name
+        # Excludes only genuine pytest-collected test modules (the same
+        # naming convention pytest itself uses), never every file that
+        # merely lives under a ``tests/`` directory: a same-directory
+        # support/helper module (e.g. ``tests/helper.py``) that is not
+        # itself a test module must still be eligible to be recorded as a
+        # main-reaching helper below, or a real test file that imports it
+        # is never propagated to (AC2).
+        if (
+            name.startswith("test_")
+            or name.startswith("smoke_test")
+            or name.endswith("_test.py")
+            or name == "conftest.py"
+        ):
             continue
         path = root_dir / rel
         try:
@@ -512,7 +524,14 @@ def _find_main_reaching_helper_modules(root_dir: Path = BFF_DIR) -> Dict[str, Se
                 for name, callees in bare_name_graph.items():
                     if name in reaching:
                         continue
-                    if callees & cross_reaching_names:
+                    # Also propagate through a callee that this same
+                    # fixed-point loop has already newly added to
+                    # ``reaching`` (not only a directly-imported
+                    # cross_reaching_names symbol), so a same-module chain
+                    # of local wrapper functions (A calls imported reach(),
+                    # B calls A, C calls B, ...) all propagate instead of
+                    # stopping at the first local hop (AC2).
+                    if callees & (cross_reaching_names | reaching):
                         reaching.add(name)
                         local_changed = True
             if reaching != helpers.get(dotted, set()):
@@ -715,18 +734,16 @@ WHOLE_APP_ALLOWLIST = {
     # missing seam. Operator-authorized single new allowlist entry; do not
     # add another allowlist entry without a separate governed authorization.
     "tests/test_management_read_timeout_and_capacity.py",
-    # GENUINE BLOCKER: test_composition_root_smoke() builds a python -c
-    # snippet in a local variable and runs it via subprocess.run([sys.
-    # executable, "-c", code]); the snippet imports services.control_plane.
-    # bff.main to prove the default composition wires auth_deps/session_
-    # lifecycle_store/guards correctly end to end, running in an isolated
-    # subprocess specifically so main is never loaded into the shared pytest
-    # process (the other tests in this same file assert exactly that
-    # isolation). Discovered by this generation's subprocess-variable
-    # scanner fix (previously invisible because the -c argument was a local
-    # variable, not an inline string literal).
-    "auth/test_policy.py",
 }
+# NOTE: auth/test_policy.py's test_composition_root_smoke() is a real,
+# live-scanned composition-root import (the PM12 fixture-closure entry's own
+# comment above says not to add another allowlist entry without a separate
+# governed authorization, which does not exist for this file). It is
+# deliberately NOT in WHOLE_APP_ALLOWLIST or the inventory's
+# composition_allowlist -- it is tracked honestly as a live offender in
+# live_scan_non_whitelisted_main_importers with the ceiling raised to match,
+# pending an operator decision to either authorize a whole-app exception or
+# migrate the smoke test off the composition root.
 
 
 def test_composition_allowlist_is_strictly_contained_and_retained() -> None:
@@ -930,6 +947,73 @@ def test_scanner_detects_transitive_helper_main_import(tmp_path: Path) -> None:
     non_reacher = tmp_path / "test_non_reacher.py"
     non_reacher.write_text("from support_helper import unrelated_helper\n", encoding="utf-8")
     assert _file_imports_main_via_helper(non_reacher, helper_symbols) is False
+
+
+def test_helper_graph_propagates_local_call_chain_to_fixed_point(tmp_path: Path) -> None:
+    """AC2 regression (defect fix): a same-module chain of local wrapper
+    functions must all propagate once the first hop is recognized as an
+    imported cross-file reach, not just the function that directly calls
+    the imported name. Reproduces: source_helper.reach() imports main ->
+    bridge_test_support.bridge() calls reach() -> bridge_test_support.
+    public() calls bridge() -> a real test module imports public()."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "source_helper.py").write_text(
+        "import importlib\n"
+        "def reach():\n"
+        "    return importlib.import_module('services.control_plane.bff.main')\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "bridge_test_support.py").write_text(
+        "from tests.source_helper import reach\n"
+        "def bridge():\n"
+        "    return reach()\n"
+        "def public():\n"
+        "    return bridge()\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_client.py").write_text(
+        "from tests.bridge_test_support import public\n"
+        "public()\n",
+        encoding="utf-8",
+    )
+
+    helpers = _find_main_reaching_helper_modules(root_dir=tmp_path)
+    assert helpers["tests.bridge_test_support"] == {"bridge", "public"}
+
+    offenders = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
+    assert "tests/test_client.py" in offenders
+
+
+def test_helper_graph_includes_non_test_named_support_module_under_tests_dir(tmp_path: Path) -> None:
+    """AC2 regression (defect fix): a support/helper module that lives under
+    ``tests/`` but is not itself a pytest-collected test module (does not
+    start with ``test_``/``smoke_test``, end with ``_test.py``, or equal
+    ``conftest.py``) must still be recorded in the main-reaching helper
+    graph, so a real test file that imports it is transitively flagged.
+    Previously such a file was excluded from the helper graph entirely
+    because ``tests/`` membership alone was (over-broadly) treated as
+    pytest-test classification."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "helper.py").write_text(
+        "import importlib\n"
+        "def get_main():\n"
+        "    return importlib.import_module('services.control_plane.bff.main')\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_uses_helper.py").write_text(
+        "from tests.helper import get_main\n"
+        "get_main()\n",
+        encoding="utf-8",
+    )
+
+    helpers = _find_main_reaching_helper_modules(root_dir=tmp_path)
+    assert helpers.get("tests.helper") == {"get_main"}
+
+    offenders = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
+    assert "tests/helper.py" in offenders
+    assert "tests/test_uses_helper.py" in offenders
 
 
 def test_scanner_detects_static_import_inside_helper_function_body(tmp_path: Path) -> None:
