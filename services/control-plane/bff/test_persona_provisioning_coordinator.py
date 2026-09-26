@@ -21,7 +21,7 @@ try:
         deterministic_provisioning_ids,
     )
 except ImportError:
-    sys.path.insert(0, os.path.dirname(__file__))
+    pass
     from persona_provisioning import MemoryPersonaProvisioningStore, ProvisioningRecord  # type: ignore[no-redef]
     from persona_provisioning_coordinator import (  # type: ignore[no-redef]
         FIRST_EVALUATION_WORKFLOW_ID,
@@ -1049,7 +1049,7 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
     assert owner_approval_decision["target_id"] == ids.strategy_artifact_id
 
     governance_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "governance"))
-    sys.path.insert(0, governance_dir)
+    pass
     from deployment_plan import DeploymentScale, RollbackRef, StagePlanner
 
     domain_plan = StagePlanner().create_plan(

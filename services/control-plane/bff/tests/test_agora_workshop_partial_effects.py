@@ -19,7 +19,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from agora.strategy_workshop.operations import (  # noqa: E402
     CanonicalOperationError,

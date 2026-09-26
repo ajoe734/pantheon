@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from models import OperatorIdentity
 from agora.identity.scope import (

@@ -13,7 +13,6 @@ from typing import Any, Callable
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from management_read_models.router import (  # noqa: E402
     create_management_read_models_router,

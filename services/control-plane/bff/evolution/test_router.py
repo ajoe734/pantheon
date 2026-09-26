@@ -16,10 +16,9 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from evolution.router import create_evolution_programs_router  # noqa: E402
-from ports.evolution_program_commands import (  # noqa: E402
+from services.control_plane.bff.evolution.router import create_evolution_programs_router  # noqa: E402
+from services.control_plane.bff.ports.evolution_program_commands import (  # noqa: E402
     EvolutionProgramCommandError,
     EvolutionProgramConflictError,
     EvolutionProgramNotFoundError,

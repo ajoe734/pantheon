@@ -22,9 +22,8 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from assistant.mode_policy import (
+from services.control_plane.bff.assistant.mode_policy import (
     DEFAULT_KERNEL_TTL_SECONDS,
     MAX_KERNEL_TTL_SECONDS,
     ModePolicyViolation,
@@ -33,10 +32,10 @@ from assistant.mode_policy import (
     mode_allows_command_broker,
     validate_session_request,
 )
-from assistant.control_mode import PASSPHRASE_HASH_ENV, ControlModeStore, passphrase_hash
-from assistant.models import AssistantMode
-from assistant.routes import create_assistant_router
-from assistant.transcript_store import (
+from services.control_plane.bff.assistant.control_mode import PASSPHRASE_HASH_ENV, ControlModeStore, passphrase_hash
+from services.control_plane.bff.assistant.models import AssistantMode
+from services.control_plane.bff.assistant.routes import create_assistant_router
+from services.control_plane.bff.assistant.transcript_store import (
     AssistantSession,
     InMemorySessionStore,
     InMemoryTranscriptStore,
@@ -50,7 +49,7 @@ from assistant.transcript_store import (
     build_session,
     build_turn,
 )
-from management_ai_store import ManagementAiAttachmentStore, ManagementAiConversationStore
+from services.control_plane.bff.management_ai_store import ManagementAiAttachmentStore, ManagementAiConversationStore
 
 
 # ---------------------------------------------------------------------------

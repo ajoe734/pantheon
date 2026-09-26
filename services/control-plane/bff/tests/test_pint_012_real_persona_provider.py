@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from agora.interaction.runner import run_selected_persona_interaction
 from agora.interaction.provider import (

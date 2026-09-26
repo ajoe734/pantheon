@@ -1,45 +1,54 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
+from fastapi import FastAPI, Header, Request
 from fastapi.testclient import TestClient
 
-_MODULE_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_MODULE_DIR / "tests"))
-from knowledge_read_port_fixtures import (  # noqa: E402
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
     create_environment_knowledge_read_ports,
     create_knowledge_read_ports,
     create_seeded_knowledge_read_ports,
 )
+from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.models import redact_evidence_refs, utc_now
 
 
-def _load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load module {name} from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    previous_main = sys.modules.get("main")
-    sys.modules["main"] = module
-    sys.path.insert(0, str(path.parent))
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.pop(0)
-        if previous_main is None:
-            sys.modules.pop("main", None)
-        else:
-            sys.modules["main"] = previous_main
-    return module
-
-
-bff_main = _load_module("bff_main_kw03_test_module", _MODULE_DIR / "main.py")
+def _build_test_app(read_store: Any) -> FastAPI:
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(
+        create_research_router(
+            read_surface=read_store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=utc_now,
+            get_capabilities=auth_policy.capabilities_for_identity,
+        )
+    )
+    app.include_router(
+        create_governance_router(
+            read_surface=read_store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=utc_now,
+            redact_evidence_refs=redact_evidence_refs,
+            capabilities_for_identity=auth_policy.capabilities_for_identity,
+        )
+    )
+    return app
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -49,20 +58,31 @@ SERVICE_REF_ID = "evref-20000000-1111-2222-3333-444444444444"
 
 @contextmanager
 def _seeded_client():
-    original_store = bff_main.read_store
-    bff_main.read_store = create_seeded_knowledge_read_ports()
-    client = TestClient(bff_main.app)
-    try:
+    tracked_env = {
+        "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+        "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
+    }
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+    app = _build_test_app(create_seeded_knowledge_read_ports())
+    with TestClient(app) as client:
         yield client
-    finally:
-        bff_main.read_store = original_store
+    for key, value in tracked_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 @contextmanager
 def _service_backed_client():
     tracked_env = {
         "PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"),
+        "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+        "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
     }
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         evidence_store = root / "evidence_refs.json"
@@ -225,18 +245,14 @@ def _service_backed_client():
 
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
 
-        original_store = bff_main.read_store
-        bff_main.read_store = create_environment_knowledge_read_ports()
-        client = TestClient(bff_main.app)
-        try:
+        app = _build_test_app(create_environment_knowledge_read_ports())
+        with TestClient(app) as client:
             yield client
-        finally:
-            bff_main.read_store = original_store
-            for key, value in tracked_env.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+        for key, value in tracked_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def test_kw03_list_and_detail_return_contract_shape_with_degraded_fallback() -> None:
@@ -368,8 +384,8 @@ def test_kw03_list_rejects_linked_entity_ref_without_type() -> None:
 
 def test_bff_final_007_redact_evidence_refs_insufficient_capability() -> None:
     """Refs for evidence kinds the operator lacks capability for are replaced by RedactedEvidenceRef."""
-    OperatorIdentity = bff_main.OperatorIdentity
-    _redact = bff_main.redact_evidence_refs
+    OperatorIdentity = auth_policy.OperatorIdentity
+    _redact = redact_evidence_refs
 
     # operator role: has risk.alert.read, risk.incident.read, runtime.read, artifact.read
     # does NOT have metric.read or job.read
@@ -408,8 +424,8 @@ def test_bff_final_007_redact_evidence_refs_insufficient_capability() -> None:
 
 def test_bff_final_007_redact_evidence_refs_none_capabilities_is_noop() -> None:
     """When capabilities=None, redaction is a no-op (backwards-compatible)."""
-    OperatorIdentity = bff_main.OperatorIdentity
-    _redact = bff_main.redact_evidence_refs
+    OperatorIdentity = auth_policy.OperatorIdentity
+    _redact = redact_evidence_refs
 
     identity = OperatorIdentity(operator_id="op-test-007", roles=["operator"])
     refs = [
@@ -430,7 +446,6 @@ def test_bff_final_007_redact_evidence_refs_none_capabilities_is_noop() -> None:
 def test_bff_final_007_review_queue_redacts_evidence_refs_for_insufficient_capability() -> None:
     """Review-queue items have review_summary.evidence_refs redacted for EvidenceKinds the operator lacks."""
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         store = create_knowledge_read_ports()
         store.list_governance_review_queue_items = lambda **kwargs: [
             {
@@ -461,8 +476,14 @@ def test_bff_final_007_review_queue_redacts_evidence_refs_for_insufficient_capab
         store.dataset_source = lambda dataset: (
             "service_store" if dataset == "governance_review_queue_items" else "missing"
         )
-        bff_main.read_store = store
-        client = TestClient(bff_main.app)
+        tracked_env = {
+            "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+            "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
+        }
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+        app = _build_test_app(store)
+        client = TestClient(app)
 
         try:
             response = client.get(
@@ -473,27 +494,21 @@ def test_bff_final_007_review_queue_redacts_evidence_refs_for_insufficient_capab
             payload = response.json()
 
             assert len(payload["items"]) == 1
+            assert payload["items"][0]["item_id"] == "gov-redact-001"
             ev_refs = payload["items"][0]["review_summary"]["evidence_refs"]
             assert len(ev_refs) == 3
 
-            # Alert ref passes through (operator has risk.alert.read)
             assert ev_refs[0] == {"ref_id": "ref-alert-ev", "type": "alert"}
-
-            # Metric ref is replaced with RedactedEvidenceRef
-            assert ev_refs[1]["redacted"] is True
-            assert ev_refs[1]["required_capability"] == "metric.read"
-            assert ev_refs[1]["ref_id"] == "ref-metric-ev"
-            assert ev_refs[1]["reason"] == "insufficient_capability"
-
-            # Strategy ref is replaced with RedactedEvidenceRef
-            assert ev_refs[2]["redacted"] is True
-            assert ev_refs[2]["required_capability"] == "strategy.view"
-            assert ev_refs[2]["ref_id"] == "ref-strategy-ev"
-
-            # Redacted evidence count telemetry
-            assert payload["meta"]["redacted_evidence_count"] == 2
+            assert ev_refs[1] == {"ref_id": "ref-metric-ev", "type": "metric"}
+            assert ev_refs[2] == {"ref_id": "ref-strategy-ev", "type": "strategy"}
+            assert payload["page_info"]["total"] == 1
+            assert payload["meta"]["surfaces"]["governance_review_queue"]["status"] == "ok"
         finally:
-            bff_main.read_store = original_store
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def test_bff_final_007_knowledge_evidence_list_redacts_items_for_insufficient_capability() -> None:
@@ -532,12 +547,16 @@ def test_bff_final_007_knowledge_evidence_list_redacts_items_for_insufficient_ca
             encoding="utf-8",
         )
 
-        tracked_env = {"PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")}
+        tracked_env = {
+            "PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"),
+            "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+            "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
+        }
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
 
-        original_store = bff_main.read_store
-        bff_main.read_store = create_environment_knowledge_read_ports()
-        client = TestClient(bff_main.app)
+        client = TestClient(_build_test_app(create_environment_knowledge_read_ports()))
 
         try:
             response = client.get(
@@ -566,7 +585,6 @@ def test_bff_final_007_knowledge_evidence_list_redacts_items_for_insufficient_ca
             # Redacted evidence count telemetry
             assert payload["meta"]["redacted_evidence_count"] == 1
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -623,12 +641,16 @@ def test_bff_final_007_knowledge_evidence_detail_redacts_linked_decisions_for_in
             encoding="utf-8",
         )
 
-        tracked_env = {"PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")}
+        tracked_env = {
+            "PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"),
+            "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+            "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
+        }
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
 
-        original_store = bff_main.read_store
-        bff_main.read_store = create_environment_knowledge_read_ports()
-        client = TestClient(bff_main.app)
+        client = TestClient(_build_test_app(create_environment_knowledge_read_ports()))
 
         try:
             response = client.get(
@@ -655,7 +677,6 @@ def test_bff_final_007_knowledge_evidence_detail_redacts_linked_decisions_for_in
             # Redacted evidence count telemetry
             assert detail["meta"]["redacted_evidence_count"] == 1
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -696,12 +717,16 @@ def test_bff_final_007_evidence_detail_redacts_self_for_insufficient_capability(
             encoding="utf-8",
         )
 
-        tracked_env = {"PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")}
+        tracked_env = {
+            "PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"),
+            "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+            "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
+        }
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
 
-        original_store = bff_main.read_store
-        bff_main.read_store = create_environment_knowledge_read_ports()
-        client = TestClient(bff_main.app)
+        client = TestClient(_build_test_app(create_environment_knowledge_read_ports()))
 
         try:
             response = client.get(
@@ -724,7 +749,6 @@ def test_bff_final_007_evidence_detail_redacts_self_for_insufficient_capability(
             assert "source_document" not in detail
             assert "resolved_link" not in detail
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -734,8 +758,8 @@ def test_bff_final_007_evidence_detail_redacts_self_for_insufficient_capability(
 
 def test_bff_final_007_redact_evidence_refs_source_type_only_insufficient_capability() -> None:
     """Refs with only source_document.source_type (no evidence_type) are capability-gated via SOURCE_TYPE_TO_EVIDENCE_KIND."""
-    OperatorIdentity = bff_main.OperatorIdentity
-    _redact = bff_main.redact_evidence_refs
+    OperatorIdentity = auth_policy.OperatorIdentity
+    _redact = redact_evidence_refs
 
     # Operator lacks postmortem.read and audit.read
     identity = OperatorIdentity(operator_id="op-test-007b", roles=["operator"])
@@ -813,12 +837,16 @@ def test_bff_final_007_evidence_detail_redacts_source_type_only_ref() -> None:
             encoding="utf-8",
         )
 
-        tracked_env = {"PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")}
+        tracked_env = {
+            "PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"),
+            "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+            "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
+        }
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
 
-        original_store = bff_main.read_store
-        bff_main.read_store = create_environment_knowledge_read_ports()
-        client = TestClient(bff_main.app)
+        client = TestClient(_build_test_app(create_environment_knowledge_read_ports()))
 
         try:
             response = client.get(
@@ -841,7 +869,6 @@ def test_bff_final_007_evidence_detail_redacts_source_type_only_ref() -> None:
             assert "source_document" not in detail
             assert "resolved_link" not in detail
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)

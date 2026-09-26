@@ -5,14 +5,7 @@ import sys
 from pathlib import Path
 import pytest
 
-_BFF_DIR = Path(__file__).resolve().parents[2]
-if str(_BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(_BFF_DIR))
-_CONTROL_PLANE_DIR = Path(__file__).resolve().parents[3]
-if str(_CONTROL_PLANE_DIR) not in sys.path:
-    sys.path.insert(0, str(_CONTROL_PLANE_DIR))
-
-from agora.strategy_workshop.reconstruction import (
+from services.control_plane.bff.agora.strategy_workshop.reconstruction import (
     StrategyReconstructionResult,
     reconstruct_strategy_from_events,
 )

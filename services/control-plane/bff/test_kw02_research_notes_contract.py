@@ -1,44 +1,39 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-_MODULE_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_MODULE_DIR / "tests"))
-from knowledge_read_port_fixtures import (  # noqa: E402
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
     create_environment_knowledge_read_ports,
     create_seeded_knowledge_read_ports,
 )
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.models import utc_now
 
 
-def _load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load module {name} from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    previous_main = sys.modules.get("main")
-    sys.modules["main"] = module
-    sys.path.insert(0, str(path.parent))
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.pop(0)
-        if previous_main is None:
-            sys.modules.pop("main", None)
-        else:
-            sys.modules["main"] = previous_main
-    return module
-
-
-bff_main = _load_module("bff_main_kw02_test_module", _MODULE_DIR / "main.py")
+def _build_test_app(read_store: Any) -> FastAPI:
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(
+        create_research_router(
+            read_surface=read_store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=utc_now,
+        )
+    )
+    return app
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -47,13 +42,20 @@ NOTE_ID = "note-a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
 @contextmanager
 def _seeded_client():
-    original_store = bff_main.read_store
-    bff_main.read_store = create_seeded_knowledge_read_ports()
-    client = TestClient(bff_main.app)
-    try:
+    tracked_env = {
+        "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+        "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
+    }
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+    app = _build_test_app(create_seeded_knowledge_read_ports())
+    with TestClient(app) as client:
         yield client
-    finally:
-        bff_main.read_store = original_store
+    for key, value in tracked_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 @contextmanager
@@ -65,7 +67,11 @@ def _service_backed_client():
         "PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE": os.environ.get("PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE"),
         "PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"),
         "PANTHEON_BFF_STRATEGY_SPEC_STORE": os.environ.get("PANTHEON_BFF_STRATEGY_SPEC_STORE"),
+        "PANTHEON_BFF_AUTH_STUB": os.environ.get("PANTHEON_BFF_AUTH_STUB"),
+        "PANTHEON_BFF_AUTH_MODE": os.environ.get("PANTHEON_BFF_AUTH_MODE"),
     }
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "1"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         stores = {
@@ -177,18 +183,14 @@ def _service_backed_client():
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(stores["evidence"])
         os.environ["PANTHEON_BFF_STRATEGY_SPEC_STORE"] = str(stores["strategy"])
 
-        original_store = bff_main.read_store
-        bff_main.read_store = create_environment_knowledge_read_ports()
-        client = TestClient(bff_main.app)
-        try:
+        app = _build_test_app(create_environment_knowledge_read_ports())
+        with TestClient(app) as client:
             yield client
-        finally:
-            bff_main.read_store = original_store
-            for key, value in tracked_env.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+        for key, value in tracked_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def test_kw02_list_and_detail_return_contract_shape_with_degraded_fallback() -> None:

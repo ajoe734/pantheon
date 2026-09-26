@@ -13,11 +13,7 @@ import sys
 
 import pytest
 
-BFF_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if BFF_DIR not in sys.path:
-    sys.path.insert(0, BFF_DIR)
-
-from assistant.mode_policy import (  # noqa: E402
+from services.control_plane.bff.assistant.mode_policy import (  # noqa: E402
     PRODUCT_DEFAULT_MODE,
     ModePolicyViolation,
     assert_kernel_allowed,
@@ -26,8 +22,8 @@ from assistant.mode_policy import (  # noqa: E402
     mode_allows_command_broker,
     user_mode_capability_summary,
 )
-from assistant.models import AssistantContextPackRequest, AssistantMode  # noqa: E402
-from assistant.context_composer import (  # noqa: E402
+from services.control_plane.bff.assistant.models import AssistantContextPackRequest, AssistantMode  # noqa: E402
+from services.control_plane.bff.assistant.context_composer import (  # noqa: E402
     AssistantContextPolicyError,
     KERNEL_ONLY_SOURCES,
     _enforce_mode_policy,

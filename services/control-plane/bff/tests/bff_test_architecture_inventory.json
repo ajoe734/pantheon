@@ -110,9 +110,9 @@
   },
   "disposition_summary": {
     "ALLOWLIST": 20,
-    "DECOUPLED": 313,
-    "MIGRATED": 45,
-    "PLANNED": 9
+    "DECOUPLED": 323,
+    "MIGRATED": 44,
+    "PLANNED": 0
   },
   "tests": [
     {
@@ -594,9 +594,9 @@
     {
       "file": "test_bff_management_delta_routes.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
@@ -615,9 +615,9 @@
     {
       "file": "test_bff_mgmt_ops_001_operations_read_model_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_bff_mgmt_ops_006_operator_actions_contract.py",
@@ -965,9 +965,9 @@
     {
       "file": "test_management_data_sources_v2.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_management_list_contract_guardrail.py",
@@ -986,16 +986,16 @@
     {
       "file": "test_mcp_tool_import.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_mgmt_load_002_shell_summary.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_mgmt_load_005_read_concurrency.py",
@@ -1007,9 +1007,9 @@
     {
       "file": "test_mgmt_ooda_004_bff_routes.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_mgmt_ooda_005_control_room_card.py",
@@ -1028,9 +1028,9 @@
     {
       "file": "test_mgmt_syn_006_conflict_log_view.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_no_undefined_call_symbols.py",
@@ -2001,9 +2001,9 @@
     {
       "file": "tests/test_bff_consol_skills_mcp_registry_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "tests/test_bff_emergency_containment.py",
@@ -2064,16 +2064,16 @@
     {
       "file": "tests/test_bff_management_data_sources_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "tests/test_bff_management_gap_003_contract_schema.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "tests/test_bff_me_locale.py",
