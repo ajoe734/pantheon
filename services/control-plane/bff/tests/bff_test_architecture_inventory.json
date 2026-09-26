@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 388,
+  "total_test_files": 389,
   "migrated_in_task_count": 32,
   "composition_allowlist": [
     "smoke_test.py",
@@ -99,7 +99,7 @@
     "application": 190,
     "composition": 18,
     "hosted": 12,
-    "router": 115
+    "router": 116
   },
   "main_by_layer": {
     "adapter": 0,
@@ -110,7 +110,7 @@
   },
   "disposition_summary": {
     "ALLOWLIST": 20,
-    "DECOUPLED": 314,
+    "DECOUPLED": 315,
     "MIGRATED": 45,
     "PLANNED": 9
   },
@@ -2739,6 +2739,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_review_queue_evidence_redaction.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-REVIEW-QUEUE-REDACTION-REPAIR-001 regression: exercises create_governance_router directly with the real models.redact_evidence_refs and auth.policy.capabilities_for_identity; never imports main"
     },
     {
       "file": "tests/test_runtime_router.py",
