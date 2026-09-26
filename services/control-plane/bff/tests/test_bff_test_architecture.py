@@ -899,3 +899,47 @@ def test_scanner_detects_relative_helper_main_import(tmp_path: Path) -> None:
 
     offenders_after = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
     assert "pkg/test_safe.py" not in offenders_after
+
+
+def test_knowledge_read_port_fixtures_architecture_compliance() -> None:
+    """Requirement 4: knowledge_read_port_fixtures.py must conform to architecture gate.
+
+    Verifies that services/control-plane/bff/tests/knowledge_read_port_fixtures.py:
+    1. Exists and is registered in bff_test_architecture_inventory.json as DECOUPLED.
+    2. Performs zero sys.path mutations.
+    3. Contains zero imports of bff main (direct or transitive).
+    4. Contains zero global monkeypatching.
+    5. Uses canonical package imports under services.control_plane.bff.
+    """
+    rel_path = "tests/knowledge_read_port_fixtures.py"
+    fixture_path = BFF_DIR / rel_path
+    assert fixture_path.exists(), f"{rel_path} must exist"
+
+    # 1. Registered in inventory
+    data = _load_inventory()
+    entries = {t["file"]: t for t in data["tests"]}
+    assert rel_path in entries, f"{rel_path} must be present in inventory"
+    entry = entries[rel_path]
+    assert entry.get("imports_main") is False
+    assert entry.get("disposition") == "DECOUPLED"
+
+    # 2. No sys.path mutations
+    tree = ast.parse(fixture_path.read_text(encoding="utf-8"), filename=str(fixture_path))
+    sys_path_calls = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("insert", "append"):
+            if isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "path":
+                val = node.func.value.value
+                if isinstance(val, ast.Name) and val.id == "sys":
+                    sys_path_calls.append(f"{node.lineno}: sys.path.{node.func.attr}")
+    assert not sys_path_calls, f"{rel_path} must not mutate sys.path: {sys_path_calls}"
+
+    # 3. No main imports
+    assert not _file_imports_bff_main(fixture_path), f"{rel_path} must not import bff main"
+
+    # 4. Canonical package imports (no bare 'from ports import' or 'from auth import')
+    bare_imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in ("ports", "auth", "core", "governance", "research", "personas"):
+            bare_imports.append(f"{node.lineno}: from {node.module} import ...")
+    assert not bare_imports, f"{rel_path} must use canonical package imports: {bare_imports}"

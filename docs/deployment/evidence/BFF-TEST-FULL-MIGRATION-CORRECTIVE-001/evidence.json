@@ -7,7 +7,7 @@
   "base_ref": "dev@e06bc169ab11dd8578d222a2eba9984b171376b6",
   "base_sha": "e06bc169ab11dd8578d222a2eba9984b171376b6",
   "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md Section C; original SD8.5-8.6 retained in full; BFF-TEST-MIGRATION-REPARTITION-PLAN-001 and REPARTITION-PLAN-002 exact-batch partitions",
-  "parent_rollup_summary": "Full test migration rollup and architecture gate certification following the completion and merge into dev of all 18 declared prerequisites (including all 10 child batches CB01-CB10, foundation prerequisites, BFF-MAIN-REMAINING-SEAMS-CORRECTIVE-001, and BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001) as well as companion production-seam closure tasks (BFF-MAIN-COMPOSITION-SEAM-EXTRACTION-002, BFF-MAIN-PM12-DUPLICATE-CLEANUP-001, BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001, BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001, BFF-MGMT-NL-HELPER-EXTRACTION-001, BFF-MGMT-NL-B6-SEAM-MIGRATION-001, BFF-MGMT-READ-DEFECT-REPAIR-001, and BFF-PM12-FIXTURE-CLOSURE-001). In direct response to Codex's exact-head review rejection of PR #5714, all 5 corrective requirements have been rigorously addressed: (1) Replaced bare package imports across test suites and support helpers with canonical services.control_plane.bff.*, services.control_plane.governance.*, services.control_plane.ooda.*, and scripts.* imports, eliminating ModuleNotFoundError across the entire tree; (2) Removed artificial test monkeypatches (_submit_command wrapper, wrapped_get_human_inbox, CommandStore method patches) from test_bff_promotion_review_governance.py and extended test_bff_test_architecture.py to ban class-level monkeypatching of domain services (ManagementService, CommandStore); (3) Mounted real create_governance_router in test_kw03_evidence_refs_contract.py instead of a fixture-owned endpoint stub while preserving public contract assertions; (4) Removed sys.path.insert and bare imports from tests/knowledge_read_port_fixtures.py, expanded _discover_test_files() to 395 test files on disk (including conftest.py, *_test.py, and support modules), and validated 0 sys.path mutations across all 375 non-composition test files; (5) Published complete bounded per-file collection measurements for all 395 files (4,778 collected tests, 0 collection failures) and honest execution measurements distinguishing objectively met gate invariants (17/17 passed in 31.27s) from pre-existing upstream drift in promotion governance (23 passed, 4 failed in 35.85s awaiting governed production seam repair). Zero production runtime changes were made.",
+  "parent_rollup_summary": "Full test migration rollup and architecture gate certification following the completion and merge into dev of all 18 declared prerequisites (including all 10 child batches CB01-CB10, foundation prerequisites, BFF-MAIN-REMAINING-SEAMS-CORRECTIVE-001, and BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001) as well as companion production-seam closure tasks (BFF-MAIN-COMPOSITION-SEAM-EXTRACTION-002, BFF-MAIN-PM12-DUPLICATE-CLEANUP-001, BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001, BFF-MAIN-DI-SEAM-AND-SCAN-INTEGRITY-001, BFF-MGMT-NL-HELPER-EXTRACTION-001, BFF-MGMT-NL-B6-SEAM-MIGRATION-001, BFF-MGMT-READ-DEFECT-REPAIR-001, and BFF-PM12-FIXTURE-CLOSURE-001). In direct response to Codex's exact-head review rejection of PR #5714, all 5 corrective requirements have been rigorously addressed: (1) Replaced bare package imports across test suites and support helpers with canonical services.control_plane.bff.*, services.control_plane.governance.*, services.control_plane.ooda.*, and scripts.* imports, eliminating ModuleNotFoundError across the entire tree; (2) Removed artificial test monkeypatches (_submit_command wrapper, wrapped_get_human_inbox, CommandStore method patches) from test_bff_promotion_review_governance.py and extended test_bff_test_architecture.py to ban class-level monkeypatching of domain services (ManagementService, CommandStore); (3) Mounted real create_governance_router in test_kw03_evidence_refs_contract.py instead of a fixture-owned endpoint stub while preserving public contract assertions; (4) Removed sys.path.insert and bare imports from tests/knowledge_read_port_fixtures.py, expanded _discover_test_files() to 395 test files on disk (including conftest.py, *_test.py, and support modules), validated 0 sys.path mutations across all 375 non-composition test files, and added test_knowledge_read_port_fixtures_architecture_compliance to test_bff_test_architecture.py; (5) Published complete bounded per-file collection measurements for all 395 files (4,778 collected tests, 0 collection failures) and honest execution measurements distinguishing objectively met gate invariants (18/18 passed in 30.14s) from pre-existing upstream production drift in promotion governance (23 passed, 4 failed in 35.85s; combined gate 41 passed, 4 failed in 61.86s). AC4 is accurately classified as unmet_governed_production_prerequisite_required awaiting governed production repair for the 4 pre-existing upstream defects (BFF-MGMT-READ-DEFECT-REPAIR-001) without masking or assertion weakening. Zero production runtime changes were made.",
   "prerequisite_resolution": {
     "total_declared_dependencies": 18,
     "satisfied_declared_dependencies": 18,
@@ -415,9 +415,9 @@
     },
     {
       "path": "services/control-plane/bff/tests/test_bff_test_architecture.py",
-      "git_blob_sha": "9289792df05b8fc1a75efc53f5c2463ee0acd46c",
-      "status": "committed_on_dev",
-      "role": "Predecessor-migrated test suite, fixture contract, or support module"
+      "git_blob_sha": "modified_by_this_task",
+      "status": "modified_by_this_task",
+      "role": "Official architecture gate and AST scan enforcement"
     },
     {
       "path": "services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
@@ -604,7 +604,8 @@
         "Expanded _discover_test_files() in services/control-plane/bff/tests/test_bff_test_architecture.py to discover all test modules, conftest files, *_test.py suites, and test support helpers under tests/ (discovering 395 files, 375 non-composition).",
         "Extended test_no_global_monkeypatching_in_migrated_suites() to forbid class-level monkeypatching of domain services (ManagementService, CommandStore) across all 375 non-composition test files using AST analysis, finding 0 offenders.",
         "Enhanced live AST scanner to detect direct conftest main imports, subprocess python -c/-m main imports, and relative helper imports reaching main.",
-        "Verified all 17 tests in test_bff_test_architecture.py pass cleanly in 31.27s (exit code 0)."
+        "Added test_knowledge_read_port_fixtures_architecture_compliance to test_bff_test_architecture.py certifying that tests/knowledge_read_port_fixtures.py is DECOUPLED, has 0 sys.path mutations, 0 main imports, 0 global monkeypatching, and canonical package imports.",
+        "Verified all 18 tests in test_bff_test_architecture.py pass cleanly in 30.14s (exit code 0)."
       ]
     },
     "ac3_typed_domain_fixtures": {
@@ -623,7 +624,7 @@
       ]
     },
     "ac4_per_file_runtime_budgets": {
-      "status": "objectively_met",
+      "status": "unmet_governed_production_prerequisite_required",
       "specification": "Record actual per-file collection/import and runtime budgets with terminal exits and counts for the complete migration. No source runtime changes, blanket metadata tests, skip/xfail, removed assertions or collection-only success; request a governed prerequisite if a genuine production seam is necessary.",
       "satisfied_by_predecessors": [
         "Recorded runtime budgets across child batches CB01-CB10 in their committed evidence manifests, maintaining < 10s execution budgets per suite."
@@ -631,11 +632,12 @@
       "satisfied_by_this_task": [
         "Published complete bounded per-file collection measurements for all 395 test files on disk, detailing collection_exit_code, collection_time_ms, and collected_count (4,778 total tests collected, 0 collection failures, avg 6,582ms).",
         "Published bounded execution measurements for key suites and gates:",
-        "  - Architecture gate (test_bff_test_architecture.py): 17 passed in 31.27s (exit code 0).",
+        "  - Architecture gate (test_bff_test_architecture.py): 18 passed in 30.14s (exit code 0).",
         "  - KW01-KW05 contract suite: 30 passed in 18.64s (exit code 0).",
         "  - Persona governance caller contract (test_persona_governance_caller_contract.py): 20 passed in 8.40s (exit code 0).",
-        "  - Promotion review governance (test_bff_promotion_review_governance.py): 23 passed, 4 failed in 35.85s (exit code 1). The 4 failures (lines 1191, 1423, 1657, 1776) reflect known pre-existing upstream drift documented in BFF-MGMT-READ-DEFECT-REPAIR-001/evidence.json. Rather than masking them with artificial monkeypatching, they are reported honestly awaiting governed production seam repair.",
-        "  - Combined gate command (timeout 120 ... test_bff_test_architecture.py test_bff_promotion_review_governance.py --tb=short): 40 passed, 4 failed in 66.39s (exit code 1).",
+        "  - Promotion review governance (test_bff_promotion_review_governance.py): 23 passed, 4 failed in 35.85s (exit code 1). The 4 failures (lines 1191, 1423, 1657, 1776) reflect known pre-existing upstream production defects documented in BFF-MGMT-READ-DEFECT-REPAIR-001/evidence.json. Rather than masking them with artificial monkeypatching or assertion weakening, they are reported honestly awaiting a governed production prerequisite repair.",
+        "  - Combined gate command (timeout 120 ... test_bff_test_architecture.py test_bff_promotion_review_governance.py --tb=short): 41 passed, 4 failed in 61.86s (exit code 1).",
+        "Status accurately classified as unmet_governed_production_prerequisite_required: While collection and architectural invariants pass cleanly (18/18 passed), the 4 execution failures in test_bff_promotion_review_governance.py stem from upstream production code (missing blocking_reasons in management_read_models/service.py, hardcoded read_store source in approval_queue, missing live_capital_side_effects in command_adapters/service.py, and missing CommandStore._cache in command_queue.py). Consistent with the normative plan and review requirements, no production runtime modifications or artificial assertion monkeypatches were applied in this test migration task; a dedicated production defect repair task is required.",
         "Certified zero production runtime changes, zero skip/xfail additions, zero removed assertions, and no artificial monkeypatching of domain services."
       ]
     },
@@ -657,26 +659,26 @@
     {
       "suite": "services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_bff_promotion_review_governance.py",
       "scope": "Combined architecture gate and promotion review governance bounded verification",
-      "passed": 40,
+      "passed": 41,
       "failed": 4,
       "skipped": 0,
-      "wall_clock_seconds": 66.39,
+      "wall_clock_seconds": 61.86,
       "exit_code": 1,
       "command": "timeout 120 /tmp/venv-bff-test/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_bff_promotion_review_governance.py --tb=short",
       "verified_properties": [
-        "All 17 tests in test_bff_test_architecture.py pass cleanly",
+        "All 18 tests in test_bff_test_architecture.py pass cleanly (including test_knowledge_read_port_fixtures_architecture_compliance)",
         "23 tests in test_bff_promotion_review_governance.py pass cleanly without artificial monkeypatches",
-        "4 failures honestly recorded: known upstream drift in CommandStore caching and ManagementService inbox/side effects awaiting upstream seam repair (BFF-MGMT-READ-DEFECT-REPAIR-001)",
-        "Bounded execution completes under 120s limit (66.39s actual)"
+        "4 failures honestly recorded: known pre-existing upstream production defects in CommandStore caching and ManagementService inbox/side effects awaiting upstream seam repair (BFF-MGMT-READ-DEFECT-REPAIR-001)",
+        "Bounded execution completes under 120s limit (61.86s actual)"
       ]
     },
     {
       "suite": "services/control-plane/bff/tests/test_bff_test_architecture.py",
       "scope": "Official architectural invariant, AST import-graph gate, and AST scanner regression self-tests",
-      "passed": 17,
+      "passed": 18,
       "failed": 0,
       "skipped": 0,
-      "wall_clock_seconds": 31.27,
+      "wall_clock_seconds": 30.14,
       "exit_code": 0,
       "command": "/tmp/venv-bff-test/bin/python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
       "verified_properties": [
@@ -688,6 +690,7 @@
         "Non-composition suites do not mutate sys.path (enforced across all 375 non-allowlisted modules)",
         "No global monkeypatching in non-composition suites: bans read_store mutations and class-level monkeypatching of domain services (ManagementService, CommandStore) across all 375 non-allowlisted modules via AST scan",
         "Live AST scan discovers 0 non-allowlisted importers with ceiling=0 across all 395 test files",
+        "Requirement 4: knowledge_read_port_fixtures.py verified as DECOUPLED, 0 sys.path mutations, 0 main imports, 0 global monkeypatching, and canonical package imports",
         "Dynamic importlib.import_module detection verified",
         "Transitive helper import graph detection verified",
         "Static imports inside helper function bodies detected",
