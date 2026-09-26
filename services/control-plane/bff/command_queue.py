@@ -24,6 +24,14 @@ class CommandStore:
         self.lock_path = f"{os.path.abspath(self.file_path)}.lock"
         self._thread_lock = threading.RLock()
         self._local = threading.local()
+        # Lazily populated on first read and re-read from disk on every
+        # call while the file exists, so concurrent CommandStore instances
+        # on the same file never see stale data. A missing file always
+        # resets the cache to empty rather than serving a prior in-memory
+        # snapshot -- serving that snapshot would let one instance
+        # resurrect or overwrite a command another instance already
+        # completed once the file disappears.
+        self._cache: Optional[List[Dict[str, Any]]] = None
         parent = os.path.dirname(os.path.abspath(self.file_path))
         os.makedirs(parent, exist_ok=True)
         # Initialize the file if it doesn't exist
@@ -65,11 +73,14 @@ class CommandStore:
                 f.write(json.dumps(command, ensure_ascii=False) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
+            if self._cache is not None:
+                self._cache.append(command)
 
     def _get_all_commands(self) -> List[Dict[str, Any]]:
         with self.serialized_transaction():
             if not os.path.exists(self.file_path):
-                return []
+                self._cache = []
+                return self._cache
             commands = []
             with open(self.file_path, "r", encoding="utf-8") as f:
                 for line in f:
@@ -79,7 +90,8 @@ class CommandStore:
                             commands.append(json.loads(line_str))
                         except json.JSONDecodeError:
                             continue
-            return commands
+            self._cache = commands
+            return self._cache
 
     def _update_commands(self, commands: List[Dict[str, Any]]):
         with self.serialized_transaction():
