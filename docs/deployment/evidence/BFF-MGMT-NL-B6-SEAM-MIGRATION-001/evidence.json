@@ -140,6 +140,16 @@
       "root_cause": "Pre-existing main.py dead-code and lambda-read_store-seam debt unrelated to this task's scoped seams. This delivery's main.py edits only remove code; it introduces zero new lambda read_store seams (the 2 flagged lines pre-date this task and are untouched by this diff)."
     }
   },
+  "review_rejection_fix_pr5979": {
+    "defect": "services/control-plane/bff/command_adapters/service.py used sys.modules.get(...) at 3 call sites (originally reported at lines 1894 and 1944) without importing the sys module, raising NameError: name 'sys' is not defined inside process_command during background command execution.",
+    "reviewer_finding": "Independent review of PR #5979 rejected the delivery: Branch CI Gate job 'Smoke acceptance' failed with 11 errors in `python3 -m services.control_plane.bff.smoke_test`, reproduced identically in local verification.",
+    "fix": "Added `import sys` to the module's import block (alongside the existing `os`/`re`/`uuid` imports); no other change to command_adapters/service.py.",
+    "verification": [
+      {"command": "python3 -m services.control_plane.bff.smoke_test", "result": "Ran 26 tests in 1.105s, OK (0 errors, 0 failures)"},
+      {"command": "pytest -q test_management_nl_assistant_provider.py test_bff_b6_001_security_hardening.py migrations/test_overlay_retirement.py test_main_composition_seam_extraction_002.py test_main_composition_seam_extraction_003.py test_main_composition_seam_extraction_006.py test_bff_test_architecture.py", "result": "164 passed, 3 skipped (unchanged from prior evidence run; skips are the same pre-existing real-Postgres-only fixtures)"},
+      {"command": "pytest -q test_bff_rebalance_proposals.py (isolated)", "result": "33 failed, 7 passed -- identical failing test names to the previously documented pre_existing_unrelated_failures baseline (CapitalBffAuthorityHarness /bff/capital-pools environment gap, reproduces on unmodified dev tip 3810a740d); unaffected by the sys-import fix and out of this task's scope"}
+    ]
+  },
   "delivery": {
     "branch": "task/BFF-MGMT-NL-B6-SEAM-MIGRATION-001",
     "fork_point_from_dev": "64b59ea46daae61e2946e4fbda24be25da78a4a7",
@@ -147,6 +157,7 @@
     "first_delivery_commit": "9616d620f5494d75214c60336b5570c7b28b469c",
     "merge_with_dev_commit": "d08b51074f307ee4feb9176fcd17c57ae896727c",
     "dev_tip_merged_from": "3810a740dfd3f027c20deccc772619c39a99bd00",
+    "review_rejection_fix_note": "The sys-import fix (services/control-plane/bff/command_adapters/service.py) and this evidence update are committed together as this delivery's fresh exact-head commit for the reopened PR #5979 review.",
     "note": "PR number, exact final head SHA, and CI run links are filled in at handoff time per task-closeout-finalization.md; this manifest is committed at the exact PR head before handoff."
   }
 }
