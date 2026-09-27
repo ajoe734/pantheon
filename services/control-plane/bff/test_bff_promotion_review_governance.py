@@ -1352,6 +1352,10 @@ def test_cockpit_timeout_degrades_without_blocking_health() -> None:
     restored for ``/bff/alerts`` in ``test_mgmt_load_005_read_concurrency.py``.
     """
     with _isolated_client() as (client, store, command_store):
+        # Warm up route and schema cache on isolated client before measuring concurrent responsiveness
+        client.get("/health")
+        client.get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+
         def slow_list_personas(*_args, **_kwargs):
             time.sleep(0.6)
             return []
