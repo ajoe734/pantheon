@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "SIMPLIFY-EXTRACTION-CONTRACT-FOUNDATION-001",
-  "base_ref": "dev@b8a6e90c66d3b8fee223dd4bf160dd55e22cbea4",
+  "base_ref": "dev@b467338ef848836c8e28376ab7a8c0cb616fae87",
   "depends_on": "SIMPLIFY-OPENCLAW-001 (done, satisfied), AGORA-CHAIN-001 (done, satisfied)",
   "normative_plan": ".orchestrator/worker-runtime/task-context/simplify-extraction-contract-foundation-001.md (Constituent slice of SIMPLIFY-EXTRACTION-001; approved 2026-09-27 dependency audit at /tmp/pantheon-dependency-audit-20260927/REPORT.zh-TW.md)",
   "results": {
