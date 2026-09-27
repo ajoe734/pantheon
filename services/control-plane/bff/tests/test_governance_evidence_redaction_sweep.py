@@ -28,6 +28,10 @@ from services.control_plane.bff.models import redact_evidence_refs, utc_now
 
 LOW_CAPABILITY_TOKEN = "Bearer op-sweep-1:operator"
 FULL_CAPABILITY_TOKEN = "Bearer admin-sweep-1:admin"
+# The "reviewer" role lacks artifact.read and risk.incident.read (unlike
+# "operator", which holds both) -- it is the low-capability identity that
+# actually exercises redaction on consult-request context_refs.
+CONTEXT_REF_LOW_CAPABILITY_TOKEN = "Bearer reviewer-sweep-1:reviewer"
 
 _ALERT_REF = {"ref_id": "ref-alert-ev", "type": "alert"}
 _METRIC_REF = {"ref_id": "ref-metric-ev", "type": "metric"}
@@ -101,6 +105,32 @@ _TRANSCRIPT_1: Dict[str, Any] = {
         {"event_id": "ev-2", "sequence_no": 2, "evidence_refs": []},
     ],
 }
+_CONSULT_REQUEST_1: Dict[str, Any] = {
+    "request_id": "consult-req-1",
+    "status": "draft",
+    "from_persona_id": "persona-1",
+    "target_type": "strategy",
+    "target_ref": "strategy-1",
+    "task": "Review pre-deployment risk posture",
+    "context_refs": [
+        {"type": "artifact", "id": "consult-artifact-1"},
+        {"type": "incident", "id": "consult-incident-1"},
+    ],
+    "priority": "high",
+    "consultation_type": "pre_deployment",
+    "created_at": "2026-08-30T12:00:00Z",
+    "completed_at": None,
+    "canceled_at": None,
+    "linked_session_id": None,
+    "request_to_session_status": "pending_session",
+    "session_handoff": {
+        "status": "pending_session",
+        "linked_session_id": None,
+        "session_route_href": None,
+        "note": "",
+    },
+    "allowedActions": {"canCancel": True},
+}
 
 
 class _SweepStore:
@@ -162,6 +192,9 @@ class _SweepStore:
 
     def get_consult_transcript(self, session_id: str, **_: Any) -> Optional[Dict[str, Any]]:
         return copy.deepcopy(_TRANSCRIPT_1) if session_id == "session-1" else None
+
+    def get_consult_request(self, request_id: str) -> Optional[Dict[str, Any]]:
+        return copy.deepcopy(_CONSULT_REQUEST_1) if request_id == "consult-req-1" else None
 
 
 def _build_app(
@@ -743,3 +776,54 @@ def test_consultation_participants_fail_closed_when_capabilities_unresolvable() 
         assert len(refs) == 3
         assert all(ref["redacted"] is True for ref in refs)
         assert payload["meta"]["supporting_counts"]["redacted_evidence_count"] == 3
+
+
+# --- Consult request detail (context_refs) ----------------------------------
+
+
+def test_get_consult_request_redacts_context_refs_for_low_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/consult/requests/consult-req-1",
+            headers={"Authorization": CONTEXT_REF_LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        refs = payload["context_refs"]
+        assert len(refs) == 2
+        # "reviewer" role lacks both artifact.read and risk.incident.read.
+        _assert_redacted(refs[0], ref_id="consult-artifact-1", required_capability="artifact.read")
+        _assert_redacted(refs[1], ref_id="consult-incident-1", required_capability="risk.incident.read")
+        assert payload["meta"]["redacted_evidence_count"] == 2
+
+
+def test_get_consult_request_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/consult/requests/consult-req-1",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["context_refs"] == _CONSULT_REQUEST_1["context_refs"]
+        assert payload["meta"]["redacted_evidence_count"] == 0
+
+
+def test_get_consult_request_fails_closed_when_capabilities_unresolvable() -> None:
+    def _boom(identity: Any) -> List[str]:
+        raise RuntimeError("capability lookup unavailable")
+
+    with _stub_auth_env():
+        client = TestClient(_build_app(capabilities_for_identity=_boom))
+        response = client.get(
+            "/api/v1/consult/requests/consult-req-1",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        refs = payload["context_refs"]
+        assert len(refs) == 2
+        assert all(ref["redacted"] is True for ref in refs)
+        assert payload["meta"]["redacted_evidence_count"] == 2

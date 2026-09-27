@@ -523,7 +523,7 @@ def create_governance_router(
         request_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         snapshot_at = _now()
         record = _service().get_consult_request(request_id)
         surface = _surface(
@@ -540,18 +540,26 @@ def create_governance_router(
                     "Consult request read surface is unavailable",
                 )
             _not_found("Consult request", request_id)
+        record = dict(record)
+        raw_context_refs = list(record.get("context_refs") or [])
+        total_redacted = 0
+        if raw_context_refs:
+            redacted_refs, total_redacted = _safe_redact(identity, raw_context_refs)
+            record["context_refs"] = redacted_refs
+        meta = _read_meta(
+            "consult_requests",
+            "consult_request_detail",
+            snapshot_at=snapshot_at,
+            surface=surface,
+        )
+        meta["redacted_evidence_count"] = total_redacted
         return {
             **record,
             "links": {
                 "self": f"/api/v1/consult/requests/{request_id}",
                 "workbench_detail": f"/consultation/requests/{request_id}",
             },
-            "meta": _read_meta(
-                "consult_requests",
-                "consult_request_detail",
-                snapshot_at=snapshot_at,
-                surface=surface,
-            ),
+            "meta": meta,
         }
 
     @router.post("/api/v1/consult/requests/{request_id}/cancel")
