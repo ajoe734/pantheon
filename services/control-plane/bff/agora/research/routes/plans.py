@@ -1,8 +1,12 @@
-"""Agora research plans subrouter."""
+"""Agora research plans subrouter.
+
+Part of BFF-ROUTER-USECASE-CORRECTIVE-001.
+Handlers only perform request parsing, auth invocation, DTO translation, and status mapping.
+All store access and business branching are delegated to ctx.service.
+"""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-import uuid
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Header, Query, Response
 
@@ -13,7 +17,6 @@ from .common import (
     _plan_detail_envelope,
     _plan_etag,
     _validate_create_body,
-    _build_plan,
 )
 
 
@@ -32,11 +35,7 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
         limit: int = Query(default=20, ge=1, le=100),
     ) -> Dict[str, Any]:
         scope = ctx.read_scope(authorization, x_tenant_id)
-        plans = ctx.store.list_plans_for_workshop(
-            workshop_id,
-            tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
-        )
+        plans = ctx.service.list_workshop_plans(workshop_id, scope=scope)
         return {
             "items": plans,
             "page_info": {
@@ -76,32 +75,12 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
             idempotency_key,  # type: ignore[arg-type]
         )
         _validate_create_body(body, workshop_id, ctx.bff_error, ctx.error_code_enum)
-        now = ctx.utc_now()
-        plan_id = str(uuid.uuid4())
-        plan = _build_plan(
-            body,
+        plan = ctx.service.create_workshop_plan(
             workshop_id,
-            plan_id,
-            now,
-            scope,
-            workshop_store=ctx.workshop_store,
+            body,
+            scope=scope,
             trace_id=x_trace_id,
             correlation_id=x_correlation_id,
-        )
-        plan = ctx.store.create_plan(plan)
-        ctx.store.record_audit_action({
-            "action_type": "research_plan.create",
-            "tenant_id": scope.tenant_id,
-            "user_id": scope.user_id,
-            "subject_type": "research_plan",
-            "subject_id": plan_id,
-            "workshop_id": workshop_id,
-            "payload": {"status": plan["status"]},
-        })
-        ctx.publish_research_event(
-            workshop_id,
-            "research.plan.created",
-            {"plan_id": plan_id, "status": plan["status"]},
         )
         envelope = _plan_detail_envelope(plan, ctx.utc_now, scope)
         if response is not None:
@@ -146,48 +125,11 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
             f"POST:/bff/agora/research-plans/{plan_id}/approve",
             idempotency_key,  # type: ignore[arg-type]
         )
-        plan = ctx.get_plan_or_404(plan_id, scope)
-        ctx.check_plan_if_match(plan, if_match)  # type: ignore[arg-type]
-        if plan["status"] != "draft":
-            ErrorCode = ctx.error_code_enum()
-            raise ctx.bff_error(
-                409, ErrorCode.RESOURCE_CONFLICT,
-                f"Plan cannot be approved from status '{plan['status']}'",
-                f"expected status 'draft', got '{plan['status']}'",
-            )
-        now = ctx.utc_now()
-        ctx.store.update_plan(
-            plan_id,
-            {
-                "status": "approved",
-                "approved_at": now,
-                "approval": {
-                    "state": "approved",
-                    "decided_by": scope.user_id,
-                    "decided_at": now,
-                },
-                "lock_version": plan.get("lock_version", 1) + 1,
-                "updated_at": now,
-            },
-            tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
-        )
-        ctx.store.record_audit_action({
-            "action_type": "research_plan.approve",
-            "tenant_id": scope.tenant_id,
-            "user_id": scope.user_id,
-            "subject_type": "research_plan",
-            "subject_id": plan_id,
-            "payload": {"status": "approved"},
-        })
-        ctx.publish_research_event(
-            plan.get("workshop_id", ""),
-            "research.plan.approved",
-            {"plan_id": plan_id, "status": "approved"},
-        )
-        etag = _plan_etag(plan_id, plan.get("lock_version", 1) + 1)
+        res = ctx.service.approve_plan(plan_id, scope=scope, if_match=if_match)
+        etag = _plan_etag(plan_id, res["lock_version"])
         if response is not None:
             response.headers["ETag"] = etag
+        now = ctx.utc_now()
         return {
             "status": "completed",
             "data": {"plan_id": plan_id, "status": "approved"},
@@ -219,40 +161,8 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
             f"POST:/bff/agora/research-plans/{plan_id}/cancel",
             idempotency_key,  # type: ignore[arg-type]
         )
-        plan = ctx.get_plan_or_404(plan_id, scope)
-        ctx.check_plan_if_match(plan, if_match)  # type: ignore[arg-type]
-        cancellable = {"draft", "approved", "running"}
-        if plan["status"] not in cancellable:
-            ErrorCode = ctx.error_code_enum()
-            raise ctx.bff_error(
-                409, ErrorCode.RESOURCE_CONFLICT,
-                f"Plan in status '{plan['status']}' cannot be cancelled",
-                f"cancellable statuses: {sorted(cancellable)}",
-            )
+        ctx.service.cancel_plan(plan_id, scope=scope, if_match=if_match)
         now = ctx.utc_now()
-        ctx.store.update_plan(
-            plan_id,
-            {
-                "status": "cancelled",
-                "lock_version": plan.get("lock_version", 1) + 1,
-                "updated_at": now,
-            },
-            tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
-        )
-        ctx.store.record_audit_action({
-            "action_type": "research_plan.cancel",
-            "tenant_id": scope.tenant_id,
-            "user_id": scope.user_id,
-            "subject_type": "research_plan",
-            "subject_id": plan_id,
-            "payload": {"status": "cancelled"},
-        })
-        ctx.publish_research_event(
-            plan.get("workshop_id", ""),
-            "research.plan.cancelled",
-            {"plan_id": plan_id, "status": "cancelled"},
-        )
         return {
             "status": "completed",
             "data": {"plan_id": plan_id, "status": "cancelled"},
@@ -262,6 +172,5 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
                 "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
             },
         }
-
 
     return router

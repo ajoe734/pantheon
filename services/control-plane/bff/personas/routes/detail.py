@@ -11,7 +11,6 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query
 from services.control_plane.bff.models import ErrorCode
 from ..service import (
     _PERSONA_PATCH_SERVER_MANAGED_FIELDS,
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY,
     _bff_me_tenant_payload,
     _composed_surface_status,
     _ensure_persona_exists,
@@ -20,17 +19,12 @@ from ..service import (
     _list_governance_audit_events,
     _merged_skill_records,
     _merged_tool_records,
-    _normalize_risk_level,
-    _openclaw_agent_reconcile_request,
     _persona_provisioning_store,
     _persona_record_for_provisioning,
-    _persona_record_tenant_id,
     _project_persona_dto,
     _project_persona_fleet_item,
     _retrieve_canonical_persona_memory,
     _routed_strategies_for_persona,
-    _stable_json_hash,
-    _strategy_persona_idempotency_check,
     build_persona_runtime_profile,
     deterministic_provisioning_ids,
 )
@@ -42,8 +36,6 @@ log = logging.getLogger(__name__)
 def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
     router = APIRouter(tags=["personas"], dependencies=[make_context_dependency(ctx)])
 
-    read_store = ctx.read_store
-    command_store = ctx.command_store
     _service = ctx.service
     _extract_identity = ctx.extract_identity
     _require_read_role = ctx.require_read_role
@@ -66,7 +58,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
         snapshot_at = utc_now()
         persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-        persona = read_store.get_persona(persona_id)
+        persona = _service.get_persona(persona_id)
         if not persona:
             _raise_if_read_surface_unavailable(persona_surface, label="Persona")
             raise _bff_error(
@@ -76,7 +68,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 f"Persona {persona_id} does not exist",
             )
 
-        bindings = read_store.get_bindings_for_persona(persona_id) or []
+        bindings = _service.get_bindings_for_persona(persona_id) or []
         payload = dict(persona)
         payload["bindings"] = bindings
 
@@ -101,7 +93,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
         snapshot_at = utc_now()
         persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-        persona = read_store.get_persona(persona_id)
+        persona = _service.get_persona(persona_id)
         if not persona:
             _raise_if_read_surface_unavailable(persona_surface, label="Persona")
             raise _bff_error(
@@ -112,7 +104,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             )
 
         capability_surface = _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at)
-        snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+        snapshot = _service.get_capability_snapshot_for_persona(persona_id)
         if not snapshot:
             _raise_if_read_surface_unavailable(capability_surface, label="Capability snapshot")
             raise _bff_error(
@@ -148,7 +140,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
 
         # PS-02: Persona detail
-        persona = read_store.get_persona(persona_id)
+        persona = _service.get_persona(persona_id)
         if not persona:
             raise _bff_error(
                 404,
@@ -161,7 +153,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         surfaces = {}
 
         # PS-02: Persona bindings (bindings where this persona is the owner)
-        persona_bindings = read_store.get_bindings_for_persona(persona_id)
+        persona_bindings = _service.get_bindings_for_persona(persona_id)
         persona_bindings_available = persona_bindings is not None
         if persona_bindings is None:
             persona_bindings = []
@@ -176,7 +168,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         enriched_bindings = []
         for binding in persona_bindings:
             binding_detail = dict(binding)
-            pool = read_store.get_capital_pool(binding.get("capital_pool_id"))
+            pool = _service.get_capital_pool(binding.get("capital_pool_id"))
             if pool:
                 binding_detail["capital_pool"] = pool
             enriched_bindings.append(binding_detail)
@@ -193,7 +185,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             surfaces["capital_pool_bindings"] = capital_pool_surface
 
         # PS-03: Active sessions for this persona
-        sessions = read_store.get_sessions_for_persona(persona_id)
+        sessions = _service.get_sessions_for_persona(persona_id)
         sessions_available = sessions is not None
         if sessions is None:
             sessions = []
@@ -205,7 +197,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         )
 
         # PS-05: Teaching sessions for this persona
-        teaching_sessions = read_store.get_teaching_sessions_for_persona(persona_id)
+        teaching_sessions = _service.get_teaching_sessions_for_persona(persona_id)
         teaching_sessions_available = teaching_sessions is not None
         if teaching_sessions is None:
             teaching_sessions = []
@@ -217,7 +209,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         )
 
         # Backend-shaped allowed actions (acceptance: backend_shaped_persona_actions)
-        allowed_actions = read_store.get_persona_allowed_actions(persona_id)
+        allowed_actions = _service.get_persona_allowed_actions(persona_id)
         allowed_actions_available = allowed_actions is not None
         if allowed_actions is None:
             allowed_actions = {}
@@ -239,9 +231,9 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         try:
             fleet_item = _project_persona_fleet_item(
                 persona,
-                all_runtime_bindings=list(read_store.list_runtime_bindings() or []),
-                all_incidents=list(read_store.list_incidents() or []),
-                all_evolution_decisions=list(read_store.list_evolution_decisions() or []),
+                all_runtime_bindings=_service.list_runtime_bindings(),
+                all_incidents=_service.list_incidents(),
+                all_evolution_decisions=_service.list_evolution_decisions(),
             )
         except Exception:  # pragma: no cover - defensive: never break detail page
             fleet_item = None
@@ -272,7 +264,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         deployment_plans_for_persona: List[Dict[str, Any]] = []
         approvals_for_persona: List[Dict[str, Any]] = []
         try:
-            all_plans = read_store.list_deployment_plans() or []
+            all_plans = _service.list_deployment_plans()
             deployment_plans_for_persona = [
                 plan for plan in all_plans
                 if persona_binding_ids & {
@@ -285,7 +277,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 for plan in deployment_plans_for_persona
                 if str(plan.get("id") or plan.get("plan_id") or "").strip()
             }
-            all_approvals = read_store.list_approval_decisions() or []
+            all_approvals = _service.list_approval_decisions()
             approvals_for_persona = [
                 decision for decision in all_approvals
                 if str(decision.get("target_id") or decision.get("plan_id") or "") in plan_ids
@@ -376,7 +368,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 routed_strategies=_routed_strategies_for_persona(persona_id),
             )
         )
-        containment = read_store.get_persona_containment(persona_id)
+        containment = _service.get_persona_containment(persona_id)
         if containment:
             containment_state = str(containment.get("containment_state") or "frozen")
             dto["containment_state"] = containment_state
@@ -421,124 +413,14 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 precondition_failed=managed_fields[0],
                 suggestion="Use the governed Persona action or promotion workflow.",
             )
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        raw = read_store.get_persona(persona_id)
-        if not raw:
-            directory = _get_persona_directory_snapshot(caller_tenant)
-            raw = directory.records_by_id.get(persona_id)
-        raw_tenant = _persona_record_tenant_id(raw) if raw else ""
-        if raw and (not raw_tenant or raw_tenant != caller_tenant):
-            raw = None
-        if not raw:
-            raise _bff_error(
-                404, ErrorCode.RESOURCE_NOT_FOUND,
-                "Persona not found",
-                f"Persona {persona_id} does not exist",
-            )
-        cache_key = ":".join(
-            ("persona-patch", caller_tenant, identity.operator_id, resolved_key)
+        return _service.patch_persona(
+            persona_id=persona_id,
+            payload=payload,
+            identity=identity,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
         )
-        request_hash = _stable_json_hash(
-            {
-                "route": "PATCH /bff/personas/{persona_id}",
-                "tenant_id": caller_tenant,
-                "operator_id": identity.operator_id,
-                "id": persona_id,
-                "payload": payload,
-            }
-        )
-        cached = _strategy_persona_idempotency_check(cache_key, request_hash)
-        if cached is not None:
-            return cached
-        snapshot_at = utc_now()
-        routed = _routed_strategies_for_persona(persona_id)
-        base = _project_persona_dto(raw or {"persona_id": persona_id}, routed_strategies=routed)
-        for field in (
-            "name", "risk",
-            "archetype", "routedStrategies", "successRate",
-        ):
-            if field in payload:
-                base[field] = payload[field]
-        if "risk" in payload:
-            base["risk"] = _normalize_risk_level(payload["risk"])
-        base["updatedAt"] = snapshot_at
-        base["id"] = persona_id
-        base["tenantId"] = caller_tenant
-        existing_metadata = dict(raw.get("metadata") if isinstance(raw, dict) and isinstance(raw.get("metadata"), dict) else {})
-        canonical_lifecycle = str(
-            (raw or {}).get("lifecycle_state")
-            or (raw or {}).get("state")
-            or "draft"
-        )
-        update_metadata: Dict[str, Any] = {
-            "success_rate": float(base.get("successRate") or 0.0),
-        }
-        update_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
-            {
-                "id": persona_id,
-                "persona_id": persona_id,
-                "name": str(base.get("name") or persona_id),
-                "mandate": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
-                "strategy_family": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
-                "lifecycle_state": canonical_lifecycle,
-                "metadata": {
-                    **existing_metadata,
-                    **update_metadata,
-                    "owner": str(existing_metadata.get("owner") or identity.operator_id),
-                    "archetype": str(base.get("archetype") or "generalist"),
-                    "risk_level": str(base.get("risk") or "low"),
-                },
-            },
-            reason="persona_updated",
-        )
-        updater = getattr(ctx.write_owner, "update_persona", None) if hasattr(ctx, "write_owner") and ctx.write_owner is not None else None
-        if updater is None or not callable(updater):
-            raise _bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Persona write owner unavailable",
-                "Cannot mutate persona: canonical write owner is not configured or unavailable",
-                precondition_failed="persona_write_owner_unavailable",
-                suggestion="Check persona registry service availability or configure write_owner.",
-            )
-        persona_record = updater(
-            persona_id,
-            name=str(base.get("name") or persona_id),
-            actor_id=str(existing_metadata.get("owner") or identity.operator_id),
-            updated_at=snapshot_at,
-            archetype=str(base.get("archetype") or "generalist"),
-            # Lifecycle is controller-owned.  Omitting it makes update_persona
-            # re-read and preserve the latest canonical value, avoiding a stale
-            # overlay racing paper_running/provisioning_failed reconciliation.
-            lifecycle_state=None,
-            risk_level=str(base.get("risk") or "low"),
-            metadata=update_metadata,
-        )
-        if persona_record is None:
-            raise _bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Persona update failed",
-                f"Failed to persist update for persona {persona_id} in canonical write owner",
-                precondition_failed="persona_update_persistence_failed",
-            )
-        routed = _routed_strategies_for_persona(persona_id)
-        base = _project_persona_dto(
-            persona_record,
-            overlay={
-                "routedStrategies": int(base.get("routedStrategies") or routed),
-                "successRate": float(base.get("successRate") or 0.0),
-                "tenantId": caller_tenant,
-            },
-            routed_strategies=routed,
-        )
-        result = {"data": deepcopy(base), "meta": {"snapshot_at": snapshot_at}}
-        _STRATEGY_PERSONA_BFF_IDEMPOTENCY[cache_key] = {
-            "request_hash": request_hash,
-            "result": deepcopy(result),
-        }
-        return result
+
 
 
     @router.get("/bff/personas/{persona_id}/route-policy")
@@ -551,15 +433,9 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         _ensure_persona_exists(persona_id)
         snapshot_at = utc_now()
-        policy = None
-        fetcher = getattr(read_store, "get_route_policy_for_persona", None)
-        if callable(fetcher):
-            policy = fetcher(persona_id)
+        policy = _service.get_route_policy_for_persona(persona_id)
         if not policy:
-            consult_policy = None
-            consult_fetcher = getattr(read_store, "get_persona_consult_policy", None)
-            if callable(consult_fetcher):
-                consult_policy = consult_fetcher(persona_id)
+            consult_policy = _service.get_persona_consult_policy(persona_id)
             policy = {
                 "personaId": persona_id,
                 "version": "v1",
@@ -585,11 +461,8 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         _ensure_persona_exists(persona_id)
         snapshot_at = utc_now()
-        persona = read_store.get_persona(persona_id) or {"persona_id": persona_id}
-        route_policy = None
-        fetcher = getattr(read_store, "get_route_policy_for_persona", None)
-        if callable(fetcher):
-            route_policy = fetcher(persona_id)
+        persona = _service.get_persona(persona_id) or {"persona_id": persona_id}
+        route_policy = _service.get_route_policy_for_persona(persona_id)
         try:
             profile = build_persona_runtime_profile(
                 persona,
@@ -621,11 +494,8 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         _ensure_persona_exists(persona_id)
         snapshot_at = utc_now()
-        sessions = read_store.get_sessions_for_persona(persona_id) or []
-        consultations: List[Dict[str, Any]] = []
-        consult_fetcher = getattr(read_store, "list_consultations_for_persona", None)
-        if callable(consult_fetcher):
-            consultations = consult_fetcher(persona_id) or []
+        sessions = _service.get_sessions_for_persona(persona_id) or []
+        consultations: List[Dict[str, Any]] = _service.list_consultations_for_persona(persona_id) or []
         activity = {
             "personaId": persona_id,
             "sessions": sessions,
@@ -650,7 +520,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         _ensure_persona_exists(persona_id)
         snapshot_at = utc_now()
-        teaching = read_store.get_teaching_sessions_for_persona(persona_id) or []
+        teaching = _service.get_teaching_sessions_for_persona(persona_id) or []
         return {
             "data": teaching,
             "items": teaching,
@@ -721,7 +591,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         _ensure_persona_exists(persona_id)
         snapshot_at = utc_now()
-        snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+        snapshot = _service.get_capability_snapshot_for_persona(persona_id)
         effective_skill_ids = list((snapshot or {}).get("effective_skills") or [])
         all_skills = _merged_skill_records()
         skill_by_id: Dict[str, Dict[str, Any]] = {
@@ -758,7 +628,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         _ensure_persona_exists(persona_id)
         snapshot_at = utc_now()
-        snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+        snapshot = _service.get_capability_snapshot_for_persona(persona_id)
         effective_tool_ids = list((snapshot or {}).get("effective_tools") or [])
         all_tools = _merged_tool_records()
         tool_by_id: Dict[str, Dict[str, Any]] = {
@@ -795,7 +665,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         _ensure_persona_exists(persona_id)
         snapshot_at = utc_now()
-        snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+        snapshot = _service.get_capability_snapshot_for_persona(persona_id)
         data: Dict[str, Any] = {
             "personaId": persona_id,
             "effectiveSkills": (snapshot or {}).get("effective_skills") or [],

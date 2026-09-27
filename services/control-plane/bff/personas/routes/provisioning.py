@@ -18,10 +18,6 @@ from ..service import (
     _routed_strategies_for_persona,
 )
 from .common import PersonaRouteContext, make_context_dependency
-from ..reconciliation import (
-    PersonaProvisioningReconciliationMutationPort,
-    PersonaReconciliationMutationError,
-)
 
 log = logging.getLogger(__name__)
 
@@ -29,8 +25,6 @@ log = logging.getLogger(__name__)
 def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
     router = APIRouter(tags=["personas"], dependencies=[make_context_dependency(ctx)])
 
-    read_store = ctx.read_store
-    command_store = ctx.command_store
     _service = ctx.service
     _extract_identity = ctx.extract_identity
     _require_read_role = ctx.require_read_role
@@ -45,12 +39,6 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
     _reject_body_idempotency_key = ctx.reject_body_idempotency_key
     _resolve_final_idempotency_key = ctx.resolve_final_idempotency_key
 
-    mutation_port: Optional[PersonaProvisioningReconciliationMutationPort] = None
-    if ctx.write_owner is not None and hasattr(ctx.write_owner, "update_persona"):
-        mutation_port = PersonaProvisioningReconciliationMutationPort(
-            persona_mutation_port=ctx.write_owner,
-        )
-
     @router.post("/bff/personas/{persona_id}/provisioning/reconcile")
     async def bff_reconcile_persona_provisioning(
         persona_id: str,
@@ -62,7 +50,7 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_operator_role(identity)
         caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
         directory = _get_persona_directory_snapshot(caller_tenant)
-        raw = directory.records_by_id.get(persona_id) or read_store.get_persona(persona_id)
+        raw = directory.records_by_id.get(persona_id) or _service.get_persona(persona_id)
         if (
             raw is None
             or _persona_record_tenant_id(raw) != caller_tenant
@@ -80,14 +68,15 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
             raw,
             diagnostics=diagnostics,
         )
-        if state in ("paper_running", "provisioning_failed") and mutation_port is not None:
+        if state in ("paper_running", "provisioning_failed"):
             metadata = raw.get("metadata") or {}
-            mutation_port.persist_terminal_transition(
+            persisted = _service.persist_terminal_transition(
                 persona_id,
                 lifecycle_state=state,
                 metadata=metadata,
             )
-            raw.setdefault("metadata", {})["provisioning_reconciliation_state"] = state
+            if persisted:
+                raw.setdefault("metadata", {})["provisioning_reconciliation_state"] = state
         dto = _project_persona_dto(
             raw,
             overlay=None,
