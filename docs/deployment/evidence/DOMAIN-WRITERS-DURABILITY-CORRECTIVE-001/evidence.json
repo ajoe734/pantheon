@@ -160,7 +160,7 @@
       "services/control-plane/bff/runtime/router.py",
       "services/control-plane/bff/runtime/service.py",
       "services/control-plane/bff/tests/test_command_adapters_router.py",
-      "services/control-plane/bff/tests/test_domain_durability_corrective_p1.py",
+      "services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
       "docs/deployment/evidence/DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001/evidence.json"
     ],
     "artifact_scope_boundary": "core/app_factory.py is preserved byte-identical to base dev commit because core/app_factory.py falls outside this task's declared artifact contract. Capital and governance routers encapsulate their durable store and authority resolution entirely within their domain-scoped boundaries.",
@@ -170,7 +170,7 @@
   "verification": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_domain_durability_corrective_p1.py",
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
         "result": "8 passed, 3 warnings in 3.77s",
         "executed": 8,
         "collected": 8
@@ -182,7 +182,7 @@
         "collected": 5
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_domain_durability_corrective_p1.py",
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
         "result": "81 passed, 3 warnings in 46.28s",
         "executed": 81,
         "collected": 81
