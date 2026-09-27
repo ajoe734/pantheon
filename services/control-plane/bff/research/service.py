@@ -7,7 +7,6 @@ Institutional Memory, Conflict Logs, and Search away from HTTP route handlers.
 """
 from __future__ import annotations
 
-import inspect
 import json
 import logging
 import os
@@ -138,12 +137,6 @@ class ResearchRouterService:
     def _call_port(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         port = self._port()
         fn = getattr(port, method_name, None)
-        target = port
-        if not callable(fn):
-            delegate = getattr(port, "_active_delegate", None) or getattr(port, "research_knowledge_source", None)
-            if delegate is not None:
-                fn = getattr(delegate, method_name, None)
-                target = delegate
         if not callable(fn):
             self._raise_error(
                 503,
@@ -151,24 +144,6 @@ class ResearchRouterService:
                 f"Research store port missing {method_name}",
                 f"Port {type(port).__name__} does not implement {method_name}",
             )
-        if kwargs:
-            try:
-                sig = inspect.signature(fn)
-                has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
-                if has_var_keyword:
-                    for delegate_attr in ("_active_delegate", "research_knowledge_source"):
-                        delegate = getattr(target, delegate_attr, None)
-                        if delegate is not None and hasattr(delegate, method_name):
-                            delegate_method = getattr(delegate, method_name)
-                            delegate_sig = inspect.signature(delegate_method)
-                            if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in delegate_sig.parameters.values()):
-                                sig = delegate_sig
-                                has_var_keyword = False
-                                break
-                if not has_var_keyword:
-                    kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
-            except (ValueError, TypeError):
-                pass
         try:
             return fn(*args, **kwargs)
         except HTTPException:
@@ -220,9 +195,6 @@ class ResearchRouterService:
     ) -> str:
         port = self._port()
         source_fn = getattr(port, "dataset_source", None)
-        if not callable(source_fn):
-            delegate = getattr(port, "_active_delegate", None) or getattr(port, "research_knowledge_source", None)
-            source_fn = getattr(delegate, "dataset_source", None)
         source = str(source_fn(dataset) or "missing") if callable(source_fn) else "missing"
         if self.dataset_surface_status is not None:
             surface = self.dataset_surface_status(
@@ -266,9 +238,6 @@ class ResearchRouterService:
     def _surface(self, dataset: str, *, snapshot_at: str, has_data: bool) -> Dict[str, Any]:
         port = self._port()
         source_fn = getattr(port, "dataset_source", None)
-        if not callable(source_fn):
-            delegate = getattr(port, "_active_delegate", None) or getattr(port, "research_knowledge_source", None)
-            source_fn = getattr(delegate, "dataset_source", None)
         source = str(source_fn(dataset) or "missing") if callable(source_fn) else "missing"
         surface_fn = self.dataset_surface_status or getattr(port, "dataset_surface_status", None)
         if callable(surface_fn):
@@ -2071,9 +2040,6 @@ class ResearchRouterService:
     def _ticket_surface_state(self, *, snapshot_at: str, has_data: Optional[bool] = None) -> str:
         port = self._port()
         source_fn = getattr(port, "dataset_source", None)
-        if not callable(source_fn):
-            delegate = getattr(port, "_active_delegate", None) or getattr(port, "research_knowledge_source", None)
-            source_fn = getattr(delegate, "dataset_source", None)
         source = str(source_fn("research_tickets") or "missing") if callable(source_fn) else "missing"
         if self.dataset_surface_status is not None:
             surface = self.dataset_surface_status(
@@ -2143,9 +2109,6 @@ class ResearchRouterService:
         snap = snapshot_at or self.utc_now()
         port = self._port()
         source_fn = getattr(port, "dataset_source", None)
-        if not callable(source_fn):
-            delegate = getattr(port, "_active_delegate", None) or getattr(port, "research_knowledge_source", None)
-            source_fn = getattr(delegate, "dataset_source", None)
         source = str(source_fn("research_tickets") or "") if callable(source_fn) else ""
         if source == "local_snapshot":
             ticket = None

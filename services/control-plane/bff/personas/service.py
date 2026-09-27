@@ -14575,6 +14575,270 @@ class PersonaService:
         read_store = self.get_read_store()
         return read_store.list_teaching_sessions_for_persona(persona_id, status=status) or []
 
+    def submit_quarterly_ranking_recommendation(
+        self,
+        *,
+        route_review_id: str,
+        recommendation_id: str,
+        payload: Dict[str, Any],
+        identity: Any,
+        idempotency_key: Optional[str],
+        x_idempotency_key: Optional[str],
+        snapshot_at: str,
+        bff_error: Any,
+        snapshot_meta: Any,
+        resolve_final_idempotency_key: Any,
+    ) -> Any:
+        """Domain use case: snapshot selection, revision admission, replay branching,
+        and command orchestration for quarterly ranking recommendation submission.
+
+        The HTTP handler parses inputs and authorizes the request; this method
+        owns all business branching and command dispatch, returning a JSONResponse.
+        Operates under the _current_persona_service context so module-level
+        functions (_sem_command_response, etc.) read from this instance's stores.
+        """
+        token = _current_persona_service.set(self)
+        try:
+            return self._submit_quarterly_ranking_recommendation_impl(
+                route_review_id=route_review_id,
+                recommendation_id=recommendation_id,
+                payload=payload,
+                identity=identity,
+                idempotency_key=idempotency_key,
+                x_idempotency_key=x_idempotency_key,
+                snapshot_at=snapshot_at,
+                bff_error=bff_error,
+                snapshot_meta=snapshot_meta,
+                resolve_final_idempotency_key=resolve_final_idempotency_key,
+            )
+        finally:
+            _current_persona_service.reset(token)
+
+    def _submit_quarterly_ranking_recommendation_impl(
+        self,
+        *,
+        route_review_id: str,
+        recommendation_id: str,
+        payload: Dict[str, Any],
+        identity: Any,
+        idempotency_key: Optional[str],
+        x_idempotency_key: Optional[str],
+        snapshot_at: str,
+        bff_error: Any,
+        snapshot_meta: Any,
+        resolve_final_idempotency_key: Any,
+    ) -> Any:
+        """Implementation of submit_quarterly_ranking_recommendation under active context."""
+        # Snapshot selection: resolve the ranking snapshot to bind this submission
+        requested_ranking_snapshot_id = str(
+            payload.get("ranking_snapshot_id") or ""
+        ).strip()
+        command_payload: Optional[Dict[str, Any]] = None
+        current_review: Optional[Dict[str, Any]] = None
+
+        if requested_ranking_snapshot_id:
+            command_payload = {
+                **payload,
+                "quarter": (
+                    payload.get("quarter")
+                    or _promotion_review_quarter_from_id(recommendation_id)
+                ),
+                "recommendation_id": recommendation_id,
+                "ranking_snapshot_id": requested_ranking_snapshot_id,
+            }
+            # Validate caller assertions against the durable snapshot before
+            # resolving the dynamic current alias. Forged IDs and snapshots remain
+            # validation failures rather than being masked as a missing current row.
+            _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
+        else:
+            # A snapshotless request deliberately follows the mutable stable alias.
+            # A caller that supplied an admitted snapshot has already been resolved
+            # from the durable snapshot store and must not be rebound to this
+            # current-only projection after a lifecycle/session rotation.
+            current_review, _, _, _ = _promotion_review_find(
+                identity,
+                recommendation_id,
+                snapshot_at=snapshot_at,
+                quarter=str(payload.get("quarter") or "").strip() or None,
+                include_historical=False,
+            )
+            if current_review is None:
+                if route_review_id == recommendation_id:
+                    raise bff_error(
+                        404,
+                        ErrorCode.RESOURCE_NOT_FOUND,
+                        "Quarterly ranking recommendation not found",
+                        f"Recommendation {recommendation_id} does not exist",
+                        precondition_failed="recommendation_id",
+                    )
+                raise bff_error(
+                    409,
+                    ErrorCode.RESOURCE_CONFLICT,
+                    "historical promotion review requires its immutable snapshot",
+                    "Refresh the historical review and replay it with ranking_snapshot_id.",
+                    precondition_failed="ranking_snapshot_id",
+                )
+            requested_ranking_snapshot_id = str(
+                current_review.get("ranking_snapshot_id") or ""
+            ).strip()
+            command_payload = {
+                **payload,
+                "quarter": (
+                    payload.get("quarter")
+                    or _promotion_review_quarter_from_id(recommendation_id)
+                ),
+                "recommendation_id": recommendation_id,
+                "ranking_snapshot_id": requested_ranking_snapshot_id,
+            }
+            _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
+
+        # Revision admission: bind to the immutable promotion review revision
+        review_revision_id = str(
+            command_payload.get("promotion_review_id")
+            or command_payload.get("review_id")
+            or ""
+        ).strip()
+        if not review_revision_id:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "admitted ranking snapshot has no promotion review revision",
+                "The server could not bind the recommendation to its immutable snapshot.",
+                precondition_failed="promotion_review_id",
+            )
+        if route_review_id != recommendation_id and route_review_id != review_revision_id:
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "promotion review revision is stale",
+                "The route revision does not identify the admitted ranking snapshot.",
+                precondition_failed="promotion_review_id",
+                suggestion="Refresh the current recommendation before submitting.",
+            )
+
+        # Historical replay branching: return idempotent response for existing submission
+        existing_submission = _promotion_review_submission_projection(
+            review_revision_id,
+            include_source_recommendation=True,
+        )
+        if existing_submission:
+            stored_source = existing_submission.get("source_recommendation")
+            if not isinstance(stored_source, dict):
+                raise bff_error(
+                    409,
+                    ErrorCode.PRECONDITION_FAILED,
+                    "submitted recommendation has no immutable source snapshot",
+                    "The legacy submission is audit-readable but cannot be replayed as a snapshot-bound revision.",
+                    precondition_failed="source_recommendation",
+                    suggestion="Submit the current governed recommendation revision.",
+                )
+            stored_source = json.loads(json.dumps(stored_source))
+            # Evidence visibility is request-scoped. Never replay stored evidence
+            # bodies across identities or roles.
+            stored_source["evidence_refs"] = []
+            stored_source["evidence_ref_ids"] = []
+            already = _promotion_review_item_from_recommendation(stored_source)
+            replay_snapshot_id = str(
+                existing_submission.get("ranking_snapshot_id")
+                or already.get("ranking_snapshot_id")
+                or ""
+            ).strip()
+            return JSONResponse(
+                status_code=200,
+                content=jsonable_encoder(
+                    {
+                        "data": {
+                            "command_id": existing_submission.get("command_id"),
+                            "review_id": already["review_id"],
+                            "promotion_review_id": already["promotion_review_id"],
+                            "recommendation_id": already["recommendation_id"],
+                            "persona_id": already.get("persona_id"),
+                            "action_id": already.get("action_id"),
+                            "ranking_snapshot_id": replay_snapshot_id,
+                            "status": already.get("status"),
+                            "submitted": True,
+                            "human_inbox_id": already.get("human_inbox_id"),
+                            "requires_human_gate_decision": True,
+                            "live_capital_mutation": False,
+                            "review": already,
+                            "links": already.get("links") or {},
+                        },
+                        "meta": {
+                            **snapshot_meta(snapshot_at),
+                            "ranking_snapshot_id": replay_snapshot_id,
+                            "idempotency": {
+                                "replayed": True,
+                                "source": "existing_submission",
+                            },
+                            "live_capital_mutation": False,
+                            "direct_live_capital_mutation": False,
+                            "requires_human_gate_decision": True,
+                            "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
+                        },
+                    }
+                ),
+            )
+
+        # Current-revision guard: only the current admitted revision may create a new submission
+        if route_review_id != recommendation_id:
+            if current_review is None:
+                current_review, _, _, _ = _promotion_review_find(
+                    identity,
+                    recommendation_id,
+                    snapshot_at=snapshot_at,
+                    quarter=str(payload.get("quarter") or "").strip() or None,
+                    include_historical=False,
+                )
+            current_revision_id = str(
+                (current_review or {}).get("promotion_review_id")
+                or (current_review or {}).get("review_id")
+                or ""
+            ).strip()
+            if route_review_id != current_revision_id:
+                raise bff_error(
+                    409,
+                    ErrorCode.RESOURCE_CONFLICT,
+                    "historical promotion review cannot create a new submission",
+                    "Only the current admitted recommendation revision may create a Human Gate submission.",
+                    precondition_failed="promotion_review_id",
+                    suggestion="Refresh the current recommendation before submitting.",
+                )
+
+        # Command orchestration: dispatch the promotion review submission command
+        source_recommendation = command_payload.get("source_recommendation")
+        if not isinstance(source_recommendation, dict):
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "admitted ranking snapshot has no recommendation",
+                "The durable snapshot could not materialize the requested recommendation.",
+                precondition_failed="recommendation_id",
+            )
+        review = _promotion_review_item_from_recommendation(source_recommendation)
+        client_idempotency_key = resolve_final_idempotency_key(
+            idempotency_key,
+            x_idempotency_key,
+        )
+        scoped_idempotency_key = _promotion_review_scoped_idempotency_key(
+            client_idempotency_key,
+            None,
+            review["review_id"],
+        )
+        command_response = _sem_command_response(
+            command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+            target_type=ObjectType.RANKING,
+            target_id=review["review_id"],
+            payload=command_payload,
+            identity=identity,
+            idempotency_key=scoped_idempotency_key,
+            trusted_evidence_producer=_HUMAN_INBOX_PROMOTION_PRODUCER,
+        )
+        return _promotion_review_submit_response(
+            command_response,
+            review=review,
+            client_idempotency_key=client_idempotency_key,
+        )
+
     def get_persona_league_entry(self, persona_id: str) -> Optional[Dict[str, Any]]:
         read_store = self.get_read_store()
         return read_store.get_persona_league_entry(persona_id)
