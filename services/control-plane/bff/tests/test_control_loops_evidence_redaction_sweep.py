@@ -28,6 +28,7 @@ from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import os
+import pytest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -1572,6 +1573,8 @@ _CONSULTATION_REQUEST: Dict[str, Any] = {
             "committee_session_ids": ["review-session"],
             "quorum_state": "met",
             "consensus_state": "consensus_reached",
+            "rationale_ref": _CONSULTATION_AUDIT_REF,
+            "sponsor_session_id": "review-session",
         }
     },
 }
@@ -1615,7 +1618,7 @@ def _build_real_consultation_governance_app(
 
 
 def test_committee_real_producer_detail_redacts_for_low_capability_identity() -> None:
-    """Real consultation producer: linked_evidence and synthesis_summary are redacted for low capability."""
+    """Real consultation producer: linked_evidence, synthesis_summary, and rationale aliases are redacted for low capability."""
     app, port = _build_real_consultation_governance_app()
     original = port.get_committee("review-committee")
     assert original["linked_evidence"][0]["evidence_type"] == "consultation_evidence"
@@ -1631,11 +1634,17 @@ def test_committee_real_producer_detail_redacts_for_low_capability_identity() ->
         assert body["linked_evidence"][0]["required_capability"] == "audit.read"
         assert body["synthesis_summary"]["evidence_refs"][0].get("redacted") is True
         assert body["synthesis_summary"]["evidence_refs"][0]["required_capability"] == "audit.read"
-        assert body["meta"]["redacted_evidence_count"] == 2
+        assert body["synthesis_summary"]["rationale_ref"].get("redacted") is True
+        assert body["synthesis_summary"]["rationale_ref"]["required_capability"] == "audit.read"
+        assert body["participant_roster"][0]["rationale_ref"].get("redacted") is True
+        assert body["participant_roster"][0]["rationale_ref"]["required_capability"] == "audit.read"
+        assert body["sponsor_assignment"]["rationale_ref"].get("redacted") is True
+        assert body["sponsor_assignment"]["rationale_ref"]["required_capability"] == "audit.read"
+        assert body["meta"]["redacted_evidence_count"] == 5
 
 
 def test_committee_real_producer_detail_passes_through_for_full_capability_identity() -> None:
-    """Real consultation producer: linked_evidence and synthesis_summary remain visible for full capability."""
+    """Real consultation producer: linked_evidence, synthesis_summary, and rationale aliases remain visible for full capability."""
     app, port = _build_real_consultation_governance_app()
     original = port.get_committee("review-committee")
     with _stub_auth_env():
@@ -1648,6 +1657,9 @@ def test_committee_real_producer_detail_passes_through_for_full_capability_ident
         body = response.json()
         assert body["linked_evidence"] == original["linked_evidence"]
         assert body["synthesis_summary"]["evidence_refs"] == [_CONSULTATION_AUDIT_REF]
+        assert body["synthesis_summary"]["rationale_ref"] == _CONSULTATION_AUDIT_REF
+        assert body["participant_roster"][0]["rationale_ref"] == _CONSULTATION_AUDIT_REF
+        assert body["sponsor_assignment"]["rationale_ref"] == _CONSULTATION_AUDIT_REF
         assert body["meta"]["redacted_evidence_count"] == 0
 
 
@@ -1669,7 +1681,13 @@ def test_committee_real_producer_detail_fails_closed_when_capabilities_unresolva
         assert body["linked_evidence"][0]["reason"] == "redaction_policy_unavailable"
         assert body["synthesis_summary"]["evidence_refs"][0].get("redacted") is True
         assert body["synthesis_summary"]["evidence_refs"][0]["reason"] == "redaction_policy_unavailable"
-        assert body["meta"]["redacted_evidence_count"] == 2
+        assert body["synthesis_summary"]["rationale_ref"].get("redacted") is True
+        assert body["synthesis_summary"]["rationale_ref"]["reason"] == "redaction_policy_unavailable"
+        assert body["participant_roster"][0]["rationale_ref"].get("redacted") is True
+        assert body["participant_roster"][0]["rationale_ref"]["reason"] == "redaction_policy_unavailable"
+        assert body["sponsor_assignment"]["rationale_ref"].get("redacted") is True
+        assert body["sponsor_assignment"]["rationale_ref"]["reason"] == "redaction_policy_unavailable"
+        assert body["meta"]["redacted_evidence_count"] == 5
 
 
 def test_committee_real_producer_detail_fails_closed_when_capabilities_return_none() -> None:
@@ -1687,4 +1705,35 @@ def test_committee_real_producer_detail_fails_closed_when_capabilities_return_no
         assert body["linked_evidence"][0]["reason"] == "redaction_policy_unavailable"
         assert body["synthesis_summary"]["evidence_refs"][0].get("redacted") is True
         assert body["synthesis_summary"]["evidence_refs"][0]["reason"] == "redaction_policy_unavailable"
-        assert body["meta"]["redacted_evidence_count"] == 2
+        assert body["synthesis_summary"]["rationale_ref"].get("redacted") is True
+        assert body["synthesis_summary"]["rationale_ref"]["reason"] == "redaction_policy_unavailable"
+        assert body["participant_roster"][0]["rationale_ref"].get("redacted") is True
+        assert body["participant_roster"][0]["rationale_ref"]["reason"] == "redaction_policy_unavailable"
+        assert body["sponsor_assignment"]["rationale_ref"].get("redacted") is True
+        assert body["sponsor_assignment"]["rationale_ref"]["reason"] == "redaction_policy_unavailable"
+        assert body["meta"]["redacted_evidence_count"] == 5
+
+
+@pytest.mark.parametrize("location", ["synthesis_summary", "participant_roster", "sponsor_assignment"])
+@pytest.mark.parametrize("mode", ["low", "full", "unavailable", "none"])
+def test_committee_rationale_evidence_alias(location: str, mode: str) -> None:
+    """Parametric test: all three rationale aliases redact properly across low, full, exception, and None modes."""
+    def _unavailable(identity: Any) -> Any:
+        raise RuntimeError("review policy unavailable")
+
+    caps_fn = _unavailable if mode == "unavailable" else (lambda _: None) if mode == "none" else auth_policy.capabilities_for_identity
+    token = FULL_CAPABILITY_TOKEN if mode != "low" else LOW_CAPABILITY_TOKEN
+    app, port = _build_real_consultation_governance_app(capabilities_for_identity=caps_fn)
+    with _stub_auth_env():
+        response = TestClient(app).get("/api/v1/committees/review-committee", headers={"Authorization": token})
+    assert response.status_code == 200
+    body = response.json()
+    value = body[location][0]["rationale_ref"] if location == "participant_roster" else body[location]["rationale_ref"]
+    if mode == "full":
+        assert value == _CONSULTATION_AUDIT_REF
+        assert body["linked_evidence"] == port.get_committee("review-committee")["linked_evidence"]
+    else:
+        assert body["linked_evidence"][0]["redacted"] is True
+        assert body["linked_evidence"][0]["required_capability"] == "audit.read"
+        assert isinstance(value, dict) and value.get("redacted") is True, f"{location}.rationale_ref remains visible: {value}"
+        assert value["required_capability"] == "audit.read"

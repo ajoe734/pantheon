@@ -935,6 +935,36 @@ def safe_redact_evidence_refs(
         return fail_closed_redacted_refs(refs, default_kind=default_kind, kind_map=kind_map)
 
 
+def safe_redact_scalar_ref(
+    identity: Any,
+    ref: Any,
+    *,
+    redact_fn: Callable[..., tuple[list[Any], int]],
+    capabilities_fn: Callable[[Any], Any],
+    default_kind: Optional[str] = None,
+    kind_map: Optional[Mapping[str, str]] = None,
+) -> tuple[Any, int]:
+    """Resolve capabilities and redact a scalar evidence reference.
+
+    Preserves the original reference when authorized or when the reference
+    requires no capability. Withholds unauthorized references or when
+    capabilities cannot be resolved, returning a RedactedEvidenceRef dict and count 1.
+    """
+    if not ref:
+        return ref, 0
+    redacted_refs, count = safe_redact_evidence_refs(
+        identity,
+        [ref],
+        redact_fn=redact_fn,
+        capabilities_fn=capabilities_fn,
+        default_kind=default_kind,
+        kind_map=kind_map,
+    )
+    if count > 0 and redacted_refs:
+        return redacted_refs[0], count
+    return ref, 0
+
+
 def redact_evidence_field_items(
     identity: Any,
     items: list[Any],
@@ -1087,16 +1117,16 @@ def redact_ooda_packet(
             container[field_name] = redacted_refs
             total_redacted += count
         elif isinstance(raw, (str, dict)) and raw:
-            redacted_refs, count = safe_redact_evidence_refs(
+            redacted_val, count = safe_redact_scalar_ref(
                 identity,
-                [raw],
+                raw,
                 redact_fn=redact_fn,
                 capabilities_fn=capabilities_fn,
                 default_kind=default_kind,
                 kind_map=packet_kind_map,
             )
             if count > 0:
-                container[field_name] = redacted_refs[0]
+                container[field_name] = redacted_val
                 total_redacted += count
 
     # Top-level refs:

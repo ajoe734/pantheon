@@ -32,6 +32,7 @@ from ..models import (
     _resolve_evidence_kind_and_capability,
     fail_closed_redacted_refs,
     safe_redact_evidence_refs,
+    safe_redact_scalar_ref,
     EVIDENCE_CAPABILITY_MAP,
 )
 
@@ -681,28 +682,37 @@ class GovernanceService:
         )
 
         ref_kind_map: Dict[str, str] = {}
-        for raw_ref in raw_linked:
-            if isinstance(raw_ref, dict):
-                ref_id = str(raw_ref.get("id") or raw_ref.get("ref_id") or "").strip()
-                art_ref = str(raw_ref.get("artifact_ref") or "").strip()
-                kind_key, _, req_cap = _resolve_evidence_kind_and_capability(raw_ref)
+
+        def _register_ref(r: Any) -> None:
+            if isinstance(r, dict):
+                ref_id = str(r.get("id") or r.get("ref_id") or "").strip()
+                art_ref = str(r.get("artifact_ref") or "").strip()
+                kind_key, _, req_cap = _resolve_evidence_kind_and_capability(r)
                 if req_cap and kind_key in EVIDENCE_CAPABILITY_MAP:
                     if ref_id:
                         ref_kind_map[ref_id] = kind_key
                     if art_ref:
                         ref_kind_map[art_ref] = kind_key
 
+        for raw_ref in raw_linked:
+            _register_ref(raw_ref)
+
         raw_handoff = committee.get("service_handoff") or {}
         for raw_ref in (raw_handoff.get("evidence_refs") or []):
-            if isinstance(raw_ref, dict):
-                ref_id = str(raw_ref.get("id") or raw_ref.get("ref_id") or "").strip()
-                art_ref = str(raw_ref.get("artifact_ref") or "").strip()
-                kind_key, _, req_cap = _resolve_evidence_kind_and_capability(raw_ref)
-                if req_cap and kind_key in EVIDENCE_CAPABILITY_MAP:
-                    if ref_id:
-                        ref_kind_map[ref_id] = kind_key
-                    if art_ref:
-                        ref_kind_map[art_ref] = kind_key
+            _register_ref(raw_ref)
+
+        raw_synth = committee.get("synthesis_summary") or {}
+        _register_ref(raw_synth.get("rationale_ref"))
+
+        raw_roster = committee.get("participant_roster") or []
+        if isinstance(raw_roster, list):
+            for p in raw_roster:
+                if isinstance(p, dict):
+                    _register_ref(p.get("rationale_ref"))
+
+        raw_sponsor = committee.get("sponsor_assignment") or {}
+        if isinstance(raw_sponsor, dict):
+            _register_ref(raw_sponsor.get("rationale_ref"))
 
         synthesis_summary = copy.deepcopy(committee.get("synthesis_summary") or {})
         synth_count = 0
@@ -715,6 +725,18 @@ class GovernanceService:
                 kind_map=ref_kind_map,
             )
             synthesis_summary["evidence_refs"] = redacted_synth_refs
+
+        synth_rationale_count = 0
+        if synthesis_summary.get("rationale_ref"):
+            redacted_rat, synth_rationale_count = safe_redact_scalar_ref(
+                identity,
+                synthesis_summary["rationale_ref"],
+                redact_fn=self.redact_evidence_refs,
+                capabilities_fn=self.capabilities_for_identity,
+                kind_map=ref_kind_map,
+            )
+            if synth_rationale_count > 0:
+                synthesis_summary["rationale_ref"] = redacted_rat
 
         service_handoff = copy.deepcopy(committee.get("service_handoff") or {})
         handoff_ev_count = 0
@@ -738,7 +760,45 @@ class GovernanceService:
             )
             service_handoff["audit_refs"] = redacted_handoff_audit
 
-        total_redacted = linked_count + synth_count + handoff_ev_count + handoff_audit_count
+        participant_roster = copy.deepcopy(committee.get("participant_roster") or [])
+        roster_rationale_count = 0
+        if isinstance(participant_roster, list):
+            for participant in participant_roster:
+                if isinstance(participant, dict) and participant.get("rationale_ref"):
+                    redacted_rat, r_count = safe_redact_scalar_ref(
+                        identity,
+                        participant["rationale_ref"],
+                        redact_fn=self.redact_evidence_refs,
+                        capabilities_fn=self.capabilities_for_identity,
+                        kind_map=ref_kind_map,
+                    )
+                    if r_count > 0:
+                        participant["rationale_ref"] = redacted_rat
+                        roster_rationale_count += r_count
+
+        sponsor_assignment = copy.deepcopy(committee.get("sponsor_assignment") or {})
+        sponsor_rationale_count = 0
+        if isinstance(sponsor_assignment, dict) and sponsor_assignment.get("rationale_ref"):
+            redacted_rat, sp_count = safe_redact_scalar_ref(
+                identity,
+                sponsor_assignment["rationale_ref"],
+                redact_fn=self.redact_evidence_refs,
+                capabilities_fn=self.capabilities_for_identity,
+                kind_map=ref_kind_map,
+            )
+            if sp_count > 0:
+                sponsor_assignment["rationale_ref"] = redacted_rat
+                sponsor_rationale_count += sp_count
+
+        total_redacted = (
+            linked_count
+            + synth_count
+            + synth_rationale_count
+            + handoff_ev_count
+            + handoff_audit_count
+            + roster_rationale_count
+            + sponsor_rationale_count
+        )
 
         return {
             "committee_id": committee.get("committee_id"),
@@ -749,8 +809,8 @@ class GovernanceService:
             "escalation_reason": copy.deepcopy(committee.get("escalation_reason") or {}),
             "quorum_state": committee.get("quorum_state"),
             "consensus_state": committee.get("consensus_state"),
-            "participant_roster": copy.deepcopy(committee.get("participant_roster") or []),
-            "sponsor_assignment": copy.deepcopy(committee.get("sponsor_assignment") or {}),
+            "participant_roster": participant_roster,
+            "sponsor_assignment": sponsor_assignment,
             "sponsor_decision": committee.get("sponsor_decision"),
             "sponsor_decided_at": committee.get("sponsor_decided_at"),
             "sponsor_decided_by": committee.get("sponsor_decided_by"),
