@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from services.governance.decision_journal import (
@@ -37,15 +38,23 @@ from services.governance.decision_journal import (
 def resolve_decision_journal_data_dir() -> str:
     """Resolve the durable Decision Journal data directory.
 
-    Follows the same direct-store convention already used by other BFF-side
-    consumers of governance-owned durable state (see ``services/capital`` and
-    ``services/deployment``): a domain-specific override first, then the
-    shared governance data directory, then a dev-only fallback.
+    Follows the direct-store convention used by BFF-side consumers of governance-owned
+    durable state:
+    1. Domain-specific override PANTHEON_DECISION_JOURNAL_DATA_DIR
+    2. BFF-specific decision journal store path PANTHEON_BFF_DECISION_JOURNAL_STORE
+    3. Shared governance data directory PANTHEON_GOVERNANCE_DATA_DIR / GOVERNANCE_DATA_DIR
+    4. Dev-only fallback /tmp/pantheon/governance
     """
+    if os.getenv("PANTHEON_DECISION_JOURNAL_DATA_DIR"):
+        return os.environ["PANTHEON_DECISION_JOURNAL_DATA_DIR"]
+
+    bff_store = os.getenv("PANTHEON_BFF_DECISION_JOURNAL_STORE")
+    if bff_store:
+        path = Path(bff_store)
+        return str(path.parent if path.suffix else path)
 
     return (
-        os.getenv("PANTHEON_DECISION_JOURNAL_DATA_DIR")
-        or os.getenv("PANTHEON_GOVERNANCE_DATA_DIR")
+        os.getenv("PANTHEON_GOVERNANCE_DATA_DIR")
         or os.getenv("GOVERNANCE_DATA_DIR")
         or "/tmp/pantheon/governance"
     )
@@ -65,6 +74,25 @@ class DecisionJournalOwnerAdapter:
     @property
     def stores(self) -> DecisionJournalStores:
         return self._stores
+
+    @property
+    def is_storage_healthy(self) -> bool:
+        """Return True if the underlying stores are writeable and healthy."""
+        try:
+            if hasattr(self._stores, "entries") and self._stores.entries is not None:
+                entries = self._stores.entries
+                if getattr(entries, "read_only", False):
+                    return False
+                storage_path = getattr(entries, "storage_path", None)
+                if storage_path is not None:
+                    p = Path(storage_path)
+                    if p.exists() and not os.access(p, os.W_OK):
+                        return False
+                    if not p.exists() and p.parent.exists() and not os.access(p.parent, os.W_OK):
+                        return False
+            return True
+        except Exception:
+            return False
 
     def list_decision_journal_entries(
         self,
