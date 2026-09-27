@@ -1,0 +1,88 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "SIMPLIFY-EXTRACTION-CONTRACT-FOUNDATION-001",
+  "base_ref": "dev@b8a6e90c66d3b8fee223dd4bf160dd55e22cbea4",
+  "depends_on": "SIMPLIFY-OPENCLAW-001 (done, satisfied), AGORA-CHAIN-001 (done, satisfied)",
+  "normative_plan": ".orchestrator/worker-runtime/task-context/simplify-extraction-contract-foundation-001.md (Constituent slice of SIMPLIFY-EXTRACTION-001; approved 2026-09-27 dependency audit at /tmp/pantheon-dependency-audit-20260927/REPORT.zh-TW.md)",
+  "results": {
+    "single_typed_semantic_extraction_contract": {
+      "file": "services/source_ingestion/semantic_extraction.py",
+      "detail": "Delivered single typed semantic extraction contract with SemanticExtractionRequest, SemanticExtractionResult, SourceSpan, IntentExtractionPayload, StrategySeedExtractionPayload, TradeLessonExtractionPayload, SemanticExtractionAdmission, compute_schema_id, get_semantic_extraction_json_schema, and DeterministicBaselineExtractor. Reuses existing canonical enums (InteractionPrimaryIntent, TrainerSeedKind, StrategySpecSeedStatus, ExtractionTaskType, AbstentionReason, ExtractionFailureCode). Enforces strict SourceSpan character slice validation."
+    },
+    "bounded_failure_client": {
+      "file": "services/source_ingestion/semantic_extraction_client.py",
+      "detail": "Delivered SemanticExtractionClient consuming restricted OpenClaw HTTP transport (/v1/chat/completions) with pre-call admission check (zero model calls on denial), bounded failure semantics for invalid schema, wrong tool, missing critical support, refusal, incomplete response, timeout (15s total deadline), token budget breach, and bounded retry policy (max 1 retry)."
+    },
+    "frozen_evaluation_cases": {
+      "file": "services/source_ingestion/evaluation/semantic_extraction_cases.jsonl",
+      "sha256": "c3b2a93296440ea6ea42f6512348307f0d334d53578218c7408d12113c1b673e",
+      "total_cases": 210,
+      "language_counts": {
+        "zh-TW": 108,
+        "en": 102
+      },
+      "split_counts": {
+        "train": 126,
+        "validation": 42,
+        "holdout": 42
+      },
+      "detail": "210 deduplicated permissioned test cases covering all 9 canonical intent classes, strategy seeds, trade lessons, comprehensive extractions, and comprehensive negative/refusal/admission boundary cases (PII, API keys, bearer tokens, private note markers, raw transcripts, lookahead timestamps, missing/invalid tenants, rejected statuses, prohibited licenses)."
+    },
+    "evaluation_manifest_schema": {
+      "file": "services/source_ingestion/evaluation/semantic_extraction_manifest.schema.json",
+      "sha256": "9eb796dc91c2256c6b18b1424c4dccf09e5f1aa3f6e8e2dc124b45cad7d8049a",
+      "detail": "Valid JSON Schema Draft-7 defining manifest metadata, case counts, aggregate metrics, acceptance thresholds, and auditable per-case result records."
+    },
+    "evaluation_runner_and_baseline": {
+      "file": "services/source_ingestion/evaluation/run_semantic_extraction_eval.py",
+      "detail": "Harness executing 210 test cases against the deterministic baseline extractor or OpenClaw client, calculating aggregate macro-F1, field-F1, abstention recall, critical support, source validity, latency percentiles (p50/p95), and validating against the manifest schema."
+    },
+    "evaluation_documentation": {
+      "file": "services/source_ingestion/evaluation/README.md",
+      "detail": "Complete documentation of evaluation dataset composition, partitions, intent categories, negative/refusal coverage, baseline metrics, downstream thresholds, manifest schema, and CLI execution instructions."
+    },
+    "business_rules_changed": false,
+    "hosted_deployment_performed": false,
+    "new_dispatcher_or_cron_added": false,
+    "callers_migrated": false,
+    "caller_migration_scope_preserved": "Per acceptance item 8, callers (classifier, bridge, normalizer, production_distillation) and stores (strategy_seed_store, distillation_controller, Registry, BFF) are untouched. Full consumer migration and retirement of legacy semantic paths remain owned by parent SIMPLIFY-EXTRACTION-001."
+  },
+  "verification": [
+    {
+      "command": "/tmp/clean-bff-venv/bin/python -m compileall -q services/source_ingestion/semantic_extraction.py services/source_ingestion/semantic_extraction_client.py services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py services/source_ingestion/evaluation/run_semantic_extraction_eval.py",
+      "result": "pass (5/5 files compiled cleanly with exit code 0)"
+    },
+    {
+      "command": "/tmp/clean-bff-venv/bin/python -m pytest -v services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py",
+      "result": "32 passed, 0 failed in 5.59s",
+      "executed": 32,
+      "collected": 32
+    },
+    {
+      "command": "/tmp/clean-bff-venv/bin/python services/source_ingestion/evaluation/run_semantic_extraction_eval.py --manifest-out /tmp/eval_manifest_run.json",
+      "result": "pass, 210 cases executed, critical support 100.0%, source validity 100.0%, breaches 0, manifest validated against Draft-7 schema",
+      "executed": 210,
+      "collected": 210
+    }
+  ],
+  "downstream_thresholds_documented": {
+    "intent_macro_f1": ">= 0.95 and within 0.01 of baseline",
+    "field_f1": ">= 0.95 and no worse than baseline",
+    "abstention_recall": ">= 0.95",
+    "critical_support_pct": "100.0%",
+    "source_validity_pct": "100.0%",
+    "tenant_source_breaches": 0,
+    "p95_latency_ms": "<= 10000 ms",
+    "total_deadline_ms": "<= 15000 ms",
+    "max_retries": "<= 1"
+  },
+  "coordination_note": "Constituent implementation prerequisite for SIMPLIFY-EXTRACTION-001 delivering typed contract, enums, admission guard, bounded failure semantics, frozen inputs (210 cases, 108 zh-TW, 102 en), and evaluation runner. No callers or stores modified. Downstream migration, prompt tuning, and quality/cost acceptance deferred to parent task.",
+  "review": {
+    "reviewer": "Codex2",
+    "decision": "pending independent exact-head review"
+  },
+  "remaining_owned_elsewhere": [
+    "Consumer migration (classifier, bridge, normalizer, production_distillation) and quality/cost acceptance: SIMPLIFY-EXTRACTION-001",
+    "Domain entity durability prerequisites: DOMAIN-WRITERS-001 / AGORA-CHAIN-001"
+  ]
+}

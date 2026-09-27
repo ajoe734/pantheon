@@ -1,0 +1,170 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/semantic-extraction-manifest/v1",
+  "title": "SemanticExtractionManifest",
+  "description": "Schema for auditable evaluation results and manifest of the typed semantic extraction contract and frozen evaluation inputs.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "run_id",
+    "evaluated_at",
+    "task_id",
+    "corpus_id",
+    "corpus_sha256",
+    "total_cases",
+    "split_counts",
+    "language_counts",
+    "task_type_counts",
+    "baseline_metrics",
+    "downstream_thresholds",
+    "provenance_counts",
+    "case_results"
+  ],
+  "properties": {
+    "manifest_version": {
+      "type": "string",
+      "enum": ["semantic_extraction_manifest.v1"]
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "task_id": {
+      "type": "string",
+      "enum": ["SIMPLIFY-EXTRACTION-CONTRACT-FOUNDATION-001", "SIMPLIFY-EXTRACTION-001"]
+    },
+    "corpus_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "corpus_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "total_cases": {
+      "type": "integer",
+      "minimum": 200
+    },
+    "split_counts": {
+      "type": "object",
+      "required": ["train", "validation", "holdout"],
+      "properties": {
+        "train": { "type": "integer", "minimum": 1 },
+        "validation": { "type": "integer", "minimum": 1 },
+        "holdout": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "language_counts": {
+      "type": "object",
+      "required": ["zh-TW", "en"],
+      "properties": {
+        "zh-TW": { "type": "integer", "minimum": 80 },
+        "en": { "type": "integer", "minimum": 80 }
+      },
+      "additionalProperties": true
+    },
+    "task_type_counts": {
+      "type": "object",
+      "properties": {
+        "intent": { "type": "integer" },
+        "strategy_seed": { "type": "integer" },
+        "trade_lesson": { "type": "integer" },
+        "comprehensive": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "baseline_metrics": {
+      "type": "object",
+      "required": [
+        "intent_macro_f1",
+        "field_f1",
+        "abstention_recall",
+        "critical_support_pct",
+        "source_validity_pct",
+        "tenant_source_breaches",
+        "p50_latency_ms",
+        "p95_latency_ms",
+        "mean_cost_usd"
+      ],
+      "properties": {
+        "intent_macro_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "field_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "abstention_recall": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "critical_support_pct": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "source_validity_pct": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "tenant_source_breaches": { "type": "integer", "minimum": 0 },
+        "p50_latency_ms": { "type": "number", "minimum": 0.0 },
+        "p95_latency_ms": { "type": "number", "minimum": 0.0 },
+        "mean_cost_usd": { "type": "number", "minimum": 0.0 }
+      },
+      "additionalProperties": true
+    },
+    "downstream_thresholds": {
+      "type": "object",
+      "required": [
+        "macro_f1_min",
+        "field_f1_min",
+        "abstention_recall_min",
+        "critical_support_pct_min",
+        "source_validity_pct_min",
+        "zero_breaches",
+        "target_p95_seconds",
+        "max_deadline_seconds"
+      ],
+      "properties": {
+        "macro_f1_min": { "type": "number", "enum": [0.95] },
+        "field_f1_min": { "type": "number", "enum": [0.95] },
+        "abstention_recall_min": { "type": "number", "enum": [0.95] },
+        "critical_support_pct_min": { "type": "number", "enum": [100.0] },
+        "source_validity_pct_min": { "type": "number", "enum": [100.0] },
+        "zero_breaches": { "type": "integer", "enum": [0] },
+        "target_p95_seconds": { "type": "number", "enum": [10.0] },
+        "max_deadline_seconds": { "type": "number", "enum": [15.0] }
+      },
+      "additionalProperties": false
+    },
+    "provenance_counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
+    "case_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "case_id",
+          "split",
+          "language",
+          "task_type",
+          "status",
+          "is_abstained",
+          "passed"
+        ],
+        "properties": {
+          "case_id": { "type": "string" },
+          "split": { "type": "string", "enum": ["train", "validation", "holdout"] },
+          "language": { "type": "string" },
+          "task_type": { "type": "string" },
+          "status": { "type": "string" },
+          "is_abstained": { "type": "boolean" },
+          "abstention_reason": { "type": ["string", "null"] },
+          "passed": { "type": "boolean" },
+          "extracted_intent": { "type": ["string", "null"] },
+          "expected_intent": { "type": ["string", "null"] },
+          "source_spans_count": { "type": "integer" },
+          "critical_support_valid": { "type": "boolean" },
+          "latency_ms": { "type": "number" },
+          "cost_usd": { "type": "number" },
+          "error": { "type": ["string", "null"] }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}
