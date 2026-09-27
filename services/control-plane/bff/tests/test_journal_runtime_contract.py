@@ -261,6 +261,121 @@ class TestJournalRuntimeContract(unittest.TestCase):
                 self.assertIsInstance(deps.decision_journal_write_owner, DecisionJournalWriteOwner)
                 self.assertTrue(deps.decision_journal_write_owner.is_storage_healthy)
 
+    def test_postgres_backend_propagation_builds_postgres_store(self) -> None:
+        """P1 AC4/AC6: When DATABASE_URL is set, build_decision_journal_stores must construct
+        PostgresGovernanceRecordStore (not JsonGovernanceRecordStore) for every store.
+
+        Reproduces the reviewer defect: resolver said 'postgres' but actual entries store
+        was JsonGovernanceRecordStore because build_governance_record_store independently
+        re-read GOVERNANCE_STORE_BACKEND and defaulted to json.
+        """
+        from services.governance.record_store import PostgresGovernanceRecordStore
+        import unittest.mock as mock
+
+        fake_dsn = "postgresql://user:pass@localhost:1/pantheon"
+        # Patch PostgresGovernanceRecordStore.__init__ to avoid real DB connection.
+        with patch(
+            "services.governance.decision_journal.PostgresGovernanceRecordStore",
+            autospec=True,
+        ) as MockPGStore:
+            MockPGStore.return_value = mock.MagicMock()
+            with patch.dict(
+                os.environ,
+                {
+                    "GOVERNANCE_STORE_BACKEND": "postgres",
+                    "GOVERNANCE_STORE_DSN": fake_dsn,
+                    "GOVERNANCE_STORE_BOOTSTRAP": "0",
+                },
+                clear=True,
+            ):
+                with tempfile.TemporaryDirectory() as tmp:
+                    build_decision_journal_stores(tmp)
+            # Every store (entries, idempotency, audit) must have used the Postgres path.
+            # With outbox suppressed by GOVERNANCE_STORE_BACKEND=postgres and no
+            # PANTHEON_DECISION_JOURNAL_OUTBOX, we expect exactly 3 calls.
+            self.assertGreaterEqual(MockPGStore.call_count, 3, msg=(
+                "Expected PostgresGovernanceRecordStore to be constructed for entries, "
+                "idempotency, and audit; got %d call(s). "
+                "This proves the backend was propagated through _build_journal_record_store "
+                "rather than silently re-defaulting to json." % MockPGStore.call_count
+            ))
+            # Verify the DSN was passed, not read again independently.
+            for call in MockPGStore.call_args_list:
+                self.assertEqual(call.kwargs.get("dsn"), fake_dsn)
+
+    def test_bff_factory_wires_injected_owner_into_agora_service(self) -> None:
+        """P1 AC4/AC5: compose_bff_app with injected decision_journal_write_owner must wire
+        that exact owner into the agora_service, not fall back to a new default.
+
+        Reproduces the reviewer defect: compose_bff_app(app_deps=AppDependencies.create_default(
+        decision_journal_write_owner=injected)) returned selected owner injected=False and
+        selected path default-journal instead of injected-journal.
+        """
+        from services.control_plane.bff.core.app_factory import compose_bff_app
+
+        with tempfile.TemporaryDirectory() as sentinel_dir:
+            # Build a concrete adapter on a sentinel directory so we can verify
+            # exact identity of the injected owner in agora_service.
+            sentinel = build_decision_journal_write_owner(data_dir=sentinel_dir)
+
+            with tempfile.TemporaryDirectory() as tmp:
+                with patch.dict(
+                    os.environ,
+                    {"PANTHEON_DECISION_JOURNAL_DATA_DIR": tmp},
+                    clear=False,
+                ):
+                    deps = AppDependencies.create_default(
+                        decision_journal_write_owner=sentinel
+                    )
+                    app = compose_bff_app(app_deps=deps)
+
+        # The agora_service must expose the sentinel owner, not a freshly built default.
+        agora_router = getattr(app.state, "agora_router", None)
+        self.assertIsNotNone(agora_router, msg="agora_router not attached to app.state")
+        agora_service = getattr(agora_router, "agora_service", None)
+        self.assertIsNotNone(agora_service, msg="agora_service not attached to agora_router")
+        get_jwo = getattr(agora_service, "_get_journal_write_owner", None)
+        selected_owner = get_jwo() if callable(get_jwo) else None
+        self.assertIs(
+            selected_owner,
+            sentinel,
+            msg=(
+                "Selected owner is NOT the injected sentinel. "
+                "This means decision_journal_write_owner was not propagated from "
+                "app_deps through create_agora_router into agora_service. "
+                "has agora_service=%s, selected owner identity=%r"
+                % (agora_service is not None, selected_owner)
+            ),
+        )
+
+    def test_postgres_storage_health_false_for_unreachable_db(self) -> None:
+        """P2 AC5: is_storage_healthy must return False for an unreachable Postgres store.
+
+        Reproduces the reviewer defect: is_storage_healthy returned True even when
+        GOVERNANCE_STORE_BOOTSTRAP=0 and list_all() raised OperationalError on
+        localhost:1 (connect_timeout=1).
+        """
+        from unittest.mock import MagicMock
+
+        # Build a mock entries store that has no storage_path (postgres posture)
+        # and raises on list_all() to simulate unreachable DB.
+        mock_entries = MagicMock()
+        del mock_entries.storage_path  # no storage_path attribute = postgres-like
+        mock_entries.read_only = False
+        mock_entries.list_all.side_effect = Exception("connection refused: localhost:1")
+
+        mock_stores = MagicMock(spec=DecisionJournalStores)
+        mock_stores.entries = mock_entries
+
+        adapter = DecisionJournalOwnerAdapter(stores=mock_stores)
+        self.assertFalse(
+            adapter.is_storage_healthy,
+            msg=(
+                "is_storage_healthy must return False when list_all() raises "
+                "(simulating unreachable Postgres with GOVERNANCE_STORE_BOOTSTRAP=0)."
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

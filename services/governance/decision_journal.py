@@ -40,6 +40,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar
 from .record_store import (
     GovernanceRecordStore,
     JsonGovernanceRecordStore,
+    PostgresGovernanceRecordStore,
     _record_id,
     build_governance_record_store,
 )
@@ -547,11 +548,31 @@ def _build_journal_record_store(
     *,
     table: str,
     id_fields: Sequence[str],
+    backend: str,
+    dsn: Optional[str] = None,
+    bootstrap: bool = True,
 ) -> GovernanceRecordStore:
-    backend = resolve_decision_journal_backend()
+    """Build a single journal record store with the already-resolved backend contract.
+
+    The caller (``build_decision_journal_stores``) must resolve the backend and DSN
+    once and pass them in explicitly.  This prevents a secondary env-read from
+    silently returning a JsonGovernanceRecordStore even when the resolved backend
+    is postgres.
+    """
     if backend == "json":
         return CoordinatingJsonGovernanceRecordStore(storage_path, id_fields=id_fields)
-    return build_governance_record_store(storage_path, table=table, id_fields=id_fields)
+    # backend == "postgres": construct directly with the pre-resolved DSN so no
+    # second env-read can override the resolved contract.
+    if not dsn:
+        raise ValueError(
+            "GOVERNANCE_STORE_DSN or DATABASE_URL is required for Postgres governance store"
+        )
+    return PostgresGovernanceRecordStore(
+        dsn=dsn,
+        table=table,
+        id_fields=id_fields,
+        bootstrap=bootstrap,
+    )
 
 
 def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores:
@@ -561,24 +582,46 @@ def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores
     staging/production) -- the same posture already governing freeze orders
     and rollbacks -- so this owner never silently downgrades to a
     process-local dict when a durable backend is configured.
+
+    The backend and DSN are resolved **once** here and propagated into every
+    store builder.  ``build_governance_record_store`` is intentionally not
+    delegated to for postgres: that helper independently re-reads
+    ``GOVERNANCE_STORE_BACKEND`` and would silently return a
+    ``JsonGovernanceRecordStore`` if the variable was absent or changed.
     """
 
     base = Path(data_dir)
     backend = resolve_decision_journal_backend()
+    # Resolve DSN and bootstrap flag once so every store uses the same contract.
+    dsn: Optional[str] = None
+    bootstrap: bool = True
+    if backend == "postgres":
+        dsn = os.getenv("GOVERNANCE_STORE_DSN") or os.getenv("DATABASE_URL")
+        bootstrap = os.getenv("GOVERNANCE_STORE_BOOTSTRAP", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+        )
+
+    _kw: Dict[str, Any] = {"backend": backend, "dsn": dsn, "bootstrap": bootstrap}
+
     entries = _build_journal_record_store(
         base / "decision_journal_entries.json",
         table="governance.decision_journal_entries",
         id_fields=_ENTRY_ID_FIELDS,
+        **_kw,
     )
     idempotency = _build_journal_record_store(
         base / "decision_journal_idempotency.json",
         table="governance.decision_journal_idempotency",
         id_fields=_IDEMPOTENCY_ID_FIELDS,
+        **_kw,
     )
     audit = _build_journal_record_store(
         base / "decision_journal_audit.json",
         table="governance.decision_journal_audit",
         id_fields=_AUDIT_ID_FIELDS,
+        **_kw,
     )
     outbox = None
     if backend == "json" or os.getenv("PANTHEON_DECISION_JOURNAL_OUTBOX") == "1":
@@ -586,6 +629,7 @@ def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores
             base / "decision_journal_outbox.json",
             table="governance.decision_journal_outbox",
             id_fields=_OUTBOX_ID_FIELDS,
+            **_kw,
         )
     return DecisionJournalStores(
         entries=entries,

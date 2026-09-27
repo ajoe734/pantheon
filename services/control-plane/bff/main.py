@@ -7746,10 +7746,10 @@ _agora_router = app.state.agora_router
 _runtime_router = app.state.runtime_router
 if hasattr(app, "state"):
     app.state.decision_journal_write_owner = decision_journal_write_owner
-    if hasattr(app.state, "agora_router") and hasattr(app.state.agora_router, "service"):
+    if hasattr(app.state, "agora_router") and hasattr(app.state.agora_router, "agora_service"):
         def _get_decision_journal_write_owner() -> Any:
             return decision_journal_write_owner
-        app.state.agora_router.service._get_journal_write_owner = _get_decision_journal_write_owner
+        app.state.agora_router.agora_service._get_journal_write_owner = _get_decision_journal_write_owner
 interaction_lifecycle = app.state.interaction_lifecycle
 workshop_store = app.state.workshop_store
 proposal_store = app.state.proposal_store

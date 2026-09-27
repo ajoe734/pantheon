@@ -77,7 +77,15 @@ class DecisionJournalOwnerAdapter:
 
     @property
     def is_storage_healthy(self) -> bool:
-        """Return True if the underlying stores are writeable and healthy."""
+        """Return True if the underlying stores are writeable and healthy.
+
+        For JSON-backed stores the check is filesystem write-access on the
+        storage path (unchanged).  For Postgres-backed stores the check is a
+        real connectivity probe via ``list_all()``; any ``OperationalError`` or
+        other connection failure returns ``False`` so that misconfigured or
+        unreachable databases are not silently reported as healthy
+        (including when ``GOVERNANCE_STORE_BOOTSTRAP=0`` suppresses DDL).
+        """
         try:
             if hasattr(self._stores, "entries") and self._stores.entries is not None:
                 entries = self._stores.entries
@@ -85,11 +93,17 @@ class DecisionJournalOwnerAdapter:
                     return False
                 storage_path = getattr(entries, "storage_path", None)
                 if storage_path is not None:
+                    # JSON-backed store: check filesystem write access.
                     p = Path(storage_path)
                     if p.exists() and not os.access(p, os.W_OK):
                         return False
                     if not p.exists() and p.parent.exists() and not os.access(p.parent, os.W_OK):
                         return False
+                else:
+                    # Non-JSON store (e.g. Postgres): probe via a real list call.
+                    # Any connection failure, OperationalError, or misconfiguration
+                    # raises an exception that we catch below and map to unhealthy.
+                    entries.list_all()
             return True
         except Exception:
             return False

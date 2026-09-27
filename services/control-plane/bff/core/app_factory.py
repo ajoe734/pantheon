@@ -1629,6 +1629,7 @@ def mount_bff_routers(
         openclaw_ops_client_factory=lambda: _dep("OpenClawOpsClient", lambda: OpenClawOpsClient)(),
         handle_sse_stream=_dep("_handle_sse_stream"),
         publish_event_fn=_dep("_publish_event"),
+        journal_write_owner=getattr(app_deps, "decision_journal_write_owner", None),
     )
     app.include_router(agora_router)
 
