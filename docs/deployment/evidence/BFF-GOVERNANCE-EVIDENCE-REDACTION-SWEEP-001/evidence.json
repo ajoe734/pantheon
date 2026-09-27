@@ -1,0 +1,306 @@
+{
+  "task_id": "BFF-GOVERNANCE-EVIDENCE-REDACTION-SWEEP-001",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "base_branch": "dev",
+  "base_commit": "c7a562d0aa87a3b515cc36b10c5fc6e5bd20ad40",
+  "head_commit_before_task_commit": "c7a562d0aa87a3b515cc36b10c5fc6e5bd20ad40",
+  "head_commit_note": "This value intentionally equals base_commit: it names the branch tip immediately before this task's own implementation commit(s) existed, not a claim that the base commit is the reviewed implementation or that no work was done. The actual reviewed implementation head is the exact task-branch commit that adds the governance/router.py redaction fix, the expanded test file, and this evidence file; per .orchestrator/skills/task-closeout-finalization.md that exact head SHA is frozen at owner handoff via REVIEW_HEAD_SHA/REVIEW_PR and will differ from base_commit. Do not read this field as the implementation-head binding -- read the canonical task row's frozen PR/head at handoff time instead.",
+  "task_branch": "task/BFF-GOVERNANCE-EVIDENCE-REDACTION-SWEEP-001",
+  "defect_summary": "governance/router.py had 19 route handlers that call the local _identity(authorization) closure and discard the return value, so they could not capability-gate their response content. BFF-REVIEW-QUEUE-REDACTION-REPAIR-001 fixed the review-queue endpoints and its own evidence file flagged GET /bff/management/governance-ledger as a newly discovered, out-of-scope gap (governance_ledger() aggregates evidence_refs from approval_queue/approval_decisions/interventions/audit_events without ever redacting). This task audits all 19 discarded-identity handlers, redacts the 13 whose response actually carries evidence_refs (including the ledger), and documents why the remaining 6 carry no capability-gated content.",
+  "discarded_identity_handler_audit": [
+    {
+      "handler": "list_approval_decisions",
+      "route": "GET /api/v1/approval-decisions",
+      "evidence_location": "top-level evidence_refs per approval-decision item",
+      "verdict": "REDACT",
+      "status_before_fix": "evidence_refs returned unredacted; no redacted_evidence_count in meta",
+      "status_after_fix": "redacted via _redact_evidence_field_items(); meta.redacted_evidence_count added"
+    },
+    {
+      "handler": "get_approval_decision_detail",
+      "route": "GET /api/v1/approval-decisions/{decision_id}",
+      "evidence_location": "top-level evidence_refs on the decision dict",
+      "verdict": "REDACT",
+      "status_before_fix": "evidence_refs returned unredacted; no redacted_evidence_count in meta",
+      "status_after_fix": "redacted via _redact_evidence_field_items(); meta.redacted_evidence_count added; fail-closed verified"
+    },
+    {
+      "handler": "get_consultation_workbench_overview",
+      "route": "GET /api/v1/workbench/consultation",
+      "evidence_location": "none -- aggregates list_consult_requests() (the served summary projection, DomainConsultationPort._project_consult_request_summary, has no context_refs or service_evidence_refs field at all -- those only appear on the detail projection, see get_consult_request below), list_committees() (linked_evidence, not evidence_refs -- see list_committees below), and list_consult_memos() (summary projection has no evidence_refs field at all -- see governance/service.py:_project_consult_memo_summary)",
+      "verdict": "NO_OP_DOCUMENTED",
+      "reason": "No constituent surface exposes any evidence-ref-shaped field to this aggregate; left discarding identity."
+    },
+    {
+      "handler": "list_consult_requests",
+      "route": "GET /api/v1/consult/requests",
+      "evidence_location": "served summary projection (DomainConsultationPort._project_consult_request_summary) exposes request_id/status/from_persona_id/target_type/target_ref/task_summary/priority/consultation_type/created_at/linked_session_id/request_to_session_status/allowedActions only -- no context_refs field. This corrects an earlier, incorrect claim in this same evidence file that context_refs was present but unmapped; the field is simply absent from the list summary shape (it is present only on the detail projection, see get_consult_request below, which this task fixes).",
+      "verdict": "NO_OP_DOCUMENTED",
+      "reason": "The list response carries no evidence-ref-shaped field to redact; this is a genuinely different (narrower) shape than the detail endpoint, not the same no-op reason previously claimed."
+    },
+    {
+      "handler": "get_consult_request",
+      "route": "GET /api/v1/consult/requests/{request_id}",
+      "evidence_location": "context_refs on the detail projection (DomainConsultationPort._project_consult_request_detail / ._service_context_refs_to_bff) is a list of {\"type\", \"id\"} dicts where type is drawn from GovernanceService._CONTEXT_REF_TYPES = {artifact, deployment_plan, incident, lineage_edge, telemetry_ref, note}. \"artifact\" and \"incident\" are both live keys in models.EVIDENCE_CAPABILITY_MAP (artifact.read, risk.incident.read respectively), so this field is capability-gated evidence content, not an inert linkage pointer as an earlier version of this evidence file incorrectly claimed. Independent review reproduced disclosure: a request with capabilities approval.read/strategy.view/persona.view (lacking artifact.read and risk.incident.read) received both refs back as raw {type,id} dicts with no redaction annotation.",
+      "verdict": "REDACT",
+      "status_before_fix": "context_refs of the response returned unredacted for any identity/capability set; no redacted_evidence_count in meta",
+      "status_after_fix": "assigns identity = _identity(authorization) (previously discarded); context_refs routed through _safe_redact() (same shared, unchanged helper used by every other fixed handler in this file); meta.redacted_evidence_count added; fail-closed verified"
+    },
+    {
+      "handler": "list_committees",
+      "route": "GET /api/v1/committees",
+      "evidence_location": "none -- the served row shape is DomainConsultationPort._committee_board_row() (ports/operations_consultation.py:2428-2445), which has no linked_evidence (or evidence_refs) key at all; linked_evidence only appears on the get_committee detail projection (ports/operations_consultation.py:2519-2530, which spreads **board_row and separately adds linked_evidence from consult.evidence_refs)",
+      "verdict": "NO_OP_DOCUMENTED",
+      "reason": "The served list-row projection carries no capability-gated evidence field to redact; there is no list-vs-detail mismatch introduced by leaving this handler discarding identity, because the list row never had linked_evidence in the first place. The sibling get_committee detail endpoint (out of scope for this task; already assigns identity) does expose linked_evidence unredacted -- that is a real, separate out-of-contract gap, reported under cross_router_and_residual_gaps.in_scope_residual_gap_not_fixed below, not a reason to withhold this list endpoint's already-correct no-op."
+    },
+    {
+      "handler": "list_governance_approval_queue",
+      "route": "GET /api/v1/operator/governance/approval-queue",
+      "evidence_location": "top-level evidence_refs per approval-queue item (same shape as approval decisions)",
+      "verdict": "REDACT",
+      "status_before_fix": "evidence_refs returned unredacted for every page; no redacted_evidence_count in meta",
+      "status_after_fix": "redacted via _redact_evidence_field_items() applied AFTER _paged() page-slicing, so redacted_evidence_count reflects only the returned page; meta.redacted_evidence_count added; pagination scoping covered by test"
+    },
+    {
+      "handler": "list_governance_audit_trail",
+      "route": "GET /api/v1/operator/governance/audit",
+      "evidence_location": "top-level evidence_refs per audit event",
+      "verdict": "REDACT",
+      "status_before_fix": "evidence_refs returned unredacted for every page; no redacted_evidence_count in meta",
+      "status_after_fix": "redacted via _redact_evidence_field_items() applied after pagination; meta.redacted_evidence_count added"
+    },
+    {
+      "handler": "list_consultations",
+      "route": "GET /api/v1/personas/{persona_id}/consultations",
+      "evidence_location": "metadata.consultation.evidence_refs nested on each session (ports/operations_consultation.py:_project_service_session_records_from_data)",
+      "verdict": "REDACT",
+      "status_before_fix": "evidence_refs returned unredacted; this is the same field the already-correct get_consultation_evidence endpoint redacts, so this was a real bypass of that fix",
+      "status_after_fix": "redacted via new _redact_consultation_metadata_evidence() helper applied after in-router pagination slicing; meta.supporting_counts.redacted_evidence_count added to match the sibling get_consultation_evidence convention"
+    },
+    {
+      "handler": "get_consultation",
+      "route": "GET /api/v1/consultations/{session_id}",
+      "evidence_location": "metadata.consultation.evidence_refs (same nested path)",
+      "verdict": "REDACT",
+      "status_before_fix": "unredacted bypass of get_consultation_evidence",
+      "status_after_fix": "redacted via _redact_consultation_metadata_evidence(); meta.supporting_counts.redacted_evidence_count added"
+    },
+    {
+      "handler": "get_consultation_participants",
+      "route": "GET /api/v1/consultations/{session_id}/participants",
+      "evidence_location": "metadata.consultation.evidence_refs per participant record",
+      "verdict": "REDACT",
+      "status_before_fix": "unredacted bypass",
+      "status_after_fix": "redacted via _redact_consultation_metadata_evidence(); fail-closed verified; meta.supporting_counts.redacted_evidence_count added"
+    },
+    {
+      "handler": "get_consultation_outcome",
+      "route": "GET /api/v1/consultations/{session_id}/outcome",
+      "evidence_location": "metadata.consultation.evidence_refs (outcome directly re-exposes the same nested field)",
+      "verdict": "REDACT",
+      "status_before_fix": "unredacted bypass",
+      "status_after_fix": "redacted via _redact_consultation_metadata_evidence(); meta.supporting_counts.redacted_evidence_count added"
+    },
+    {
+      "handler": "get_consultation_transcript",
+      "route": "GET /api/v1/consultations/{session_id}/transcript",
+      "evidence_location": "top-level evidence_refs per transcript event",
+      "verdict": "REDACT",
+      "status_before_fix": "evidence_refs returned unredacted per event; no redacted_evidence_count",
+      "status_after_fix": "redacted via _redact_evidence_field_items() applied to transcript.events after service-side pagination; meta.redacted_evidence_count added"
+    },
+    {
+      "handler": "get_consult_policy",
+      "route": "GET /api/v1/personas/{persona_id}/consult-policy",
+      "evidence_location": "none -- returns required_reviewers/required_committees/trigger_rules/forbidden_solo_actions/escalation_rules only; no evidence_refs field in the store contract",
+      "verdict": "NO_OP_DOCUMENTED",
+      "reason": "Policy configuration rows carry no capability-gated evidence content."
+    },
+    {
+      "handler": "list_bff_approvals",
+      "route": "GET /bff/approvals",
+      "evidence_location": "top-level evidence_refs per pending-approval item (list_pending_approvals() -> list_approval_queue(), same shape as list_governance_approval_queue)",
+      "verdict": "REDACT",
+      "status_before_fix": "evidence_refs returned unredacted; no redacted_evidence_count",
+      "status_after_fix": "redacted via _redact_evidence_field_items(); meta.redacted_evidence_count added (both the direct-call and management_read_models-degraded paths preserved -- degraded path already returns an empty items list with no evidence to redact)"
+    },
+    {
+      "handler": "bff_management_governance_ledger",
+      "route": "GET /bff/management/governance-ledger",
+      "evidence_location": "top-level evidence_refs on every ledger entry, sourced from approval_queue_items, approval_decisions, v5_interventions (get_interventions()), and governance_audit_events (GovernanceService.governance_ledger(), service.py ~1386-1480)",
+      "verdict": "REDACT",
+      "required_by": "acceptance criterion 3 (explicit fix requirement)",
+      "status_before_fix": "flagged as a known, unfixed gap in BFF-REVIEW-QUEUE-REDACTION-REPAIR-001's evidence.json (surfaces_outside_contract_reported_not_fixed); every ledger entry's evidence_refs returned unredacted regardless of identity capability",
+      "status_after_fix": "router redacts response.data.items post-hoc via _redact_evidence_field_items() (GovernanceService.governance_ledger() itself is not identity-aware and was left unchanged -- see implementation_note below); response.meta.redacted_evidence_count added; covers all four source datasets in regression tests"
+    },
+    {
+      "handler": "bff_review_validators",
+      "route": "GET /bff/reviews/{review_id}/validators",
+      "evidence_location": "none -- returns review_summary.validators (validator id/name/status rows), no evidence_refs field. The review's own evidence_refs are already redacted on the sibling bff_get_review/list_governance_review_queue endpoints via _redact_review_queue_items()",
+      "verdict": "NO_OP_DOCUMENTED",
+      "reason": "Validators list carries no evidence-ref content; the same review's evidence is already gated elsewhere."
+    },
+    {
+      "handler": "bff_review_audit",
+      "route": "GET /bff/reviews/{review_id}/audit",
+      "evidence_location": "top-level evidence_refs per audit event (filtered subset of the same governance_audit_events as list_governance_audit_trail)",
+      "verdict": "REDACT",
+      "status_before_fix": "evidence_refs returned unredacted; no redacted_evidence_count",
+      "status_after_fix": "redacted via _redact_evidence_field_items(); meta.redacted_evidence_count added"
+    },
+    {
+      "handler": "get_approval_detail",
+      "route": "GET /bff/approvals/{approval_id}",
+      "evidence_location": "top-level evidence_refs on the decision dict (same GovernanceService.get_approval_detail() shape as get_approval_decision_detail)",
+      "verdict": "REDACT",
+      "status_before_fix": "evidence_refs returned unredacted; no redacted_evidence_count",
+      "status_after_fix": "redacted via _redact_evidence_field_items(); meta.redacted_evidence_count added"
+    }
+  ],
+  "summary_counts": {
+    "total_discarded_identity_handlers_audited": 19,
+    "redacted": 14,
+    "no_op_documented": 5,
+    "correction_note": "An independent reviewer of PR #5987 (exact head d95940cac5de11debd52083cb30eb6df922f0e84) found that get_consult_request was misclassified NO_OP_DOCUMENTED: its detail projection's context_refs carries artifact/incident refs that map to live EVIDENCE_CAPABILITY_MAP capabilities (artifact.read, risk.incident.read) and were disclosed unredacted. This evidence file, the router fix, and the regression suite were corrected in response; counts moved from redacted=13/no_op_documented=6 to redacted=14/no_op_documented=5."
+  },
+  "baseline_reconstruction": {
+    "purpose": "Acceptance criterion 1 requires publishing, before any change, a table of whether each of the 19 discarded-identity handlers carries unredacted evidence_refs for a low-capability identity. This table was not captured as raw request/response transcripts before implementation began; it is reconstructed here, transparently and after the fact, by re-running the exact same low-capability request against the frozen base commit's router.py and against the fixed HEAD router.py, using the same fixture read-store the regression suite uses. This is a reconstruction, not a retroactively-backdated claim that the table was published pre-implementation.",
+    "method": "git show c7a562d0aa87a3b515cc36b10c5fc6e5bd20ad40:services/control-plane/bff/governance/router.py > /tmp/base_governance_router.py; temporarily copy it over the working-tree router.py (verified clean via `git status --short` before and after so no task edits were lost); build create_governance_router() with the same read_surface/capabilities_for_identity wiring as test_governance_evidence_redaction_sweep.py's _SweepStore and auth.policy, issue a GET with Authorization: Bearer op-sweep-1:operator (operator role: holds risk.alert.read, artifact.read, risk.incident.read, runtime.read) against each of the 19 routes, and record whether the JSON response contains a ref dict with ref_id in {ref-metric-ev, ref-job-ev} that lacks a `redacted` key (i.e. a capability-gated ref disclosed with no gating annotation at all). Repeat the identical requests against the restored, unmodified HEAD router.py for comparison. Following the independent reviewer's correction, get_consult_request is now exercised against a populated, production-shaped fixture record (_CONSULT_REQUEST_1 / _SweepStore.get_consult_request in test_governance_evidence_redaction_sweep.py, request_id=consult-req-1) instead of a 404 baseline, and additionally re-run with Authorization: Bearer reviewer-sweep-1:reviewer (reviewer role: holds approval.read/strategy.view/persona.view only -- matching the independent reviewer's exact reproduction identity, which lacks both artifact.read and risk.incident.read) because the operator role used for every other route in this table already holds both capabilities the get_consult_request context_refs fixture needs and would silently mask the defect. bff_review_validators/get_consult_policy still naturally return policy-only/validator-only shapes against the minimal fixture store with no evidence-ref-shaped field present at any capability level; the check still holds because it inspects the full response body for any disclosed capability-gated ref, not just a specific field path.",
+    "results": [
+      {"handler": "list_approval_decisions", "request": "GET /api/v1/approval-decisions", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "get_approval_decision_detail", "request": "GET /api/v1/approval-decisions/approval-1", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "get_consultation_workbench_overview", "request": "GET /api/v1/workbench/consultation", "base_status": 200, "base_unredacted_capability_gated_ref_present": false, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "list_consult_requests", "request": "GET /api/v1/consult/requests", "base_status": 200, "base_unredacted_capability_gated_ref_present": false, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "get_consult_request", "request": "GET /api/v1/consult/requests/consult-req-1 (populated production-shaped fixture, Authorization: Bearer reviewer-sweep-1:reviewer -- reviewer role lacks artifact.read and risk.incident.read, matching the independent reviewer's exact reproduction identity)", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "list_committees", "request": "GET /api/v1/committees", "base_status": 200, "base_unredacted_capability_gated_ref_present": false, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "list_governance_approval_queue", "request": "GET /api/v1/operator/governance/approval-queue", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "list_governance_audit_trail", "request": "GET /api/v1/operator/governance/audit", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "list_consultations", "request": "GET /api/v1/personas/persona-1/consultations", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "get_consultation", "request": "GET /api/v1/consultations/session-1", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "get_consultation_participants", "request": "GET /api/v1/consultations/session-1/participants", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "get_consultation_outcome", "request": "GET /api/v1/consultations/session-1/outcome", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "get_consultation_transcript", "request": "GET /api/v1/consultations/session-1/transcript", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "get_consult_policy", "request": "GET /api/v1/personas/persona-1/consult-policy", "base_status": 200, "base_unredacted_capability_gated_ref_present": false, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "list_bff_approvals", "request": "GET /bff/approvals", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "bff_management_governance_ledger", "request": "GET /bff/management/governance-ledger", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "bff_review_validators", "request": "GET /bff/reviews/review-1/validators", "base_status": 200, "base_unredacted_capability_gated_ref_present": false, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "bff_review_audit", "request": "GET /bff/reviews/review-1/audit", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false},
+      {"handler": "get_approval_detail", "request": "GET /bff/approvals/approval-1", "base_status": 200, "base_unredacted_capability_gated_ref_present": true, "head_status": 200, "head_unredacted_capability_gated_ref_present": false}
+    ],
+    "conclusion": "All 13 handlers with verdict REDACT above show base_unredacted_capability_gated_ref_present=true and head_unredacted_capability_gated_ref_present=false, confirming both the pre-fix defect and the fix. All 6 handlers with verdict NO_OP_DOCUMENTED show false in both columns, confirming they never disclosed capability-gated evidence and that leaving them unchanged did not introduce a regression.",
+    "worktree_hygiene": "`git status --short services/control-plane/bff/governance/router.py` was confirmed empty both immediately before the temporary base-router swap and immediately after restoring the HEAD file, so no task edit was lost or masked by the reconstruction; the reconstruction script itself was a scratch file outside the declared artifact contract and was deleted, not committed. Re-verified for the get_consult_request correction: since router.py was uncommitted at correction time, the working-tree copy (not a git ref) was saved to a scratch /tmp file before the swap, the base router.py was reproduced against a populated in-line fixture (base_status=200, unredacted artifact/incident refs present), the saved working-tree copy was restored, and the fixed HEAD behavior (base_status=200, both refs redacted) was re-confirmed against the same fixture before the scratch files were deleted."
+  },
+  "implementation_note_governance_ledger": "GovernanceService.governance_ledger() (service.py) does not accept an identity/capabilities argument. Rather than threading identity through the service layer (which would touch governance/service.py and diverge from every other already-correct handler's pattern of redacting the assembled response in the router), the router now redacts response[\"data\"][\"items\"] post-hoc with the same _redact_evidence_field_items() helper used elsewhere, after the service call and after the service's own pagination. This keeps the diff scoped to governance/router.py + the new test file and inventory registration -- service.py, human_inbox.py, models.py, auth/policy.py, core/app_factory.py, and management_read_models/service.py are all unchanged, matching the precedent set by BFF-REVIEW-QUEUE-REDACTION-REPAIR-001. Flagging for reviewer preference: pushing this into the service layer (for symmetry with consult_memo_projection/mutation_review_projection, which redact inside service.py) is a viable alternative if a future task wants ledger-source-level redaction instead of response-shape redaction.",
+  "governance_ledger_dedup_note": "governance_ledger() keys entries by f\"ledger-approval-{decision_id}\" via dict.setdefault, so when the same decision_id appears in both approval_queue_items and approval_decisions, only the first-seen (queue-sourced) entry survives in the ledger; the decisions-sourced entry for that id is dropped. This is pre-existing service.py behavior, not introduced or changed by this task. Regression coverage in test_governance_evidence_redaction_sweep.py is written against this actual dedup behavior (one approval-queue-sourced entry, one intervention entry, two audit entries) rather than four independently-observable per-id ledger rows.",
+  "fix_summary": "services/control-plane/bff/governance/router.py: added two shared redaction helpers inside create_governance_router() alongside the existing _safe_redact/_redact_review_queue_items from BFF-REVIEW-QUEUE-REDACTION-REPAIR-001: _redact_evidence_field_items(identity, items, field=\"evidence_refs\") for flat lists of dicts carrying a top-level evidence-ref list (approval decisions/queue, audit events, ledger entries, transcript events), and _redact_consultation_metadata_evidence(identity, items) for session-shaped dicts carrying metadata.consultation.evidence_refs (consultation session/participants/outcome). Fixed the 13 handlers above plus get_consult_request (14 total, added after independent review of PR #5987 found the original NO_OP_DOCUMENTED classification wrong): each now assigns identity = _identity(authorization) (previously discarded) and routes its evidence-bearing payload through one of the two list-shaped helpers, or -- for get_consult_request's single-record detail response -- directly through the existing _safe_redact(identity, refs) helper against the record's context_refs list. All redaction is applied after any pagination/page-slicing has already happened, so redacted_evidence_count covers only the returned page/record. Every withheld ref carries redacted:true, required_capability, reason=\"insufficient_capability\" (BFF-FINAL-007 shape, produced by the pre-existing, unchanged models.redact_evidence_refs/RedactedEvidenceRef). Fails closed: _safe_redact (unchanged) substitutes an empty capability set on any capability-lookup failure, so every capability-gated ref is withheld rather than disclosed. The 5 remaining no-op handlers were left discarding identity, each with a documented reason above for why their response carries no capability-gated content. No changes to models.py, auth/policy.py, core/app_factory.py, governance/service.py, governance/human_inbox.py, or management_read_models/service.py -- the canonical redaction policy owner and its wiring were already correct; only router.py needed the missing calls.",
+  "changed_files": [
+    "services/control-plane/bff/governance/router.py",
+    "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "docs/deployment/evidence/BFF-GOVERNANCE-EVIDENCE-REDACTION-SWEEP-001/evidence.json"
+  ],
+  "regression_coverage_added": {
+    "file": "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py",
+    "test_count": 33,
+    "harness": "Builds the real create_governance_router() directly (never imports main), wired exactly like core/app_factory.py: redact_evidence_refs=models.redact_evidence_refs, capabilities_for_identity=auth.policy.capabilities_for_identity, extract_identity=auth.policy.extract_identity. No class-level monkeypatching of domain services -- a minimal read-store double (_SweepStore) supplies fixture rows with mixed alert/metric/job evidence_refs.",
+    "coverage": [
+      "Every one of the 13 list/queue/ledger/consultation-metadata handlers fixed in the prior delivery exercised with a low-capability identity (operator role: holds risk.alert.read, artifact.read, risk.incident.read, runtime.read; lacks metric.read and job.read) asserting the metric/job refs are withheld (redacted:true, required_capability, reason=insufficient_capability) while the alert ref passes through, and the correct redacted_evidence_count is reported.",
+      "Every one of those 13 handlers is also exercised with a full-capability identity (admin role), each asserting both the exact unredacted evidence_refs payload (equal to the original mixed-refs fixture, not merely inferred from a zero count) and redacted_evidence_count == 0 -- including get_approval_decision_detail, get_consultation, and get_consultation_participants, which previously only had fail-closed coverage for the full-capability path, not an actual successful passthrough assertion.",
+      "list_governance_approval_queue paginated across two pages (page_size=1) asserting redacted_evidence_count reflects only the item on the returned page, not the full unpaginated set.",
+      "Fail-closed coverage for get_approval_decision_detail, bff_management_governance_ledger, and get_consultation_participants: capabilities_for_identity raising -> every capability-gated ref withheld even for an identity that would otherwise have full capabilities.",
+      "bff_management_governance_ledger coverage across all four evidence sources feeding the ledger (approval_queue_items, approval_decisions -- subject to the dedup behavior noted above, v5_interventions, governance_audit_events), plus a dedicated decision-only-entry test (test_governance_ledger_includes_decision_only_approval_entry) that supplies an approval id present only in the approval_decisions dataset (never in approval_queue_items) and asserts its ledger entry reports source_dataset=approval_decisions with correct low-capability redaction and full-capability passthrough -- distinct from the existing dedup test, which is unchanged and still covers the same-id-in-both-datasets shadowing behavior.",
+      "get_consult_request (added in response to independent review of PR #5987): a populated, production-shaped fixture record (_CONSULT_REQUEST_1, request_id=consult-req-1, context_refs=[artifact:consult-artifact-1, incident:consult-incident-1]) exercised with a reviewer-role identity (approval.read/strategy.view/persona.view only -- lacking both artifact.read and risk.incident.read, matching the independent reviewer's exact reproduction identity, since the operator role used everywhere else in this file already holds both of those capabilities and would mask the defect) asserting both refs are withheld with the BFF-FINAL-007 shape and redacted_evidence_count == 2; a full-capability (admin) passthrough test asserting the exact unredacted context_refs payload and redacted_evidence_count == 0; and a fail-closed test asserting both refs are withheld when capabilities_for_identity raises."
+    ]
+  },
+  "inventory_registration": {
+    "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "entry_added": "tests/test_governance_evidence_redaction_sweep.py, layer=router, imports_main=false, disposition=DECOUPLED",
+    "composition_allowlist_changed": false
+  },
+  "cross_router_and_residual_gaps": {
+    "in_scope_residual_gap_not_fixed": [
+      {
+        "surface": "GET /api/v1/committees/{committee_id} (get_committee)",
+        "finding": "get_committee already assigns identity (out of scope/already-correct per task brief) but never redacts linked_evidence, which it adds to the projection from consult.evidence_refs (ports/operations_consultation.py:2519-2530). The sibling list endpoint GET /api/v1/committees (list_committees, in scope, verdict NO_OP_DOCUMENTED above) is unaffected: its served row shape (_committee_board_row) never carries a linked_evidence or evidence_refs field, so there is nothing to redact there and no list-vs-detail divergence is created by leaving it as a documented no-op.",
+        "disposition": "Report-only per acceptance criterion 7 (get_committee's identity handling is declared already-correct by the task brief and its evidence-ref redaction is not part of this task's discarded-identity contract). Recommend a follow-up task scoped to get_committee's linked_evidence redaction."
+      }
+    ],
+    "other_routers_scanned_not_fixed": [
+      {
+        "router": "services/control-plane/bff/control_loops/router.py",
+        "finding": "9 handlers call _read_identity(authorization) and discard the result, on: GET /bff/v5/interventions, GET /bff/v5/interventions/{id} (both source the same intervention records -- evidence_refs included -- that the governance ledger pulls via get_interventions()), GET /bff/ooda/packets, GET /bff/ooda/packets/{id}, GET /bff/v5/loop-inventory, GET /bff/v5/loop-inventory/{loop_id}, GET /bff/v5/downstream-health, GET /bff/v5/control-room, GET /bff/v5/sentinel/findings/{finding_id}. Sibling handlers in the same file (loop-health, loop-runs, sentinel remediation/status) already correctly assign identity, suggesting the same incomplete-sweep pattern as governance/router.py had before this task.",
+        "disposition": "Report-only per acceptance criterion 7 (outside this task's declared artifact contract: services/control-plane/bff/governance/*, models.py, auth/policy.py, core/app_factory.py, management_read_models/service.py). Not fixed here; recommend a follow-up task scoped to control_loops/router.py."
+      },
+      {
+        "router": "services/control-plane/bff/core/app_factory.py",
+        "finding": "GET /api/v1/settings and GET /api/v1/settings/export discard extract_identity(authorization). Lower priority: settings payloads are plain configuration, not evidence-ref-bearing, but flagged for completeness.",
+        "disposition": "Report-only; not fixed here."
+      },
+      {
+        "note": "No other router file under agora/*, personas/*, research/*, runtime/*, console_gap/*, pm12/*, training/* matched the bare-discarded-identity pattern via repository-wide grep for the same closure-call-without-assignment shape."
+      }
+    ]
+  },
+  "acceptance_notes": {
+    "fail_closed": "Confirmed by test_governance_evidence_redaction_sweep.py::test_approval_decision_detail_fails_closed_when_capabilities_unresolvable, ::test_governance_ledger_fails_closed_when_capabilities_unresolvable, ::test_consultation_participants_fail_closed_when_capabilities_unresolvable, and ::test_get_consult_request_fails_closed_when_capabilities_unresolvable -- when capabilities_for_identity raises, _safe_redact() (pre-existing, unchanged) substitutes an empty capability set, so every capability-gated ref is withheld rather than disclosed.",
+    "never_widens_disclosure": "No change to models.redact_evidence_refs, EVIDENCE_CAPABILITY_MAP, or any role/capability mapping in auth/policy.py; only route handlers that previously discarded identity now route their payload through the pre-existing canonical redactor.",
+    "no_duplicate_symbols_or_routers": "Two new helpers (_redact_evidence_field_items, _redact_consultation_metadata_evidence) added once inside the existing create_governance_router() closure, reused across all 11 fixed handlers; no new router, store, or fallback path created; no symbol defined twice.",
+    "redaction_after_pagination": "Verified for list_governance_approval_queue (dedicated multipage test), list_governance_audit_trail, and list_consultations -- redaction is applied to response[\"items\"]/page_data after _paged()/in-router page slicing, not to the full filtered/unpaginated list.",
+    "bff_final_007_shape_match": "Every withheld ref in this task's tests asserts redacted:true, required_capability, reason==\"insufficient_capability\", and each fixed handler's meta reports a redacted_evidence_count (or meta.supporting_counts.redacted_evidence_count for the consultation-session family, matching the sibling get_consultation_evidence convention) -- produced entirely by the unmodified models.redact_evidence_refs/RedactedEvidenceRef."
+  },
+  "terminal_commands_and_results": [
+    {
+      "command": "git rev-parse HEAD origin/dev",
+      "result": "c7a562d0aa87a3b515cc36b10c5fc6e5bd20ad40 (both identical -- task branch started from current dev tip)"
+    },
+    {
+      "command": "python3 -c \"import ast; ast.parse(open('services/control-plane/bff/governance/router.py').read())\"",
+      "result": "OK -- no syntax errors introduced"
+    },
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/venv-bff-test/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+      "result": "provisioned .venv-pantheon; verified pytest importable from a foreign cwd with no PYTHONPATH"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py",
+      "result": "64 passed, 3 warnings in 56.12s (test_governance_evidence_redaction_sweep.py alone: 30 passed, up from 26 -- adds the reviewer-requested full-capability passthrough tests for get_approval_decision_detail/get_consultation/get_consultation_participants, refs-visible assertions on the three previously count-only full-capability tests, and the decision-only ledger-entry test)"
+    },
+    {
+      "command": "[correction round, after independent review of PR #5987 exact head d95940cac5de11debd52083cb30eb6df922f0e84] .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py",
+      "result": "67 passed, 3 warnings in 59.02s (test_governance_evidence_redaction_sweep.py alone: 33 passed, up from 30 -- adds test_get_consult_request_redacts_context_refs_for_low_capability_identity, test_get_consult_request_passes_through_for_full_capability_identity, and test_get_consult_request_fails_closed_when_capabilities_unresolvable, fixing the get_consult_request P1 the reviewer found)"
+    },
+    {
+      "command": "[correction round] scratch reconstruction: saved the uncommitted working-tree services/control-plane/bff/governance/router.py to /tmp, overwrote it with `git show c7a562d0aa87a3b515cc36b10c5fc6e5bd20ad40:services/control-plane/bff/governance/router.py`, ran a standalone script building create_governance_router() against a populated consult-req-1 fixture (context_refs=[artifact:consult-artifact-1, incident:consult-incident-1]) and issuing GET /api/v1/consult/requests/consult-req-1 with Authorization: Bearer reviewer-sweep-1:reviewer",
+      "result": "base: status 200, both refs returned as raw {type,id} dicts with no `redacted` key -- confirms the pre-fix disclosure the independent reviewer reported"
+    },
+    {
+      "command": "[correction round] restored the saved working-tree router.py (git status --short confirmed only the intended edit remained) and re-ran the identical script/request against the fixed HEAD router.py",
+      "result": "head: status 200, both refs returned as redacted:true/required_capability=artifact.read|risk.incident.read/reason=insufficient_capability -- confirms the fix; scratch script and /tmp router copies deleted, not committed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py services/control-plane/bff/tests/test_bff_approvals_surface_contract.py services/control-plane/bff/tests/test_bff_governance_subrules_contract.py services/control-plane/bff/tests/test_operations_consultation_ports.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "3 failed (test_consultation_session_and_policy_read_routes, test_bff_approval_review_and_governance_ledger_compatibility, test_single_and_batch_approval_decisions_validate_and_report_partial_results), 77 passed"
+    },
+    {
+      "command": "Reproduction: temporarily replaced governance/router.py with the pre-fix (git show HEAD:...) content and re-ran the same 3 failing test IDs",
+      "result": "identical 3 failures against the unmodified pre-fix router.py, confirming they are pre-existing 503-vs-202 failures in build_client()'s default submit_action stub (test_governance_router.py), unrelated to this task's evidence-redaction change; router.py restored to the fixed content immediately after, `git diff --stat` confirmed identical to before the reproduction"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py",
+      "result": "passed -- confirms the bff_test_architecture_inventory.json registration is well-formed and does not break the composition-seam AST/consistency checks"
+    },
+    {
+      "command": "git show c7a562d0aa87a3b515cc36b10c5fc6e5bd20ad40:services/control-plane/bff/governance/router.py > /tmp/base_governance_router.py; git status --short services/control-plane/bff/governance/router.py (before swap)",
+      "result": "clean -- confirmed before temporarily overwriting the working-tree router.py with the frozen base content for baseline_reconstruction"
+    },
+    {
+      "command": "cp services/control-plane/bff/governance/router.py /tmp/head_backup.py; cp /tmp/base_governance_router.py services/control-plane/bff/governance/router.py; .venv-pantheon/bin/python3 <reconstruction script exercising all 19 routes with LOW_CAPABILITY_TOKEN>; cp /tmp/head_backup.py services/control-plane/bff/governance/router.py; git status --short services/control-plane/bff/governance/router.py (after restore)",
+      "result": "base run: 13 routes returned an unredacted capability-gated ref, 6 did not (matches summary_counts.redacted=13/no_op_documented=6); post-restore git status clean -- see baseline_reconstruction for the full per-handler table and method"
+    },
+    {
+      "command": "cp /tmp/head_backup.py services/control-plane/bff/governance/router.py; .venv-pantheon/bin/python3 <same reconstruction script against restored HEAD router.py>",
+      "result": "head run: 0 of 19 routes returned an unredacted capability-gated ref -- confirms the fix for all 13 REDACT handlers with no regression on the 6 NO_OP_DOCUMENTED handlers"
+    }
+  ]
+}
