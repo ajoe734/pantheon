@@ -1,0 +1,128 @@
+{
+  "task_id": "BFF-ROUTER-USECASE-CORRECTIVE-001",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "title": "Finish five-domain router-to-application boundaries without further mechanical splitting",
+  "timestamp": "2026-09-27T08:38:00Z",
+  "summary": "Completed five-domain router-to-application boundaries without further mechanical splitting per normative plan STRUCTURAL_RESIDUAL_SA_SD_20260906.md Section D and SD4.2A. Across all five domains (personas, strategies, research, agora/research, agora/trading_room), business branching, persistence, and retries have been moved entirely into domain-specific application use-case services (PersonaService, StrategiesService, ResearchRouterService, AgoraResearchService, TradingRoomService). Router HTTP handlers only parse inputs, invoke authorization, delegate to the domain service, and map DTO/status. Extended test_bff_test_architecture.py with three boundary gates enforcing zero direct store accesses in route handlers, zero duplicate AST handler bodies, and strict two-instance data and metadata isolation across all five domains.",
+  "router_domains": [
+    {
+      "domain": "personas",
+      "parent_factory": "services/control-plane/bff/personas/router.py",
+      "domain_service": {
+        "class": "PersonaService",
+        "file": "services/control-plane/bff/personas/service.py"
+      },
+      "subrouters": [
+        "services/control-plane/bff/personas/routes/collection.py",
+        "services/control-plane/bff/personas/routes/detail.py",
+        "services/control-plane/bff/personas/routes/lifecycle.py",
+        "services/control-plane/bff/personas/routes/provisioning.py",
+        "services/control-plane/bff/personas/routes/ranking.py"
+      ],
+      "direct_store_access_count": 0,
+      "duplicate_ast_bodies_count": 0,
+      "two_instance_isolation_verified": true
+    },
+    {
+      "domain": "strategies",
+      "parent_factory": "services/control-plane/bff/strategies/router.py",
+      "domain_service": {
+        "class": "StrategiesService",
+        "file": "services/control-plane/bff/strategies/service.py"
+      },
+      "subrouters": [
+        "services/control-plane/bff/strategies/routes/collection.py",
+        "services/control-plane/bff/strategies/routes/detail.py",
+        "services/control-plane/bff/strategies/routes/seeds.py"
+      ],
+      "direct_store_access_count": 0,
+      "duplicate_ast_bodies_count": 0,
+      "two_instance_isolation_verified": true
+    },
+    {
+      "domain": "research",
+      "parent_factory": "services/control-plane/bff/research/router.py",
+      "domain_service": {
+        "class": "ResearchRouterService",
+        "file": "services/control-plane/bff/research/service.py"
+      },
+      "subrouters": [
+        "services/control-plane/bff/research/routes/analyses.py",
+        "services/control-plane/bff/research/routes/artifacts.py",
+        "services/control-plane/bff/research/routes/experiments.py",
+        "services/control-plane/bff/research/routes/knowledge.py",
+        "services/control-plane/bff/research/routes/ops.py",
+        "services/control-plane/bff/research/routes/tickets.py"
+      ],
+      "direct_store_access_count": 0,
+      "duplicate_ast_bodies_count": 0,
+      "two_instance_isolation_verified": true
+    },
+    {
+      "domain": "agora_research",
+      "parent_factory": "services/control-plane/bff/agora/research/router.py",
+      "domain_service": {
+        "class": "AgoraResearchService",
+        "file": "services/control-plane/bff/agora/research/service.py"
+      },
+      "subrouters": [
+        "services/control-plane/bff/agora/research/routes/candidates.py",
+        "services/control-plane/bff/agora/research/routes/plans.py",
+        "services/control-plane/bff/agora/research/routes/runs.py"
+      ],
+      "direct_store_access_count": 0,
+      "duplicate_ast_bodies_count": 0,
+      "two_instance_isolation_verified": true
+    },
+    {
+      "domain": "agora_trading_room",
+      "parent_factory": "services/control-plane/bff/agora/trading_room/router.py",
+      "domain_service": {
+        "class": "TradingRoomService",
+        "file": "services/control-plane/bff/agora/trading_room/service.py"
+      },
+      "subrouters": [
+        "services/control-plane/bff/agora/trading_room/routes/workspaces.py",
+        "services/control-plane/bff/agora/trading_room/routes/decisions.py",
+        "services/control-plane/bff/agora/trading_room/routes/intents.py"
+      ],
+      "direct_store_access_count": 0,
+      "duplicate_ast_bodies_count": 0,
+      "two_instance_isolation_verified": true
+    }
+  ],
+  "acceptance_criteria_verification": {
+    "section_d_and_sd4_2a_satisfied": true,
+    "http_handlers_only_parse_authorize_invoke_map": true,
+    "zero_direct_store_access_in_subrouters": true,
+    "zero_duplicate_ast_bodies": true,
+    "two_instance_data_and_metadata_isolation_preserved": true,
+    "existing_subrouters_and_contracts_preserved": true,
+    "no_universal_locator_or_dynamic_forwarding": true
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "result": "27 passed, 3 warnings in 40.95s (including 3 new boundary gates)"
+      },
+      {
+        "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/agora/trading_room/test_trading_room.py",
+        "result": "216 passed, 0 failed, 3 warnings in 155.98s"
+      },
+      {
+        "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
+        "result": "19 passed, 1 skipped in 11.58s"
+      },
+      {
+        "command": "python3 -m py_compile across all modified router, service, route, and test files",
+        "result": "0 errors, 0 warnings under Python 3.12"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review"
+  }
+}

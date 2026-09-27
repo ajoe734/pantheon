@@ -99,7 +99,6 @@ def create_research_router(
     router.routes.extend(build_candidates_router(ctx).routes)
     router.routes.extend(build_plans_router(ctx).routes)
     router.routes.extend(build_runs_router(ctx).routes)
-    router.store = store
     router.dispatcher = dispatcher
     router.adapter_registry = adapter_registry
     router.service = service

@@ -145,7 +145,12 @@ class ResearchRouterService:
                 fn = getattr(delegate, method_name, None)
                 target = delegate
         if not callable(fn):
-            return None
+            self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                f"Research store port missing {method_name}",
+                f"Port {type(port).__name__} does not implement {method_name}",
+            )
         if kwargs:
             try:
                 sig = inspect.signature(fn)
@@ -164,7 +169,17 @@ class ResearchRouterService:
                     kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
             except (ValueError, TypeError):
                 pass
-        return fn(*args, **kwargs)
+        try:
+            return fn(*args, **kwargs)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                f"Research port {method_name} failed",
+                str(exc),
+            )
 
     def _raise_error(self, status_code: int, error_code: Any, message: str, reason: str, **kwargs: Any) -> None:
         surfaces = kwargs.pop("surfaces", None)
@@ -1388,7 +1403,7 @@ class ResearchRouterService:
             page_items, next_token = self.page_slice(records, page_token, page_size)
             has_more = next_token is not None
         meta = self.snapshot_meta(snap)
-        meta["surfaces"] = {"insight_cards_list": surface_state}
+        meta["surfaces"] = {"insight_cards": surface_state}
         return {
             "insight_cards": [self._insight_list_item(item) for item in page_items],
             "filter_metadata": filter_metadata,

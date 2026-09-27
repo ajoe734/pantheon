@@ -1558,10 +1558,11 @@ class AgoraResearchRouteContext:
     service: Optional[Any] = None
 
     def __post_init__(self) -> None:
-        if self.service is None and self.store is not None:
+        raw_store = getattr(self, "store", None)
+        if self.service is None and raw_store is not None:
             from ..service import AgoraResearchService
             self.service = AgoraResearchService(
-                store=self.store,
+                store=raw_store,
                 dispatcher=self.dispatcher,
                 workshop_store=self.workshop_store,
                 dataset_store=self.dataset_store,

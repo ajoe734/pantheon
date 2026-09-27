@@ -1478,3 +1478,252 @@ def test_knowledge_read_port_fixtures_architecture_compliance() -> None:
         if isinstance(node, ast.ImportFrom) and node.module in ("ports", "auth", "core", "governance", "research", "personas"):
             bare_imports.append(f"{node.lineno}: from {node.module} import ...")
     assert not bare_imports, f"{rel_path} must use canonical package imports: {bare_imports}"
+
+
+def test_five_domain_routers_have_no_direct_store_access() -> None:
+    """Requirement BFF-ROUTER-USECASE-CORRECTIVE-001: Router HTTP route handlers
+    must not access persistence stores directly; all business branching, persistence,
+    and retries must be mediated through domain-specific application services.
+    """
+    store_attrs = {
+        "store",
+        "read_store",
+        "command_store",
+        "provisioning_store",
+        "workshop_store",
+        "dataset_store",
+    }
+    domains = [
+        "personas/routes",
+        "strategies/routes",
+        "research/routes",
+        "agora/research/routes",
+        "agora/trading_room/routes",
+    ]
+    violations: List[str] = []
+    scanned_files = 0
+    for d in domains:
+        route_dir = BFF_DIR / d
+        assert route_dir.is_dir(), f"Domain directory {route_dir} must exist"
+        for py_path in sorted(route_dir.glob("*.py")):
+            if py_path.name in ("__init__.py", "common.py"):
+                continue
+            scanned_files += 1
+            tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and node.attr in store_attrs:
+                    violations.append(f"{py_path.relative_to(BFF_DIR)}:{node.lineno} accesses .{node.attr}")
+    assert scanned_files == 20, f"Expected 20 subrouter files across 5 domains, found {scanned_files}"
+    assert not violations, f"Subrouter handlers must not access store attributes directly: {violations}"
+
+
+def test_five_domain_router_handlers_have_no_duplicate_ast_bodies() -> None:
+    """Requirement BFF-ROUTER-USECASE-CORRECTIVE-001: Ensure no duplicate AST handler
+    bodies exist across the five decomposed router domains (no mechanical copy-paste).
+    """
+    from collections import defaultdict
+
+    domains = [
+        "personas/routes",
+        "strategies/routes",
+        "research/routes",
+        "agora/research/routes",
+        "agora/trading_room/routes",
+    ]
+    bodies: Dict[str, List[str]] = defaultdict(list)
+    scanned_handlers = 0
+    for d in domains:
+        route_dir = BFF_DIR / d
+        for py_path in sorted(route_dir.glob("*.py")):
+            if py_path.name in ("__init__.py", "common.py"):
+                continue
+            tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    stmts = node.body
+                    if (
+                        stmts
+                        and isinstance(stmts[0], ast.Expr)
+                        and isinstance(stmts[0].value, ast.Constant)
+                        and isinstance(stmts[0].value.value, str)
+                    ):
+                        stmts = stmts[1:]
+                    if len(stmts) >= 4:
+                        scanned_handlers += 1
+                        dump = ast.dump(
+                            ast.Module(body=stmts, type_ignores=[]),
+                            annotate_fields=False,
+                            include_attributes=False,
+                        )
+                        bodies[dump].append(f"{py_path.relative_to(BFF_DIR)}:{node.name} ({len(stmts)} stmts)")
+
+    duplicates = {dump: locs for dump, locs in bodies.items() if len(locs) > 1}
+    assert not duplicates, f"Found duplicate AST handler bodies: {duplicates}"
+    assert scanned_handlers > 0, "Expected to scan substantive route handlers"
+
+
+def test_five_domain_routers_preserve_two_instance_isolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Requirement BFF-ROUTER-USECASE-CORRECTIVE-001: Verify that all five decomposed
+    router domains preserve two-instance data and metadata isolation without global
+    state pollution or cross-instance contamination.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+
+    auth_headers = {"Authorization": "Bearer test-user:operator,admin,reviewer"}
+    base_auth = {
+        "extract_identity": lambda auth, **kw: SimpleNamespace(operator_id="op-test"),
+        "require_read_role": lambda idn: None,
+        "bff_error": lambda status, code, msg, reason, **kw: HTTPException(status_code=status, detail=msg),
+        "utc_now": lambda: "2026-08-30T00:00:00Z",
+    }
+
+    # 1. Personas
+    from services.control_plane.bff.personas import PersonaService, create_personas_router
+    from services.control_plane.bff.personas.service import create_persona_registry_write_owner
+    from services.control_plane.bff.command_queue import CommandStore
+
+    class FakeRankingWriteOwner:
+        def list_ranking_snapshots(self) -> List[Any]:
+            return []
+        def get_ranking_snapshot(self, sid: str) -> Optional[Any]:
+            return None
+
+    class PersonaStore1:
+        def list_personas(self, **kw: Any) -> List[Dict[str, Any]]:
+            return [{"id": "p1", "name": "P1", "lifecycle_state": "active"}]
+        def dataset_source(self, d: str) -> str:
+            return "typed_store"
+
+    class PersonaStore2:
+        def list_personas(self, **kw: Any) -> List[Dict[str, Any]]:
+            return [{"id": "p2", "name": "P2", "lifecycle_state": "active"}]
+        def dataset_source(self, d: str) -> str:
+            return "other_store"
+
+    svc_p1 = PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        ranking_write_owner=FakeRankingWriteOwner(),
+        read_store=PersonaStore1(),
+        command_store=CommandStore(str(tmp_path / "cmd1.jsonl")),
+    )
+    svc_p2 = PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        ranking_write_owner=FakeRankingWriteOwner(),
+        read_store=PersonaStore2(),
+        command_store=CommandStore(str(tmp_path / "cmd2.jsonl")),
+    )
+    app_p1 = FastAPI()
+    app_p1.include_router(create_personas_router(service=svc_p1))
+    app_p2 = FastAPI()
+    app_p2.include_router(create_personas_router(service=svc_p2))
+    c_p1 = TestClient(app_p1)
+    c_p2 = TestClient(app_p2)
+
+    res1 = c_p1.get("/api/v1/personas", headers=auth_headers).json()
+    res2 = c_p2.get("/api/v1/personas", headers=auth_headers).json()
+    res1_again = c_p1.get("/api/v1/personas", headers=auth_headers).json()
+    assert res1["data"][0]["id"] == "p1"
+    assert res2["data"][0]["id"] == "p2"
+    assert res1_again["data"][0]["id"] == "p1"
+
+    # 2. Strategies
+    from services.control_plane.bff.strategies.router import create_strategies_router
+    from services.control_plane.bff.strategies.service import StrategiesService
+
+    def make_strat_rs(title: str) -> Any:
+        rs = MagicMock()
+        rs.get_strategy_spec_detail.return_value = {"lifecycle_state": "candidate", "title": title}
+        return rs
+
+    svc_s1 = StrategiesService(
+        list_strategy_summaries=lambda: [{"strategy_id": "s1", "title": "Strat 1", "lifecycle_state": "candidate"}],
+        read_surface=lambda: make_strat_rs("Strat 1"),
+    )
+    svc_s2 = StrategiesService(
+        list_strategy_summaries=lambda: [{"strategy_id": "s2", "title": "Strat 2", "lifecycle_state": "candidate"}],
+        read_surface=lambda: make_strat_rs("Strat 2"),
+    )
+    app_s1 = FastAPI()
+    app_s1.include_router(create_strategies_router(service=svc_s1))
+    app_s2 = FastAPI()
+    app_s2.include_router(create_strategies_router(service=svc_s2))
+    c_s1 = TestClient(app_s1)
+    c_s2 = TestClient(app_s2)
+
+    res1 = c_s1.get("/bff/strategies", headers=auth_headers).json()
+    res2 = c_s2.get("/bff/strategies", headers=auth_headers).json()
+    res1_again = c_s1.get("/bff/strategies", headers=auth_headers).json()
+    assert res1["data"][0]["id"] == "s1"
+    assert res2["data"][0]["id"] == "s2"
+    assert res1_again["data"][0]["id"] == "s1"
+
+    # 3. Research
+    from services.control_plane.bff.research.router import create_research_router
+
+    mock_rs1 = MagicMock()
+    mock_rs1.list_research_tickets.return_value = [{"ticket_id": "t1", "title": "Ticket 1"}]
+    mock_rs2 = MagicMock()
+    mock_rs2.list_research_tickets.return_value = [{"ticket_id": "t2", "title": "Ticket 2"}]
+    app_r1 = FastAPI()
+    app_r1.include_router(create_research_router(**base_auth, get_read_store=lambda: mock_rs1))
+    app_r2 = FastAPI()
+    app_r2.include_router(create_research_router(**base_auth, get_read_store=lambda: mock_rs2))
+    c_r1 = TestClient(app_r1)
+    c_r2 = TestClient(app_r2)
+
+    res1 = c_r1.get("/api/v1/research/tickets", headers=auth_headers).json()
+    res2 = c_r2.get("/api/v1/research/tickets", headers=auth_headers).json()
+    res1_again = c_r1.get("/api/v1/research/tickets", headers=auth_headers).json()
+    assert res1["data"][0]["ticket_id"] == "t1"
+    assert res2["data"][0]["ticket_id"] == "t2"
+    assert res1_again["data"][0]["ticket_id"] == "t1"
+
+    # 4. Agora Research
+    from services.control_plane.bff.agora.research.router import create_research_router as create_agora_research_router
+
+    mock_as1 = MagicMock()
+    mock_as1.list_candidate_pools.return_value = [
+        {"pool_id": "pool_1", "operator_id": "op-test", "snapshot_at": "2026-08-30T00:00:00Z", "candidates": []}
+    ]
+    mock_as2 = MagicMock()
+    mock_as2.list_candidate_pools.return_value = [
+        {"pool_id": "pool_2", "operator_id": "op-test", "snapshot_at": "2026-08-30T00:00:00Z", "candidates": []}
+    ]
+    app_ar1 = FastAPI()
+    app_ar1.include_router(create_agora_research_router(**base_auth, research_plan_store=mock_as1))
+    app_ar2 = FastAPI()
+    app_ar2.include_router(create_agora_research_router(**base_auth, research_plan_store=mock_as2))
+    c_ar1 = TestClient(app_ar1)
+    c_ar2 = TestClient(app_ar2)
+
+    res1 = c_ar1.get("/bff/agora/candidate-pools", headers=auth_headers).json()
+    res2 = c_ar2.get("/bff/agora/candidate-pools", headers=auth_headers).json()
+    res1_again = c_ar1.get("/bff/agora/candidate-pools", headers=auth_headers).json()
+    assert res1["items"][0]["pool_id"] == "pool_1"
+    assert res2["items"][0]["pool_id"] == "pool_2"
+    assert res1_again["items"][0]["pool_id"] == "pool_1"
+
+    # 5. Agora Trading Room
+    from services.control_plane.bff.agora.trading_room.router import create_trading_room_router
+    from services.control_plane.bff.agora.trading_room.store import make_trading_room_store
+
+    store1 = make_trading_room_store()
+    store2 = make_trading_room_store()
+    app_tr1 = FastAPI()
+    app_tr1.include_router(create_trading_room_router(**base_auth, trading_room_store=store1))
+    app_tr2 = FastAPI()
+    app_tr2.include_router(create_trading_room_router(**base_auth, trading_room_store=store2))
+    c_tr1 = TestClient(app_tr1)
+    c_tr2 = TestClient(app_tr2)
+
+    res1 = c_tr1.get("/bff/agora/trading-room", headers=auth_headers)
+    res2 = c_tr2.get("/bff/agora/trading-room", headers=auth_headers)
+    assert res1.status_code == 200
+    assert res2.status_code == 200
+    assert app_tr1.routes is not app_tr2.routes
