@@ -257,6 +257,13 @@ class ResearchRouteContext:
                 utc_now=self.utc_now,
                 snapshot_meta=self.snapshot_meta,
                 page_slice=self.page_slice,
+                bff_error=self.bff_error,
+                dataset_surface_status=self.dataset_surface_status,
+                get_capabilities=self.get_capabilities,
+                list_synthesis_conflict_logs_reader=self.list_synthesis_conflict_logs,
+                get_synthesis_conflict_log_reader=self.get_synthesis_conflict_log,
+                cross_entity_search_fn=self.cross_entity_search,
+                build_knowledge_workbench=self.build_knowledge_workbench,
             )
 
     def raise_service_error(self, exc: Exception) -> None:
