@@ -15,7 +15,10 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from ..models import safe_redact_evidence_refs
+from ..models import (
+    redact_evidence_refs as _canonical_redact_evidence_refs,
+    safe_redact_evidence_refs,
+)
 from .service import GovernanceService, SubmitAction, page_slice, split_csv, utc_now_rfc3339
 
 
@@ -93,7 +96,7 @@ def _default_read_surface_meta(
 def _default_redact_evidence_refs(
     identity: Any, refs: List[Dict[str, Any]], *, capabilities: Any = None
 ) -> Tuple[List[Dict[str, Any]], int]:
-    return GovernanceService._fail_closed_redact_evidence_refs(
+    return _canonical_redact_evidence_refs(
         identity, refs, capabilities=capabilities
     )
 
@@ -245,6 +248,20 @@ def create_governance_router(
 
     resolved_service = governance_service
 
+    _submit_action = submit_action
+    if _submit_action is None:
+        try:
+            from ..command_adapters.service import CommandAdapterService
+            from ..command_queue import CommandStore
+            _default_store = command_store or CommandStore()
+            _default_cs = CommandAdapterService(
+                command_store=_default_store,
+                read_surface=_get_store(),
+            )
+            _submit_action = _default_cs.submit_governance_action
+        except Exception:
+            _submit_action = None
+
     def _service() -> GovernanceService:
         nonlocal resolved_service
         current_store = _get_store()
@@ -253,7 +270,7 @@ def create_governance_router(
                 current_store,
                 utc_now=_now,
                 page_slice_fn=_page,
-                submit_action=submit_action,
+                submit_action=_submit_action,
                 publish_event=publish_event,
                 get_interventions=get_interventions,
                 dataset_surface_status=_surface,
@@ -1313,6 +1330,12 @@ def create_governance_router(
                 results.append({"index": index, "id": item_id, "status": "failed", "error": {"code": "VALIDATION_FAILED", "message": f"{exc} is required or invalid"}})
             except RuntimeError:
                 results.append({"index": index, "id": item_id, "status": "failed", "error": {"code": "IDEMPOTENCY_CONFLICT", "message": "idempotency key conflict"}})
+            except HTTPException as exc:
+                err_detail = exc.detail if isinstance(exc.detail, dict) else {"error": {"message": str(exc.detail)}}
+                err_info = err_detail.get("error", {})
+                code = err_info.get("code") or ("RESOURCE_CONFLICT" if exc.status_code == 409 else "VALIDATION_FAILED" if exc.status_code == 422 else "FAILED")
+                msg = err_info.get("message") or str(exc.detail)
+                results.append({"index": index, "id": item_id, "status": "failed", "error": {"code": code, "message": msg}})
         accepted = sum(item["status"] == "accepted" for item in results)
         failed = len(results) - accepted
         status = "accepted" if not failed else "partial" if accepted else "failed"

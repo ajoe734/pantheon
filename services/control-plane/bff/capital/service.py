@@ -13,7 +13,8 @@ from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import json
 from threading import RLock
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, runtime_checkable
+import uuid
 
 
 def run_management_read(*args: Any, **kwargs: Any) -> Any:
@@ -220,6 +221,167 @@ def _call_write(method: Callable[..., Any], payload: Dict[str, Any], context: Di
     raise signature_error
 
 
+@runtime_checkable
+class CapitalAuthority(Protocol):
+    """Protocol defining the mutation methods supported by Capital authority."""
+
+    def create_capital_pool(self, payload: Dict[str, Any], *, actor_id: str = ..., **kwargs: Any) -> Dict[str, Any]: ...
+    def patch_capital_pool(self, payload: Dict[str, Any], pool_id: str, *, actor_id: str = ..., **kwargs: Any) -> Dict[str, Any]: ...
+    def capital_pool_action(self, payload: Dict[str, Any], pool_id: str, *, actor_id: str = ..., **kwargs: Any) -> Dict[str, Any]: ...
+    def create_rebalance(self, payload: Dict[str, Any], *, actor_id: str = ..., **kwargs: Any) -> Dict[str, Any]: ...
+    def patch_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = ..., **kwargs: Any) -> Dict[str, Any]: ...
+    def apply_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = ..., **kwargs: Any) -> Dict[str, Any]: ...
+    def approve_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = ..., **kwargs: Any) -> Dict[str, Any]: ...
+    def sign_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = ..., **kwargs: Any) -> Dict[str, Any]: ...
+    def rebalance_action(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = ..., **kwargs: Any) -> Dict[str, Any]: ...
+
+
+class DefaultCapitalAuthority:
+    """Default production Capital write authority delegating to command executor and adapters."""
+
+    def __init__(
+        self,
+        command_executor: Any = None,
+        capital_adapter: Any = None,
+    ) -> None:
+        self._command_executor = command_executor
+        self._capital_adapter = capital_adapter
+
+    def _get_executor(self) -> Any:
+        if self._command_executor is not None:
+            return self._command_executor
+        try:
+            from .. import command_executor
+            return command_executor
+        except (ImportError, ValueError):
+            try:
+                from services.control_plane.bff import command_executor
+                return command_executor
+            except (ImportError, ValueError):
+                return None
+
+    def _get_adapter(self) -> Any:
+        if self._capital_adapter is not None:
+            return self._capital_adapter
+        try:
+            from ..command_adapters.capital_adapter import CapitalCommandAdapter
+            return CapitalCommandAdapter()
+        except (ImportError, ValueError):
+            try:
+                from services.control_plane.bff.command_adapters.capital_adapter import CapitalCommandAdapter
+                return CapitalCommandAdapter()
+            except (ImportError, ValueError):
+                return None
+
+    def create_capital_pool(self, payload: Dict[str, Any], *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
+        executor = self._get_executor()
+        body = dict(payload)
+        body.setdefault("actor_id", actor_id)
+        body.setdefault("actor_role", "operator")
+        pool_id = str(body.get("pool_id") or body.get("id") or "").strip()
+        if not pool_id:
+            pool_id = f"pool-{uuid.uuid4().hex[:8]}"
+            body["pool_id"] = pool_id
+            body["id"] = pool_id
+        if executor is not None and hasattr(executor, "create_capital_pool"):
+            return executor.create_capital_pool(body)
+        adapter = self._get_adapter()
+        if adapter is not None:
+            return adapter.execute(
+                command_id=str(uuid.uuid4()),
+                command_type="CapitalPoolAction",
+                params={**body, "action_id": "create"},
+            )
+        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+    def patch_capital_pool(self, payload: Dict[str, Any], pool_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
+        adapter = self._get_adapter()
+        if adapter is not None:
+            return adapter.execute(
+                command_id=str(uuid.uuid4()),
+                command_type="CapitalPoolAction",
+                params={**payload, "pool_id": pool_id, "action_id": "patch", "actor_id": actor_id},
+            )
+        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+    def capital_pool_action(self, payload: Dict[str, Any], pool_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
+        adapter = self._get_adapter()
+        if adapter is not None:
+            action_id = str(payload.get("action_id") or "action")
+            return adapter.execute(
+                command_id=str(uuid.uuid4()),
+                command_type="CapitalPoolAction",
+                params={**payload, "pool_id": pool_id, "action_id": action_id, "actor_id": actor_id},
+            )
+        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+    def create_rebalance(self, payload: Dict[str, Any], *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
+        executor = self._get_executor()
+        body = dict(payload)
+        body.setdefault("actor_id", actor_id)
+        if executor is not None and hasattr(executor, "create_capital_rebalance_proposal"):
+            return executor.create_capital_rebalance_proposal(body)
+        adapter = self._get_adapter()
+        if adapter is not None:
+            return adapter.execute(
+                command_id=str(uuid.uuid4()),
+                command_type="RebalanceProposal",
+                params={**body, "action_id": "propose", "actor_id": actor_id},
+            )
+        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+    def patch_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
+        adapter = self._get_adapter()
+        if adapter is not None:
+            return adapter.execute(
+                command_id=str(uuid.uuid4()),
+                command_type="PatchRebalance",
+                params={**payload, "rebalance_id": rebalance_id, "action_id": "patch", "actor_id": actor_id},
+            )
+        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+    def apply_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
+        adapter = self._get_adapter()
+        if adapter is not None:
+            return adapter.execute(
+                command_id=str(uuid.uuid4()),
+                command_type="ApprovedApply",
+                params={**payload, "rebalance_id": rebalance_id, "action_id": "apply", "actor_id": actor_id},
+            )
+        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+    def approve_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
+        adapter = self._get_adapter()
+        if adapter is not None:
+            return adapter.execute(
+                command_id=str(uuid.uuid4()),
+                command_type="ApprovedApply",
+                params={**payload, "rebalance_id": rebalance_id, "action_id": "approve", "actor_id": actor_id},
+            )
+        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+    def sign_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
+        adapter = self._get_adapter()
+        if adapter is not None:
+            return adapter.execute(
+                command_id=str(uuid.uuid4()),
+                command_type="ApprovedApply",
+                params={**payload, "rebalance_id": rebalance_id, "action_id": "sign", "actor_id": actor_id},
+            )
+        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+    def rebalance_action(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
+        adapter = self._get_adapter()
+        if adapter is not None:
+            action_id = str(payload.get("action_id") or "action")
+            return adapter.execute(
+                command_id=str(uuid.uuid4()),
+                command_type="RebalanceAction",
+                params={**payload, "rebalance_id": rebalance_id, "action_id": action_id, "actor_id": actor_id},
+            )
+        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+
 @dataclass
 class CapitalService:
     """Store/authority facade shared by all 25 Capital routes."""
@@ -238,7 +400,9 @@ class CapitalService:
 
     def _authority(self) -> Any:
         authority = self.get_capital_authority() if self.get_capital_authority else None
-        return authority if authority is not None else self._store()
+        if authority is None:
+            raise CapitalAuthorityUnavailable("Capital write authority is unavailable")
+        return authority
 
     def list_pools(
         self, *, status: Optional[str] = None, risk_policy_ref: Optional[str] = None

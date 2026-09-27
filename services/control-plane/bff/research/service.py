@@ -770,14 +770,6 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         params: Optional[Dict[str, Any]] = None,
         status: str = "active",
     ) -> Dict[str, Any]:
-        if self._read_surface is not None and hasattr(self._read_surface, "create_experiment_bff"):
-            return self._read_surface.create_experiment_bff(
-                name=name,
-                actor_id=actor_id,
-                created_at=created_at,
-                params=params,
-                status=status,
-            )
         ticket_id = str((params or {}).get("ticket_id") or "")
         return self.create_research_experiment(
             ticket_id=ticket_id,
@@ -3502,23 +3494,15 @@ class ResearchRouterService:
         port = self._port()
         try:
             with self._map_port_errors("create_experiment"):
-                if hasattr(port, "create_experiment_bff"):
-                    result = port.create_experiment_bff(
-                        name=name,
-                        actor_id=actor_id,
-                        created_at=self.utc_now(),
-                        params=payload,
-                    )
-                else:
-                    result = port.create_research_experiment(
-                        ticket_id=str(payload.get("ticket_id") or ""),
-                        experiment_name=name,
-                        strategy_selector=payload.get("strategy_selector") or {},
-                        parameter_set=payload.get("parameter_set") or {},
-                        run_config=payload.get("run_config") or {},
-                        launch_context=payload.get("launch_context") or {"actor_id": actor_id},
-                        queued_at=self.utc_now(),
-                    )
+                result = port.create_research_experiment(
+                    ticket_id=str(payload.get("ticket_id") or ""),
+                    experiment_name=name,
+                    strategy_selector=payload.get("strategy_selector") or {},
+                    parameter_set=payload.get("parameter_set") or {},
+                    run_config=payload.get("run_config") or {},
+                    launch_context=payload.get("launch_context") or {"actor_id": actor_id},
+                    queued_at=self.utc_now(),
+                )
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
                 503,

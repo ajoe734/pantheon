@@ -385,6 +385,7 @@ class CommandAdapterService:
         self._gov_bff_idempotency: Dict[str, Dict[str, Any]] = (
             gov_bff_idempotency if gov_bff_idempotency is not None else {}
         )
+        self._publish_event = publish_event
 
     @property
     def command_store(self) -> Any:
@@ -1021,6 +1022,8 @@ class CommandAdapterService:
             staleness_warning=staleness_warning,
         )
         res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+        if isinstance(res_dict, dict) and isinstance(res_dict.get("data"), dict):
+            res_dict["data"].setdefault("action", action_id)
         self._gov_bff_idempotency[resolved_key] = {"request_hash": request_hash, "result": res_dict}
         return res_dict
 
@@ -1729,7 +1732,7 @@ def _runtime_command_context(
 ) -> Dict[str, Optional[str]]:
     effective_store = read_store
     if effective_store is None:
-        bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        bff_main = sys.modules.get("services.control_plane.bff.main")
         if bff_main is not None:
             effective_store = getattr(bff_main, "read_store", None)
     runtime_binding = (
@@ -1894,7 +1897,7 @@ async def process_command(
     """
     store = command_store
     if store is None:
-        bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        bff_main = sys.modules.get("services.control_plane.bff.main")
         if bff_main is not None:
             store = getattr(bff_main, "command_store", None)
     if store is None:
@@ -1943,69 +1946,6 @@ async def process_command(
         )
         log.warning("Worker: command %s failed during routing resolution: %s", command_id, exc)
         return
-
-    effective_read_store = read_store
-    if effective_read_store is None:
-        bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
-        if bff_main is not None:
-            effective_read_store = getattr(bff_main, "read_store", None)
-
-    if command_type == CommandType.RECORD_SPONSOR_DECISION and effective_read_store is not None:
-        try:
-            committee_id = str(execution_params.get("committee_id") or "").strip()
-            updated = effective_read_store.record_sponsor_decision(
-                committee_id,
-                sponsor_decision=str(execution_params.get("sponsor_decision") or "").strip().lower(),
-                rationale_ref=str(execution_params.get("rationale_ref") or "").strip(),
-                actor_id=str(audit.get("operator_id") or "operator-command"),
-                recorded_at=utc_now(),
-            )
-            if updated is None:
-                raise ValueError(f"Committee {committee_id} could not be updated.")
-            result = {
-                "command_id": command_id,
-                "committee_id": updated.get("committee_id"),
-                "committee_ref": updated.get("committee_ref"),
-                "sponsor_decision": updated.get("sponsor_decision"),
-                "sponsor_decided_at": updated.get("sponsor_decided_at"),
-                "sponsor_decided_by": updated.get("sponsor_decided_by"),
-                "consensus_state": updated.get("consensus_state"),
-                "rationale_ref": (updated.get("synthesis_summary") or {}).get("rationale_ref"),
-                "service_handoff": updated.get("service_handoff") or {},
-                "execution_completed_at": utc_now(),
-            }
-            audit["execution_completed_at"] = result["execution_completed_at"]
-            audit["executor"] = "bff_read_store"
-            audit["downstream_verified"] = True
-            store.update_status(
-                command_id,
-                CommandStatus.EXECUTED,
-                result=result,
-                audit=audit,
-            )
-            log.info("Worker: command %s completed with status=%s", command_id, CommandStatus.EXECUTED.value)
-            return
-        except Exception as exc:
-            failed_at = utc_now()
-            error = {
-                "code": "COMMITTEE_UPDATE_FAILED",
-                "message": f"Unable to record sponsor decision: {exc}",
-                "started_at": failed_at,
-                "failed_at": failed_at,
-                "suggestion": "Refresh the committee board projection and retry once the committee surface is available.",
-            }
-            audit["execution_completed_at"] = failed_at
-            audit["executor"] = "bff_read_store"
-            audit["failure_reason"] = error["message"]
-            audit["failure_suggestion"] = error["suggestion"]
-            store.update_status(
-                command_id,
-                CommandStatus.FAILED,
-                error=error,
-                audit=audit,
-            )
-            log.warning("Worker: command %s failed during committee update: %s", command_id, exc)
-            return
 
     from ..command_executor import execute_command_with_status
     status, result, error = execute_command_with_status(

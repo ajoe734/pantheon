@@ -354,6 +354,15 @@ class GovernanceService:
             records = self._call("list_approval_decisions", default=[])
         items = [copy.deepcopy(item) for item in (records or [])]
         items.extend(copy.deepcopy(list(self._created_approvals.values())))
+        if self.command_store is not None:
+            try:
+                for cmd in self.command_store._get_all_commands():
+                    foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
+                    approval_rec = foundation.get("approval_record")
+                    if isinstance(approval_rec, dict):
+                        items.append(copy.deepcopy(approval_rec))
+            except Exception:
+                pass
         if outcome:
             requested = {part.lower() for part in split_csv(outcome) or []}
             items = [
@@ -387,6 +396,16 @@ class GovernanceService:
             return None
         if clean_id in self._created_approvals:
             return copy.deepcopy(self._created_approvals[clean_id])
+        if self.command_store is not None:
+            try:
+                cmd = self.command_store.get_command(clean_id)
+                if cmd is not None:
+                    foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
+                    approval_rec = foundation.get("approval_record")
+                    if isinstance(approval_rec, dict):
+                        return copy.deepcopy(approval_rec)
+            except Exception:
+                pass
         decision = self._call("get_approval_decision", clean_id, default=None)
         if decision is None:
             decision = self._call("get_approval_decision_by_id", clean_id, default=None)
@@ -423,11 +442,32 @@ class GovernanceService:
         request_hash = stable_json_hash(
             {"plan_id": plan_id, "decision": decision, "memo": memo}
         )
-        existing = self._idempotency.get(idempotency_key)
-        if existing:
-            if existing["request_hash"] != request_hash:
-                raise RuntimeError("idempotency_conflict")
-            return copy.deepcopy(existing["result"])
+        existing = None
+        if self.command_store is not None:
+            try:
+                cmd = self.command_store.get_command_by_idempotency_key(
+                    idempotency_key,
+                    operator_id=_identity_operator_id(identity),
+                )
+                if cmd is not None:
+                    foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
+                    idem_rec = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
+                    if idem_rec.get("request_hash") and idem_rec.get("request_hash") != request_hash:
+                        raise RuntimeError("idempotency_conflict")
+                    if cmd.get("result"):
+                        existing = cmd["result"]
+            except RuntimeError:
+                raise
+            except Exception:
+                pass
+        if existing is None:
+            in_mem = self._idempotency.get(idempotency_key)
+            if in_mem:
+                if in_mem["request_hash"] != request_hash:
+                    raise RuntimeError("idempotency_conflict")
+                existing = in_mem["result"]
+        if existing is not None:
+            return copy.deepcopy(existing)
 
         decided_at = self.utc_now()
         decision_id = str(payload.get("decision_id") or payload.get("id") or uuid.uuid4())
@@ -468,6 +508,37 @@ class GovernanceService:
                 "request_hash": request_hash,
                 "result": copy.deepcopy(result),
             }
+            if self.command_store is not None:
+                try:
+                    from ..models import CommandType, ObjectType, TargetObject
+                    cmd_type = CommandType.APPROVE_DECISION if decision == "approve" else CommandType.REJECT_DECISION
+                    operator_id = _identity_operator_id(identity)
+                    audit_context = {
+                        "operator_id": operator_id,
+                        "correlation_id": correlation_id,
+                        "timestamp": decided_at,
+                        "idempotency_key": idempotency_key,
+                    }
+                    foundation_context = {
+                        "idempotency_record": {
+                            "idempotency_key": idempotency_key,
+                            "request_hash": request_hash,
+                            "operator_id": operator_id,
+                        },
+                        "approval_record": copy.deepcopy(record),
+                    }
+                    self.command_store.submit_terminal_command(
+                        command_id=decision_id,
+                        command_type=cmd_type,
+                        target=TargetObject(type=ObjectType.APPROVAL_DECISION, id=decision_id),
+                        submitted_at=decided_at,
+                        params={"plan_id": plan_id, "decision": decision, "memo": memo},
+                        audit_context=audit_context,
+                        foundation_context=foundation_context,
+                        result=copy.deepcopy(result),
+                    )
+                except Exception:
+                    pass
         return result
 
     # Consultation requests, committees, and memos ---------------------

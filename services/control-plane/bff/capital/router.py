@@ -151,6 +151,10 @@ def create_capital_router(
     else:
         resolved_get_read_store = lambda: None
 
+    if get_capital_authority is None:
+        from .service import DefaultCapitalAuthority
+        get_capital_authority = lambda: DefaultCapitalAuthority()
+
     router = APIRouter(tags=["capital"])
     service = CapitalService(
         get_read_store=resolved_get_read_store,

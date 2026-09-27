@@ -102,7 +102,22 @@ from ..models import (
 try:
     from ..capital.service import _pm12_semantic_values_match
 except (ImportError, ValueError):
-    from services.control_plane.bff.capital.service import _pm12_semantic_values_match
+    try:
+        from services.control_plane.bff.capital.service import _pm12_semantic_values_match
+    except (ImportError, ValueError):
+        try:
+            from capital.service import _pm12_semantic_values_match
+        except (ImportError, ValueError):
+            def _pm12_semantic_values_match(asserted: Any, authoritative: Any) -> bool:
+                """Fail-safe fallback comparing asserted vs authoritative values."""
+                if asserted == authoritative:
+                    return True
+                try:
+                    if isinstance(asserted, (int, float, Decimal)) and isinstance(authoritative, (int, float, Decimal)):
+                        return Decimal(str(asserted)) == Decimal(str(authoritative))
+                except Exception:
+                    pass
+                return False
 
 try:
     from services.foundation import (
