@@ -112,53 +112,24 @@ class GovernedQuantLibInputAdapter:
             raise QuantLibWorkflowError("Bond payment_frequency must be positive")
 
 
-def _norm_cdf(x: float) -> float:
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
-
-
-def _norm_pdf(x: float) -> float:
-    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
-
-
 def _bs_metrics(option: GovernedOptionSpec) -> dict[str, float]:
+    """Compute option metrics via the unified QuantLib numerical backend."""
+    import QuantLib as ql
+
     t = option.maturity_days / 365.0
-    s = option.spot
-    k = option.strike
-    sigma = option.volatility
-    r = option.risk_free_rate
-    q = option.dividend_yield
-    sqrt_t = math.sqrt(t)
-    d1 = (math.log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
-    d2 = d1 - sigma * sqrt_t
-
-    if option.option_type == "call":
-        price = s * math.exp(-q * t) * _norm_cdf(d1) - k * math.exp(-r * t) * _norm_cdf(d2)
-        delta = math.exp(-q * t) * _norm_cdf(d1)
-        theta = (
-            -(s * _norm_pdf(d1) * sigma * math.exp(-q * t)) / (2.0 * sqrt_t)
-            - r * k * math.exp(-r * t) * _norm_cdf(d2)
-            + q * s * math.exp(-q * t) * _norm_cdf(d1)
-        )
-        rho = k * t * math.exp(-r * t) * _norm_cdf(d2)
-    else:
-        price = k * math.exp(-r * t) * _norm_cdf(-d2) - s * math.exp(-q * t) * _norm_cdf(-d1)
-        delta = math.exp(-q * t) * (_norm_cdf(d1) - 1.0)
-        theta = (
-            -(s * _norm_pdf(d1) * sigma * math.exp(-q * t)) / (2.0 * sqrt_t)
-            + r * k * math.exp(-r * t) * _norm_cdf(-d2)
-            - q * s * math.exp(-q * t) * _norm_cdf(-d1)
-        )
-        rho = -k * t * math.exp(-r * t) * _norm_cdf(-d2)
-
-    gamma = math.exp(-q * t) * _norm_pdf(d1) / (s * sigma * sqrt_t)
-    vega = s * math.exp(-q * t) * _norm_pdf(d1) * sqrt_t
+    forward = option.spot * math.exp((option.risk_free_rate - option.dividend_yield) * t)
+    std_dev = option.volatility * math.sqrt(t)
+    discount = math.exp(-option.risk_free_rate * t)
+    ql_type = ql.Option.Call if option.option_type == "call" else ql.Option.Put
+    payoff = ql.PlainVanillaPayoff(ql_type, option.strike)
+    calc = ql.BlackCalculator(payoff, forward, std_dev, discount)
     return {
-        "npv": round(price * abs(option.quantity), 6),
-        "delta": round(delta * option.quantity, 6),
-        "gamma": round(gamma * abs(option.quantity), 6),
-        "vega": round(vega * abs(option.quantity) / 100.0, 6),
-        "theta": round(theta * option.quantity / 365.0, 6),
-        "rho": round(rho * option.quantity / 100.0, 6),
+        "npv": round(calc.value() * abs(option.quantity), 6),
+        "delta": round(calc.delta(option.spot) * option.quantity, 6),
+        "gamma": round(calc.gamma(option.spot) * abs(option.quantity), 6),
+        "vega": round(calc.vega(t) * abs(option.quantity) / 100.0, 6),
+        "theta": round(calc.thetaPerDay(option.spot, t) * option.quantity, 6),
+        "rho": round(calc.rho(t) * option.quantity / 100.0, 6),
     }
 
 

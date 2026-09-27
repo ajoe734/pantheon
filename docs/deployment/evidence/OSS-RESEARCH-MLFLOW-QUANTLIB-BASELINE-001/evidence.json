@@ -1,0 +1,154 @@
+{
+  "task_id": "OSS-RESEARCH-MLFLOW-QUANTLIB-BASELINE-001",
+  "record_kind": "source_review_evidence_manifest",
+  "status": "ready_for_independent_review",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "review_file": "docs/deployment/evidence/OSS-RESEARCH-MLFLOW-QUANTLIB-BASELINE-001/evidence.json",
+  "base_commit": "b8a6e90c66d3b8fee223dd4bf160dd55e22cbea4",
+  "scope_and_boundary": {
+    "description": "Narrow implementation prerequisite extracted from OSS-RESEARCH-BASELINE-001 delivering independent MLflow 3.16.1 and QuantLib 1.43 compatibility.",
+    "scoped_artifacts_count": 22,
+    "declared_artifacts": [
+      "dependencies/constraints-research.txt",
+      "dependencies/locks/services-registry-experiments.txt",
+      "dependencies/locks/services-research-mlflow.txt",
+      "dependencies/locks/services-research-quantlib.txt",
+      "services/registry/experiments/Dockerfile",
+      "services/registry/experiments/requirements.txt",
+      "services/registry/experiments/adapter.py",
+      "services/registry/experiments/test_adapter.py",
+      "services/registry/experiments/README.md",
+      "mlflow_adapter.py",
+      "services/research/mlflow/Dockerfile",
+      "services/research/mlflow/entrypoint.py",
+      "services/research/mlflow/requirements.txt",
+      "services/research/mlflow/test_security_boundary.py",
+      "services/research/quantlib/Dockerfile",
+      "services/research/quantlib/adapter.py",
+      "services/research/quantlib/adapter/quantlib_adapter.py",
+      "services/research/quantlib/production_option_chain.py",
+      "services/research/quantlib/requirements.txt",
+      "services/research/quantlib/test_adapter.py",
+      "services/research/quantlib/test_production_option_chain.py",
+      "docs/deployment/evidence/OSS-RESEARCH-MLFLOW-QUANTLIB-BASELINE-001/evidence.json"
+    ],
+    "boundary_safeguards": "Zero modifications to six-framework adapters (DSPy, TRL, FinRL, RLlib, Qlib) or compose profiles. No production data migration, credential changes, or real-capital operations."
+  },
+  "library_transitions": {
+    "mlflow": {
+      "before": ">=2.11.0 (adapter pin 2.11.3)",
+      "after": "3.16.1 (adapter pin 3.16.1)",
+      "services_updated": [
+        "services/registry/experiments/requirements.txt",
+        "services/registry/experiments/adapter.py",
+        "services/registry/experiments/README.md",
+        "services/research/mlflow/requirements.txt",
+        "mlflow_adapter.py"
+      ]
+    },
+    "quantlib": {
+      "before": "QuantLib-Python>=1.18 (metapackage)",
+      "after": "QuantLib==1.43 (official core SWIG wheel), numpy>=1.26.4,<2.0.0",
+      "services_updated": [
+        "services/research/quantlib/requirements.txt",
+        "services/research/quantlib/Dockerfile",
+        "services/research/quantlib/adapter.py",
+        "services/research/quantlib/adapter/quantlib_adapter.py",
+        "services/research/quantlib/production_option_chain.py",
+        "services/research/quantlib/test_adapter.py"
+      ]
+    },
+    "constraints_and_locks": {
+      "constraints": "dependencies/constraints-research.txt",
+      "locks": [
+        "dependencies/locks/services-registry-experiments.txt",
+        "dependencies/locks/services-research-mlflow.txt",
+        "dependencies/locks/services-research-quantlib.txt"
+      ]
+    }
+  },
+  "quantlib_numerical_consolidation": {
+    "engine": "Official QuantLib 1.43 numerical engine",
+    "european_pricing": "ql.BlackCalculator via ql.BlackScholesMertonProcess",
+    "american_pricing": "ql.BinomialVanillaEngine(process, 'crr', steps=steps) with tenor-scaled rate/volatility for continuous research contracts",
+    "deduplication": [
+      "services/research/quantlib/adapter.py: consolidated price_european and price_american_binomial onto QuantLib",
+      "services/research/quantlib/production_option_chain.py: removed duplicate analytical BSM formula, delegated to price_european",
+      "services/research/quantlib/adapter/quantlib_adapter.py: _bs_metrics uses ql.BlackCalculator directly"
+    ],
+    "reference_fixtures": "Analytical BSM formulas and CRR tree reference formulas retained strictly in services/research/quantlib/test_adapter.py as frozen comparison fixtures with tolerances: price/delta/gamma 1e-4, vega/theta 1e-3."
+  },
+  "mlflow_security_and_runtime_verification": {
+    "tracking_and_artifact_roundtrip": "Verified in test_sqlite_tracking_and_artifact_roundtrip using isolated temporary SQLite store and local artifact repository.",
+    "basic_auth_boundary": "Verified in test_basic_auth_boundary_rejection_and_admission: unauthenticated access receives 401, invalid credentials receive 401, valid admin credentials receive 200 and can create experiments."
+  },
+  "container_verification": [
+    {
+      "service": "services/registry/experiments",
+      "image_tag": "pantheon-test-registry-experiments:latest",
+      "image_id": "sha256:b2274b68a71f46b2f424158bf78a8c54184f623bf2e1aec0556ca2c6bc609511",
+      "verification_command": "docker run --rm pantheon-test-registry-experiments python -c 'import mlflow, wandb; from adapter import MLFLOW_VERSION_PIN; print(mlflow.__version__, wandb.__version__, MLFLOW_VERSION_PIN); assert mlflow.__version__ == \"3.16.1\" == MLFLOW_VERSION_PIN'",
+      "exit_code": 0,
+      "output": "3.16.1 0.30.0 3.16.1"
+    },
+    {
+      "service": "services/research/mlflow",
+      "image_tag": "pantheon-test-research-mlflow:latest",
+      "image_id": "sha256:7bf793bba6be30ff9decbb9be1209182e05f898060d12ad85e8d53039b676cb5",
+      "verification_command": "docker run --rm --entrypoint python pantheon-test-research-mlflow -c 'import mlflow, flask_wtf, pydantic, redis; print(f\"mlflow: {mlflow.__version__}, flask_wtf: {flask_wtf.__version__}, pydantic: {pydantic.__version__}, redis: {redis.__version__}\"); assert mlflow.__version__ == \"3.16.1\"'",
+      "exit_code": 0,
+      "output": "mlflow: 3.16.1, flask_wtf: 1.3.0, pydantic: 2.13.5, redis: 8.1.0"
+    },
+    {
+      "service": "services/research/quantlib",
+      "image_tag": "pantheon-test-research-quantlib:latest",
+      "image_id": "sha256:ef081e684498a0427820c316b6d45d24b8d131b6d55a5d8b8ba140388ccdf247",
+      "verification_command": "docker run --rm pantheon-test-research-quantlib",
+      "exit_code": 0,
+      "output": "SMOKE TEST PASSED (checksum cf326a3cc1ec822623a15e5cd1e5adbb16e1ffebcf5669e2fe8d267fa4330673)"
+    }
+  ],
+  "validation": [
+    {
+      "batch": "python_unit_and_integration_tests",
+      "command": "pytest -v services/registry/experiments/test_adapter.py services/research/mlflow/test_security_boundary.py services/research/quantlib/test_adapter.py services/research/quantlib/test_production_option_chain.py services/research/quantlib/smoke_test.py",
+      "exit_code": 0,
+      "passed": 60,
+      "failed": 0,
+      "skipped": 0,
+      "xfail": 0,
+      "elapsed_seconds": 43.74
+    },
+    {
+      "batch": "registry_experiments_smoke",
+      "command": "python services/registry/experiments/smoke_test.py",
+      "exit_code": 0,
+      "passed": 1,
+      "output": "LP-003 smoke test passed with backend=memory: registry metadata mapped into experiment metadata."
+    },
+    {
+      "batch": "quantlib_smoke",
+      "command": "python services/research/quantlib/smoke_test.py",
+      "exit_code": 0,
+      "passed": 1,
+      "output": "SMOKE TEST PASSED (checksum cf326a3cc1ec822623a15e5cd1e5adbb16e1ffebcf5669e2fe8d267fa4330673)"
+    }
+  ],
+  "validation_total": {
+    "unique_test_cases_passed": 62,
+    "failed": 0,
+    "skipped": 0,
+    "xfail": 0
+  },
+  "other_checks": [
+    {
+      "command": "git diff b8a6e90c6 --check",
+      "exit_code": 0
+    }
+  ],
+  "independent_review": {
+    "status": "pending",
+    "authority": "Codex exact-head canonical review, followed by existing supervisor integrator"
+  }
+}

@@ -9,4 +9,4 @@ COPY . .
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "-m", "pytest", "-q", "smoke_test.py"]
+CMD ["python", "smoke_test.py"]

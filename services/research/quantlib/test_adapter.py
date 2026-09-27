@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -334,6 +335,291 @@ class TestRunQuantLibWorkflow(unittest.TestCase):
         b1 = run_quantlib_workflow(_snapshot())
         b2 = run_quantlib_workflow(_snapshot())
         self.assertNotEqual(b1["artifact_id"], b2["artifact_id"])
+
+
+# ---------------------------------------------------------------------------
+# Analytical Reference Fixtures (retained for verification of numerical core)
+# ---------------------------------------------------------------------------
+
+FROZEN_PRICE_TOLERANCE = 1e-4
+FROZEN_DELTA_TOLERANCE = 1e-4
+FROZEN_GAMMA_TOLERANCE = 1e-4
+FROZEN_VEGA_TOLERANCE = 1e-3
+FROZEN_THETA_TOLERANCE = 1e-3
+
+
+def _ref_norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _ref_norm_pdf(x: float) -> float:
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def reference_bsm_analytical(
+    spot: float,
+    strike: float,
+    rate: float,
+    vol: float,
+    tenor: float,
+    option_type: str,
+    dividend_yield: float = 0.0,
+) -> dict[str, float]:
+    """Analytical reference BSM formula retained only as test fixture."""
+    sqrt_t = math.sqrt(tenor)
+    discount_rate = math.exp(-rate * tenor)
+    discount_div = math.exp(-dividend_yield * tenor)
+    d1 = (math.log(spot / strike) + (rate - dividend_yield + 0.5 * vol * vol) * tenor) / (vol * sqrt_t)
+    d2 = d1 - vol * sqrt_t
+    pdf_d1 = _ref_norm_pdf(d1)
+
+    if option_type == "call":
+        price = spot * discount_div * _ref_norm_cdf(d1) - strike * discount_rate * _ref_norm_cdf(d2)
+        delta = discount_div * _ref_norm_cdf(d1)
+        theta_annual = (
+            -(spot * discount_div * pdf_d1 * vol) / (2.0 * sqrt_t)
+            - rate * strike * discount_rate * _ref_norm_cdf(d2)
+            + dividend_yield * spot * discount_div * _ref_norm_cdf(d1)
+        )
+        rho = strike * tenor * discount_rate * _ref_norm_cdf(d2)
+    else:
+        price = strike * discount_rate * _ref_norm_cdf(-d2) - spot * discount_div * _ref_norm_cdf(-d1)
+        delta = discount_div * (_ref_norm_cdf(d1) - 1.0)
+        theta_annual = (
+            -(spot * discount_div * pdf_d1 * vol) / (2.0 * sqrt_t)
+            + rate * strike * discount_rate * _ref_norm_cdf(-d2)
+            - dividend_yield * spot * discount_div * _ref_norm_cdf(-d1)
+        )
+        rho = -strike * tenor * discount_rate * _ref_norm_cdf(-d2)
+
+    gamma = discount_div * pdf_d1 / (spot * vol * sqrt_t)
+    vega = spot * discount_div * pdf_d1 * sqrt_t
+    return {
+        "price": price,
+        "delta": delta,
+        "gamma": gamma,
+        "vega": vega,
+        "theta": theta_annual / 365.0,
+        "rho": rho,
+    }
+
+
+def reference_crr_american_analytical(
+    spot: float,
+    strike: float,
+    rate: float,
+    vol: float,
+    tenor: float,
+    option_type: str,
+    steps: int = 512,
+) -> float:
+    """Analytical CRR tree reference formula retained only as test fixture."""
+    dt = tenor / steps
+    up = math.exp(vol * math.sqrt(dt))
+    down = 1.0 / up
+    discount = math.exp(-rate * dt)
+    probability = (math.exp(rate * dt) - down) / (up - down)
+
+    def payoff(s: float) -> float:
+        return max(s - strike, 0.0) if option_type == "call" else max(strike - s, 0.0)
+
+    values = [payoff(spot * (up**j) * (down ** (steps - j))) for j in range(steps + 1)]
+    for level in range(steps - 1, -1, -1):
+        values = [
+            max(
+                discount * (probability * values[j + 1] + (1.0 - probability) * values[j]),
+                payoff(spot * (up**j) * (down ** (level - j))),
+            )
+            for j in range(level + 1)
+        ]
+    return values[0]
+
+
+class TestQuantLibNumericalEngineVersusReferenceFixtures(unittest.TestCase):
+    """Verify numerical QuantLib backend against analytical reference fixtures with frozen tolerances."""
+
+    def test_european_call_and_put_match_reference_fixtures(self) -> None:
+        from adapter import price_european
+
+        test_cases = [
+            (100.0, 100.0, 0.05, 0.20, 1.0, 0.0),
+            (105.0, 100.0, 0.03, 0.25, 0.5, 0.01),
+            (95.0, 100.0, 0.02, 0.18, 0.75, 0.03),
+            (21000.0, 20400.0, 0.015, 0.238, 31 / 365.0, 0.012),
+            (21000.0, 21600.0, 0.015, 0.242, 60 / 365.0, 0.012),
+        ]
+        for spot, strike, rate, vol, tenor, div in test_cases:
+            for opt_type in ("call", "put"):
+                ql_result = price_european(spot, strike, rate, vol, tenor, opt_type, dividend_yield=div)
+                ref_result = reference_bsm_analytical(spot, strike, rate, vol, tenor, opt_type, dividend_yield=div)
+
+                self.assertAlmostEqual(
+                    ql_result["price"], ref_result["price"], delta=FROZEN_PRICE_TOLERANCE,
+                    msg=f"Price mismatch for {opt_type} at S={spot}, K={strike}"
+                )
+                self.assertAlmostEqual(
+                    ql_result["delta"], ref_result["delta"], delta=FROZEN_DELTA_TOLERANCE,
+                    msg=f"Delta mismatch for {opt_type} at S={spot}, K={strike}"
+                )
+                self.assertAlmostEqual(
+                    ql_result["gamma"], ref_result["gamma"], delta=FROZEN_GAMMA_TOLERANCE,
+                    msg=f"Gamma mismatch for {opt_type} at S={spot}, K={strike}"
+                )
+                self.assertAlmostEqual(
+                    ql_result["vega"], ref_result["vega"], delta=FROZEN_VEGA_TOLERANCE,
+                    msg=f"Vega mismatch for {opt_type} at S={spot}, K={strike}"
+                )
+                self.assertAlmostEqual(
+                    ql_result["theta"], ref_result["theta"], delta=FROZEN_THETA_TOLERANCE,
+                    msg=f"Theta mismatch for {opt_type} at S={spot}, K={strike}"
+                )
+
+    def test_american_binomial_crr_matches_reference_fixtures(self) -> None:
+        from adapter import price_american_binomial, price_european
+
+        spot, strike, rate, vol, tenor = 105.0, 100.0, 0.03, 0.20, 0.5
+        ql_call = price_american_binomial(spot, strike, rate, vol, tenor, "call", steps=512)
+        ref_call = reference_crr_american_analytical(spot, strike, rate, vol, tenor, "call", steps=512)
+        self.assertAlmostEqual(ql_call["price"], ref_call, delta=1e-3)
+
+        # Non-dividend American call converges to European call
+        euro_call = price_european(spot, strike, rate, vol, tenor, "call")
+        self.assertAlmostEqual(ql_call["price"], euro_call["price"], delta=1e-3)
+
+        # American put reflects early exercise premium
+        ql_put = price_american_binomial(spot, 95.0, rate, vol, tenor, "put", steps=512)
+        euro_put = price_european(spot, 95.0, rate, vol, tenor, "put")
+        self.assertGreaterEqual(ql_put["price"], euro_put["price"] - 1e-4)
+
+
+class TestQuantLibCalendarsAndConventions(unittest.TestCase):
+    """Verify official QuantLib calendar conventions."""
+
+    def test_supported_calendars(self) -> None:
+        import QuantLib as ql
+
+        calendars = {
+            "Null": ql.NullCalendar(),
+            "TARGET": ql.TARGET(),
+            "Taiwan": ql.Taiwan(),
+            "US_NYSE": ql.UnitedStates(ql.UnitedStates.NYSE),
+            "US_Settlement": ql.UnitedStates(ql.UnitedStates.Settlement),
+        }
+        ref_date = ql.Date(1, 1, 2026)
+        for name, cal in calendars.items():
+            self.assertIsNotNone(cal.name())
+            advanced = cal.advance(ref_date, 1, ql.Days)
+            self.assertGreater(advanced, ref_date)
+
+    def test_calendar_day_count_and_year_fraction(self) -> None:
+        import QuantLib as ql
+
+        day_count_365 = ql.Actual365Fixed()
+        day_count_act = ql.ActualActual(ql.ActualActual.ISDA)
+        d1 = ql.Date(1, 1, 2026)
+        d2 = ql.Date(1, 7, 2026)
+        yf365 = day_count_365.yearFraction(d1, d2)
+        yfact = day_count_act.yearFraction(d1, d2)
+        self.assertAlmostEqual(yf365, 181.0 / 365.0, places=5)
+        self.assertAlmostEqual(yfact, 181.0 / 365.0, places=5)
+
+
+class TestZeroAndShortMaturity(unittest.TestCase):
+    """Verify zero and short maturity handling in QuantLib numerical engine."""
+
+    def test_zero_maturity_boundary_values(self) -> None:
+        from adapter import price_american_binomial, price_european
+
+        # European Call: ITM
+        res = price_european(spot=110.0, strike=100.0, rate=0.03, vol=0.20, tenor=0.0, option_type="call")
+        self.assertEqual(res["price"], 10.0)
+        self.assertEqual(res["delta"], 1.0)
+        self.assertEqual(res["gamma"], 0.0)
+        self.assertEqual(res["vega"], 0.0)
+        self.assertEqual(res["theta"], 0.0)
+
+        # European Call: OTM
+        res = price_european(spot=90.0, strike=100.0, rate=0.03, vol=0.20, tenor=0.0, option_type="call")
+        self.assertEqual(res["price"], 0.0)
+        self.assertEqual(res["delta"], 0.0)
+
+        # European Put: ITM
+        res = price_european(spot=90.0, strike=100.0, rate=0.03, vol=0.20, tenor=0.0, option_type="put")
+        self.assertEqual(res["price"], 10.0)
+        self.assertEqual(res["delta"], -1.0)
+
+        # European Put: OTM
+        res = price_european(spot=110.0, strike=100.0, rate=0.03, vol=0.20, tenor=0.0, option_type="put")
+        self.assertEqual(res["price"], 0.0)
+        self.assertEqual(res["delta"], 0.0)
+
+        # American Binomial at tenor=0.0
+        am_call = price_american_binomial(110.0, 100.0, 0.03, 0.20, 0.0, "call")
+        self.assertEqual(am_call["price"], 10.0)
+        am_put = price_american_binomial(90.0, 100.0, 0.03, 0.20, 0.0, "put")
+        self.assertEqual(am_put["price"], 10.0)
+
+    def test_short_maturity_numerical_stability(self) -> None:
+        from adapter import price_european
+
+        for short_tenor in (1.0 / 365.0, 0.1 / 365.0, 1e-4):
+            res_call = price_european(100.0, 100.0, 0.03, 0.20, short_tenor, "call")
+            self.assertGreater(res_call["price"], 0.0)
+            self.assertTrue(math.isfinite(res_call["delta"]))
+            self.assertTrue(math.isfinite(res_call["gamma"]))
+            self.assertTrue(math.isfinite(res_call["vega"]))
+
+
+class TestQuantLibEdgeCases(unittest.TestCase):
+    """Verify deep ITM/OTM, extreme volatility, and interest rate boundaries."""
+
+    def test_deep_in_the_money(self) -> None:
+        from adapter import price_european
+
+        # Deep ITM Call
+        res = price_european(spot=1000.0, strike=10.0, rate=0.03, vol=0.20, tenor=1.0, option_type="call")
+        self.assertAlmostEqual(res["delta"], 1.0, delta=1e-3)
+        self.assertAlmostEqual(res["gamma"], 0.0, delta=1e-3)
+
+        # Deep ITM Put
+        res_put = price_european(spot=10.0, strike=1000.0, rate=0.03, vol=0.20, tenor=1.0, option_type="put")
+        self.assertAlmostEqual(res_put["delta"], -1.0, delta=1e-3)
+        self.assertAlmostEqual(res_put["gamma"], 0.0, delta=1e-3)
+
+    def test_deep_out_of_the_money(self) -> None:
+        from adapter import price_european
+
+        # Deep OTM Call
+        res = price_european(spot=10.0, strike=1000.0, rate=0.03, vol=0.20, tenor=1.0, option_type="call")
+        self.assertAlmostEqual(res["price"], 0.0, delta=1e-6)
+        self.assertAlmostEqual(res["delta"], 0.0, delta=1e-6)
+
+        # Deep OTM Put
+        res_put = price_european(spot=1000.0, strike=10.0, rate=0.03, vol=0.20, tenor=1.0, option_type="put")
+        self.assertAlmostEqual(res_put["price"], 0.0, delta=1e-6)
+        self.assertAlmostEqual(res_put["delta"], 0.0, delta=1e-6)
+
+    def test_extreme_volatility(self) -> None:
+        from adapter import price_european
+
+        # Very low vol
+        res_low = price_european(100.0, 100.0, 0.03, 0.0001, 1.0, "call")
+        self.assertGreater(res_low["price"], 0.0)
+
+        # High vol
+        res_high = price_european(100.0, 100.0, 0.03, 3.0, 1.0, "call")
+        self.assertGreater(res_high["price"], res_low["price"])
+
+    def test_zero_and_negative_rates(self) -> None:
+        from adapter import price_european
+
+        # Zero rate
+        res_zero = price_european(100.0, 100.0, 0.0, 0.20, 1.0, "call")
+        self.assertGreater(res_zero["price"], 0.0)
+
+        # Negative rate
+        res_neg = price_european(100.0, 100.0, -0.005, 0.20, 1.0, "call")
+        self.assertGreater(res_neg["price"], 0.0)
 
 
 if __name__ == "__main__":

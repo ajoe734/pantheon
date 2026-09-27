@@ -1,3 +1,4 @@
-mlflow==3.11.1
+mlflow==3.16.1
+Flask-WTF>=1.2.0
 pydantic>=2.6.3
 redis>=5.0.0

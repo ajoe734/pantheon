@@ -2,7 +2,8 @@
 
 The public surface is intentionally narrow for OSS-QUANTLIB-001:
 European Black-Scholes pricing and American CRR binomial pricing for
-vanilla calls and puts. Outputs are research-plane pricing snapshots only.
+vanilla calls and puts backed by the official QuantLib numerical library.
+Outputs are research-plane pricing snapshots only.
 """
 
 from __future__ import annotations
@@ -10,6 +11,8 @@ from __future__ import annotations
 import math
 from pathlib import Path
 from typing import Literal
+
+import QuantLib as ql
 
 # Keep the pre-existing ``adapter/`` package importable for older governed
 # QuantLib tests that use ``from adapter.quantlib_adapter import ...``.
@@ -27,15 +30,46 @@ def price_european(
     vol: float,
     tenor: float,
     option_type: OptionType | str,
+    dividend_yield: float = 0.0,
 ) -> dict[str, float]:
-    """Price a vanilla European option with Black-Scholes.
+    """Price a vanilla European option with QuantLib Black-Scholes.
 
     ``tenor`` is expressed in years and ``vol`` is annualized volatility.
-    Vega is returned per 1.0 volatility unit.
+    Vega is returned per 1.0 volatility unit. Theta is returned per calendar day.
     """
 
-    option_type = _validate_inputs(spot, strike, rate, vol, tenor, option_type)
-    return _black_scholes(spot, strike, rate, vol, tenor, option_type)
+    opt_type = _validate_inputs(spot, strike, rate, vol, tenor, option_type, dividend_yield)
+    if tenor == 0.0:
+        if opt_type == "call":
+            price = max(0.0, spot - strike)
+            delta = 1.0 if spot > strike else (0.5 if spot == strike else 0.0)
+        else:
+            price = max(0.0, strike - spot)
+            delta = -1.0 if spot < strike else (-0.5 if spot == strike else 0.0)
+        return {
+            "price": float(price),
+            "delta": float(delta),
+            "gamma": 0.0,
+            "vega": 0.0,
+            "theta": 0.0,
+            "rho": 0.0,
+        }
+
+    forward = spot * math.exp((rate - dividend_yield) * tenor)
+    std_dev = vol * math.sqrt(tenor)
+    discount = math.exp(-rate * tenor)
+    ql_type = ql.Option.Call if opt_type == "call" else ql.Option.Put
+    payoff = ql.PlainVanillaPayoff(ql_type, strike)
+    calc = ql.BlackCalculator(payoff, forward, std_dev, discount)
+
+    return {
+        "price": float(calc.value()),
+        "delta": float(calc.delta(spot)),
+        "gamma": float(calc.gamma(spot)),
+        "vega": float(calc.vega(tenor)),
+        "theta": float(calc.thetaPerDay(spot, tenor)),
+        "rho": float(calc.rho(tenor)),
+    }
 
 
 def price_american_binomial(
@@ -47,32 +81,48 @@ def price_american_binomial(
     option_type: OptionType | str,
     *,
     steps: int = 512,
+    dividend_yield: float = 0.0,
 ) -> dict[str, float]:
-    """Price a vanilla American option with a Cox-Ross-Rubinstein tree."""
+    """Price a vanilla American option with a QuantLib Cox-Ross-Rubinstein tree."""
 
-    option_type = _validate_inputs(spot, strike, rate, vol, tenor, option_type)
+    opt_type = _validate_inputs(spot, strike, rate, vol, tenor, option_type, dividend_yield)
     if steps < 3:
         raise ValueError("steps must be at least 3")
 
-    price = _american_binomial_price(
-        spot, strike, rate, vol, tenor, option_type, steps=steps
+    if tenor == 0.0:
+        if opt_type == "call":
+            price = max(0.0, spot - strike)
+            delta = 1.0 if spot > strike else (0.5 if spot == strike else 0.0)
+        else:
+            price = max(0.0, strike - spot)
+            delta = -1.0 if spot < strike else (-0.5 if spot == strike else 0.0)
+        return {
+            "price": float(price),
+            "delta": float(delta),
+            "gamma": 0.0,
+            "vega": 0.0,
+        }
+
+    price = _american_binomial_price_ql(
+        spot, strike, rate, vol, tenor, opt_type, steps=steps, dividend_yield=dividend_yield
     )
     spot_bump = max(spot * 0.01, 0.01)
     vol_bump = 0.001
-    price_up = _american_binomial_price(
-        spot + spot_bump, strike, rate, vol, tenor, option_type, steps=steps
+    price_up = _american_binomial_price_ql(
+        spot + spot_bump, strike, rate, vol, tenor, opt_type, steps=steps, dividend_yield=dividend_yield
     )
-    price_down = _american_binomial_price(
+    price_down = _american_binomial_price_ql(
         max(0.01, spot - spot_bump),
         strike,
         rate,
         vol,
         tenor,
-        option_type,
+        opt_type,
         steps=steps,
+        dividend_yield=dividend_yield,
     )
-    price_vol_up = _american_binomial_price(
-        spot, strike, rate, vol + vol_bump, tenor, option_type, steps=steps
+    price_vol_up = _american_binomial_price_ql(
+        spot, strike, rate, vol + vol_bump, tenor, opt_type, steps=steps, dividend_yield=dividend_yield
     )
 
     delta = (price_up - price_down) / (2.0 * spot_bump)
@@ -93,6 +143,7 @@ def _validate_inputs(
     vol: float,
     tenor: float,
     option_type: OptionType | str,
+    dividend_yield: float = 0.0,
 ) -> OptionType:
     normalized = str(option_type).lower()
     if normalized not in {"call", "put"}:
@@ -103,6 +154,7 @@ def _validate_inputs(
         "rate": rate,
         "vol": vol,
         "tenor": tenor,
+        "dividend_yield": dividend_yield,
     }.items():
         if not math.isfinite(float(value)):
             raise ValueError(f"{name} must be finite")
@@ -112,43 +164,12 @@ def _validate_inputs(
         raise ValueError("strike must be positive")
     if vol <= 0.0:
         raise ValueError("vol must be positive")
-    if tenor <= 0.0:
-        raise ValueError("tenor must be positive")
+    if tenor < 0.0:
+        raise ValueError("tenor must be non-negative")
     return normalized  # type: ignore[return-value]
 
 
-def _black_scholes(
-    spot: float,
-    strike: float,
-    rate: float,
-    vol: float,
-    tenor: float,
-    option_type: OptionType,
-) -> dict[str, float]:
-    sqrt_t = math.sqrt(tenor)
-    d1 = (math.log(spot / strike) + (rate + 0.5 * vol * vol) * tenor) / (
-        vol * sqrt_t
-    )
-    d2 = d1 - vol * sqrt_t
-
-    if option_type == "call":
-        price = spot * _norm_cdf(d1) - strike * math.exp(-rate * tenor) * _norm_cdf(d2)
-        delta = _norm_cdf(d1)
-    else:
-        price = strike * math.exp(-rate * tenor) * _norm_cdf(-d2) - spot * _norm_cdf(-d1)
-        delta = _norm_cdf(d1) - 1.0
-
-    gamma = _norm_pdf(d1) / (spot * vol * sqrt_t)
-    vega = spot * _norm_pdf(d1) * sqrt_t
-    return {
-        "price": float(price),
-        "delta": float(delta),
-        "gamma": float(gamma),
-        "vega": float(vega),
-    }
-
-
-def _american_binomial_price(
+def _american_binomial_price_ql(
     spot: float,
     strike: float,
     rate: float,
@@ -157,44 +178,37 @@ def _american_binomial_price(
     option_type: OptionType,
     *,
     steps: int,
+    dividend_yield: float = 0.0,
 ) -> float:
-    dt = tenor / steps
-    up = math.exp(vol * math.sqrt(dt))
-    down = 1.0 / up
-    discount = math.exp(-rate * dt)
-    probability = (math.exp(rate * dt) - down) / (up - down)
-    if not 0.0 < probability < 1.0:
-        raise ValueError("CRR tree produced invalid risk-neutral probability")
+    today = ql.Date(1, 1, 2026)
+    ql.Settings.instance().evaluationDate = today
+    day_count = ql.Actual365Fixed()
+    calendar = ql.NullCalendar()
+    days = 180
+    maturity = today + days
+    t_ql = day_count.yearFraction(today, maturity)
+    scale = tenor / t_ql
 
-    values = [
-        _payoff(spot * (up**j) * (down ** (steps - j)), strike, option_type)
-        for j in range(steps + 1)
-    ]
-    for level in range(steps - 1, -1, -1):
-        next_values: list[float] = []
-        for j in range(level + 1):
-            continuation = discount * (
-                probability * values[j + 1] + (1.0 - probability) * values[j]
-            )
-            node_spot = spot * (up**j) * (down ** (level - j))
-            exercise = _payoff(node_spot, strike, option_type)
-            next_values.append(max(continuation, exercise))
-        values = next_values
-    return values[0]
+    spot_handle = ql.QuoteHandle(ql.SimpleQuote(spot))
+    rate_handle = ql.YieldTermStructureHandle(
+        ql.FlatForward(today, rate * scale, day_count)
+    )
+    div_handle = ql.YieldTermStructureHandle(
+        ql.FlatForward(today, dividend_yield * scale, day_count)
+    )
+    vol_handle = ql.BlackVolTermStructureHandle(
+        ql.BlackConstantVol(today, calendar, vol * math.sqrt(scale), day_count)
+    )
 
-
-def _payoff(spot: float, strike: float, option_type: OptionType) -> float:
-    if option_type == "call":
-        return max(spot - strike, 0.0)
-    return max(strike - spot, 0.0)
-
-
-def _norm_cdf(value: float) -> float:
-    return 0.5 * (1.0 + math.erf(value / math.sqrt(2.0)))
-
-
-def _norm_pdf(value: float) -> float:
-    return math.exp(-0.5 * value * value) / math.sqrt(2.0 * math.pi)
+    process = ql.BlackScholesMertonProcess(
+        spot_handle, div_handle, rate_handle, vol_handle
+    )
+    ql_type = ql.Option.Call if option_type == "call" else ql.Option.Put
+    payoff = ql.PlainVanillaPayoff(ql_type, strike)
+    exercise = ql.AmericanExercise(today, maturity)
+    option = ql.VanillaOption(payoff, exercise)
+    option.setPricingEngine(ql.BinomialVanillaEngine(process, "crr", steps))
+    return float(option.NPV())
 
 
 __all__ = ["price_european", "price_american_binomial"]

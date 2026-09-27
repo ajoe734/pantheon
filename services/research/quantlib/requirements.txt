@@ -1,2 +1,2 @@
-QuantLib-Python==1.18
+QuantLib==1.43
 numpy>=1.26.4,<2.0.0
