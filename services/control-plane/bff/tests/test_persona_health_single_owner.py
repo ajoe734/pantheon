@@ -81,24 +81,23 @@ def test_main_py_has_no_module_global_source_health_cache() -> None:
 
 
 def test_main_py_constructs_persona_service_once_before_runtime_router() -> None:
-    """main.py builds exactly one app-scoped PersonaService, before the runtime
+    """app_factory.py builds exactly one app-scoped PersonaService, before the runtime
     router is assembled, and injects its bound method (not a bare function)."""
-    text = _main_py_source()
+    text = (BFF_DIR / "core" / "app_factory.py").read_text(encoding="utf-8")
 
-    construct_idx = text.index("persona_service = PersonaService(")
-    assert text.count("persona_service = PersonaService(") == 1, (
-        "main.py must construct exactly one persona_service instance"
+    construct_idx = text.index("PersonaService(")
+    assert text.count("PersonaService(") == 1, (
+        "app_factory.py must construct exactly one persona_service instance"
     )
 
-    runtime_router_idx = text.index("_create_runtime_router(")
+    runtime_router_idx = text.index("create_runtime_router(")
     assert construct_idx < runtime_router_idx, (
         "persona_service must be constructed before the runtime router is "
         "assembled so runtime consumers bind to the same instance"
     )
 
     assert (
-        '("_build_persona_health_items", persona_service.build_persona_health_items)'
-        in text
+        'getattr(persona_service, "build_persona_health_items")' in text
     ), "runtime router must be injected the bound instance method, not a bare function"
 
 

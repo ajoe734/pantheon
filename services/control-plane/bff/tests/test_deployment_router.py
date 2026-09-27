@@ -78,9 +78,10 @@ def test_deployment_router_owns_all_deployment_routes() -> None:
 
 
 def test_main_composes_deployment_router_without_inline_decorators() -> None:
-    main_source = (BFF_ROOT / "main.py").read_text(encoding="utf-8")
-    assert "from .deployment.router import create_deployment_router" in main_source
+    factory_source = (BFF_ROOT / "core" / "app_factory.py").read_text(encoding="utf-8")
+    assert "create_deployment_router" in factory_source
 
+    main_source = (BFF_ROOT / "main.py").read_text(encoding="utf-8")
     extracted_paths = (
         r'"/api/v1/deployment-plans"',
         r'"/api/v1/deployment-plans/\{plan_id\}"',
@@ -119,7 +120,6 @@ def test_deployment_service_accepts_typed_queries() -> None:
 
 
 def test_main_composes_deployment_router_with_queries_not_closure() -> None:
-    main_source = (BFF_ROOT / "main.py").read_text(encoding="utf-8")
-    assert "queries=app_deps.deployment_queries" in main_source
-    assert "commands=app_deps.deployment_commands" in main_source
-    assert "_create_deployment_router(\n        queries=app_deps.deployment_queries,\n        commands=app_deps.deployment_commands," in main_source
+    factory_source = (BFF_ROOT / "core" / "app_factory.py").read_text(encoding="utf-8")
+    assert "queries=app_deps.deployment_queries" in factory_source
+    assert "commands=app_deps.deployment_commands" in factory_source

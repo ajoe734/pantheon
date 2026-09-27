@@ -69,6 +69,7 @@ def _isolated_command_client() -> Iterator[TestClient]:
             command_store=store,
             read_surface=None,
             extract_identity=_test_extract_identity,
+            process_command_task=lambda cmd_id: None,
         )
         app = FastAPI()
         register_error_handlers(app)

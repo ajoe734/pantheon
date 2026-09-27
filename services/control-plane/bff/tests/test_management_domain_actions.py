@@ -45,25 +45,35 @@ def _load_main_command_helpers():
     import ast
     from pathlib import Path
 
-    tree = ast.parse(Path(__file__).resolve().parent.parent.joinpath("main.py").read_text())
+    bff_dir = Path(__file__).resolve().parent.parent
+    trees = [
+        ast.parse(bff_dir.joinpath("main.py").read_text()),
+        ast.parse(bff_dir.joinpath("command_adapters", "service.py").read_text()),
+    ]
     needed = {
         "_DRAWER_RUNTIME_COMMANDS",
         "_TWO_MAN_EVIDENCE_FIELDS",
         "_HUMAN_GATE_DECISIONS_BY_COMMAND",
+        "stored_command_params",
         "_stored_command_params",
         "_resolve_execution_params_for_record",
     }
     nodes = [ast.parse("from __future__ import annotations").body[0]]
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in needed:
-            nodes.append(node)
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id in needed:
-                    nodes.append(node)
-        elif isinstance(node, ast.AnnAssign):
-            if isinstance(node.target, ast.Name) and node.target.id in needed:
+    found = set()
+    for tree in trees:
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in needed and node.name not in found:
                 nodes.append(node)
+                found.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in needed and target.id not in found:
+                        nodes.append(node)
+                        found.add(target.id)
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name) and node.target.id in needed and node.target.id not in found:
+                    nodes.append(node)
+                    found.add(node.target.id)
 
     mod = ast.Module(body=nodes, type_ignores=[])
     ns = {
@@ -72,6 +82,9 @@ def _load_main_command_helpers():
         "Dict": dict,
         "Any": object,
         "Optional": object,
+        "Callable": object,
+        "List": list,
+        "Tuple": tuple,
     }
     exec(compile(mod, "main_command_helpers.py", "exec"), ns)
     return ns

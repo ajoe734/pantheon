@@ -25,7 +25,8 @@ _COCKPIT_FUNCS = None
 def _get_cockpit_funcs():
     global _COCKPIT_FUNCS
     if _COCKPIT_FUNCS is None:
-        tree = ast.parse(Path("services/control-plane/bff/main.py").read_text(encoding="utf-8"))
+        tree_mgmt = ast.parse(Path("services/control-plane/bff/assistant/management_service.py").read_text(encoding="utf-8"))
+        tree_main = ast.parse(Path("services/control-plane/bff/main.py").read_text(encoding="utf-8"))
         target_names = {
             "_mgmt_nl_collect_context",
             "_mgmt_nl_filter_tenant_records",
@@ -35,6 +36,7 @@ def _get_cockpit_funcs():
             "_mgmt_nl_trading_pulse_snippet",
             "_mgmt_nl_scoped_runtime_rows",
             "_project_operator_runtime_state_row",
+            "_project_operator_runtime_state_row_impl",
             "_project_runtime_state_telemetry_summary",
             "_project_runtime_state_monitoring_session",
             "_runtime_state_monitoring_terminal_reason",
@@ -57,7 +59,10 @@ def _get_cockpit_funcs():
             "_mgmt_nl_surface_owner_observation",
         }
         _COCKPIT_FUNCS = [
-            n for n in tree.body
+            n for n in tree_mgmt.body
+            if isinstance(n, ast.FunctionDef) and n.name in target_names
+        ] + [
+            n for n in tree_main.body
             if isinstance(n, ast.FunctionDef) and n.name in target_names
         ]
     return _COCKPIT_FUNCS
@@ -88,6 +93,9 @@ class _MockContextHost:
         })
         mod = ast.Module(body=funcs, type_ignores=[])
         exec(compile(mod, "main_cockpit.py", "exec"), ns)
+        if "_project_operator_runtime_state_row_impl" in ns:
+            ns["_project_operator_runtime_state_row"] = ns["_project_operator_runtime_state_row_impl"]
+            ns["_PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN"] = ns["_project_operator_runtime_state_row_impl"]
         return ns["_mgmt_nl_collect_context"](focus, snapshot_at, tenant_id)
 
 

@@ -5,11 +5,13 @@ from fastapi.testclient import TestClient
 
 from services.control_plane.bff.auth.policy import (
     bff_error,
+    capabilities_for_identity,
     extract_identity_stub,
     require_operator_role,
     require_read_role,
 )
 from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.models import redact_evidence_refs
 from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 
@@ -25,6 +27,8 @@ def _client_for(store: ReadSurfacePorts) -> TestClient:
             require_read_role=require_read_role,
             require_operator_role=require_operator_role,
             bff_error=bff_error,
+            redact_evidence_refs=redact_evidence_refs,
+            capabilities_for_identity=capabilities_for_identity,
         )
     )
     return TestClient(app, raise_server_exceptions=False)
