@@ -418,19 +418,19 @@
   "scoped_artifacts_audit": [
     {
       "path": "docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json",
-      "git_blob_sha": "d8e9f51595dd643823d27f62cd9a90244a3bd9f8",
+      "git_blob_sha": "canonical_delivery_binding",
       "status": "created_by_this_task",
-      "role": "Canonical task evidence manifest and full architectural rollup certification"
+      "role": "Canonical task evidence manifest and full architectural rollup certification (manifest blob is bound at owner handoff via REVIEW_FILE into canonical task store delivery_binding.manifest_blob_sha)"
     },
     {
       "path": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
-      "git_blob_sha": "18677fbe70c474a3ea3ee0f2f265296701eceedd",
+      "git_blob_sha": "969fd05b3146c018ebe84e51a8baaf0c2d514a38",
       "status": "modified_by_this_task",
-      "role": "BFF test architecture inventory reconciled: 10 PLANNED entries updated to DECOUPLED; test_promotion_review_production_defects.py added from dev"
+      "role": "BFF test architecture inventory reconciled: 10 PLANNED entries updated to DECOUPLED; test_promotion_review_production_defects.py added from dev; auth/test_policy.py disposition updated to MIGRATED and extracted composition-root smoke allowlist entry added"
     },
     {
       "path": "services/control-plane/bff/tests/test_bff_test_architecture.py",
-      "git_blob_sha": "59963565b8efbaad06439b030c1de1699cb0dab3",
+      "git_blob_sha": "bdeb77ea8cb92fd84673725d2de88435393c5d39",
       "status": "modified_by_this_task",
       "role": "Official architecture gate and AST scan enforcement; corrected P2 AC4 aggregate misreporting and P1 AC1/AC2 residual offender"
     },
@@ -460,9 +460,9 @@
     },
     {
       "path": "services/control-plane/bff/tests/rebalance_authority_test_support.py",
-      "git_blob_sha": "b0bc3140d8935d273dbecb22d72a8c446e427f78",
-      "status": "committed_on_dev",
-      "role": "Predecessor-migrated test suite, fixture contract, or support module"
+      "git_blob_sha": "a337708cffbc36e8089df01c6f56f90b7a74d9d2",
+      "status": "modified_by_this_task",
+      "role": "Predecessor-migrated test support module; wired real pool/binding authority test doubles with pre-existing create_pool failure transferred to successor"
     },
     {
       "path": "services/control-plane/bff/test_bff_promotion_review_governance.py",
@@ -514,7 +514,7 @@
     },
     {
       "path": "services/control-plane/bff/events/test_router.py",
-      "git_blob_sha": "d511e7d040b0217974a98459f680bcc74bf674ae",
+      "git_blob_sha": "eb578e860789c1eea7b25dc0658caa8d63228ac1",
       "status": "modified_by_this_task",
       "role": "Decoupled test suite or support helper canonicalized to package imports"
     },
@@ -532,7 +532,7 @@
     },
     {
       "path": "services/control-plane/bff/test_kw03_evidence_refs_contract.py",
-      "git_blob_sha": "244a264835e078b1f6112f3f362f6b966badc5ef",
+      "git_blob_sha": "b9dd5710508972e7325c08ee0e80238d3bf838ac",
       "status": "modified_by_this_task",
       "role": "Decoupled test suite or support helper canonicalized to package imports"
     },
@@ -589,12 +589,6 @@
       "git_blob_sha": "0c6b03414b341f90919ea7dd5cec7753bffe81a6",
       "status": "modified_by_this_task",
       "role": "Decoupled test suite or support helper canonicalized to package imports"
-    },
-    {
-      "path": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
-      "git_blob_sha": "dcb37fefdbc1815e29bc86ed7e8ecc437b4e5191",
-      "status": "modified_by_this_task",
-      "role": "Corrected auth/test_policy.py disposition (PLANNED->MIGRATED) and added the extracted composition-root smoke allowlist entry"
     },
     {
       "path": "services/control-plane/bff/auth/test_policy.py",
@@ -10560,8 +10554,8 @@
     "total_runtime_modules_measured": 397,
     "runtime_passed_modules": 334,
     "runtime_failed_modules": 56,
-    "total_runtime_tests_passed": 4494,
-    "total_runtime_tests_failed": 245,
+    "total_runtime_tests_passed": 4493,
+    "total_runtime_tests_failed": 246,
     "runtime_failures_breakdown": {
       "no_tests_collected_support_modules": [
         "conftest.py",
