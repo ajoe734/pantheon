@@ -325,12 +325,10 @@ def _module_level_main_attribute_reexports(tree: ast.Module) -> Set[str]:
     """Module-level names bound to a *specific attribute* imported directly
     from the composition root (``from services.control_plane.bff.main
     import app``) -- i.e. a bare re-export of something main exposes.
-    Deliberately excludes a name bound to the main module object itself
-    (``import main as bm`` / ``from services.control_plane.bff import
-    main``): that whole-module-alias case is already handled by
-    ``_module_level_bff_main_names`` for the purpose of detecting functions
-    that *reference* it, but is not itself treated as a reaching "symbol" of
-    this module -- only an actual re-exported attribute is (AC2)."""
+    Whole-module aliases (``import main as bm`` / ``from
+    services.control_plane.bff import main as bm``) are captured by
+    ``_module_level_bff_main_names`` and propagated as reaching symbols in
+    ``_reaches_main_symbols_from_tree`` (AC2)."""
     names: Set[str] = set()
 
     def visit(node: ast.AST) -> None:
@@ -416,6 +414,7 @@ def _reaches_main_symbols_from_tree(tree: ast.Module) -> Set[str]:
     object must still be recorded as reaching (AC2)."""
     reaching = _functions_calling_bff_main(tree)
     reaching |= _module_level_main_attribute_reexports(tree)
+    reaching |= _module_level_bff_main_names(tree)
     graph = _call_graph(tree)
     changed = True
     while changed:
@@ -1171,7 +1170,7 @@ def test_scanner_detects_module_level_static_import_reached_via_call_graph(tmp_p
         encoding="utf-8",
     )
     reaching = _reaches_main_symbols(helper)
-    assert reaching == {"get_read_store", "wraps_get_read_store"}
+    assert reaching == {"bm", "get_read_store", "wraps_get_read_store"}
     assert "unrelated_helper" not in reaching
 
     helper_symbols = {"module_level_static_helper": reaching}
@@ -1310,6 +1309,66 @@ def test_helper_graph_detects_bare_module_level_reexport_of_main(tmp_path: Path)
 
     offenders = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
     assert "test_client.py" in offenders
+
+
+def test_helper_graph_detects_module_level_alias_reexport_of_main(tmp_path: Path) -> None:
+    """AC2 regression (defect fix): a helper module that imports the composition
+    root as a module-level alias (``from services.control_plane.bff import main as bm``
+    or ``import services.control_plane.bff.main as bm``) must have that alias
+    recorded as a reaching symbol, flagging any test that imports the alias, while
+    preserving safe non-main imports from the same helper."""
+    # Sub-case 1: from services.control_plane.bff import main as bm
+    (tmp_path / "helper1.py").write_text(
+        "from services.control_plane.bff import main as bm\n"
+        "def safe_fn1():\n"
+        "    return 42\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_client1.py").write_text(
+        "from helper1 import bm\n", encoding="utf-8"
+    )
+    (tmp_path / "test_safe1.py").write_text(
+        "from helper1 import safe_fn1\n"
+        "def test_safe():\n"
+        "    assert safe_fn1() == 42\n",
+        encoding="utf-8",
+    )
+
+    helpers1 = _find_main_reaching_helper_modules(root_dir=tmp_path)
+    assert "bm" in helpers1.get("helper1", set())
+    assert "safe_fn1" not in helpers1.get("helper1", set())
+
+    offenders1 = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
+    assert "test_client1.py" in offenders1
+    assert "test_safe1.py" not in offenders1
+
+    # Sub-case 2: import services.control_plane.bff.main as bm
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "helper2.py").write_text(
+        "import services.control_plane.bff.main as bm\n"
+        "def safe_fn2():\n"
+        "    return 99\n",
+        encoding="utf-8",
+    )
+    (pkg / "test_client2.py").write_text(
+        "from .helper2 import bm\n", encoding="utf-8"
+    )
+    (pkg / "test_safe2.py").write_text(
+        "from .helper2 import safe_fn2\n"
+        "def test_safe():\n"
+        "    assert safe_fn2() == 99\n",
+        encoding="utf-8",
+    )
+
+    helpers2 = _find_main_reaching_helper_modules(root_dir=tmp_path)
+    assert "bm" in helpers2.get("pkg.helper2", set())
+    assert "safe_fn2" not in helpers2.get("pkg.helper2", set())
+
+    offenders2 = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
+    assert "pkg/test_client2.py" in offenders2
+    assert "pkg/test_safe2.py" not in offenders2
 
 
 def test_helper_graph_detects_submodule_attribute_wrapper_chain(tmp_path: Path) -> None:
