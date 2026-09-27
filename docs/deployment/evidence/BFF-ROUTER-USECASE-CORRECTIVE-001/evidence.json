@@ -3,8 +3,8 @@
   "owner": "Antigravity",
   "reviewer": "Codex2",
   "title": "Finish five-domain router-to-application boundaries without further mechanical splitting",
-  "timestamp": "2026-09-27T18:55:00Z",
-  "summary": "Remediated all 3 reviewer rejection acceptance failures from Codex2 on PR #5992 exact head 1036fb492ca0d11b80fe6590ee82966c967b0124: (1) Defect 1 (Persona league/quarterly ranking workflows moved to PersonaService): Relocated all four cohesive read-scoring-evidence-snapshot workflows (bff_management_persona_league, bff_management_persona_league_rankings, bff_management_quarterly_ranking, bff_management_quarterly_ranking_drilldown) and snapshot persistence (_pm12_attach_ranking_snapshot) from personas/routes/ranking.py into PersonaService (get_persona_league, get_persona_league_rankings, get_quarterly_ranking, get_quarterly_ranking_drilldown, and shared helper _compose_quarterly_ranking_context), leaving HTTP handlers strictly to parse, authorize, and map DTO/status, with documented cohesive size exception in PersonaService docstring. (2) Defect 2 (Typed ResearchPortWiring with concrete operation signatures): Refactored ResearchPortWiring in research/service.py to take typed owners (read_surface: Optional[ReadSurfacePorts] = None, knowledge_source: Optional[ResearchKnowledgeSourcePort] = None), removed dynamic method copying onto self in __init__, replaced generic _dispatch and *args: Any/**kwargs: Any forwarding with concrete operation parameter signatures across all 39 ResearchKnowledgeSourcePort methods and explicit typed bindings for optional read-surface methods, and updated ResearchRouterService._port(). (3) Defect 3 (AST gate extensions & negative regressions): Extended scan_route_source_for_store_access in test_bff_test_architecture.py to detect route snapshot persistence helpers (_pm12_attach_ranking_snapshot, attach_ranking_snapshot, put_ranking_snapshot), generic forwarders (_dispatch), and generic *args/**kwargs methods in wiring/adapter classes; added scan_route_source_for_duplicate_business_statement_blocks detecting duplicated multi-statement business blocks (5+ consecutive statements), catching the previously missed 6-statement ranking business block; and added 3 negative regression tests proving all three defects are strictly caught.",
+  "timestamp": "2026-09-27T19:30:00Z",
+  "summary": "Remediated all 3 reviewer rejection acceptance failures from Codex2 on PR #5992 exact head 293ad3efc9885dfdcb6caafc69dae6b7a978b730: (1) Defect 1 (Runtime regression in research/service.py): ResearchPortWiring.get_research_oss_preactivation_snapshot now explicitly accepts and forwards keyword argument activity_limit: int = 20 to the underlying operations_consultation port. Added regression test test_mounted_research_router_oss_preactivation_with_read_surface_ports verifying real research router mounted with ReadSurfacePorts and isolated operations owner returns 200 for GET /oss-preactivation?activity_limit=7 and /oss-activation-ready?activity_limit=7. (2) Defect 2 (Persona ranking cohesive use cases moved to PersonaService): Relocated all remaining business workflows from personas/routes/ranking.py into PersonaService (get_promotion_reviews, get_promotion_review_detail, get_persona_league_movers, get_persona_league_tiers, get_persona_league_heatmap, and expanded get_quarterly_ranking_recommendations), leaving HTTP handlers strictly to parse query/path parameters, invoke authorization, and map DTO/status, with documented bounded cohesive size exceptions in both module docstrings. (3) Defect 3 (Eliminated generic **kwargs in ResearchPortWiring & tightened AST gate): Replaced all 7 remaining **kwargs: Any methods in ResearchPortWiring (create_experiment_bff, list_synthesis_conflict_logs, get_synthesis_conflict_log, list_strategies, list_strategy_summaries, list_personas, list_capital_pools) with concrete domain signatures. Updated AST gate StoreAccessVisitor in test_bff_test_architecture.py to check (node.args.vararg or node.args.kwarg) so kwargs-only forwarding is caught, and extended negative gate regression tests.",
   "router_domains": [
     {
       "domain": "personas",
@@ -105,20 +105,16 @@
   "verification": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
-        "result": "38 passed, 3 warnings in 44.11s"
+        "command": "pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "result": "39 passed, 3 warnings in 47.65s"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_kw04_insight_cards_contract.py",
-        "result": "3 passed, 1 warning in 3.50s"
+        "command": "pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/research/test_router.py services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/test_kw02_research_notes_contract.py",
+        "result": "168 passed, 1 skipped, 3 warnings in 127.41s"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/research/test_router.py services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/test_kw02_research_notes_contract.py",
-        "result": "167 passed, 1 skipped, 3 warnings in 135.65s"
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_datastrat_seed_review_bff.py services/control-plane/bff/test_datastrat_seed_replication_bff.py services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/test_kw04_insight_cards_contract.py services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_candidate_pool.py",
-        "result": "106 passed, 3 warnings in 62.87s"
+        "command": "pytest -q services/control-plane/bff/test_datastrat_seed_review_bff.py services/control-plane/bff/test_datastrat_seed_replication_bff.py services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/test_kw04_insight_cards_contract.py services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_candidate_pool.py",
+        "result": "106 passed, 3 warnings in 56.70s"
       }
     ]
   },

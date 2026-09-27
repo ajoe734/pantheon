@@ -1584,7 +1584,7 @@ def scan_route_source_for_store_access(
             if node.name in ("__getattr__", "__getattribute__"):
                 violations.append(f"{filename}:{node.lineno} defines forbidden dynamic attribute fallback '{node.name}'")
             if self.current_class and ("Wiring" in self.current_class or "Adapter" in self.current_class):
-                if node.args.vararg and node.args.kwarg and len(node.args.args) <= 1:
+                if node.name != "__init__" and (node.args.vararg or node.args.kwarg):
                     violations.append(
                         f"{filename}:{node.lineno} in {self.current_class}.{node.name} uses generic *args/**kwargs forwarding instead of concrete domain signature"
                     )
@@ -1599,7 +1599,7 @@ def scan_route_source_for_store_access(
             if node.name in ("__getattr__", "__getattribute__"):
                 violations.append(f"{filename}:{node.lineno} defines forbidden dynamic attribute fallback '{node.name}'")
             if self.current_class and ("Wiring" in self.current_class or "Adapter" in self.current_class):
-                if node.args.vararg and node.args.kwarg and len(node.args.args) <= 1:
+                if node.name != "__init__" and (node.args.vararg or node.args.kwarg):
                     violations.append(
                         f"{filename}:{node.lineno} in {self.current_class}.{node.name} uses generic *args/**kwargs forwarding instead of concrete domain signature"
                     )
@@ -2419,6 +2419,18 @@ def test_five_domain_store_access_gate_catches_generic_runtime_forwarder() -> No
         f"Gate missed generic *args/**kwargs forwarding method: {detected}"
     )
 
+    bad_kwargs_only_wiring_src = textwrap.dedent("""
+        class ResearchPortWiring(ResearchKnowledgeSourcePort):
+            def list_personas(self, **kwargs: Any):
+                return self._read_surface.list_personas(**kwargs)
+    """)
+    detected_kwargs = scan_route_source_for_store_access(
+        bad_kwargs_only_wiring_src, filename="research/service.py", is_service=True
+    )
+    assert any("list_personas" in d and "generic *args/**kwargs forwarding" in d for d in detected_kwargs), (
+        f"Gate missed kwargs-only forwarding probe: {detected_kwargs}"
+    )
+
 
 def test_five_domain_duplicate_body_gate_catches_duplicate_business_blocks() -> None:
     """Negative regression: verify scan_route_source_for_duplicate_business_statement_blocks
@@ -2842,5 +2854,82 @@ def test_research_mounted_persona_attachment_regressions() -> None:
             },
         )
         assert res_fail.status_code == 422, res_fail.text
+
+
+def test_mounted_research_router_oss_preactivation_with_read_surface_ports() -> None:
+    """Regression test for Acceptance Failure (1):
+    Mount the real research router backed by a ReadSurfacePorts instance with an isolated
+    operations owner and NO build_research_oss_readiness callback override.
+    Verify that GET /api/v1/operator/research/oss-preactivation?activity_limit=7 and
+    GET /api/v1/operator/research/oss-activation-ready?activity_limit=7 return 200,
+    and forward the concrete activity_limit parameter through ResearchPortWiring.
+    """
+    import types
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+    from services.control_plane.bff.research.router import create_research_router
+
+    class OpsOwnerDouble:
+        def __init__(self):
+            self.activity_limits_received = []
+
+        def get_research_oss_preactivation_snapshot(self, *, activity_limit: int = 20):
+            self.activity_limits_received.append(activity_limit)
+            return {
+                "snapshot_at": "2026-09-27T00:00:00Z",
+                "service_surfaces": {
+                    "openclaw": {
+                        "status": "ok",
+                        "activity": [{"id": f"act-{i}"} for i in range(activity_limit)],
+                    }
+                },
+                "summary": {"activity_count": activity_limit},
+            }
+
+    ops_owner = OpsOwnerDouble()
+    dummy = object()
+    ports = ReadSurfacePorts(
+        operations_consultation=ops_owner,
+        persona_capital_runtime=dummy,
+        ooda_management=dummy,
+        research_knowledge_source=dummy,
+        lifecycle_telemetry_governance=dummy,
+        persona_training=dummy,
+        job_read=dummy,
+    )
+
+    app = FastAPI()
+    app.include_router(
+        create_research_router(
+            read_surface=ports,
+            extract_identity=lambda *a, **k: types.SimpleNamespace(operator_id="op-test"),
+            require_read_role=lambda identity: None,
+            require_operator_role=lambda identity: None,
+            bff_error=lambda status, code, message, reason, **kw: HTTPException(
+                status_code=status,
+                detail={"code": getattr(code, "value", str(code)), "message": message, "reason": reason, **kw},
+            ),
+            utc_now=lambda: "2026-09-27T00:00:00Z",
+            build_research_oss_readiness=None,
+        )
+    )
+
+    with TestClient(app) as client:
+        # GET /api/v1/operator/research/oss-preactivation?activity_limit=7
+        res_pre = client.get("/api/v1/operator/research/oss-preactivation?activity_limit=7")
+        assert res_pre.status_code == 200, res_pre.text
+        data_pre = res_pre.json()
+        assert "research_oss_preactivation" in data_pre["meta"]["surfaces"]
+
+        # GET /api/v1/operator/research/oss-activation-ready?activity_limit=7
+        res_ready = client.get("/api/v1/operator/research/oss-activation-ready?activity_limit=7")
+        assert res_ready.status_code == 200, res_ready.text
+        data_ready = res_ready.json()
+        assert "research_oss_activation_ready" in data_ready["meta"]["surfaces"]
+
+        # Assert both endpoints passed concrete activity_limit=7 through ReadSurfacePorts wiring
+        assert ops_owner.activity_limits_received == [7, 7]
+
 
 

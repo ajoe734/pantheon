@@ -771,7 +771,6 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         created_at: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
         status: str = "active",
-        **kwargs: Any,
     ) -> Dict[str, Any]:
         if self._read_surface is not None and hasattr(self._read_surface, "create_experiment_bff"):
             return self._read_surface.create_experiment_bff(
@@ -780,7 +779,6 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
                 created_at=created_at,
                 params=params,
                 status=status,
-                **kwargs,
             )
         ticket_id = str((params or {}).get("ticket_id") or "")
         return self.create_research_experiment(
@@ -808,43 +806,66 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             return self._read_surface.get_experiment_artifacts(experiment_id)
         return []
 
-    def get_research_oss_preactivation_snapshot(self) -> Dict[str, Any]:
+    def get_research_oss_preactivation_snapshot(self, *, activity_limit: int = 20) -> Dict[str, Any]:
         if self._read_surface is not None and hasattr(self._read_surface, "get_research_oss_preactivation_snapshot"):
-            return self._read_surface.get_research_oss_preactivation_snapshot()
+            return self._read_surface.get_research_oss_preactivation_snapshot(activity_limit=activity_limit)
         raise AttributeError("Research port operation 'get_research_oss_preactivation_snapshot' not implemented")
 
-    def list_synthesis_conflict_logs(self, **kwargs: Any) -> List[Dict[str, Any]]:
+    def list_synthesis_conflict_logs(
+        self,
+        *,
+        capital_pool_id: Optional[str] = None,
+        scope_ref: Optional[str] = None,
+        proposal_id: Optional[str] = None,
+        sponsor_persona_id: Optional[str] = None,
+        synthesis_method: Optional[str] = None,
+        committee_ref: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "list_synthesis_conflict_logs"):
-            return self._read_surface.list_synthesis_conflict_logs(**kwargs)
+            return self._read_surface.list_synthesis_conflict_logs(
+                capital_pool_id=capital_pool_id,
+                scope_ref=scope_ref,
+                proposal_id=proposal_id,
+                sponsor_persona_id=sponsor_persona_id,
+                synthesis_method=synthesis_method,
+                committee_ref=committee_ref,
+            )
         if self._ks is not None and hasattr(self._ks, "list_synthesis_conflict_logs"):
-            return self._ks.list_synthesis_conflict_logs(**kwargs)
+            return self._ks.list_synthesis_conflict_logs(
+                capital_pool_id=capital_pool_id,
+                scope_ref=scope_ref,
+                proposal_id=proposal_id,
+                sponsor_persona_id=sponsor_persona_id,
+                synthesis_method=synthesis_method,
+                committee_ref=committee_ref,
+            )
         return []
 
-    def get_synthesis_conflict_log(self, log_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def get_synthesis_conflict_log(self, log_id: str) -> Optional[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "get_synthesis_conflict_log"):
-            return self._read_surface.get_synthesis_conflict_log(log_id, **kwargs)
+            return self._read_surface.get_synthesis_conflict_log(log_id)
         if self._ks is not None and hasattr(self._ks, "get_synthesis_conflict_log"):
-            return self._ks.get_synthesis_conflict_log(log_id, **kwargs)
+            return self._ks.get_synthesis_conflict_log(log_id)
         return None
 
-    def list_strategies(self, **kwargs: Any) -> List[Dict[str, Any]]:
+    def list_strategies(self) -> List[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "list_strategies"):
-            return self._read_surface.list_strategies(**kwargs)
+            return self._read_surface.list_strategies()
         raise AttributeError("Research port operation 'list_strategies' not implemented")
 
-    def list_strategy_summaries(self, **kwargs: Any) -> List[Dict[str, Any]]:
+    def list_strategy_summaries(self) -> List[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "list_strategy_summaries"):
-            return self._read_surface.list_strategy_summaries(**kwargs)
+            return self._read_surface.list_strategy_summaries()
         raise AttributeError("Research port operation 'list_strategy_summaries' not implemented")
 
-    def list_personas(self, **kwargs: Any) -> List[Dict[str, Any]]:
+    def list_personas(self) -> List[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "list_personas"):
-            return self._read_surface.list_personas(**kwargs)
+            return self._read_surface.list_personas()
         raise AttributeError("Research port operation 'list_personas' not implemented")
 
-    def list_capital_pools(self, **kwargs: Any) -> List[Dict[str, Any]]:
+    def list_capital_pools(self) -> List[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "list_capital_pools"):
-            return self._read_surface.list_capital_pools(**kwargs)
+            return self._read_surface.list_capital_pools()
         raise AttributeError("Research port operation 'list_capital_pools' not implemented")
 
     def get_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
