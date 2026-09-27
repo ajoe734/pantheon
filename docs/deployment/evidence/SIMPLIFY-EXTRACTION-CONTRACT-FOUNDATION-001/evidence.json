@@ -1,0 +1,94 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "SIMPLIFY-EXTRACTION-CONTRACT-FOUNDATION-001",
+  "base_ref": "dev@b467338ef848836c8e28376ab7a8c0cb616fae87",
+  "depends_on": "SIMPLIFY-OPENCLAW-001 (done, satisfied), AGORA-CHAIN-001 (done, satisfied)",
+  "normative_plan": ".orchestrator/worker-runtime/task-context/simplify-extraction-contract-foundation-001.md (Constituent slice of SIMPLIFY-EXTRACTION-001; approved 2026-09-27 dependency audit at /tmp/pantheon-dependency-audit-20260927/REPORT.zh-TW.md)",
+  "results": {
+    "single_typed_semantic_extraction_contract": {
+      "file": "services/source_ingestion/semantic_extraction.py",
+      "detail": "Delivered single typed semantic extraction contract with SemanticExtractionRequest, SemanticExtractionResult, SourceSpan, IntentExtractionPayload, StrategySeedExtractionPayload, TradeLessonExtractionPayload, SemanticExtractionAdmission, compute_schema_id, get_semantic_extraction_json_schema, and DeterministicBaselineExtractor integrating StrategySpecSeedBuilder for true production baseline extraction and grounded canonical source spans. Reuses existing canonical enums (InteractionPrimaryIntent, TrainerSeedKind, StrategySpecSeedStatus, ExtractionTaskType, AbstentionReason, ExtractionFailureCode). Enforces strict SourceSpan character slice validation."
+    },
+    "bounded_failure_client": {
+      "file": "services/source_ingestion/semantic_extraction_client.py",
+      "detail": "Delivered SemanticExtractionClient consuming restricted OpenClaw HTTP transport with pre-call admission check (zero model calls on denial), bounded failure semantics for invalid schema, wrong tool, missing critical support, refusal, incomplete response, wall-clock deadline enforcement across slow headers and chunks, honest rate tracking (None for routing aliases and unknown subscription models), and bounded retry policy (max 1 retry)."
+    },
+    "frozen_evaluation_cases": {
+      "file": "services/source_ingestion/evaluation/semantic_extraction_cases.jsonl",
+      "sha256": "83a1fc0d6ae6aac771eb4c904f20b282e7d663137a503e11bf7c0122559c6868",
+      "total_cases": 210,
+      "language_counts": {
+        "zh-TW": 108,
+        "en": 102
+      },
+      "split_counts": {
+        "train": 126,
+        "validation": 42,
+        "holdout": 42
+      },
+      "detail": "210 deduplicated permissioned test cases covering all 9 canonical intent classes, strategy seeds, trade lessons, comprehensive extractions, and comprehensive negative/refusal/admission boundary cases. Grouped into 108 stable template dedup groups, pairing 102 bilingual counterparts into identical partitions with zero split leakage across train/validation/holdout."
+    },
+    "evaluation_manifest_schema": {
+      "file": "services/source_ingestion/evaluation/semantic_extraction_manifest.schema.json",
+      "sha256": "b146ef60eb27261af28bce4997d0074fde472c76a3f0412594c727f3967c1024",
+      "detail": "Valid JSON Schema Draft-7 defining manifest metadata, full frozen corpus constraints (corpus_total_cases, corpus_split_counts, corpus_language_counts), evaluated subset metrics (total_cases, evaluated_split), acceptance thresholds, and auditable per-case result records."
+    },
+    "evaluation_runner_and_baseline": {
+      "file": "services/source_ingestion/evaluation/run_semantic_extraction_eval.py",
+      "detail": "Harness executing test cases against the deterministic baseline extractor or OpenClaw client, calculating aggregate macro-F1, honest field-F1, abstention recall, critical support, source validity, latency percentiles (p50/p95), verifying zero split leakage, enforcing exact hypothesis/proposed_change comparisons and canonical span verification, and producing an auditable manifest."
+    },
+    "evaluation_documentation": {
+      "file": "services/source_ingestion/evaluation/README.md",
+      "detail": "Complete documentation of evaluation dataset composition, partitions, canonical intent categories, negative/refusal coverage, baseline metrics, downstream thresholds, manifest schema, and CLI execution instructions."
+    },
+    "business_rules_changed": false,
+    "hosted_deployment_performed": false,
+    "new_dispatcher_or_cron_added": false,
+    "callers_migrated": false,
+    "caller_migration_scope_preserved": "Per acceptance item 8, callers (classifier, bridge, normalizer, production_distillation) and stores (strategy_seed_store, distillation_controller, Registry, BFF) are untouched. Full consumer migration and retirement of legacy semantic paths remain owned by parent SIMPLIFY-EXTRACTION-001."
+  },
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m compileall -q services/source_ingestion/semantic_extraction.py services/source_ingestion/semantic_extraction_client.py services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py services/source_ingestion/evaluation/run_semantic_extraction_eval.py",
+      "result": "pass (5/5 files compiled cleanly with exit code 0)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py",
+      "result": "55 passed, 0 failed in 12.95s",
+      "executed": 55,
+      "collected": 55
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 services/source_ingestion/evaluation/run_semantic_extraction_eval.py --manifest-out /tmp/eval_manifest_run.json",
+      "result": "pass, 210 cases executed, critical support 100.0%, source validity 100.0%, breaches 0, field_f1 0.6239, manifest validated against Draft-7 schema",
+      "executed": 210,
+      "collected": 210
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 services/source_ingestion/evaluation/run_semantic_extraction_eval.py --split holdout --manifest-out /tmp/eval_manifest_holdout.json",
+      "result": "pass, 42 holdout cases executed, critical support 100.0%, source validity 100.0%, breaches 0, field_f1 0.5455, manifest validated against Draft-7 schema",
+      "executed": 42,
+      "collected": 42
+    }
+  ],
+  "downstream_thresholds_documented": {
+    "intent_macro_f1": ">= 0.95 and within 0.01 of baseline",
+    "field_f1": ">= 0.95 and no worse than baseline",
+    "abstention_recall": ">= 0.95",
+    "critical_support_pct": "100.0%",
+    "source_validity_pct": "100.0%",
+    "tenant_source_breaches": 0,
+    "p95_latency_ms": "<= 10000 ms",
+    "total_deadline_ms": "<= 15000 ms",
+    "max_retries": "<= 1"
+  },
+  "coordination_note": "Constituent implementation prerequisite for SIMPLIFY-EXTRACTION-001 delivering typed contract, enums, admission guard, bounded failure semantics, frozen inputs (210 cases, 108 zh-TW, 102 en), and evaluation runner. No callers or stores modified. Downstream migration, prompt tuning, and quality/cost acceptance deferred to parent task.",
+  "review": {
+    "reviewer": "Antigravity2",
+    "decision": "pending independent exact-head review"
+  },
+  "remaining_owned_elsewhere": [
+    "Consumer migration (classifier, bridge, normalizer, production_distillation) and quality/cost acceptance: SIMPLIFY-EXTRACTION-001",
+    "Domain entity durability prerequisites: DOMAIN-WRITERS-001 / AGORA-CHAIN-001"
+  ]
+}

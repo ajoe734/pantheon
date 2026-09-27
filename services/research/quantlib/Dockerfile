@@ -2,11 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY dependencies/locks/services-research-quantlib.txt ./requirements.lock
+RUN pip install --no-cache-dir -r requirements.lock
 
-COPY . .
+COPY services/research/quantlib/ .
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "-m", "pytest", "-q", "smoke_test.py"]
+CMD ["python", "smoke_test.py"]
