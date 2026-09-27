@@ -14477,3 +14477,105 @@ class PersonaService:
             )
         finally:
             _current_persona_service.reset(token)
+
+    def list_personas(
+        self,
+        *,
+        lifecycle_state: Optional[str] = None,
+        mandate: Optional[str] = None,
+        strategy_family: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.list_personas(
+            lifecycle_state=lifecycle_state,
+            mandate=mandate,
+            strategy_family=strategy_family,
+        )
+
+    def get_persona(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_persona(persona_id)
+
+    def get_bindings_for_persona(self, persona_id: str) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_bindings_for_persona(persona_id) or []
+
+    def get_capability_snapshot_for_persona(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_capability_snapshot_for_persona(persona_id)
+
+    def get_capital_pool(self, capital_pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_capital_pool(capital_pool_id) if capital_pool_id else None
+
+    def get_sessions_for_persona(self, persona_id: str) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_sessions_for_persona(persona_id) or []
+
+    def get_teaching_sessions_for_persona(self, persona_id: str) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_teaching_sessions_for_persona(persona_id) or []
+
+    def get_persona_allowed_actions(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_persona_allowed_actions(persona_id)
+
+    def list_runtime_bindings(self) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return list(read_store.list_runtime_bindings() or [])
+
+    def list_incidents(self) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return list(read_store.list_incidents() or [])
+
+    def list_evolution_decisions(self) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return list(read_store.list_evolution_decisions() or [])
+
+    def list_deployment_plans(self) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return list(read_store.list_deployment_plans() or [])
+
+    def list_approval_decisions(self) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return list(read_store.list_approval_decisions() or [])
+
+    def get_persona_containment(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_persona_containment(persona_id)
+
+    def get_route_policy_for_persona(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        fetcher = getattr(read_store, "get_route_policy_for_persona", None)
+        return fetcher(persona_id) if callable(fetcher) else None
+
+    def get_persona_consult_policy(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        fetcher = getattr(read_store, "get_persona_consult_policy", None)
+        return fetcher(persona_id) if callable(fetcher) else None
+
+    def list_consultations_for_persona(self, persona_id: str) -> Optional[List[Dict[str, Any]]]:
+        read_store = self.get_read_store()
+        fetcher = getattr(read_store, "list_consultations_for_persona", None)
+        return fetcher(persona_id) if callable(fetcher) else None
+
+    def list_sessions_for_persona(self, persona_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.list_sessions_for_persona(persona_id, status=status) or []
+
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_session(session_id)
+
+    def get_capability_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_capability_snapshot(snapshot_id) if snapshot_id else None
+
+    def list_teaching_sessions_for_persona(self, persona_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.list_teaching_sessions_for_persona(persona_id, status=status) or []
+
+    def get_persona_league_entry(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        read_store = self.get_read_store()
+        return read_store.get_persona_league_entry(persona_id)
+

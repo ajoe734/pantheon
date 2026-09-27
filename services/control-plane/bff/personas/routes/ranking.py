@@ -74,8 +74,6 @@ _HUMAN_INBOX_PROMOTION_PRODUCER = "management_quarterly_ranking_recommendation_s
 def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
     router = APIRouter(tags=["personas"], dependencies=[make_context_dependency(ctx)])
 
-    read_store = ctx.read_store
-    command_store = ctx.command_store
     ranking_write_owner = ctx.ranking_write_owner
     write_owner = ctx.write_owner
     _service = ctx.service
@@ -1674,7 +1672,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         snapshot_at = utc_now()
-        entry = read_store.get_persona_league_entry(persona_id)
+        entry = _service.get_persona_league_entry(persona_id)
         if not entry:
             raise _bff_error(
                 404,

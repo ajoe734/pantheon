@@ -29,8 +29,6 @@ log = logging.getLogger(__name__)
 def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
     router = APIRouter(tags=["personas"], dependencies=[make_context_dependency(ctx)])
 
-    read_store = ctx.read_store
-    command_store = ctx.command_store
     _service = ctx.service
     _extract_identity = ctx.extract_identity
     _require_read_role = ctx.require_read_role
@@ -62,7 +60,7 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_operator_role(identity)
         caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
         directory = _get_persona_directory_snapshot(caller_tenant)
-        raw = directory.records_by_id.get(persona_id) or read_store.get_persona(persona_id)
+        raw = directory.records_by_id.get(persona_id) or _service.get_persona(persona_id)
         if (
             raw is None
             or _persona_record_tenant_id(raw) != caller_tenant
