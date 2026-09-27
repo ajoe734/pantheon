@@ -38,70 +38,7 @@ def _validate_artifact_status(ctx: ResearchRouteContext, value: Optional[str]) -
     return normalized
 
 
-def _legacy_artifact_reference_values(record: Dict[str, Any], field: str) -> set[str]:
-    candidates: List[Any] = [record.get(field)]
-    linkage = record.get("research_linkage")
-    if isinstance(linkage, dict):
-        candidates.extend(
-            linkage.get(key)
-            for key in (field, f"{field}_ref", f"linked_{field}")
-        )
-    if field == "experiment_id":
-        candidates.append(record.get("produced_by_experiment_id"))
-        candidates.append(record.get("experiment_refs"))
-    if field == "lineage_id":
-        lineage = record.get("lineage")
-        if isinstance(lineage, dict):
-            candidates.append(lineage.get("lineage_id"))
 
-    values: set[str] = set()
-    for candidate in candidates:
-        if isinstance(candidate, dict):
-            candidate = (
-                candidate.get(field)
-                or candidate.get("id")
-                or candidate.get("ref")
-            )
-        elif isinstance(candidate, list):
-            for item in candidate:
-                if isinstance(item, dict):
-                    item = item.get(field) or item.get("id") or item.get("ref")
-                if item not in (None, ""):
-                    values.add(str(item))
-            continue
-        if candidate not in (None, ""):
-            values.add(str(candidate))
-    return values
-
-
-def _filter_legacy_artifacts(
-    records: List[Dict[str, Any]],
-    *,
-    experiment_id: Optional[str],
-    ticket_id: Optional[str],
-    lineage_id: Optional[str],
-    status: Optional[str],
-) -> List[Dict[str, Any]]:
-    requested = {
-        "experiment_id": experiment_id,
-        "ticket_id": ticket_id,
-        "lineage_id": lineage_id,
-    }
-    filtered = list(records)
-    for field, expected in requested.items():
-        if expected not in (None, ""):
-            filtered = [
-                record
-                for record in filtered
-                if str(expected) in _legacy_artifact_reference_values(record, field)
-            ]
-    if status is not None:
-        filtered = [
-            record
-            for record in filtered
-            if str(record.get("status") or "").strip().lower() == status
-        ]
-    return filtered
 
 
 def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
@@ -208,51 +145,27 @@ def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
 
     async def endpoint_list_artifacts_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
-        port = ctx.get_read_store()
-        snapshot_at = ctx.utc_now()
-        experiment_id = ctx.query(request, "experiment_id")
-        ticket_id = ctx.query(request, "ticket_id")
-        lineage_id = ctx.query(request, "lineage_id")
         status = _validate_artifact_status(ctx, ctx.query(request, "status"))
-        artifact_reader = ctx.port_method(port, "list_research_artifacts")
-        try:
-            records = list(artifact_reader(
-                experiment_id=experiment_id,
-                ticket_id=ticket_id,
-                lineage_id=lineage_id,
-                status=status,
-            ) or [])
-        except TypeError:
-            records = list(artifact_reader(status=status) or [])
-        records = _filter_legacy_artifacts(
-            records,
-            experiment_id=experiment_id,
-            ticket_id=ticket_id,
-            lineage_id=lineage_id,
+        return ctx.service.list_artifacts_legacy(
+            experiment_id=ctx.query(request, "experiment_id"),
+            ticket_id=ctx.query(request, "ticket_id"),
+            lineage_id=ctx.query(request, "lineage_id"),
             status=status,
+            page_token=ctx.query(request, "page_token"),
+            page_size=int(ctx.query(request, "page_size") or 20),
+            snapshot_at=ctx.utc_now(),
         )
-        items, next_token = ctx.page(records, request)
-        return {"artifacts": items, "next_page_token": next_token, "total_count": len(records), "meta": ctx.meta(snapshot_at, "artifact_list", "research_artifacts", bool(records))}
 
     async def endpoint_get_artifact_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
-        port = ctx.get_read_store()
-        snapshot_at = ctx.utc_now()
         artifact_id = str(request.path_params.get("artifact_id") or "")
-        artifact = ctx.call_port(port, "get_research_artifact", artifact_id)
-        if not artifact:
-            ctx.not_found("Artifact", artifact_id)
-        payload = dict(artifact)
-        payload["meta"] = ctx.meta(snapshot_at, "artifact_detail", "research_artifacts", True)
-        return payload
+        return ctx.service.get_artifact_legacy(artifact_id, snapshot_at=ctx.utc_now())
 
     async def endpoint_bff_patch_artifact(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request, operator=True)
-        port = ctx.get_read_store()
         artifact_id = str(request.path_params.get("artifact_id") or "")
-        if not ctx.call_port(port, "get_research_artifact", artifact_id):
-            ctx.not_found("Artifact", artifact_id)
-        raise ctx.bff_error(409, ErrorCode.OPERATION_NOT_ALLOWED, "Research artifacts are immutable", "Use the owning artifact pipeline; the generic BFF patch alias has no typed replacement")
+        ctx.service.patch_artifact_immutable(artifact_id)
+        raise AssertionError("unreachable")
 
     async def endpoint_bff_create_artifact(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request, operator=True)

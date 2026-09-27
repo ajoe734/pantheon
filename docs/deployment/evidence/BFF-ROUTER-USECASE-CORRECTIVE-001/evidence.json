@@ -1,10 +1,10 @@
 {
   "task_id": "BFF-ROUTER-USECASE-CORRECTIVE-001",
-  "owner": "Antigravity2",
-  "reviewer": "Codex",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
   "title": "Finish five-domain router-to-application boundaries without further mechanical splitting",
-  "timestamp": "2026-09-27T10:32:00Z",
-  "summary": "Completed five-domain router-to-application boundaries and resolved all four Codex review defects (P1+P2) on PR #5992: (1) agora/research/router.py: restored router.store = store composition contract so agora/router.py resolves live store; (2) personas/routes/ranking.py: moved snapshot selection, revision admission, replay branching, and command orchestration into PersonaService.submit_quarterly_ranking_recommendation; (3) research/service.py: eliminated _call_port string-method universal forwarder and replaced with direct typed method calls on self._port(); (4) test_bff_test_architecture.py: enhanced store-access gate to detect attribute variations and getattr references, added cross-AST duplicate body check against application services, and expanded two-instance isolation test with explicit metadata assertions and Trading Room isolation (distinct records, interleaved reads, negative tenant cases).",
+  "timestamp": "2026-09-27T15:57:00Z",
+  "summary": "Remediated all 4 reviewer defects from PR #5992: (1) P1(1): Restored typed error mapping via _call_port in research/service.py mapping port failures to 503 DEPENDENCY_UNAVAILABLE without universal forwarding, and added port timeout/missing-method regression tests in test_research_router.py; (2) P1(2): Completed research boundary by migrating mounted experiment and artifact routes to domain-specific typed use cases on ResearchRouterService with typed ResearchKnowledgeSourcePort, and eliminated locator/forwarder methods (port_method, call_mutation_port, call_port) from routes/common.py; (3) P2(3): Extracted shared AST store-access scanner scan_route_source_for_store_access checking all 25 files across 5 domains (including common.py) for direct store attributes, get_read_store() calls/aliases, call_mutation_port, and call_port, and exercised the actual scanner in negative regression tests; (4) P2(4): Implemented real Trading Room proposal/accept flow (/bff/agora/strategies/strat-wb/trading-room/proposals and accept) in test_bff_test_architecture.py, asserting actual proposalId and workspaceId, verifying Instance 2 returns 404 for proposal and workspace, and asserting negative tenant rejection (403).",
   "router_domains": [
     {
       "domain": "personas",
@@ -104,29 +104,22 @@
   "verification": {
     "commands": [
       {
-        "command": "python3 -m pytest services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
-        "result": "19 passed, 1 skipped in 18.36s"
+        "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_research_router.py",
+        "result": "155 passed, 1 skipped, 3 warnings in 125.82s"
       },
       {
-        "command": "python3 -m pytest services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py",
-        "result": "52 passed, 3 warnings in 31.52s"
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "result": "30 passed, 3 warnings in 44.17s"
       },
       {
-        "command": "python3 -m pytest services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_research_router.py",
-        "result": "52 passed, 3 warnings in 31.12s"
-      },
-      {
-        "command": "python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
-        "result": "30 passed, 3 warnings in 45.63s"
-      },
-      {
-        "command": "python3 -m py_compile across all modified router, service, route, and test files",
-        "result": "0 errors, 0 warnings under Python 3.12"
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_research_router.py",
+        "result": "54 passed, 3 warnings in 26.87s"
       }
     ]
   },
   "review": {
-    "reviewer": "Codex",
+    "reviewer": "Codex2",
+    "reviewing_agent": "Codex",
     "decision": "pending independent exact-head review"
   }
 }

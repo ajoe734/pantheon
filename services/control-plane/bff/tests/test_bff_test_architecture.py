@@ -1480,10 +1480,14 @@ def test_knowledge_read_port_fixtures_architecture_compliance() -> None:
     assert not bare_imports, f"{rel_path} must use canonical package imports: {bare_imports}"
 
 
-def test_five_domain_routers_have_no_direct_store_access() -> None:
-    """Requirement BFF-ROUTER-USECASE-CORRECTIVE-001: Router HTTP route handlers
-    must not access persistence stores directly; all business branching, persistence,
-    and retries must be mediated through domain-specific application services.
+def scan_route_source_for_store_access(source: str, filename: str = "<string>") -> List[str]:
+    """Scan route AST for forbidden direct store access, locator calls, or port forwarders.
+
+    Requirement BFF-ROUTER-USECASE-CORRECTIVE-001 (P2(3)):
+    - In route files: direct store attributes (.store, .read_store, etc.),
+      get_read_store() calls/aliases, and port forwarder calls are forbidden.
+    - Across all files (including common.py): defining or referencing locator/forwarder
+      methods (call_mutation_port, call_port, port_method) is forbidden.
     """
     store_attrs = {
         "store",
@@ -1501,6 +1505,49 @@ def test_five_domain_routers_have_no_direct_store_access() -> None:
         "ticket_store",
         "memory_store",
     }
+    forbidden_forwarders = {"call_mutation_port", "call_port", "port_method"}
+    violations: List[str] = []
+    tree = ast.parse(source, filename=filename)
+    is_common = filename.endswith("common.py")
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name in forbidden_forwarders:
+            violations.append(f"{filename}:{node.lineno} defines forbidden forwarder '{node.name}'")
+        elif isinstance(node, ast.Attribute) and node.attr in forbidden_forwarders:
+            violations.append(f"{filename}:{node.lineno} accesses forbidden forwarder .{node.attr}")
+        elif isinstance(node, ast.Name) and node.id in forbidden_forwarders:
+            violations.append(f"{filename}:{node.lineno} references forbidden forwarder '{node.id}'")
+
+        if not is_common:
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id == "get_read_store":
+                    violations.append(f"{filename}:{node.lineno} calls get_read_store()")
+                elif isinstance(node.func, ast.Attribute) and node.func.attr == "get_read_store":
+                    violations.append(f"{filename}:{node.lineno} calls .{node.func.attr}()")
+            elif isinstance(node, ast.Attribute) and node.attr == "get_read_store":
+                violations.append(f"{filename}:{node.lineno} accesses .get_read_store")
+
+            if isinstance(node, ast.Attribute) and node.attr in store_attrs:
+                violations.append(f"{filename}:{node.lineno} accesses .{node.attr}")
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and (node.args[1].value in store_attrs or node.args[1].value in forbidden_forwarders)
+            ):
+                violations.append(f"{filename}:{node.lineno} calls getattr with '{node.args[1].value}'")
+
+    return violations
+
+
+def test_five_domain_routers_have_no_direct_store_access() -> None:
+    """Requirement BFF-ROUTER-USECASE-CORRECTIVE-001: Router HTTP route handlers
+    must not access persistence stores directly; all business branching, persistence,
+    and retries must be mediated through domain-specific application services.
+    Scans all 25 files across the 5 decomposed domains (including common.py).
+    """
     domains = [
         "personas/routes",
         "strategies/routes",
@@ -1514,24 +1561,14 @@ def test_five_domain_routers_have_no_direct_store_access() -> None:
         route_dir = BFF_DIR / d
         assert route_dir.is_dir(), f"Domain directory {route_dir} must exist"
         for py_path in sorted(route_dir.glob("*.py")):
-            if py_path.name in ("__init__.py", "common.py"):
+            if py_path.name == "__init__.py":
                 continue
             scanned_files += 1
-            tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Attribute) and node.attr in store_attrs:
-                    violations.append(f"{py_path.relative_to(BFF_DIR)}:{node.lineno} accesses .{node.attr}")
-                elif (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Name)
-                    and node.func.id == "getattr"
-                    and len(node.args) >= 2
-                    and isinstance(node.args[1], ast.Constant)
-                    and node.args[1].value in store_attrs
-                ):
-                    violations.append(f"{py_path.relative_to(BFF_DIR)}:{node.lineno} calls getattr with '{node.args[1].value}'")
-    assert scanned_files == 20, f"Expected 20 subrouter files across 5 domains, found {scanned_files}"
-    assert not violations, f"Subrouter handlers must not access store attributes directly: {violations}"
+            src = py_path.read_text(encoding="utf-8")
+            v = scan_route_source_for_store_access(src, filename=str(py_path.relative_to(BFF_DIR)))
+            violations.extend(v)
+    assert scanned_files == 25, f"Expected 25 route/context files across 5 domains, found {scanned_files}"
+    assert not violations, f"Subrouter handlers must not access store attributes or forwarders directly: {violations}"
 
 
 def test_five_domain_router_handlers_have_no_duplicate_ast_bodies() -> None:
@@ -1833,104 +1870,95 @@ def test_five_domain_routers_preserve_two_instance_isolation(monkeypatch: pytest
 
 
 def test_five_domain_store_access_gate_catches_aliased_access() -> None:
-    """Negative regression: verify the store-access gate would catch a route file
-    that aliases a store attribute name — the gate must detect both direct access
-    (ctx.store) and attribute-named references (variable named 'store').
+    """Negative regression: verify scan_route_source_for_store_access catches
+    route files that access store attributes, use getattr, or invoke forwarders.
 
-    This test validates that the detection logic is not trivially bypassable by
-    renaming or aliasing the forbidden attribute.
+    Requirement BFF-ROUTER-USECASE-CORRECTIVE-001 (P2(3)):
+    Directly exercises the shared scanner on bad fixtures for direct attribute access,
+    getattr access, call_mutation_port, and call_port.
     """
     import textwrap
-    import tempfile
 
-    # Synthesize a route file that accesses a forbidden store attribute
+    # Direct store attribute access
     bad_route_src = textwrap.dedent("""
         async def handler(ctx):
-            # Direct store attribute access — forbidden in subrouter handlers
             items = ctx.store.list_items()
             return items
     """)
+    detected = scan_route_source_for_store_access(bad_route_src, filename="bad_route.py")
+    assert any("accesses .store" in d for d in detected), f"Gate missed direct .store access: {detected}"
 
-    tree = ast.parse(bad_route_src, filename="bad_route.py")
-    store_attrs = {
-        "store", "read_store", "command_store",
-        "provisioning_store", "workshop_store", "dataset_store",
-        "research_store", "strategy_store", "trading_room_store",
-        "research_plan_store", "seed_store", "knowledge_store",
-        "ticket_store", "memory_store",
-    }
-    detected: List[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and node.attr in store_attrs:
-            detected.append(f"bad_route.py:{node.lineno} accesses .{node.attr}")
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "getattr"
-            and len(node.args) >= 2
-            and isinstance(node.args[1], ast.Constant)
-            and node.args[1].value in store_attrs
-        ):
-            detected.append(f"bad_route.py:{node.lineno} calls getattr with '{node.args[1].value}'")
-
-    assert detected, (
-        "The store-access gate did NOT catch a direct .store attribute access. "
-        "The negative regression guard is broken — update the gate logic."
-    )
-
+    # getattr store access
     bad_getattr_src = textwrap.dedent("""
         async def handler(ctx):
             s = getattr(ctx, "trading_room_store")
             return s.list_items()
     """)
-    tree_ga = ast.parse(bad_getattr_src, filename="bad_getattr.py")
-    detected_ga: List[str] = []
-    for node in ast.walk(tree_ga):
-        if isinstance(node, ast.Attribute) and node.attr in store_attrs:
-            detected_ga.append(f"bad_getattr.py:{node.lineno} accesses .{node.attr}")
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "getattr"
-            and len(node.args) >= 2
-            and isinstance(node.args[1], ast.Constant)
-            and node.args[1].value in store_attrs
-        ):
-            detected_ga.append(f"bad_getattr.py:{node.lineno} calls getattr with '{node.args[1].value}'")
-    assert any("trading_room_store" in d for d in detected_ga), "Gate did not catch getattr(ctx, 'trading_room_store')"
+    detected_ga = scan_route_source_for_store_access(bad_getattr_src, filename="bad_getattr.py")
+    assert any("trading_room_store" in d for d in detected_ga), f"Gate missed getattr store: {detected_ga}"
+
+    # call_mutation_port forwarder
+    bad_mutation_src = textwrap.dedent("""
+        async def handler(ctx, payload):
+            return ctx.call_mutation_port(port, "create_research_experiment", **payload)
+    """)
+    detected_mut = scan_route_source_for_store_access(bad_mutation_src, filename="bad_mutation.py")
+    assert any("call_mutation_port" in d for d in detected_mut), f"Gate missed call_mutation_port: {detected_mut}"
+
+    # call_port forwarder
+    bad_port_src = textwrap.dedent("""
+        async def handler(ctx):
+            return ctx.call_port(port, "get_experiment", "e1")
+    """)
+    detected_port = scan_route_source_for_store_access(bad_port_src, filename="bad_port.py")
+    assert any("call_port" in d for d in detected_port), f"Gate missed call_port: {detected_port}"
+
+    # common.py forwarder definition
+    bad_common_src = textwrap.dedent("""
+        class ResearchRouteContext:
+            def call_mutation_port(self, port, name, *args, **kwargs):
+                pass
+    """)
+    detected_common = scan_route_source_for_store_access(bad_common_src, filename="common.py")
+    assert any("call_mutation_port" in d for d in detected_common), f"Gate missed call_mutation_port in common.py: {detected_common}"
 
 
 def test_five_domain_store_access_gate_catches_read_store_alias() -> None:
-    """Negative regression: verify the gate catches .read_store aliased through an
-    assignment (e.g., rs = ctx.read_store; rs.list_items()) via the attribute walk.
+    """Negative regression: verify scan_route_source_for_store_access catches
+    .read_store aliased through an assignment and get_read_store() calls.
 
-    The AST walk catches the attribute node at the *assignment* side
-    (ctx.read_store). Even when aliased, the original attribute access is flagged.
+    Requirement BFF-ROUTER-USECASE-CORRECTIVE-001 (P2(3)):
+    Directly exercises the shared scanner on bad fixtures for .read_store aliased
+    assignments and get_read_store() -> local alias patterns.
     """
     import textwrap
 
+    # .read_store alias assignment
     aliased_src = textwrap.dedent("""
         async def handler(ctx):
-            rs = ctx.read_store          # the forbidden attribute access
-            return rs.list_personas()    # through alias — not independently caught but the assignment is
+            rs = ctx.read_store
+            return rs.list_personas()
     """)
-    tree = ast.parse(aliased_src, filename="aliased.py")
-    store_attrs = {
-        "store", "read_store", "command_store",
-        "provisioning_store", "workshop_store", "dataset_store",
-        "research_store", "strategy_store", "trading_room_store",
-        "research_plan_store", "seed_store", "knowledge_store",
-        "ticket_store", "memory_store",
-    }
-    detected: List[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and node.attr in store_attrs:
-            detected.append(node.attr)
+    detected_rs = scan_route_source_for_store_access(aliased_src, filename="aliased.py")
+    assert any("read_store" in d for d in detected_rs), f"Gate missed .read_store access: {detected_rs}"
 
-    assert "read_store" in detected, (
-        "AST walk on aliased assignment ctx.read_store did not detect the attribute. "
-        "The gate must walk attribute accesses, not just call sites."
-    )
+    # get_read_store() call
+    call_getter_src = textwrap.dedent("""
+        async def handler(ctx):
+            read_store = get_read_store()
+            return read_store.list_experiments()
+    """)
+    detected_getter = scan_route_source_for_store_access(call_getter_src, filename="call_getter.py")
+    assert any("get_read_store" in d for d in detected_getter), f"Gate missed get_read_store(): {detected_getter}"
+
+    # ctx.get_read_store() call -> local alias
+    ctx_getter_src = textwrap.dedent("""
+        async def handler(ctx):
+            port = ctx.get_read_store()
+            return port.list_artifacts()
+    """)
+    detected_ctx_getter = scan_route_source_for_store_access(ctx_getter_src, filename="ctx_getter.py")
+    assert any("get_read_store" in d for d in detected_ctx_getter), f"Gate missed ctx.get_read_store(): {detected_ctx_getter}"
 
 
 def test_five_domain_trading_room_isolation_provenance_and_negative_tenant(
@@ -1939,11 +1967,14 @@ def test_five_domain_trading_room_isolation_provenance_and_negative_tenant(
     """P2 regression: Trading Room two-instance isolation with distinct provenance,
     interleaved reads, and negative tenant rejection.
 
+    Requirement BFF-ROUTER-USECASE-CORRECTIVE-001 (P2(4)):
     Verifies:
-    1. Two instances return distinct data tied to their own store (provenance).
-    2. Interleaved reads across instances do not bleed state.
-    3. A request presenting the wrong tenant id is rejected (negative tenant case).
+    1. Real proposal/accept flow creates a genuine Trading Room workspace and returns actual IDs.
+    2. Two instances return distinct data tied to their own store (provenance) — instance 2 returns 404 for instance 1's proposal and workspace.
+    3. Interleaved reads across instances do not bleed state.
+    4. A request presenting a different tenant id is rejected (negative tenant rejection: 403).
     """
+    import uuid
     from types import SimpleNamespace
     from fastapi import FastAPI, HTTPException
     from fastapi.testclient import TestClient
@@ -1954,13 +1985,25 @@ def test_five_domain_trading_room_isolation_provenance_and_negative_tenant(
     from services.control_plane.bff.agora.trading_room.router import create_trading_room_router
     from services.control_plane.bff.agora.trading_room.store import make_trading_room_store
 
-    auth_headers = {"Authorization": "Bearer test-user:operator,admin,reviewer"}
+    def _make_identity(operator_id: str, tenant_id: str):
+        return SimpleNamespace(
+            operator_id=operator_id,
+            roles={"operator", "admin"},
+            claims={"tenant_id": tenant_id, "user_id": operator_id},
+        )
+
+    def _extract_identity(auth: Optional[str] = None, **kw: Any) -> Any:
+        token = str(auth or "").replace("Bearer ", "").strip()
+        parts = token.split(":")
+        tenant = parts[0] if len(parts) > 1 else "tenant-a"
+        op = parts[1] if len(parts) > 1 else "op-test"
+        return _make_identity(op, tenant)
+
+    auth_headers_tenant_a = {"Authorization": "Bearer tenant-a:op-a"}
+    auth_headers_tenant_b = {"Authorization": "Bearer tenant-b:op-b"}
 
     base_auth = {
-        "extract_identity": lambda auth, **kw: SimpleNamespace(
-            operator_id=str(auth or "").split(":")[0].split(" ")[-1] or "op-test",
-            roles={"operator", "admin"},
-        ),
+        "extract_identity": _extract_identity,
         "require_read_role": lambda idn: None,
         "bff_error": lambda status, code, msg, reason, **kw: HTTPException(status_code=status, detail=msg),
         "utc_now": lambda: "2026-09-27T00:00:00Z",
@@ -1985,26 +2028,57 @@ def test_five_domain_trading_room_isolation_provenance_and_negative_tenant(
 
     # 2. Interleaved reads do not bleed state: repeated alternating GETs return consistent 200
     for _ in range(3):
-        r1 = c1.get("/bff/agora/trading-room", headers=auth_headers)
-        r2 = c2.get("/bff/agora/trading-room", headers=auth_headers)
+        r1 = c1.get("/bff/agora/trading-room", headers=auth_headers_tenant_a)
+        r2 = c2.get("/bff/agora/trading-room", headers=auth_headers_tenant_a)
         assert r1.status_code == 200, f"Instance 1 returned {r1.status_code}"
         assert r2.status_code == 200, f"Instance 2 returned {r2.status_code}"
 
-    # 3. Negative tenant case: a workspace write to instance-1 must not appear in instance-2
-    #    (Workspace IDs must be store-scoped, not global singletons.)
-    workspace_payload = {
-        "operator_id": "op-test",
-        "name": "isolation-test-workspace",
-        "mode": "paper",
-    }
-    create1 = c1.post("/bff/agora/trading-room/workspaces", json=workspace_payload, headers=auth_headers)
-    # If the route exists and returns 2xx/4xx (non-5xx), the workspace was handled by store1
-    if create1.status_code in (200, 201, 202, 409):
-        # A GET to instance-2 for the same workspace id must not find instance-1's record
-        ws_id = (create1.json() or {}).get("data", {}).get("workspace_id") or "ws-nonexistent"
-        r2_ws = c2.get(f"/bff/agora/trading-room/workspaces/{ws_id}", headers=auth_headers)
-        # Must return 404 (not found in store2) rather than 200 (would indicate global state)
-        assert r2_ws.status_code in (404, 422, 403), (
-            f"Instance-2 returned {r2_ws.status_code} for a workspace created in instance-1. "
-            "This indicates cross-instance state leakage — stores are not properly isolated."
-        )
+    # 3. Real proposal create and accept flow on instance 1
+    create_prop_resp = c1.post(
+        "/bff/agora/strategies/strat-wb/trading-room/proposals",
+        headers={**auth_headers_tenant_a, "Idempotency-Key": f"idem-prop-{uuid.uuid4()}"},
+        json={"strategyVersion": "V4", "personalizationHints": {"density": "compact"}},
+    )
+    assert create_prop_resp.status_code == 201, f"Expected 201 on proposal create, got {create_prop_resp.status_code}: {create_prop_resp.text}"
+    proposal_data = create_prop_resp.json().get("data") or {}
+    proposal_id = proposal_data.get("proposalId")
+    assert proposal_id, f"Proposal creation must return actual proposalId, got {proposal_data}"
+
+    accept_resp = c1.post(
+        f"/bff/agora/strategies/strat-wb/trading-room/proposals/{proposal_id}/accept",
+        headers={**auth_headers_tenant_a, "Idempotency-Key": f"idem-accept-{uuid.uuid4()}"},
+        json={"expectedStatus": "preview"},
+    )
+    assert accept_resp.status_code == 200, f"Expected 200 on proposal accept, got {accept_resp.status_code}: {accept_resp.text}"
+    accept_data = accept_resp.json().get("data") or {}
+    workspace_id = accept_data.get("workspaceId")
+    assert workspace_id, f"Proposal accept must return actual workspaceId, got {accept_data}"
+
+    # 4. Instance 2 isolation assertions: Instance 2 must not see Instance 1's proposal or workspace
+    r2_prop = c2.get(
+        f"/bff/agora/strategies/strat-wb/trading-room/proposals/{proposal_id}",
+        headers=auth_headers_tenant_a,
+    )
+    assert r2_prop.status_code == 404, (
+        f"Instance-2 returned {r2_prop.status_code} for a proposal created in instance-1. "
+        "Stores are not properly isolated."
+    )
+
+    r2_ws = c2.get(
+        "/bff/agora/strategies/strat-wb/trading-room/workspace",
+        headers=auth_headers_tenant_a,
+    )
+    assert r2_ws.status_code == 404, (
+        f"Instance-2 returned {r2_ws.status_code} for a workspace created in instance-1. "
+        "Stores are not properly isolated."
+    )
+
+    # 5. Negative tenant rejection: request presenting a different tenant id must be rejected with 403
+    neg_tenant_resp = c1.get(
+        f"/bff/agora/strategies/strat-wb/trading-room/proposals/{proposal_id}",
+        headers=auth_headers_tenant_b,
+    )
+    assert neg_tenant_resp.status_code == 403, (
+        f"Different tenant received status {neg_tenant_resp.status_code} instead of 403 Forbidden. "
+        "Negative tenant rejection is not enforced."
+    )

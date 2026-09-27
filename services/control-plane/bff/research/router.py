@@ -168,6 +168,7 @@ def create_research_router(
                     snapshot_meta=snapshot_meta,
                     dataset_surface_status=dataset_surface_status,
                     submit_experiment_action=submit_experiment_action,
+                    service=ctx.service,
                 ).routes
             )
 
