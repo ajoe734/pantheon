@@ -182,26 +182,27 @@ class StrategyRouteContext:
             "token_kind": identity.token_kind,
         }
 
+    def __post_init__(self) -> None:
+        if self.service is None:
+            from ..service import StrategiesService
+
+            self.service = StrategiesService(
+                read_surface=self.read_surface,
+                get_read_store=self.get_read_store,
+                strategy_write_owner=self.strategy_write_owner,
+                get_strategy_write_owner=self.get_strategy_write_owner,
+                list_strategy_summaries=self.list_strategy_summaries,
+                bff_error=self.bff_error,
+                utc_now=self.utc_now,
+                normalize_lifecycle_state=self.normalize_lifecycle_state,
+                normalize_risk_level=self.normalize_risk_level,
+                idempotency_store=self.strategy_persona_idempotency,
+                idempotency_check=self.strategy_persona_idempotency_check,
+            )
+
     def ensure_strategy_exists(self, strategy_id: str) -> None:
         if self.service is not None:
             self.service.ensure_strategy_exists(strategy_id)
-            return
-        read_store = self.get_read_store_port()
-        found = False
-        getter = getattr(read_store, "get_strategy_spec", None)
-        if callable(getter):
-            try:
-                found = bool(getter(strategy_id))
-            except Exception:
-                pass
-        if not found:
-            getter = getattr(read_store, "get_strategy", None)
-            if callable(getter):
-                try:
-                    found = bool(getter(strategy_id))
-                except Exception:
-                    pass
-        if found:
             return
         raise self.bff_error(
             404,

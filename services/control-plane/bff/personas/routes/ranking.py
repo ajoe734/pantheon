@@ -66,8 +66,6 @@ _HUMAN_INBOX_PROMOTION_PRODUCER = "management_quarterly_ranking_recommendation_s
 def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
     router = APIRouter(tags=["personas"], dependencies=[make_context_dependency(ctx)])
 
-    ranking_write_owner = ctx.ranking_write_owner
-    write_owner = ctx.write_owner
     _service = ctx.service
     _extract_identity = ctx.extract_identity
     _require_read_role = ctx.require_read_role

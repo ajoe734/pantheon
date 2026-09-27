@@ -101,7 +101,15 @@ def create_strategies_router(
         get_strategy_write_owner=get_strategy_write_owner,
         list_strategy_summaries=list_strategy_summaries,
         bff_error=_bff_error,
+        utc_now=_utc_now,
+        normalize_lifecycle_state=normalize_lifecycle_state or (lambda s: str(s or "draft")),
+        normalize_risk_level=normalize_risk_level or (lambda r: str(r or "medium")),
+        stable_json_hash=stable_json_hash or (lambda d: ""),
+        idempotency_store=_strategy_persona_idempotency,
+        idempotency_check=strategy_persona_idempotency_check or (lambda k, h: None),
+        dry_run_success_response=dry_run_success_response or (lambda *a, **kw: {}),
     )
+
 
     ctx = StrategyRouteContext(
         service=_service,

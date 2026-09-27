@@ -10,9 +10,12 @@ import os
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from fastapi import HTTPException
+
+from .dispatcher import ResearchDispatcher
+from .store import MemoryResearchPlanStore, PostgresResearchPlanStore
 
 from .routes.common import (
     CandidateDiscussionRequest,
@@ -68,14 +71,15 @@ class AgoraResearchService:
     def __init__(
         self,
         *,
-        store: Any,
-        dispatcher: Any,
+        store: Union[MemoryResearchPlanStore, PostgresResearchPlanStore, Any],
+        dispatcher: Optional[ResearchDispatcher] = None,
         workshop_store: Optional[Any] = None,
         dataset_store: Optional[Any] = None,
         trading_room_store: Optional[Any] = None,
         utc_now: Optional[Callable[[], str]] = None,
         bff_error: Optional[Callable[..., HTTPException]] = None,
     ) -> None:
+
         self.store = store
         self.dispatcher = dispatcher
         self.workshop_store = workshop_store

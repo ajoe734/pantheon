@@ -13,7 +13,6 @@ from .common import (
     SnapshotMeta,
     SubmitAction,
     SurfaceStatus,
-    _RESEARCH_EXPERIMENT_IDEMPOTENCY,
     _authorization,
     _body_parameter,
     _default_page_slice,
@@ -107,25 +106,11 @@ def create_research_experiments_router(
         identity = extract_identity(authorization)
         require_operator_role(identity)
         resolved_key = (idempotency_key or x_idempotency_key or "").strip()
-        req_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
-        if resolved_key:
-            existing = _RESEARCH_EXPERIMENT_IDEMPOTENCY.get(resolved_key)
-            if existing is not None:
-                if existing.get("hash") != req_hash:
-                    raise bff_error(
-                        409,
-                        ErrorCode.IDEMPOTENCY_CONFLICT,
-                        "Idempotency key was already used with a different payload",
-                        f"Key {resolved_key!r} is bound to a different request hash",
-                        precondition_failed="idempotency_conflict",
-                        suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                    )
-                return existing["result"]
-
-        result = service.create_experiment(payload, actor_id=identity.operator_id)
-        if resolved_key:
-            _RESEARCH_EXPERIMENT_IDEMPOTENCY[resolved_key] = {"hash": req_hash, "result": result}
-        return result
+        return service.create_experiment(
+            payload,
+            actor_id=identity.operator_id,
+            idempotency_key=resolved_key or None,
+        )
 
     @router.get("/bff/experiments/{experiment_id}")
     async def get_experiment(

@@ -1484,10 +1484,14 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
     """Scan route AST for forbidden direct store access, locator calls, or port forwarders.
 
     Requirement BFF-ROUTER-USECASE-CORRECTIVE-001 (P2(3)):
-    - In route files: direct store attributes (.store, .read_store, etc.),
+    - In route files: direct store attributes (.store, .read_store, .write_owner, etc.),
       get_read_store() calls/aliases, and port forwarder calls are forbidden.
     - Across all files (including common.py): defining or referencing locator/forwarder
       methods (call_mutation_port, call_port, port_method) is forbidden.
+    - In common.py: store attributes and get_read_store() are only permitted in
+      Context class field annotations, Context.__init__, Context.__post_init__,
+      or Context port wiring accessors. Business functions and standalone helpers
+      must not bypass services.
     """
     store_attrs = {
         "store",
@@ -1504,41 +1508,94 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
         "knowledge_store",
         "ticket_store",
         "memory_store",
+        "write_owner",
+        "strategy_write_owner",
+        "research_write_owner",
+        "persona_write_owner",
+        "ranking_write_owner",
+        "mutation_port",
     }
     forbidden_forwarders = {"call_mutation_port", "call_port", "port_method"}
+    allowed_context_methods = {
+        "__init__",
+        "__post_init__",
+        "get_read_store_port",
+        "get_strategy_write_owner_port",
+    }
     violations: List[str] = []
     tree = ast.parse(source, filename=filename)
     is_common = filename.endswith("common.py")
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name in forbidden_forwarders:
-            violations.append(f"{filename}:{node.lineno} defines forbidden forwarder '{node.name}'")
-        elif isinstance(node, ast.Attribute) and node.attr in forbidden_forwarders:
-            violations.append(f"{filename}:{node.lineno} accesses forbidden forwarder .{node.attr}")
-        elif isinstance(node, ast.Name) and node.id in forbidden_forwarders:
-            violations.append(f"{filename}:{node.lineno} references forbidden forwarder '{node.id}'")
+    class StoreAccessVisitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.current_class: Optional[str] = None
+            self.current_function: Optional[str] = None
 
-        if not is_common:
-            if isinstance(node, ast.Call):
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            prev_class = self.current_class
+            self.current_class = node.name
+            self.generic_visit(node)
+            self.current_class = prev_class
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node.name in forbidden_forwarders:
+                violations.append(f"{filename}:{node.lineno} defines forbidden forwarder '{node.name}'")
+            prev_fn = self.current_function
+            self.current_function = node.name
+            self.generic_visit(node)
+            self.current_function = prev_fn
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if node.name in forbidden_forwarders:
+                violations.append(f"{filename}:{node.lineno} defines forbidden forwarder '{node.name}'")
+            prev_fn = self.current_function
+            self.current_function = node.name
+            self.generic_visit(node)
+            self.current_function = prev_fn
+
+        def _is_allowed_common_scope(self) -> bool:
+            if not is_common:
+                return False
+            if self.current_class and self.current_class.endswith("Context"):
+                if self.current_function in allowed_context_methods or self.current_function is None:
+                    return True
+            return False
+
+        def visit_Call(self, node: ast.Call) -> None:
+            is_allowed = self._is_allowed_common_scope()
+            if not is_allowed:
                 if isinstance(node.func, ast.Name) and node.func.id == "get_read_store":
                     violations.append(f"{filename}:{node.lineno} calls get_read_store()")
                 elif isinstance(node.func, ast.Attribute) and node.func.attr == "get_read_store":
                     violations.append(f"{filename}:{node.lineno} calls .{node.func.attr}()")
-            elif isinstance(node, ast.Attribute) and node.attr == "get_read_store":
-                violations.append(f"{filename}:{node.lineno} accesses .get_read_store")
+                if (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id == "getattr"
+                    and len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                    and (node.args[1].value in store_attrs or node.args[1].value in forbidden_forwarders)
+                ):
+                    violations.append(f"{filename}:{node.lineno} calls getattr with '{node.args[1].value}'")
+            self.generic_visit(node)
 
-            if isinstance(node, ast.Attribute) and node.attr in store_attrs:
-                violations.append(f"{filename}:{node.lineno} accesses .{node.attr}")
-            elif (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "getattr"
-                and len(node.args) >= 2
-                and isinstance(node.args[1], ast.Constant)
-                and (node.args[1].value in store_attrs or node.args[1].value in forbidden_forwarders)
-            ):
-                violations.append(f"{filename}:{node.lineno} calls getattr with '{node.args[1].value}'")
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            if node.attr in forbidden_forwarders:
+                violations.append(f"{filename}:{node.lineno} accesses forbidden forwarder .{node.attr}")
+            is_allowed = self._is_allowed_common_scope()
+            if not is_allowed:
+                if node.attr == "get_read_store":
+                    violations.append(f"{filename}:{node.lineno} accesses .get_read_store")
+                elif node.attr in store_attrs:
+                    violations.append(f"{filename}:{node.lineno} accesses .{node.attr}")
+            self.generic_visit(node)
 
+        def visit_Name(self, node: ast.Name) -> None:
+            if node.id in forbidden_forwarders:
+                violations.append(f"{filename}:{node.lineno} references forbidden forwarder '{node.id}'")
+            self.generic_visit(node)
+
+    visitor = StoreAccessVisitor()
+    visitor.visit(tree)
     return violations
 
 
@@ -1922,6 +1979,38 @@ def test_five_domain_store_access_gate_catches_aliased_access() -> None:
     detected_common = scan_route_source_for_store_access(bad_common_src, filename="common.py")
     assert any("call_mutation_port" in d for d in detected_common), f"Gate missed call_mutation_port in common.py: {detected_common}"
 
+    # write_owner attribute access in route
+    bad_write_owner_src = textwrap.dedent("""
+        async def handler(ctx):
+            return ctx.write_owner.update_persona("p1")
+    """)
+    detected_wo = scan_route_source_for_store_access(bad_write_owner_src, filename="bad_write_owner.py")
+    assert any("write_owner" in d for d in detected_wo), f"Gate missed write_owner access: {detected_wo}"
+
+    # strategy_write_owner attribute access in route
+    bad_swo_src = textwrap.dedent("""
+        async def handler(ctx):
+            return ctx.strategy_write_owner.create_strategy()
+    """)
+    detected_swo = scan_route_source_for_store_access(bad_swo_src, filename="bad_strategy_write_owner.py")
+    assert any("strategy_write_owner" in d for d in detected_swo), f"Gate missed strategy_write_owner access: {detected_swo}"
+
+    # common.py standalone helper function accessing write_owner
+    bad_common_helper_src = textwrap.dedent("""
+        def helper_write(ctx):
+            return ctx.write_owner.update_persona("p1")
+    """)
+    detected_common_helper = scan_route_source_for_store_access(bad_common_helper_src, filename="common.py")
+    assert any("write_owner" in d for d in detected_common_helper), f"Gate missed write_owner in common.py helper: {detected_common_helper}"
+
+    # common.py standalone helper function accessing store
+    bad_common_store_src = textwrap.dedent("""
+        def helper_fetch(ctx):
+            return ctx.store.list_items()
+    """)
+    detected_common_store = scan_route_source_for_store_access(bad_common_store_src, filename="common.py")
+    assert any("store" in d for d in detected_common_store), f"Gate missed store in common.py helper: {detected_common_store}"
+
 
 def test_five_domain_store_access_gate_catches_read_store_alias() -> None:
     """Negative regression: verify scan_route_source_for_store_access catches
@@ -2156,4 +2245,128 @@ def test_research_router_missing_port_method_maps_to_dependency_unavailable() ->
     assert response.status_code == 503
     detail = response.json()["detail"]
     assert detail["code"] == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_research_mounted_persona_attachment_regressions() -> None:
+    """Mounted regression tests for persona attachment resolution (P1(1)).
+
+    Verifies GET /api/v1/knowledge/notes (list), GET /api/v1/knowledge/notes/{note_id} (detail),
+    and POST /api/v1/knowledge/notes (create) with persona attachment on a mounted router
+    backed by ReadSurfacePorts and typed persona_reader.
+    """
+    import types
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+    from services.control_plane.bff.research.router import create_research_router
+
+    class KnowledgeDouble:
+        def __init__(self):
+            self.notes = {
+                "note-persona-01": {
+                    "note_id": "note-persona-01",
+                    "title": "Persona attached note",
+                    "body": "Body for persona note.",
+                    "attachment_type": "persona",
+                    "attachment_ref": "persona-TEST-001",
+                    "tags": ["persona-tag"],
+                    "linked_evidence_refs": [],
+                    "linked_memory_anchors": [],
+                    "owner_ref": {"owner_id": "op-test"},
+                    "created_at": "2026-09-27T00:00:00Z",
+                    "updated_at": "2026-09-27T00:00:00Z",
+                }
+            }
+
+        def list_research_notes(self):
+            return list(self.notes.values())
+
+        def get_research_note(self, note_id):
+            return self.notes.get(note_id)
+
+        def create_research_note(self, note):
+            nid = note.get("note_id") or "note-created-01"
+            record = dict(note, note_id=nid)
+            self.notes[nid] = record
+            return record
+
+        def dataset_source(self, dataset):
+            return "typed_store"
+
+    class PersonasDouble:
+        def get_persona(self, persona_id):
+            if persona_id == "persona-TEST-001":
+                return {"persona_id": persona_id, "name": "Synthetic Persona Alpha"}
+            return None
+
+    unused = object()
+    ports = ReadSurfacePorts(
+        operations_consultation=unused,
+        persona_capital_runtime=PersonasDouble(),
+        ooda_management=unused,
+        research_knowledge_source=KnowledgeDouble(),
+        lifecycle_telemetry_governance=unused,
+        persona_training=unused,
+        job_read=unused,
+    )
+
+    app = FastAPI()
+    app.include_router(
+        create_research_router(
+            read_surface=ports,
+            extract_identity=lambda *a, **k: types.SimpleNamespace(operator_id="op-test"),
+            require_read_role=lambda identity: None,
+            require_operator_role=lambda identity: None,
+            bff_error=lambda status, code, message, reason, **kw: HTTPException(
+                status_code=status,
+                detail={"code": getattr(code, "value", str(code)), "message": message, "reason": reason, **kw},
+            ),
+            utc_now=lambda: "2026-09-27T00:00:00Z",
+        )
+    )
+
+    with TestClient(app) as client:
+        # 1. Mounted GET list with persona attachment resolves persona display name (200, not 503)
+        res_list = client.get("/api/v1/knowledge/notes")
+        assert res_list.status_code == 200, res_list.text
+        data = res_list.json()
+        assert len(data["notes"]) == 1
+        assert data["notes"][0]["attachment"]["type"] == "persona"
+        assert data["notes"][0]["attachment"]["ref"] == "persona-TEST-001"
+        assert data["notes"][0]["attachment"]["display_label"] == "Synthetic Persona Alpha"
+
+        # 2. Mounted GET detail with persona attachment resolves route href and display name
+        res_detail = client.get("/api/v1/knowledge/notes/note-persona-01")
+        assert res_detail.status_code == 200, res_detail.text
+        detail_data = res_detail.json()
+        assert detail_data["attachment"]["type"] == "persona"
+        assert detail_data["attachment"]["display_label"] == "Synthetic Persona Alpha"
+        assert detail_data["attachment"]["route_href"] == "/personas/persona-TEST-001"
+
+        # 3. Mounted POST create with existing persona succeeds (201)
+        res_create = client.post(
+            "/api/v1/knowledge/notes",
+            json={
+                "title": "New Persona Note",
+                "body": "Note with valid persona attachment",
+                "attachment_type": "persona",
+                "attachment_ref": "persona-TEST-001",
+            },
+        )
+        assert res_create.status_code == 201, res_create.text
+        created = res_create.json()
+        assert created["note_id"].startswith("note-")
+
+        # 4. Mounted POST create with nonexistent persona fails with 422
+        res_fail = client.post(
+            "/api/v1/knowledge/notes",
+            json={
+                "title": "Invalid Persona Note",
+                "body": "Note with missing persona",
+                "attachment_type": "persona",
+                "attachment_ref": "persona-NONEXISTENT",
+            },
+        )
+        assert res_fail.status_code == 422, res_fail.text
+
 

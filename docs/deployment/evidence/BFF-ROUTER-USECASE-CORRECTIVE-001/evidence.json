@@ -3,8 +3,8 @@
   "owner": "Antigravity",
   "reviewer": "Codex2",
   "title": "Finish five-domain router-to-application boundaries without further mechanical splitting",
-  "timestamp": "2026-09-27T15:57:00Z",
-  "summary": "Remediated all 4 reviewer defects from PR #5992: (1) P1(1): Restored typed error mapping via _call_port in research/service.py mapping port failures to 503 DEPENDENCY_UNAVAILABLE without universal forwarding, and added port timeout/missing-method regression tests in test_research_router.py; (2) P1(2): Completed research boundary by migrating mounted experiment and artifact routes to domain-specific typed use cases on ResearchRouterService with typed ResearchKnowledgeSourcePort, and eliminated locator/forwarder methods (port_method, call_mutation_port, call_port) from routes/common.py; (3) P2(3): Extracted shared AST store-access scanner scan_route_source_for_store_access checking all 25 files across 5 domains (including common.py) for direct store attributes, get_read_store() calls/aliases, call_mutation_port, and call_port, and exercised the actual scanner in negative regression tests; (4) P2(4): Implemented real Trading Room proposal/accept flow (/bff/agora/strategies/strat-wb/trading-room/proposals and accept) in test_bff_test_architecture.py, asserting actual proposalId and workspaceId, verifying Instance 2 returns 404 for proposal and workspace, and asserting negative tenant rejection (403).",
+  "timestamp": "2026-09-27T16:47:30Z",
+  "summary": "Remediated all 4 reviewer rejection defects from PR #5992: (1) P1(1): Fixed cross-domain research read regression by plumbing persona_reader and persona_capital_runtime into ResearchRouterService and ResearchRouteContext, restoring mounted persona attachment retrieval and resolution (display_label resolution) without 503 errors; (2) P1(2): Fixed source-confidence parity regression in test_kw02_research_notes_contract.py by prioritizing port getter in _get_dataset_source to preserve KnowledgeReadPortsDouble provenance and eliminating erroneous status overriding; (3) P1(3): Completed service layer extraction across all domains: moved persona PATCH logic and write_owner to PersonaService.patch_persona, moved strategy replay/dry-run/persistence to StrategiesService.create_strategy, moved experiment replay check and creation to ResearchRouterService.create_experiment, completely removed _call_port dynamic forwarding in favor of explicit typed invocations with TypeError passthrough, and fixed loose/Any type annotations across services; (4) P2(4): Fixed AST boundary gate false negatives in scan_route_source_for_store_access by including write_owner, mutation_port, and domain-specific write owners, scoped common.py to prohibit standalone store/write access, and added negative tests ensuring aliased access is flagged.",
   "router_domains": [
     {
       "domain": "personas",
@@ -104,16 +104,24 @@
   "verification": {
     "commands": [
       {
-        "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_research_router.py",
-        "result": "155 passed, 1 skipped, 3 warnings in 125.82s"
-      },
-      {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
-        "result": "30 passed, 3 warnings in 44.17s"
+        "result": "33 passed, 3 warnings in 42.04s"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_research_router.py",
-        "result": "54 passed, 3 warnings in 26.87s"
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_research_router.py",
+        "result": "96 passed, 3 warnings in 55.36s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
+        "result": "19 passed, 1 skipped, 1 warning in 16.79s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/research/test_router.py services/control-plane/bff/personas/test_router_isolation.py",
+        "result": "9 passed, 1 warning in 6.82s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_kw02_research_notes_contract.py",
+        "result": "5 passed, 1 warning in 4.73s"
       }
     ]
   },

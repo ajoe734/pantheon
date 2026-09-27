@@ -248,6 +248,7 @@ class ResearchRouteContext:
     cross_entity_search: Optional[CrossEntitySearch] = None
     list_synthesis_conflict_logs: Optional[ConflictLogList] = None
     get_synthesis_conflict_log: Optional[ConflictLogGet] = None
+    persona_reader: Optional[Callable[[Optional[str]], Optional[Dict[str, Any]]]] = None
     service: Optional[ResearchRouterService] = None
 
     def __post_init__(self):
@@ -264,6 +265,7 @@ class ResearchRouteContext:
                 get_synthesis_conflict_log_reader=self.get_synthesis_conflict_log,
                 cross_entity_search_fn=self.cross_entity_search,
                 build_knowledge_workbench=self.build_knowledge_workbench,
+                persona_reader=self.persona_reader,
             )
 
     def raise_service_error(self, exc: Exception) -> None:

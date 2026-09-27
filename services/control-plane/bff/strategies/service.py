@@ -6,10 +6,14 @@ away from route handlers.
 """
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple, Set
+from typing import Any, Callable, Dict, List, Optional, Tuple, Set, Union
+import uuid
 
 from fastapi import HTTPException
+
+from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
 try:
     from services.control_plane.bff.models import ErrorCode
@@ -32,13 +36,20 @@ class StrategiesService:
     def __init__(
         self,
         *,
-        read_surface: Optional[Any] = None,
-        get_read_store: Optional[Callable[[], Any]] = None,
+        read_surface: Optional[Union[ReadSurfacePorts, Callable[[], ReadSurfacePorts], Any]] = None,
+        get_read_store: Optional[Callable[[], ReadSurfacePorts]] = None,
         strategy_write_owner: Optional[Any] = None,
         get_strategy_write_owner: Optional[Callable[[], Any]] = None,
         list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         bff_error: Optional[Callable[..., HTTPException]] = None,
-        seed_store: Optional[Any] = None,
+        seed_store: Optional[Union[StrategySpecSeedStore, Any]] = None,
+        utc_now: Optional[Callable[[], str]] = None,
+        normalize_lifecycle_state: Optional[Callable[[Any], str]] = None,
+        normalize_risk_level: Optional[Callable[[Any], str]] = None,
+        stable_json_hash: Optional[Callable[[Dict[str, Any]], str]] = None,
+        idempotency_store: Optional[Dict[str, Dict[str, Any]]] = None,
+        idempotency_check: Optional[Callable[..., Optional[Dict[str, Any]]]] = None,
+        dry_run_success_response: Optional[Callable[..., Any]] = None,
     ):
         self._read_surface = read_surface
         self._get_read_store = get_read_store
@@ -47,6 +58,13 @@ class StrategiesService:
         self._list_strategy_summaries = list_strategy_summaries
         self._bff_error = bff_error
         self._seed_store = seed_store
+        self._utc_now = utc_now
+        self._normalize_lifecycle_state = normalize_lifecycle_state
+        self._normalize_risk_level = normalize_risk_level
+        self._stable_json_hash = stable_json_hash
+        self._idempotency_store = idempotency_store
+        self._idempotency_check = idempotency_check
+        self._dry_run_success_response = dry_run_success_response
 
     def _get_read_store_port(self) -> Any:
         if self._read_surface is not None:
@@ -249,3 +267,77 @@ class StrategiesService:
 
     def merge_seed(self, seed_id: str, **kwargs: Any) -> Tuple[Any, Any]:
         return self.seed_store.merge_seed(seed_id, **kwargs)
+
+    def create_strategy(
+        self,
+        *,
+        payload: Dict[str, Any],
+        identity: Any,
+        principal: Dict[str, Any],
+        resolved_key: str,
+        dry_run: bool,
+    ) -> Dict[str, Any]:
+        """Execute the strategy creation command objective, including replay check, dry-run, and persistence."""
+        request_hash = (
+            self._stable_json_hash({"route": "POST /bff/strategies", "payload": payload, "principal": principal})
+            if self._stable_json_hash is not None
+            else str(hash(json.dumps(payload, sort_keys=True, default=str)))
+        )
+        if not dry_run and self._idempotency_check is not None:
+            cached = self._idempotency_check(resolved_key, request_hash)
+            if cached is not None:
+                return cached
+
+        name = str(payload.get("name") or "").strip()
+        snapshot_at = self._utc_now() if self._utc_now is not None else "2026-09-27T00:00:00Z"
+        strategy_id = f"strategy-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+        state = (
+            self._normalize_lifecycle_state(payload.get("state") or "draft")
+            if self._normalize_lifecycle_state is not None
+            else str(payload.get("state") or "draft")
+        )
+        risk = (
+            self._normalize_risk_level(payload.get("risk"))
+            if self._normalize_risk_level is not None
+            else str(payload.get("risk") or "medium")
+        )
+        record = {
+            "id": strategy_id,
+            "strategy_id": strategy_id,
+            "name": name,
+            "owner": str(payload.get("owner") or getattr(identity, "operator_id", "operator")),
+            "updatedAt": snapshot_at,
+            "state": state,
+            "risk": risk,
+            "alpha": str(payload.get("alpha") or ""),
+            "capitalPoolId": str(payload.get("capitalPoolId") or payload.get("capital_pool_id") or ""),
+            "personaIds": list(payload.get("personaIds") or payload.get("persona_ids") or []),
+            "pnl30d": float(payload.get("pnl30d") or 0.0),
+            "sharpe": float(payload.get("sharpe") or 0.0),
+            "drawdown": float(payload.get("drawdown") or 0.0),
+            "availableActions": ["edit", "submit", "retire"],
+            "labelKey": f"strategy.{strategy_id}",
+        }
+        if dry_run:
+            if self._dry_run_success_response is not None:
+                return self._dry_run_success_response(
+                    record,
+                    snapshot_at=snapshot_at,
+                    idempotency_key=resolved_key,
+                    evidence_kind="strategy.create",
+                )
+            return {"data": record, "meta": {"snapshot_at": snapshot_at, "dry_run": True}}
+
+        self.persist_strategy(
+            record,
+            actor=principal,
+            command_key=resolved_key,
+        )
+        result = {
+            "data": record,
+            "meta": {"snapshot_at": snapshot_at},
+        }
+        if self._idempotency_store is not None:
+            self._idempotency_store[resolved_key] = {"request_hash": request_hash, "result": result}
+        return result
+

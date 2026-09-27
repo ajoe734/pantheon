@@ -1,7 +1,6 @@
 """Strategy collection routes (list, create)."""
 from __future__ import annotations
 
-import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
@@ -66,13 +65,6 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         ctx.require_operator_role(identity)
         principal = ctx.write_principal(identity)
         ctx.reject_body_idempotency_key(payload)
-        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = ctx.stable_json_hash({"route": "POST /bff/strategies", "payload": payload, "principal": principal})
-        dry_run = ctx.request_dry_run_requested()
-        if not dry_run:
-            cached = ctx.strategy_persona_idempotency_check(resolved_key, request_hash)
-            if cached is not None:
-                return cached
         name = str(payload.get("name") or "").strip()
         if not name:
             raise ctx.bff_error(
@@ -80,42 +72,15 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 "Strategy name must be a non-empty string",
                 precondition_failed="name",
             )
-        snapshot_at = ctx.utc_now()
-        strategy_id = f"strategy-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-        record = {
-            "id": strategy_id,
-            "strategy_id": strategy_id,
-            "name": name,
-            "owner": str(payload.get("owner") or identity.operator_id),
-            "updatedAt": snapshot_at,
-            "state": ctx.normalize_lifecycle_state(payload.get("state") or "draft"),
-            "risk": ctx.normalize_risk_level(payload.get("risk")),
-            "alpha": str(payload.get("alpha") or ""),
-            "capitalPoolId": str(payload.get("capitalPoolId") or payload.get("capital_pool_id") or ""),
-            "personaIds": list(payload.get("personaIds") or payload.get("persona_ids") or []),
-            "pnl30d": float(payload.get("pnl30d") or 0.0),
-            "sharpe": float(payload.get("sharpe") or 0.0),
-            "drawdown": float(payload.get("drawdown") or 0.0),
-            "availableActions": ["edit", "submit", "retire"],
-            "labelKey": f"strategy.{strategy_id}",
-        }
-        if dry_run:
-            return ctx.dry_run_success_response(
-                record,
-                snapshot_at=snapshot_at,
-                idempotency_key=resolved_key,
-                evidence_kind="strategy.create",
-            )
-        ctx.service.persist_strategy(
-            record,
-            actor=principal,
-            command_key=resolved_key,
+        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        dry_run = ctx.request_dry_run_requested()
+        return ctx.service.create_strategy(
+            payload=payload,
+            identity=identity,
+            principal=principal,
+            resolved_key=resolved_key,
+            dry_run=dry_run,
         )
-        result = {
-            "data": record,
-            "meta": {"snapshot_at": snapshot_at},
-        }
-        ctx.strategy_persona_idempotency[resolved_key] = {"request_hash": request_hash, "result": result}
-        return result
+
 
     return router

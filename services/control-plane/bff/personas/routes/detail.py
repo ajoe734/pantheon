@@ -11,7 +11,6 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query
 from services.control_plane.bff.models import ErrorCode
 from ..service import (
     _PERSONA_PATCH_SERVER_MANAGED_FIELDS,
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY,
     _bff_me_tenant_payload,
     _composed_surface_status,
     _ensure_persona_exists,
@@ -20,17 +19,12 @@ from ..service import (
     _list_governance_audit_events,
     _merged_skill_records,
     _merged_tool_records,
-    _normalize_risk_level,
-    _openclaw_agent_reconcile_request,
     _persona_provisioning_store,
     _persona_record_for_provisioning,
-    _persona_record_tenant_id,
     _project_persona_dto,
     _project_persona_fleet_item,
     _retrieve_canonical_persona_memory,
     _routed_strategies_for_persona,
-    _stable_json_hash,
-    _strategy_persona_idempotency_check,
     build_persona_runtime_profile,
     deterministic_provisioning_ids,
 )
@@ -419,124 +413,14 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 precondition_failed=managed_fields[0],
                 suggestion="Use the governed Persona action or promotion workflow.",
             )
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        raw = _service.get_persona(persona_id)
-        if not raw:
-            directory = _get_persona_directory_snapshot(caller_tenant)
-            raw = directory.records_by_id.get(persona_id)
-        raw_tenant = _persona_record_tenant_id(raw) if raw else ""
-        if raw and (not raw_tenant or raw_tenant != caller_tenant):
-            raw = None
-        if not raw:
-            raise _bff_error(
-                404, ErrorCode.RESOURCE_NOT_FOUND,
-                "Persona not found",
-                f"Persona {persona_id} does not exist",
-            )
-        cache_key = ":".join(
-            ("persona-patch", caller_tenant, identity.operator_id, resolved_key)
+        return _service.patch_persona(
+            persona_id=persona_id,
+            payload=payload,
+            identity=identity,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
         )
-        request_hash = _stable_json_hash(
-            {
-                "route": "PATCH /bff/personas/{persona_id}",
-                "tenant_id": caller_tenant,
-                "operator_id": identity.operator_id,
-                "id": persona_id,
-                "payload": payload,
-            }
-        )
-        cached = _strategy_persona_idempotency_check(cache_key, request_hash)
-        if cached is not None:
-            return cached
-        snapshot_at = utc_now()
-        routed = _routed_strategies_for_persona(persona_id)
-        base = _project_persona_dto(raw or {"persona_id": persona_id}, routed_strategies=routed)
-        for field in (
-            "name", "risk",
-            "archetype", "routedStrategies", "successRate",
-        ):
-            if field in payload:
-                base[field] = payload[field]
-        if "risk" in payload:
-            base["risk"] = _normalize_risk_level(payload["risk"])
-        base["updatedAt"] = snapshot_at
-        base["id"] = persona_id
-        base["tenantId"] = caller_tenant
-        existing_metadata = dict(raw.get("metadata") if isinstance(raw, dict) and isinstance(raw.get("metadata"), dict) else {})
-        canonical_lifecycle = str(
-            (raw or {}).get("lifecycle_state")
-            or (raw or {}).get("state")
-            or "draft"
-        )
-        update_metadata: Dict[str, Any] = {
-            "success_rate": float(base.get("successRate") or 0.0),
-        }
-        update_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
-            {
-                "id": persona_id,
-                "persona_id": persona_id,
-                "name": str(base.get("name") or persona_id),
-                "mandate": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
-                "strategy_family": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
-                "lifecycle_state": canonical_lifecycle,
-                "metadata": {
-                    **existing_metadata,
-                    **update_metadata,
-                    "owner": str(existing_metadata.get("owner") or identity.operator_id),
-                    "archetype": str(base.get("archetype") or "generalist"),
-                    "risk_level": str(base.get("risk") or "low"),
-                },
-            },
-            reason="persona_updated",
-        )
-        updater = getattr(ctx.write_owner, "update_persona", None) if hasattr(ctx, "write_owner") and ctx.write_owner is not None else None
-        if updater is None or not callable(updater):
-            raise _bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Persona write owner unavailable",
-                "Cannot mutate persona: canonical write owner is not configured or unavailable",
-                precondition_failed="persona_write_owner_unavailable",
-                suggestion="Check persona registry service availability or configure write_owner.",
-            )
-        persona_record = updater(
-            persona_id,
-            name=str(base.get("name") or persona_id),
-            actor_id=str(existing_metadata.get("owner") or identity.operator_id),
-            updated_at=snapshot_at,
-            archetype=str(base.get("archetype") or "generalist"),
-            # Lifecycle is controller-owned.  Omitting it makes update_persona
-            # re-read and preserve the latest canonical value, avoiding a stale
-            # overlay racing paper_running/provisioning_failed reconciliation.
-            lifecycle_state=None,
-            risk_level=str(base.get("risk") or "low"),
-            metadata=update_metadata,
-        )
-        if persona_record is None:
-            raise _bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Persona update failed",
-                f"Failed to persist update for persona {persona_id} in canonical write owner",
-                precondition_failed="persona_update_persistence_failed",
-            )
-        routed = _routed_strategies_for_persona(persona_id)
-        base = _project_persona_dto(
-            persona_record,
-            overlay={
-                "routedStrategies": int(base.get("routedStrategies") or routed),
-                "successRate": float(base.get("successRate") or 0.0),
-                "tenantId": caller_tenant,
-            },
-            routed_strategies=routed,
-        )
-        result = {"data": deepcopy(base), "meta": {"snapshot_at": snapshot_at}}
-        _STRATEGY_PERSONA_BFF_IDEMPOTENCY[cache_key] = {
-            "request_hash": request_hash,
-            "result": deepcopy(result),
-        }
-        return result
+
 
 
     @router.get("/bff/personas/{persona_id}/route-policy")
