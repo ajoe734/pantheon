@@ -8,6 +8,7 @@ cutover.
 """
 from __future__ import annotations
 
+import copy
 import inspect
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -30,6 +31,7 @@ from services.control_plane.bff.models import (
     redact_evidence_refs as _default_redact_evidence_refs,
     redact_ooda_packet,
     redact_ooda_packet_items,
+    safe_redact_evidence_refs,
 )
 
 from .service import ControlLoopsService, default_bff_error
@@ -604,8 +606,60 @@ def create_control_loops_router(
     async def bff_v5_downstream_health(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _read_identity(authorization)
-        return resolved_service.downstream_health()
+        identity = _read_identity(authorization)
+        raw_result = resolved_service.downstream_health()
+        result = copy.deepcopy(raw_result)
+        data = result.get("data")
+        total_redacted = 0
+        if isinstance(data, dict):
+            replays = data.get("delivery_replays")
+            if isinstance(replays, list) and replays:
+                for replay in replays:
+                    if isinstance(replay, dict):
+                        if replay.get("approval_ref"):
+                            redacted_ref, count = safe_redact_evidence_refs(
+                                identity,
+                                [replay["approval_ref"]],
+                                redact_fn=_redact,
+                                capabilities_fn=_capabilities,
+                                default_kind="approval",
+                            )
+                            if count > 0:
+                                replay["approval_ref"] = redacted_ref[0]
+                                total_redacted += count
+                        if isinstance(replay.get("evidence_refs"), list) and replay["evidence_refs"]:
+                            redacted_refs, count = safe_redact_evidence_refs(
+                                identity,
+                                replay["evidence_refs"],
+                                redact_fn=_redact,
+                                capabilities_fn=_capabilities,
+                            )
+                            replay["evidence_refs"] = redacted_refs
+                            total_redacted += count
+            incidents = data.get("incidents")
+            if isinstance(incidents, dict):
+                for inc_row in incidents.values():
+                    if isinstance(inc_row, dict) and isinstance(inc_row.get("evidence_refs"), list) and inc_row["evidence_refs"]:
+                        redacted_refs, count = safe_redact_evidence_refs(
+                            identity,
+                            inc_row["evidence_refs"],
+                            redact_fn=_redact,
+                            capabilities_fn=_capabilities,
+                        )
+                        inc_row["evidence_refs"] = redacted_refs
+                        total_redacted += count
+            for key in ("evidence_refs", "linked_evidence"):
+                if isinstance(data.get(key), list) and data[key]:
+                    redacted_refs, count = safe_redact_evidence_refs(
+                        identity,
+                        data[key],
+                        redact_fn=_redact,
+                        capabilities_fn=_capabilities,
+                    )
+                    data[key] = redacted_refs
+                    total_redacted += count
+        result.setdefault("meta", {})["redacted_evidence_count"] = total_redacted
+        return result
 
     @router.post("/bff/v5/downstream-health/dlq/replay")
     async def bff_v5_downstream_health_dlq_replay(

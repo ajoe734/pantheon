@@ -39,6 +39,9 @@ from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.models import redact_evidence_refs, utc_now
 from services.control_plane.bff.settings_store import DEFAULT_SETTINGS_BUNDLE, SettingsStore
+from pathlib import Path
+from services.control_plane.bff.downstream_health_monitor import DownstreamHealthMonitor
+from services.control_plane.bff.ports.operations_consultation import DomainConsultationPort
 from services.broker.sinopac.evidence_packet import build_ooda_packet
 from services.persona.ooda_cycle_runtime import (
     ALPHA_SEED_SOURCES,
@@ -1091,21 +1094,29 @@ _DOWNSTREAM_HEALTH_TARGET_PROBE: Dict[str, Any] = {
 }
 
 
-class _PopulatedDownstreamHealthMonitor:
-    """Minimal double returning a populated, production-shaped ``get_state``."""
+def _build_populated_downstream_health_monitor(tmp_path: Path) -> DownstreamHealthMonitor:
+    monitor = DownstreamHealthMonitor(
+        state_path=str(tmp_path / "health.sqlite"),
+        telemetry_url="",
+        incidents_url="",
+    )
+    monitor._store.replay_dead_letters(
+        actor_id="review-operator",
+        approval_ref="approval://review/replay-private",
+        reason="review-only fixture",
+    )
+    monitor._store.reserve_incident(
+        target_name="paper-signal-producer",
+        event_id="evt-downstream-1",
+    )
+    return monitor
 
-    def get_state(self) -> Dict[str, Any]:
-        return {
-            "overall_ok": True,
-            "targets": {"risk-engine": copy.deepcopy(_DOWNSTREAM_HEALTH_TARGET_PROBE)},
-        }
 
-
-def test_downstream_health_baseline_has_no_evidence_ref_field() -> None:
+def test_downstream_health_redacts_replay_approval_ref_for_low_capability_identity(tmp_path: Path) -> None:
+    """Populated DownstreamHealthMonitor SQLite replay rows: approval_ref is redacted for low capability."""
+    monitor = _build_populated_downstream_health_monitor(tmp_path)
     with _stub_auth_env():
-        client = TestClient(
-            _build_control_loops_app(downstream_health_monitor=_PopulatedDownstreamHealthMonitor())
-        )
+        client = TestClient(_build_control_loops_app(downstream_health_monitor=monitor))
         response = client.get(
             "/bff/v5/downstream-health",
             headers={"Authorization": LOW_CAPABILITY_TOKEN},
@@ -1113,13 +1124,80 @@ def test_downstream_health_baseline_has_no_evidence_ref_field() -> None:
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["read_model"] == "downstream_health"
-        assert payload["meta"]["source"] == "bff_downstream_health_monitor"
-        # populated production-shaped baseline: real probe data, not the
-        # empty {overall_ok: null, targets: {}} shape from an uninjected monitor
-        assert payload["data"]["overall_ok"] is True
-        assert payload["data"]["targets"]["risk-engine"]["ok"] is True
-        assert "evidence_refs" not in payload["data"]
-        assert "linked_evidence" not in payload["data"]
+        data = payload["data"]
+        assert len(data["delivery_replays"]) == 1
+        assert "paper-signal-producer" in data["incidents"]
+        ref = data["delivery_replays"][0]["approval_ref"]
+        assert isinstance(ref, dict) and ref.get("redacted") is True
+        assert ref["required_capability"] == "approval.read"
+        assert ref["ref_id"] == "approval://review/replay-private"
+        assert payload["meta"]["redacted_evidence_count"] == 1
+
+
+def test_downstream_health_passes_through_for_full_capability_identity(tmp_path: Path) -> None:
+    """Populated DownstreamHealthMonitor SQLite replay rows: approval_ref remains visible for full capability."""
+    monitor = _build_populated_downstream_health_monitor(tmp_path)
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(downstream_health_monitor=monitor))
+        response = client.get(
+            "/bff/v5/downstream-health",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["read_model"] == "downstream_health"
+        data = payload["data"]
+        assert len(data["delivery_replays"]) == 1
+        assert "paper-signal-producer" in data["incidents"]
+        assert data["delivery_replays"][0]["approval_ref"] == "approval://review/replay-private"
+        assert payload["meta"]["redacted_evidence_count"] == 0
+
+
+def test_downstream_health_fails_closed_when_capabilities_unresolvable(tmp_path: Path) -> None:
+    """Populated DownstreamHealthMonitor SQLite replay rows: fail closed when capability lookup raises."""
+    def _boom(identity: Any) -> List[str]:
+        raise RuntimeError("capability lookup unavailable")
+
+    monitor = _build_populated_downstream_health_monitor(tmp_path)
+    with _stub_auth_env():
+        client = TestClient(
+            _build_control_loops_app(
+                downstream_health_monitor=monitor,
+                capabilities_for_identity=_boom,
+            )
+        )
+        response = client.get(
+            "/bff/v5/downstream-health",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        ref = payload["data"]["delivery_replays"][0]["approval_ref"]
+        assert isinstance(ref, dict) and ref.get("redacted") is True
+        assert ref["reason"] == "redaction_policy_unavailable"
+        assert payload["meta"]["redacted_evidence_count"] == 1
+
+
+def test_downstream_health_fails_closed_when_capabilities_return_none(tmp_path: Path) -> None:
+    """Populated DownstreamHealthMonitor SQLite replay rows: fail closed when capability lookup returns None."""
+    monitor = _build_populated_downstream_health_monitor(tmp_path)
+    with _stub_auth_env():
+        client = TestClient(
+            _build_control_loops_app(
+                downstream_health_monitor=monitor,
+                capabilities_for_identity=lambda _: None,
+            )
+        )
+        response = client.get(
+            "/bff/v5/downstream-health",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        ref = payload["data"]["delivery_replays"][0]["approval_ref"]
+        assert isinstance(ref, dict) and ref.get("redacted") is True
+        assert ref["reason"] == "redaction_policy_unavailable"
+        assert payload["meta"]["redacted_evidence_count"] == 1
 
 
 # --- Settings read/export: top-level evidence_refs field --------------------
@@ -1476,3 +1554,137 @@ def test_committee_detail_projection_direct() -> None:
         projected = svc.committee_projection("committee-clc-1", identity=identity)
         assert projected is not None
         assert projected["meta"]["redacted_evidence_count"] == 6
+
+
+# --- Committee detail: real DomainConsultationPort consultation producer ---
+
+_CONSULTATION_AUDIT_REF = "audit://review/committee-private-record"
+_CONSULTATION_REQUEST: Dict[str, Any] = {
+    "request_id": "review-request",
+    "linked_session_id": "review-session",
+    "status": "completed",
+    "created_at": "2026-09-27T07:00:00Z",
+    "evidence_refs": [_CONSULTATION_AUDIT_REF],
+    "from_persona_id": "review-persona",
+    "metadata": {
+        "consultation": {
+            "committee_ref": "review-committee",
+            "committee_session_ids": ["review-session"],
+            "quorum_state": "met",
+            "consensus_state": "consensus_reached",
+        }
+    },
+}
+
+
+class _RealConsultationProducerPort(DomainConsultationPort):
+    """Port projecting real service session records from consultation data."""
+
+    def _consultation_session_records(self) -> Dict[str, Any]:
+        return {
+            row["session_id"]: row
+            for row in self._project_service_session_records_from_data(
+                [copy.deepcopy(_CONSULTATION_REQUEST)], []
+            )
+        }
+
+    def dataset_source(self, dataset: str) -> str:
+        return "service_store"
+
+
+def _build_real_consultation_governance_app(
+    *, capabilities_for_identity: Any = None
+) -> Tuple[FastAPI, _RealConsultationProducerPort]:
+    port = _RealConsultationProducerPort()
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(
+        _call_with_supported_kwargs(
+            create_governance_router,
+            read_surface=port,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=utc_now,
+            redact_evidence_refs=redact_evidence_refs,
+            capabilities_for_identity=capabilities_for_identity or auth_policy.capabilities_for_identity,
+        )
+    )
+    return app, port
+
+
+def test_committee_real_producer_detail_redacts_for_low_capability_identity() -> None:
+    """Real consultation producer: linked_evidence and synthesis_summary are redacted for low capability."""
+    app, port = _build_real_consultation_governance_app()
+    original = port.get_committee("review-committee")
+    assert original["linked_evidence"][0]["evidence_type"] == "consultation_evidence"
+    with _stub_auth_env():
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/committees/review-committee",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["linked_evidence"][0].get("redacted") is True
+        assert body["linked_evidence"][0]["required_capability"] == "audit.read"
+        assert body["synthesis_summary"]["evidence_refs"][0].get("redacted") is True
+        assert body["synthesis_summary"]["evidence_refs"][0]["required_capability"] == "audit.read"
+        assert body["meta"]["redacted_evidence_count"] == 2
+
+
+def test_committee_real_producer_detail_passes_through_for_full_capability_identity() -> None:
+    """Real consultation producer: linked_evidence and synthesis_summary remain visible for full capability."""
+    app, port = _build_real_consultation_governance_app()
+    original = port.get_committee("review-committee")
+    with _stub_auth_env():
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/committees/review-committee",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["linked_evidence"] == original["linked_evidence"]
+        assert body["synthesis_summary"]["evidence_refs"] == [_CONSULTATION_AUDIT_REF]
+        assert body["meta"]["redacted_evidence_count"] == 0
+
+
+def test_committee_real_producer_detail_fails_closed_when_capabilities_unresolvable() -> None:
+    """Real consultation producer: fail closed when capability lookup raises."""
+    def _boom(identity: Any) -> List[str]:
+        raise RuntimeError("capability lookup unavailable")
+
+    app, _ = _build_real_consultation_governance_app(capabilities_for_identity=_boom)
+    with _stub_auth_env():
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/committees/review-committee",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["linked_evidence"][0].get("redacted") is True
+        assert body["linked_evidence"][0]["reason"] == "redaction_policy_unavailable"
+        assert body["synthesis_summary"]["evidence_refs"][0].get("redacted") is True
+        assert body["synthesis_summary"]["evidence_refs"][0]["reason"] == "redaction_policy_unavailable"
+        assert body["meta"]["redacted_evidence_count"] == 2
+
+
+def test_committee_real_producer_detail_fails_closed_when_capabilities_return_none() -> None:
+    """Real consultation producer: fail closed when capability lookup returns None."""
+    app, _ = _build_real_consultation_governance_app(capabilities_for_identity=lambda _: None)
+    with _stub_auth_env():
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/committees/review-committee",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["linked_evidence"][0].get("redacted") is True
+        assert body["linked_evidence"][0]["reason"] == "redaction_policy_unavailable"
+        assert body["synthesis_summary"]["evidence_refs"][0].get("redacted") is True
+        assert body["synthesis_summary"]["evidence_refs"][0]["reason"] == "redaction_policy_unavailable"
+        assert body["meta"]["redacted_evidence_count"] == 2

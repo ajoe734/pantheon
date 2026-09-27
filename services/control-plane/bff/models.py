@@ -707,36 +707,61 @@ def _resolve_evidence_kind_and_capability(
     kind_key = ""
     ref_id = ""
     if isinstance(ref, dict):
-        ref_id = str(ref.get("ref_id") or ref.get("id") or "").strip()
-        kind_key = (
+        ref_id = str(ref.get("ref_id") or ref.get("id") or ref.get("artifact_ref") or "").strip()
+        raw_kind = (
             str(ref.get("evidence_type") or "").strip()
             or str(ref.get("type") or "").strip()
             or str(ref.get("ref_type") or "").strip()
             or str(ref.get("link_type") or "").strip()
         )
+        if raw_kind in SOURCE_TYPE_TO_EVIDENCE_KIND:
+            kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND[raw_kind]
+        elif raw_kind in EVIDENCE_CAPABILITY_MAP:
+            kind_key = raw_kind
+        elif raw_kind in URI_SCHEME_TO_EVIDENCE_KIND:
+            kind_key = URI_SCHEME_TO_EVIDENCE_KIND[raw_kind]
+
         if not kind_key:
             source_document = ref.get("source_document")
             if isinstance(source_document, dict):
                 source_type = str(source_document.get("source_type") or "").strip()
-                kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND.get(source_type, "")
+                if source_type in SOURCE_TYPE_TO_EVIDENCE_KIND:
+                    kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND[source_type]
+                elif source_type in EVIDENCE_CAPABILITY_MAP:
+                    kind_key = source_type
+                elif source_type in URI_SCHEME_TO_EVIDENCE_KIND:
+                    kind_key = URI_SCHEME_TO_EVIDENCE_KIND[source_type]
     else:
         ref_id = str(ref).strip()
 
-    if kind_key and kind_key in SOURCE_TYPE_TO_EVIDENCE_KIND:
-        kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND[kind_key]
-
     if not kind_key and kind_map and ref_id in kind_map:
-        kind_key = str(kind_map[ref_id]).strip()
+        mapped_kind = str(kind_map[ref_id]).strip()
+        if mapped_kind in SOURCE_TYPE_TO_EVIDENCE_KIND:
+            kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND[mapped_kind]
+        elif mapped_kind in EVIDENCE_CAPABILITY_MAP:
+            kind_key = mapped_kind
+        elif mapped_kind in URI_SCHEME_TO_EVIDENCE_KIND:
+            kind_key = URI_SCHEME_TO_EVIDENCE_KIND[mapped_kind]
 
-    # 1. Authoritative URI scheme check: if ref_id has a scheme (e.g. audit://...),
+    # 1. Authoritative URI scheme check: if ref_id (or candidate ref strings in dict) has a scheme (e.g. audit://...),
     # resolve directly to the scheme's evidence kind or alias. Authoritative URI
     # schemes must not be downgraded by incidental path keywords.
-    if not kind_key and ref_id and "://" in ref_id:
-        scheme = ref_id.split("://", 1)[0].strip().lower()
-        if scheme in EVIDENCE_CAPABILITY_MAP:
-            kind_key = scheme
-        elif scheme in URI_SCHEME_TO_EVIDENCE_KIND:
-            kind_key = URI_SCHEME_TO_EVIDENCE_KIND[scheme]
+    if not kind_key:
+        candidates = [ref_id]
+        if isinstance(ref, dict):
+            for f in ("artifact_ref", "link", "id", "ref_id"):
+                val = str(ref.get(f) or "").strip()
+                if val and val not in candidates:
+                    candidates.append(val)
+        for cand in candidates:
+            if "://" in cand:
+                scheme = cand.split("://", 1)[0].strip().lower()
+                if scheme in EVIDENCE_CAPABILITY_MAP:
+                    kind_key = scheme
+                    break
+                elif scheme in URI_SCHEME_TO_EVIDENCE_KIND:
+                    kind_key = URI_SCHEME_TO_EVIDENCE_KIND[scheme]
+                    break
 
     # 2. Authoritative field kind: if the container field specifies a domain-specific
     # default_kind (audit_refs -> audit, incident_refs -> incident, postmortem_refs -> postmortem,
@@ -744,8 +769,11 @@ def _resolve_evidence_kind_and_capability(
     # that field assignment is authoritative over incidental substring keywords.
     if not kind_key and default_kind:
         dk = str(default_kind).strip()
-        if dk != "artifact":
-            kind_key = dk
+        if dk in EVIDENCE_CAPABILITY_MAP:
+            if dk != "artifact":
+                kind_key = dk
+        elif dk in URI_SCHEME_TO_EVIDENCE_KIND:
+            kind_key = URI_SCHEME_TO_EVIDENCE_KIND[dk]
 
     # 3. Fallback keyword matching: for generic bundles (default_kind='artifact'
     # or None) and non-URI references, resolve specific evidence kinds by keyword pattern.
@@ -768,7 +796,11 @@ def _resolve_evidence_kind_and_capability(
 
     # 4. Final fallback to default_kind (e.g. 'artifact' for remaining bundle items).
     if not kind_key and default_kind:
-        kind_key = str(default_kind).strip()
+        dk = str(default_kind).strip()
+        if dk in EVIDENCE_CAPABILITY_MAP:
+            kind_key = dk
+        elif dk in URI_SCHEME_TO_EVIDENCE_KIND:
+            kind_key = URI_SCHEME_TO_EVIDENCE_KIND[dk]
 
     required_capability = EVIDENCE_CAPABILITY_MAP.get(kind_key) if kind_key else None
     try:

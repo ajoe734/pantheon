@@ -32,6 +32,7 @@ from ..models import (
     _resolve_evidence_kind_and_capability,
     fail_closed_redacted_refs,
     safe_redact_evidence_refs,
+    EVIDENCE_CAPABILITY_MAP,
 )
 
 
@@ -683,17 +684,25 @@ class GovernanceService:
         for raw_ref in raw_linked:
             if isinstance(raw_ref, dict):
                 ref_id = str(raw_ref.get("id") or raw_ref.get("ref_id") or "").strip()
-                kind_key, _, _ = _resolve_evidence_kind_and_capability(raw_ref)
-                if ref_id and kind_key:
-                    ref_kind_map[ref_id] = kind_key
+                art_ref = str(raw_ref.get("artifact_ref") or "").strip()
+                kind_key, _, req_cap = _resolve_evidence_kind_and_capability(raw_ref)
+                if req_cap and kind_key in EVIDENCE_CAPABILITY_MAP:
+                    if ref_id:
+                        ref_kind_map[ref_id] = kind_key
+                    if art_ref:
+                        ref_kind_map[art_ref] = kind_key
 
         raw_handoff = committee.get("service_handoff") or {}
         for raw_ref in (raw_handoff.get("evidence_refs") or []):
             if isinstance(raw_ref, dict):
                 ref_id = str(raw_ref.get("id") or raw_ref.get("ref_id") or "").strip()
-                kind_key, _, _ = _resolve_evidence_kind_and_capability(raw_ref)
-                if ref_id and kind_key:
-                    ref_kind_map[ref_id] = kind_key
+                art_ref = str(raw_ref.get("artifact_ref") or "").strip()
+                kind_key, _, req_cap = _resolve_evidence_kind_and_capability(raw_ref)
+                if req_cap and kind_key in EVIDENCE_CAPABILITY_MAP:
+                    if ref_id:
+                        ref_kind_map[ref_id] = kind_key
+                    if art_ref:
+                        ref_kind_map[art_ref] = kind_key
 
         synthesis_summary = copy.deepcopy(committee.get("synthesis_summary") or {})
         synth_count = 0
