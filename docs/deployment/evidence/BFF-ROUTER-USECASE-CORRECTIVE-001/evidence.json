@@ -3,8 +3,8 @@
   "owner": "Antigravity",
   "reviewer": "Codex2",
   "title": "Finish five-domain router-to-application boundaries without further mechanical splitting",
-  "timestamp": "2026-09-27T16:47:30Z",
-  "summary": "Remediated all 4 reviewer rejection defects from PR #5992: (1) P1(1): Fixed cross-domain research read regression by plumbing persona_reader and persona_capital_runtime into ResearchRouterService and ResearchRouteContext, restoring mounted persona attachment retrieval and resolution (display_label resolution) without 503 errors; (2) P1(2): Fixed source-confidence parity regression in test_kw02_research_notes_contract.py by prioritizing port getter in _get_dataset_source to preserve KnowledgeReadPortsDouble provenance and eliminating erroneous status overriding; (3) P1(3): Completed service layer extraction across all domains: moved persona PATCH logic and write_owner to PersonaService.patch_persona, moved strategy replay/dry-run/persistence to StrategiesService.create_strategy, moved experiment replay check and creation to ResearchRouterService.create_experiment, completely removed _call_port dynamic forwarding in favor of explicit typed invocations with TypeError passthrough, and fixed loose/Any type annotations across services; (4) P2(4): Fixed AST boundary gate false negatives in scan_route_source_for_store_access by including write_owner, mutation_port, and domain-specific write owners, scoped common.py to prohibit standalone store/write access, and added negative tests ensuring aliased access is flagged.",
+  "timestamp": "2026-09-27T17:28:00Z",
+  "summary": "Remediated all 4 reviewer rejection defects from PR #5992 and secondary review findings: (1) P1(1): Fixed cross-domain research read regression by plumbing persona_reader and persona_capital_runtime into ResearchRouterService and ResearchRouteContext, restoring mounted persona attachment retrieval and resolution (display_label resolution) without 503 errors; (2) P1(2): Fixed source-confidence parity regression in test_kw02_research_notes_contract.py by prioritizing port getter in _get_dataset_source to preserve KnowledgeReadPortsDouble provenance and eliminating erroneous status overriding; (3) P1(3): Completed service layer extraction across all domains: eliminated dynamic forwarders (_resolve_knowledge_fn and _invoke_port) across all 66 callsites in ResearchRouterService replacing them with explicit typed method invocations wrapped in _map_port_errors context manager and _ResearchPortAdapter, removed Any-containing unions and untyped write-owner dependencies in StrategiesService, moved seed replication/review/merge command objectives and idempotency cache writes from seeds.py into StrategiesService, and moved persona PATCH logic and write_owner to PersonaService.patch_persona; (4) P2(4): Strengthened AST boundary gate in scan_route_source_for_store_access to detect direct bridge construction (*Bridge), router-owned persistence subscript writes (ctx.*_idempotency[...] = ...), mutation methods (.pop, .setdefault, etc.), and renamed dynamic forwarders (_invoke_port, _resolve_knowledge_fn), with negative regression tests verifying zero false negatives.",
   "router_domains": [
     {
       "domain": "personas",
@@ -104,24 +104,16 @@
   "verification": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
-        "result": "33 passed, 3 warnings in 42.04s"
+        "command": "/tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "result": "33 passed, 3 warnings in 41.13s"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_research_router.py",
-        "result": "96 passed, 3 warnings in 55.36s"
+        "command": "/tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/research/test_router.py services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/test_kw02_research_notes_contract.py",
+        "result": "129 passed, 1 skipped, 3 warnings in 78.20s"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
-        "result": "19 passed, 1 skipped, 1 warning in 16.79s"
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/research/test_router.py services/control-plane/bff/personas/test_router_isolation.py",
-        "result": "9 passed, 1 warning in 6.82s"
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_kw02_research_notes_contract.py",
-        "result": "5 passed, 1 warning in 4.73s"
+        "command": "/tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/research/test_router.py services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/test_kw02_research_notes_contract.py",
+        "result": "162 passed, 1 skipped, 3 warnings in 119.16s"
       }
     ]
   },

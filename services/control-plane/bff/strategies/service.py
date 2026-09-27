@@ -21,12 +21,30 @@ except (ImportError, ValueError):
     from models import ErrorCode
 
 try:
+    from services.control_plane.bff.ports.strategy_write_owner import StrategyWriteOwnerPort
+except (ImportError, ValueError):
+    from ..ports.strategy_write_owner import StrategyWriteOwnerPort  # type: ignore
+
+try:
+    from services.source_ingestion.replication_bridge import (
+        StrategySeedReplicationBridge,
+        StrategySeedReplicationBridgeError,
+    )
+except (ImportError, ValueError):
+    StrategySeedReplicationBridge = None  # type: ignore
+    StrategySeedReplicationBridgeError = Exception  # type: ignore
+
+try:
     from services.source_ingestion.strategy_seed_store import (
+        SeedReviewDecision,
+        StrategySpecSeedReviewError,
         StrategySpecSeedStore,
         StrategySpecSeedStoreError,
     )
 except (ImportError, ValueError):
-    StrategySpecSeedStore = None
+    SeedReviewDecision = None  # type: ignore
+    StrategySpecSeedReviewError = Exception  # type: ignore
+    StrategySpecSeedStore = None  # type: ignore
     StrategySpecSeedStoreError = Exception  # type: ignore
 
 log = logging.getLogger(__name__)
@@ -36,13 +54,14 @@ class StrategiesService:
     def __init__(
         self,
         *,
-        read_surface: Optional[Union[ReadSurfacePorts, Callable[[], ReadSurfacePorts], Any]] = None,
+        read_surface: Optional[Union[ReadSurfacePorts, Callable[[], ReadSurfacePorts]]] = None,
         get_read_store: Optional[Callable[[], ReadSurfacePorts]] = None,
-        strategy_write_owner: Optional[Any] = None,
-        get_strategy_write_owner: Optional[Callable[[], Any]] = None,
+        strategy_write_owner: Optional[Union[StrategyWriteOwnerPort, Callable[[], StrategyWriteOwnerPort]]] = None,
+        get_strategy_write_owner: Optional[Callable[[], StrategyWriteOwnerPort]] = None,
         list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         bff_error: Optional[Callable[..., HTTPException]] = None,
-        seed_store: Optional[Union[StrategySpecSeedStore, Any]] = None,
+        seed_store: Optional[StrategySpecSeedStore] = None,
+        replication_bridge: Optional[StrategySeedReplicationBridge] = None,
         utc_now: Optional[Callable[[], str]] = None,
         normalize_lifecycle_state: Optional[Callable[[Any], str]] = None,
         normalize_risk_level: Optional[Callable[[Any], str]] = None,
@@ -50,6 +69,8 @@ class StrategiesService:
         idempotency_store: Optional[Dict[str, Dict[str, Any]]] = None,
         idempotency_check: Optional[Callable[..., Optional[Dict[str, Any]]]] = None,
         dry_run_success_response: Optional[Callable[..., Any]] = None,
+        seed_replication_idempotency: Optional[Dict[str, Dict[str, Any]]] = None,
+        seed_review_idempotency: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         self._read_surface = read_surface
         self._get_read_store = get_read_store
@@ -58,6 +79,7 @@ class StrategiesService:
         self._list_strategy_summaries = list_strategy_summaries
         self._bff_error = bff_error
         self._seed_store = seed_store
+        self._replication_bridge = replication_bridge
         self._utc_now = utc_now
         self._normalize_lifecycle_state = normalize_lifecycle_state
         self._normalize_risk_level = normalize_risk_level
@@ -65,15 +87,17 @@ class StrategiesService:
         self._idempotency_store = idempotency_store
         self._idempotency_check = idempotency_check
         self._dry_run_success_response = dry_run_success_response
+        self._seed_replication_idempotency = seed_replication_idempotency
+        self._seed_review_idempotency = seed_review_idempotency
 
-    def _get_read_store_port(self) -> Any:
+    def _get_read_store_port(self) -> ReadSurfacePorts:
         if self._read_surface is not None:
             return self._read_surface() if callable(self._read_surface) else self._read_surface
         if self._get_read_store is not None:
             return self._get_read_store()
         raise NotImplementedError("Neither read_surface nor get_read_store dependency was supplied")
 
-    def _get_write_owner_port(self) -> Any:
+    def _get_write_owner_port(self) -> Optional[StrategyWriteOwnerPort]:
         if self._strategy_write_owner is not None:
             return self._strategy_write_owner() if callable(self._strategy_write_owner) else self._strategy_write_owner
         if self._get_strategy_write_owner is not None:
@@ -87,7 +111,7 @@ class StrategiesService:
         return None
 
     @property
-    def seed_store(self) -> Any:
+    def seed_store(self) -> StrategySpecSeedStore:
         if self._seed_store is not None:
             return self._seed_store
         if StrategySpecSeedStore is not None:
@@ -265,8 +289,214 @@ class StrategiesService:
     def record_seed_review_decision(self, seed_id: str, **kwargs: Any) -> Tuple[Any, Any]:
         return self.seed_store.record_review_decision(seed_id, **kwargs)
 
-    def merge_seed(self, seed_id: str, **kwargs: Any) -> Tuple[Any, Any]:
-        return self.seed_store.merge_seed(seed_id, **kwargs)
+    def submit_seed_replication(
+        self,
+        *,
+        seed_id: str,
+        payload: Dict[str, Any],
+        operator_id: str,
+        resolved_key: str,
+    ) -> Dict[str, Any]:
+        """Execute replication command objective: idempotency check, bridge submit, replay decision, cache write."""
+        request_hash = (
+            self._stable_json_hash(
+                {
+                    "route": "POST /bff/management/strategy-seeds/{seed_id}/submit-replication",
+                    "seed_id": seed_id,
+                    "payload": payload,
+                }
+            )
+            if self._stable_json_hash is not None
+            else str(hash(json.dumps(payload, sort_keys=True, default=str)))
+        )
+        if self._seed_replication_idempotency is not None:
+            existing = self._seed_replication_idempotency.get(resolved_key)
+            if existing is not None:
+                if existing.get("request_hash") != request_hash:
+                    if self._bff_error:
+                        raise self._bff_error(
+                            409,
+                            ErrorCode.IDEMPOTENCY_CONFLICT,
+                            "Idempotency key was already used with a different payload",
+                            f"Key {resolved_key!r} is bound to a different request hash",
+                            precondition_failed="idempotency_conflict",
+                            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                        )
+                    raise HTTPException(status_code=409, detail="Idempotency key conflict")
+                cached = json.loads(json.dumps(existing.get("result") or {}))
+                cached.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
+                return cached
+
+        bridge = self._replication_bridge or (StrategySeedReplicationBridge() if StrategySeedReplicationBridge is not None else None)
+        if bridge is None:
+            raise NotImplementedError("StrategySeedReplicationBridge is unavailable")
+
+        submission = bridge.submit_seed_to_replication(
+            seed_id,
+            requested_by=operator_id,
+            idempotency_key=resolved_key,
+            created_at=payload.get("created_at") or None,
+            strategy_spec_version=str(payload.get("strategy_spec_version") or "1.0.0"),
+        )
+
+        snapshot_at = submission.created_at or (self._utc_now() if self._utc_now else "2026-09-27T00:00:00Z")
+        result = {
+            "data": {
+                "seed_id": submission.seed_id,
+                "replication_ref": submission.replication_ref,
+                "experiment_task_id": submission.experiment_task_id,
+                "strategy_id": submission.strategy_id,
+                "strategy_spec_version": submission.strategy_spec_version,
+                "research_task_id": submission.research_task.get("task_id"),
+                "status": submission.research_task.get("status") or "queued",
+                "experiment_task": dict(submission.experiment_task),
+                "registry_write_performed": False,
+                "execution_route": "none",
+                "deployment_authority": "none",
+                "approved_artifact_created": False,
+                "deployment_plan_created": False,
+                "runtime_binding_created": False,
+                "idempotent_replay": submission.idempotent_replay,
+            },
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "research_only": True,
+                "execution_route": "none",
+                "idempotency": {
+                    "idempotencyKey": resolved_key,
+                    "replayed": False,
+                },
+            },
+        }
+        if self._seed_replication_idempotency is not None:
+            self._seed_replication_idempotency[resolved_key] = {
+                "request_hash": request_hash,
+                "result": result,
+            }
+        return result
+
+    def review_seed(
+        self,
+        *,
+        seed_id: str,
+        payload: Dict[str, Any],
+        action: str,
+        operator_id: str,
+        target_refs: List[Dict[str, Any]],
+        resolved_key: str,
+        result_builder: Callable[[Any, Any, str, str, bool], Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Execute review command objective: idempotency check, store decision, replay handling, cache write."""
+        request_hash = (
+            self._stable_json_hash(
+                {
+                    "route": "POST /bff/management/strategy-seeds/{seed_id}/review",
+                    "seed_id": seed_id,
+                    "action": action,
+                    "payload": payload,
+                }
+            )
+            if self._stable_json_hash is not None
+            else str(hash(json.dumps(payload, sort_keys=True, default=str)))
+        )
+        if self._seed_review_idempotency is not None:
+            existing = self._seed_review_idempotency.get(resolved_key)
+            if existing is not None:
+                if existing.get("request_hash") != request_hash:
+                    if self._bff_error:
+                        raise self._bff_error(
+                            409,
+                            ErrorCode.IDEMPOTENCY_CONFLICT,
+                            "Idempotency key was already used with a different payload",
+                            f"Key {resolved_key!r} is bound to a different request hash",
+                            precondition_failed="idempotency_conflict",
+                            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                        )
+                    raise HTTPException(status_code=409, detail="Idempotency key conflict")
+                cached = json.loads(json.dumps(existing.get("result") or {}))
+                cached.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
+                return cached
+
+        snapshot_at = self._utc_now() if self._utc_now else "2026-09-27T00:00:00Z"
+        updated, decision = self.seed_store.record_review_decision(
+            seed_id,
+            decision=action,
+            reviewer_id=operator_id,
+            reason=str(payload.get("reason") or ""),
+            target_refs=target_refs,
+            created_at=payload.get("created_at") or snapshot_at,
+            idempotency_key=resolved_key,
+            request_hash=request_hash,
+        )
+        replayed = bool(getattr(decision, "idempotent_replay", False))
+        result = result_builder(updated, decision, snapshot_at, resolved_key, replayed)
+        if self._seed_review_idempotency is not None:
+            self._seed_review_idempotency[resolved_key] = {
+                "request_hash": request_hash,
+                "result": result,
+            }
+        return result
+
+    def merge_seed(
+        self,
+        *,
+        seed_id: str,
+        payload: Dict[str, Any],
+        target_seed_id: str,
+        operator_id: str,
+        target_refs: List[Dict[str, Any]],
+        resolved_key: str,
+        result_builder: Callable[[Any, Any, str, str, bool], Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Execute merge command objective: idempotency check, store merge, replay handling, cache write."""
+        request_hash = (
+            self._stable_json_hash(
+                {
+                    "route": "POST /bff/management/strategy-seeds/{seed_id}/merge",
+                    "seed_id": seed_id,
+                    "payload": payload,
+                }
+            )
+            if self._stable_json_hash is not None
+            else str(hash(json.dumps(payload, sort_keys=True, default=str)))
+        )
+        if self._seed_review_idempotency is not None:
+            existing = self._seed_review_idempotency.get(resolved_key)
+            if existing is not None:
+                if existing.get("request_hash") != request_hash:
+                    if self._bff_error:
+                        raise self._bff_error(
+                            409,
+                            ErrorCode.IDEMPOTENCY_CONFLICT,
+                            "Idempotency key was already used with a different payload",
+                            f"Key {resolved_key!r} is bound to a different request hash",
+                            precondition_failed="idempotency_conflict",
+                            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                        )
+                    raise HTTPException(status_code=409, detail="Idempotency key conflict")
+                cached = json.loads(json.dumps(existing.get("result") or {}))
+                cached.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
+                return cached
+
+        snapshot_at = self._utc_now() if self._utc_now else "2026-09-27T00:00:00Z"
+        updated, decision = self.seed_store.merge_seed(
+            seed_id,
+            target_seed_id=target_seed_id,
+            reviewer_id=operator_id,
+            reason=str(payload.get("reason") or ""),
+            target_refs=target_refs,
+            created_at=payload.get("created_at") or snapshot_at,
+            idempotency_key=resolved_key,
+            request_hash=request_hash,
+        )
+        replayed = bool(getattr(decision, "idempotent_replay", False))
+        result = result_builder(updated, decision, snapshot_at, resolved_key, replayed)
+        if self._seed_review_idempotency is not None:
+            self._seed_review_idempotency[resolved_key] = {
+                "request_hash": request_hash,
+                "result": result,
+            }
+        return result
 
     def create_strategy(
         self,

@@ -11,7 +11,6 @@ from services.control_plane.persona.persona_strategy_discovery import (
     extract_persona_strategy_profile,
 )
 from services.source_ingestion.replication_bridge import (
-    StrategySeedReplicationBridge,
     StrategySeedReplicationBridgeError,
 )
 from services.source_ingestion.strategy_seed_store import (
@@ -35,29 +34,6 @@ _SEED_KINDS_NEGATIVE = frozenset({"negative", "negative_memory"})
 
 def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
     router = APIRouter()
-
-    def _strategy_seed_replication_idempotency_check(
-        resolved_key: str,
-        request_hash: str,
-    ) -> Optional[Dict[str, Any]]:
-        existing = ctx.strategy_seed_replication_idempotency.get(resolved_key)
-        if existing is None:
-            return None
-        if existing.get("request_hash") != request_hash:
-            raise ctx.bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        import json as _json
-        result = _json.loads(_json.dumps(existing.get("result") or {}))
-        meta = result.setdefault("meta", {})
-        idempotency = meta.setdefault("idempotency", {})
-        idempotency["replayed"] = True
-        return result
 
     def _require_strategy_seed_submit_role(identity: OperatorIdentity) -> None:
         if {"operator", "admin"}.intersection(identity.roles):
@@ -104,85 +80,15 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         identity: OperatorIdentity,
         resolved_key: str,
     ) -> Dict[str, Any]:
-        request_hash = ctx.stable_json_hash(
-            {
-                "route": "POST /bff/management/strategy-seeds/{seed_id}/submit-replication",
-                "seed_id": seed_id,
-                "payload": payload,
-            }
-        )
-        cached = _strategy_seed_replication_idempotency_check(resolved_key, request_hash)
-        if cached is not None:
-            return cached
-
         try:
-            submission = StrategySeedReplicationBridge().submit_seed_to_replication(
-                seed_id,
-                requested_by=identity.operator_id,
-                idempotency_key=resolved_key,
-                created_at=payload.get("created_at") or None,
-                strategy_spec_version=str(payload.get("strategy_spec_version") or "1.0.0"),
+            return ctx.service.submit_seed_replication(
+                seed_id=seed_id,
+                payload=payload,
+                operator_id=identity.operator_id,
+                resolved_key=resolved_key,
             )
         except StrategySeedReplicationBridgeError as exc:
             raise _strategy_seed_replication_error(exc) from exc
-
-        snapshot_at = submission.created_at or ctx.utc_now()
-        result = {
-            "data": {
-                "seed_id": submission.seed_id,
-                "replication_ref": submission.replication_ref,
-                "experiment_task_id": submission.experiment_task_id,
-                "strategy_id": submission.strategy_id,
-                "strategy_spec_version": submission.strategy_spec_version,
-                "research_task_id": submission.research_task.get("task_id"),
-                "status": submission.research_task.get("status") or "queued",
-                "experiment_task": dict(submission.experiment_task),
-                "registry_write_performed": False,
-                "execution_route": "none",
-                "deployment_authority": "none",
-                "approved_artifact_created": False,
-                "deployment_plan_created": False,
-                "runtime_binding_created": False,
-                "idempotent_replay": submission.idempotent_replay,
-            },
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "research_only": True,
-                "execution_route": "none",
-                "idempotency": {
-                    "idempotencyKey": resolved_key,
-                    "replayed": False,
-                },
-            },
-        }
-        ctx.strategy_seed_replication_idempotency[resolved_key] = {
-            "request_hash": request_hash,
-            "result": result,
-        }
-        return result
-
-    def _strategy_seed_review_idempotency_check(
-        resolved_key: str,
-        request_hash: str,
-    ) -> Optional[Dict[str, Any]]:
-        existing = ctx.strategy_seed_review_idempotency.get(resolved_key)
-        if existing is None:
-            return None
-        if existing.get("request_hash") != request_hash:
-            raise ctx.bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        import json as _json
-        result = _json.loads(_json.dumps(existing.get("result") or {}))
-        meta = result.setdefault("meta", {})
-        idempotency = meta.setdefault("idempotency", {})
-        idempotency["replayed"] = True
-        return result
 
     def _require_strategy_seed_review_role(identity: OperatorIdentity) -> None:
         if {"operator", "admin"}.intersection(identity.roles):
@@ -762,44 +668,31 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         resolved_key: str,
     ) -> Dict[str, Any]:
         action = _strategy_seed_review_action(payload)
-        request_hash = ctx.stable_json_hash(
-            {
-                "route": "POST /bff/management/strategy-seeds/{seed_id}/review",
-                "seed_id": seed_id,
-                "action": action,
-                "payload": payload,
-            }
-        )
-        cached = _strategy_seed_review_idempotency_check(resolved_key, request_hash)
-        if cached is not None:
-            return cached
-        snapshot_at = ctx.utc_now()
+        target_refs = _strategy_seed_target_refs(payload)
+        tenant_id = ctx.bff_tenant_id(identity)
+
+        def result_builder(updated_seed: Any, decision: Any, snapshot_at: str, key: str, replayed: bool) -> Dict[str, Any]:
+            return _strategy_seed_review_result(
+                updated_seed=updated_seed,
+                decision=decision,
+                snapshot_at=snapshot_at,
+                resolved_key=key,
+                replayed=replayed,
+                tenant_id=tenant_id,
+            )
+
         try:
-            updated, decision = ctx.service.record_seed_review_decision(
-                seed_id,
-                decision=action,
-                reviewer_id=identity.operator_id,
-                reason=str(payload.get("reason") or ""),
-                target_refs=_strategy_seed_target_refs(payload),
-                created_at=payload.get("created_at") or snapshot_at,
-                idempotency_key=resolved_key,
-                request_hash=request_hash,
+            return ctx.service.review_seed(
+                seed_id=seed_id,
+                payload=payload,
+                action=action,
+                operator_id=identity.operator_id,
+                target_refs=target_refs,
+                resolved_key=resolved_key,
+                result_builder=result_builder,
             )
         except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
             raise _strategy_seed_review_error(exc) from exc
-        result = _strategy_seed_review_result(
-            updated_seed=updated,
-            decision=decision,
-            snapshot_at=snapshot_at,
-            resolved_key=resolved_key,
-            replayed=bool(getattr(decision, "idempotent_replay", False)),
-            tenant_id=ctx.bff_tenant_id(identity),
-        )
-        ctx.strategy_seed_review_idempotency[resolved_key] = {
-            "request_hash": request_hash,
-            "result": result,
-        }
-        return result
 
     def _strategy_seed_merge_response(
         *,
@@ -823,43 +716,31 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
                 "Set target_seed_id to the StrategySpecSeed that will absorb this candidate.",
                 precondition_failed="target_seed_id",
             )
-        request_hash = ctx.stable_json_hash(
-            {
-                "route": "POST /bff/management/strategy-seeds/{seed_id}/merge",
-                "seed_id": seed_id,
-                "payload": payload,
-            }
-        )
-        cached = _strategy_seed_review_idempotency_check(resolved_key, request_hash)
-        if cached is not None:
-            return cached
-        snapshot_at = ctx.utc_now()
+        target_refs = _strategy_seed_target_refs(payload)
+        tenant_id = ctx.bff_tenant_id(identity)
+
+        def result_builder(updated_seed: Any, decision: Any, snapshot_at: str, key: str, replayed: bool) -> Dict[str, Any]:
+            return _strategy_seed_review_result(
+                updated_seed=updated_seed,
+                decision=decision,
+                snapshot_at=snapshot_at,
+                resolved_key=key,
+                replayed=replayed,
+                tenant_id=tenant_id,
+            )
+
         try:
-            updated, decision = ctx.service.merge_seed(
-                seed_id,
+            return ctx.service.merge_seed(
+                seed_id=seed_id,
+                payload=payload,
                 target_seed_id=target_seed_id,
-                reviewer_id=identity.operator_id,
-                reason=str(payload.get("reason") or ""),
-                target_refs=_strategy_seed_target_refs(payload),
-                created_at=payload.get("created_at") or snapshot_at,
-                idempotency_key=resolved_key,
-                request_hash=request_hash,
+                operator_id=identity.operator_id,
+                target_refs=target_refs,
+                resolved_key=resolved_key,
+                result_builder=result_builder,
             )
         except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
             raise _strategy_seed_review_error(exc) from exc
-        result = _strategy_seed_review_result(
-            updated_seed=updated,
-            decision=decision,
-            snapshot_at=snapshot_at,
-            resolved_key=resolved_key,
-            replayed=bool(getattr(decision, "idempotent_replay", False)),
-            tenant_id=ctx.bff_tenant_id(identity),
-        )
-        ctx.strategy_seed_review_idempotency[resolved_key] = {
-            "request_hash": request_hash,
-            "result": result,
-        }
-        return result
 
     @router.get("/bff/management/strategy-seeds")
     async def bff_list_strategy_seed_inbox(

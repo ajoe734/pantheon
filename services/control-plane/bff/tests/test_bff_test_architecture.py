@@ -1485,9 +1485,11 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
 
     Requirement BFF-ROUTER-USECASE-CORRECTIVE-001 (P2(3)):
     - In route files: direct store attributes (.store, .read_store, .write_owner, etc.),
-      get_read_store() calls/aliases, and port forwarder calls are forbidden.
+      get_read_store() calls/aliases, direct bridge mutation, router-owned persistence
+      subscript writes, and port forwarder calls are forbidden.
     - Across all files (including common.py): defining or referencing locator/forwarder
-      methods (call_mutation_port, call_port, port_method) is forbidden.
+      methods (call_mutation_port, call_port, port_method, _invoke_port, _resolve_knowledge_fn)
+      is forbidden.
     - In common.py: store attributes and get_read_store() are only permitted in
       Context class field annotations, Context.__init__, Context.__post_init__,
       or Context port wiring accessors. Business functions and standalone helpers
@@ -1505,6 +1507,7 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
         "trading_room_store",
         "research_plan_store",
         "seed_store",
+        "spec_seed_store",
         "knowledge_store",
         "ticket_store",
         "memory_store",
@@ -1514,8 +1517,26 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
         "persona_write_owner",
         "ranking_write_owner",
         "mutation_port",
+        "strategy_seed_replication_idempotency",
+        "strategy_seed_review_idempotency",
+        "strategy_seed_merge_idempotency",
+        "seed_replication_idempotency",
+        "seed_review_idempotency",
+        "strategy_seed_replication_bridge",
+        "seed_replication_bridge",
+        "replication_bridge",
+        "bridge",
     }
-    forbidden_forwarders = {"call_mutation_port", "call_port", "port_method"}
+    forbidden_forwarders = {
+        "call_mutation_port",
+        "call_port",
+        "port_method",
+        "_invoke_port",
+        "_resolve_knowledge_fn",
+        "invoke_port",
+        "forward_port",
+        "resolve_knowledge_fn",
+    }
     allowed_context_methods = {
         "__init__",
         "__post_init__",
@@ -1576,6 +1597,22 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
                     and (node.args[1].value in store_attrs or node.args[1].value in forbidden_forwarders)
                 ):
                     violations.append(f"{filename}:{node.lineno} calls getattr with '{node.args[1].value}'")
+
+                # Direct bridge construction or invocation
+                callee_name = None
+                if isinstance(node.func, ast.Name) and (node.func.id.endswith("Bridge") or "Bridge" in node.func.id):
+                    callee_name = node.func.id
+                elif isinstance(node.func, ast.Attribute) and (node.func.attr.endswith("Bridge") or "Bridge" in node.func.attr):
+                    callee_name = node.func.attr
+                if callee_name:
+                    violations.append(f"{filename}:{node.lineno} directly accesses or constructs bridge '{callee_name}'")
+
+                # Router-owned persistence mutation calls (.pop, .setdefault, .update, .clear)
+                if isinstance(node.func, ast.Attribute) and node.func.attr in {"pop", "setdefault", "update", "clear"}:
+                    if isinstance(node.func.value, ast.Attribute):
+                        attr_name = node.func.value.attr
+                        if attr_name in store_attrs or attr_name.startswith("strategy_seed_") or attr_name.startswith("seed_"):
+                            violations.append(f"{filename}:{node.lineno} mutates router-owned persistence .{attr_name}.{node.func.attr}()")
             self.generic_visit(node)
 
         def visit_Attribute(self, node: ast.Attribute) -> None:
@@ -1587,11 +1624,39 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
                     violations.append(f"{filename}:{node.lineno} accesses .get_read_store")
                 elif node.attr in store_attrs:
                     violations.append(f"{filename}:{node.lineno} accesses .{node.attr}")
+                elif node.attr.endswith("_bridge") or node.attr == "bridge":
+                    violations.append(f"{filename}:{node.lineno} accesses bridge attribute .{node.attr}")
             self.generic_visit(node)
 
         def visit_Name(self, node: ast.Name) -> None:
             if node.id in forbidden_forwarders:
                 violations.append(f"{filename}:{node.lineno} references forbidden forwarder '{node.id}'")
+            self.generic_visit(node)
+
+        def _check_persistence_write(self, target: ast.AST, lineno: int) -> None:
+            if isinstance(target, ast.Subscript):
+                val = target.value
+                if isinstance(val, ast.Attribute):
+                    if val.attr in store_attrs or val.attr.startswith("strategy_seed_") or val.attr.startswith("seed_"):
+                        violations.append(f"{filename}:{lineno} writes to router-owned persistence .{val.attr}[...]")
+                elif isinstance(val, ast.Name):
+                    if val.id in store_attrs or val.id.startswith("strategy_seed_") or val.id.startswith("seed_"):
+                        violations.append(f"{filename}:{lineno} writes to router-owned persistence '{val.id}[...]'")
+
+        def visit_Assign(self, node: ast.Assign) -> None:
+            if not self._is_allowed_common_scope():
+                for target in node.targets:
+                    self._check_persistence_write(target, node.lineno)
+            self.generic_visit(node)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+            if not self._is_allowed_common_scope():
+                self._check_persistence_write(node.target, node.lineno)
+            self.generic_visit(node)
+
+        def visit_AugAssign(self, node: ast.AugAssign) -> None:
+            if not self._is_allowed_common_scope():
+                self._check_persistence_write(node.target, node.lineno)
             self.generic_visit(node)
 
     visitor = StoreAccessVisitor()
@@ -2010,6 +2075,44 @@ def test_five_domain_store_access_gate_catches_aliased_access() -> None:
     """)
     detected_common_store = scan_route_source_for_store_access(bad_common_store_src, filename="common.py")
     assert any("store" in d for d in detected_common_store), f"Gate missed store in common.py helper: {detected_common_store}"
+
+    # Direct bridge construction in route (rejection P2(3) concrete regression)
+    bad_bridge_src = textwrap.dedent("""
+        async def handler(ctx, payload):
+            bridge = StrategySeedReplicationBridge(
+                strategy_write_owner=ctx.get_strategy_write_owner_port(),
+                spec_seed_store=ctx.strategy_spec_seed_store,
+            )
+            return bridge.replicate(payload)
+    """)
+    detected_bridge = scan_route_source_for_store_access(bad_bridge_src, filename="bad_bridge.py")
+    assert any("bridge" in d.lower() for d in detected_bridge), f"Gate missed direct bridge construction: {detected_bridge}"
+
+    # Router-owned persistence subscript write (rejection P2(3) concrete regression)
+    bad_idempotency_src = textwrap.dedent("""
+        async def handler(ctx, key, result):
+            ctx.strategy_seed_replication_idempotency[key] = {"result": result}
+            return result
+    """)
+    detected_idem = scan_route_source_for_store_access(bad_idempotency_src, filename="bad_idempotency.py")
+    assert any("writes to router-owned persistence" in d for d in detected_idem), f"Gate missed router-owned idempotency write: {detected_idem}"
+
+    # Renamed dynamic forwarder _invoke_port
+    bad_invoke_src = textwrap.dedent("""
+        async def handler(ctx, item_id):
+            return ctx._invoke_port("get_research_ticket", item_id)
+    """)
+    detected_invoke = scan_route_source_for_store_access(bad_invoke_src, filename="bad_invoke.py")
+    assert any("_invoke_port" in d for d in detected_invoke), f"Gate missed _invoke_port: {detected_invoke}"
+
+    # Renamed dynamic forwarder _resolve_knowledge_fn
+    bad_resolve_src = textwrap.dedent("""
+        async def handler(ctx, method_name):
+            fn = ctx._resolve_knowledge_fn(method_name)
+            return fn()
+    """)
+    detected_resolve = scan_route_source_for_store_access(bad_resolve_src, filename="bad_resolve.py")
+    assert any("_resolve_knowledge_fn" in d for d in detected_resolve), f"Gate missed _resolve_knowledge_fn: {detected_resolve}"
 
 
 def test_five_domain_store_access_gate_catches_read_store_alias() -> None:

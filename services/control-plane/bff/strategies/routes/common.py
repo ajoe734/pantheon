@@ -6,6 +6,13 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from fastapi import HTTPException
 
+from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+try:
+    from services.control_plane.bff.ports.strategy_write_owner import StrategyWriteOwnerPort
+except (ImportError, ValueError):
+    from ..ports.strategy_write_owner import StrategyWriteOwnerPort  # type: ignore
+
 try:
     from services.control_plane.bff.models import CommandType, ErrorCode, ObjectType, OperatorIdentity
 except (ImportError, ValueError):
@@ -131,17 +138,17 @@ class StrategyRouteContext:
     bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None
-    strategy_write_owner: Optional[Any] = None
-    get_strategy_write_owner: Optional[Callable[[], Any]] = None
+    strategy_write_owner: Optional[Union[StrategyWriteOwnerPort, Callable[[], StrategyWriteOwnerPort]]] = None
+    get_strategy_write_owner: Optional[Callable[[], StrategyWriteOwnerPort]] = None
 
-    def get_read_store_port(self) -> Any:
+    def get_read_store_port(self) -> ReadSurfacePorts:
         if self.read_surface is not None:
             return self.read_surface() if callable(self.read_surface) else self.read_surface
         if self.get_read_store is not None:
             return self.get_read_store()
         raise NotImplementedError("Neither read_surface nor get_read_store dependency was supplied")
 
-    def get_strategy_write_owner_port(self) -> Any:
+    def get_strategy_write_owner_port(self) -> Optional[StrategyWriteOwnerPort]:
         if self.strategy_write_owner is not None:
             return self.strategy_write_owner() if callable(self.strategy_write_owner) else self.strategy_write_owner
         if self.get_strategy_write_owner is not None:
@@ -196,8 +203,11 @@ class StrategyRouteContext:
                 utc_now=self.utc_now,
                 normalize_lifecycle_state=self.normalize_lifecycle_state,
                 normalize_risk_level=self.normalize_risk_level,
+                stable_json_hash=self.stable_json_hash,
                 idempotency_store=self.strategy_persona_idempotency,
                 idempotency_check=self.strategy_persona_idempotency_check,
+                seed_replication_idempotency=self.strategy_seed_replication_idempotency,
+                seed_review_idempotency=self.strategy_seed_review_idempotency,
             )
 
     def ensure_strategy_exists(self, strategy_id: str) -> None:

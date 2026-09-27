@@ -11,9 +11,14 @@ and mounts their routes without proxying symbols or duplicating handlers.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, HTTPException
+
+try:
+    from services.control_plane.bff.ports.strategy_write_owner import StrategyWriteOwnerPort
+except (ImportError, ValueError):
+    from ..ports.strategy_write_owner import StrategyWriteOwnerPort  # type: ignore
 
 from .routes.common import (
     StrategyRouteContext,
@@ -64,8 +69,8 @@ def create_strategies_router(
     bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None,
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None,
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None,
-    strategy_write_owner: Optional[Any] = None,
-    get_strategy_write_owner: Optional[Callable[[], Any]] = None,
+    strategy_write_owner: Optional[Union[StrategyWriteOwnerPort, Callable[[], StrategyWriteOwnerPort]]] = None,
+    get_strategy_write_owner: Optional[Callable[[], StrategyWriteOwnerPort]] = None,
     service: Optional[Any] = None,
 ) -> APIRouter:
     if strategy_overlay is not None:
@@ -108,6 +113,8 @@ def create_strategies_router(
         idempotency_store=_strategy_persona_idempotency,
         idempotency_check=strategy_persona_idempotency_check or (lambda k, h: None),
         dry_run_success_response=dry_run_success_response or (lambda *a, **kw: {}),
+        seed_replication_idempotency=_strategy_seed_replication_idempotency,
+        seed_review_idempotency=_strategy_seed_review_idempotency,
     )
 
 
