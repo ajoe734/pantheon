@@ -2082,3 +2082,78 @@ def test_five_domain_trading_room_isolation_provenance_and_negative_tenant(
         f"Different tenant received status {neg_tenant_resp.status_code} instead of 403 Forbidden. "
         "Negative tenant rejection is not enforced."
     )
+
+
+def test_research_router_notes_timeout_maps_to_dependency_unavailable() -> None:
+    """P1(1) regression: GET /api/v1/knowledge/notes with list_research_notes raising TimeoutError
+    maps to 503 DEPENDENCY_UNAVAILABLE."""
+    from types import SimpleNamespace
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from unittest.mock import MagicMock
+    from services.control_plane.bff.research.router import create_research_router
+    from services.control_plane.bff.models import ErrorCode
+
+    base_auth = {
+        "extract_identity": lambda auth, **kw: SimpleNamespace(
+            operator_id="op-test",
+            roles={"operator", "admin"},
+            claims={"tenant_id": "tenant-a", "user_id": "op-test"},
+        ),
+        "require_read_role": lambda idn: None,
+        "bff_error": lambda status, code, msg, reason, **kw: HTTPException(
+            status_code=status,
+            detail={"code": code.value if hasattr(code, "value") else str(code), "message": msg, "reason": reason},
+        ),
+        "utc_now": lambda: "2026-09-27T00:00:00Z",
+        "snapshot_meta": lambda snap: {"snapshot_at": snap, "surfaces": {}},
+        "dataset_surface_status": lambda ds, **kw: {"status": "ok", "source": "typed_store"},
+    }
+
+    mock_port = MagicMock()
+    mock_port.list_research_notes.side_effect = TimeoutError("upstream knowledge service timed out")
+    app = FastAPI()
+    app.include_router(create_research_router(**base_auth, get_read_store=lambda: mock_port))
+    client = TestClient(app)
+
+    response = client.get("/api/v1/knowledge/notes", headers={"Authorization": "Bearer op-test"})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_research_router_missing_port_method_maps_to_dependency_unavailable() -> None:
+    """P1(1) regression: missing port method maps to 503 DEPENDENCY_UNAVAILABLE."""
+    from types import SimpleNamespace
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.research.router import create_research_router
+
+    base_auth = {
+        "extract_identity": lambda auth, **kw: SimpleNamespace(
+            operator_id="op-test",
+            roles={"operator", "admin"},
+            claims={"tenant_id": "tenant-a", "user_id": "op-test"},
+        ),
+        "require_read_role": lambda idn: None,
+        "bff_error": lambda status, code, msg, reason, **kw: HTTPException(
+            status_code=status,
+            detail={"code": code.value if hasattr(code, "value") else str(code), "message": msg, "reason": reason},
+        ),
+        "utc_now": lambda: "2026-09-27T00:00:00Z",
+        "snapshot_meta": lambda snap: {"snapshot_at": snap, "surfaces": {}},
+        "dataset_surface_status": lambda ds, **kw: {"status": "ok", "source": "typed_store"},
+    }
+
+    class MissingNotesPort:
+        pass
+
+    app = FastAPI()
+    app.include_router(create_research_router(**base_auth, get_read_store=lambda: MissingNotesPort()))
+    client = TestClient(app)
+
+    response = client.get("/api/v1/knowledge/notes", headers={"Authorization": "Bearer op-test"})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "DEPENDENCY_UNAVAILABLE"
+

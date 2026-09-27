@@ -1382,28 +1382,3 @@ def test_inventory_routes_publish_legacy_request_and_query_contracts_to_openapi(
     assert "requestBody" in launch
     experiment_list_params = {item["name"] for item in schema["/api/v1/experiments"]["get"]["parameters"]}
     assert {"ticket_id", "status", "page_token", "page_size"} <= experiment_list_params
-
-
-def test_notes_route_maps_port_timeout_to_dependency_unavailable() -> None:
-    class TimeoutNotesPort(_Port):
-        def list_research_notes(self) -> List[Dict[str, Any]]:
-            raise TimeoutError("upstream knowledge service timed out")
-
-    response = _client(TimeoutNotesPort()).get("/api/v1/knowledge/notes")
-    assert response.status_code == 503
-    detail = response.json()["detail"]
-    assert detail["code"] == "DEPENDENCY_UNAVAILABLE"
-
-
-def test_notes_route_maps_missing_port_method_to_dependency_unavailable() -> None:
-    class MissingNotesPort(_Port):
-        def __getattribute__(self, name: str) -> Any:
-            if name == "list_research_notes":
-                raise AttributeError("list_research_notes")
-            return super().__getattribute__(name)
-
-    response = _client(MissingNotesPort()).get("/api/v1/knowledge/notes")
-    assert response.status_code == 503
-    detail = response.json()["detail"]
-    assert detail["code"] == "DEPENDENCY_UNAVAILABLE"
-
