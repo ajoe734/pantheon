@@ -3,8 +3,8 @@
   "owner": "Antigravity2",
   "reviewer": "Codex",
   "title": "Finish five-domain router-to-application boundaries without further mechanical splitting",
-  "timestamp": "2026-09-27T08:38:00Z",
-  "summary": "Completed five-domain router-to-application boundaries without further mechanical splitting per normative plan STRUCTURAL_RESIDUAL_SA_SD_20260906.md Section D and SD4.2A. Across all five domains (personas, strategies, research, agora/research, agora/trading_room), business branching, persistence, and retries have been moved entirely into domain-specific application use-case services (PersonaService, StrategiesService, ResearchRouterService, AgoraResearchService, TradingRoomService). Router HTTP handlers only parse inputs, invoke authorization, delegate to the domain service, and map DTO/status. Extended test_bff_test_architecture.py with three boundary gates enforcing zero direct store accesses in route handlers, zero duplicate AST handler bodies, and strict two-instance data and metadata isolation across all five domains.",
+  "timestamp": "2026-09-27T10:32:00Z",
+  "summary": "Completed five-domain router-to-application boundaries and resolved all four Codex review defects (P1+P2) on PR #5992: (1) agora/research/router.py: restored router.store = store composition contract so agora/router.py resolves live store; (2) personas/routes/ranking.py: moved snapshot selection, revision admission, replay branching, and command orchestration into PersonaService.submit_quarterly_ranking_recommendation; (3) research/service.py: eliminated _call_port string-method universal forwarder and replaced with direct typed method calls on self._port(); (4) test_bff_test_architecture.py: enhanced store-access gate to detect attribute variations and getattr references, added cross-AST duplicate body check against application services, and expanded two-instance isolation test with explicit metadata assertions and Trading Room isolation (distinct records, interleaved reads, negative tenant cases).",
   "router_domains": [
     {
       "domain": "personas",
@@ -104,16 +104,20 @@
   "verification": {
     "commands": [
       {
-        "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
-        "result": "27 passed, 3 warnings in 40.95s (including 3 new boundary gates)"
+        "command": "python3 -m pytest services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
+        "result": "19 passed, 1 skipped in 18.36s"
       },
       {
-        "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/agora/trading_room/test_trading_room.py",
-        "result": "216 passed, 0 failed, 3 warnings in 155.98s"
+        "command": "python3 -m pytest services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py",
+        "result": "52 passed, 3 warnings in 31.52s"
       },
       {
-        "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
-        "result": "19 passed, 1 skipped in 11.58s"
+        "command": "python3 -m pytest services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_research_router.py",
+        "result": "52 passed, 3 warnings in 31.12s"
+      },
+      {
+        "command": "python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "result": "30 passed, 3 warnings in 45.63s"
       },
       {
         "command": "python3 -m py_compile across all modified router, service, route, and test files",

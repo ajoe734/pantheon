@@ -134,28 +134,6 @@ class ResearchRouterService:
     def _port(self) -> Any:
         return self.port_getter()
 
-    def _call_port(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
-        port = self._port()
-        fn = getattr(port, method_name, None)
-        if not callable(fn):
-            self._raise_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                f"Research store port missing {method_name}",
-                f"Port {type(port).__name__} does not implement {method_name}",
-            )
-        try:
-            return fn(*args, **kwargs)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            self._raise_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                f"Research port {method_name} failed",
-                str(exc),
-            )
-
     def _raise_error(self, status_code: int, error_code: Any, message: str, reason: str, **kwargs: Any) -> None:
         surfaces = kwargs.pop("surfaces", None)
         if self.bff_error is not None:
@@ -664,7 +642,7 @@ class ResearchRouterService:
         for entry_id in anchor_ids:
             if not _KW02_MEMORY_ANCHOR_PATTERN.match(entry_id):
                 self._bad_request("Invalid linked_memory_anchors entry", "linked_memory_anchors items must use the mem-{UUID} format", "linked_memory_anchors")
-            if self._call_port("get_institutional_memory_entry", entry_id) is None:
+            if self._port().get_institutional_memory_entry(entry_id) is None:
                 self._bad_request("Unknown linked_memory_anchors entry", f"linked_memory_anchors entry {entry_id} does not resolve to a known institutional memory entry", "linked_memory_anchors")
             validated.append(entry_id)
         return validated
@@ -672,12 +650,14 @@ class ResearchRouterService:
     def _kw02_attachment_exists(self, attachment_type: str, attachment_ref: Optional[str]) -> bool:
         if attachment_type == "free_standing":
             return True
-        method = {
-            "research_ticket": "get_research_ticket",
-            "persona": "get_persona",
-            "strategy_spec": "get_strategy_spec",
-        }[attachment_type]
-        return self._call_port(method, attachment_ref) is not None
+        port = self._port()
+        if attachment_type == "research_ticket":
+            return port.get_research_ticket(attachment_ref) is not None
+        if attachment_type == "persona":
+            return port.get_persona(attachment_ref) is not None
+        if attachment_type == "strategy_spec":
+            return port.get_strategy_spec(attachment_ref) is not None
+        return False
 
     def _kw02_operator_display_name(self, operator_id: str) -> str:
         if operator_id == "op-001":
@@ -702,17 +682,18 @@ class ResearchRouterService:
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         if attachment_type == "free_standing":
             return True, None, None
+        port = self._port()
         if attachment_type == "research_ticket":
-            ticket = self._call_port("get_research_ticket", attachment_ref)
+            ticket = port.get_research_ticket(attachment_ref)
             if not ticket:
                 return False, None, None
             return True, ticket.get("title"), f"/research/tickets/{attachment_ref}"
         if attachment_type == "persona":
-            persona = self._call_port("get_persona", attachment_ref)
+            persona = port.get_persona(attachment_ref)
             if not persona:
                 return False, None, None
             return True, persona.get("name"), f"/personas/{attachment_ref}"
-        strategy_spec = self._call_port("get_strategy_spec", attachment_ref)
+        strategy_spec = port.get_strategy_spec(attachment_ref)
         if not strategy_spec:
             return False, None, None
         label = strategy_spec.get("title") or strategy_spec.get("name") or attachment_ref
@@ -779,7 +760,7 @@ class ResearchRouterService:
                     "route_href": None,
                 })
                 continue
-            evidence_ref = self._call_port("get_evidence_ref", ref_id)
+            evidence_ref = self._port().get_evidence_ref(ref_id)
             if evidence_ref:
                 items.append({
                     "ref_id": ref_id,
@@ -806,7 +787,7 @@ class ResearchRouterService:
         items: List[Dict[str, Any]] = []
         missing_entries = False
         for entry_id in entry_ids:
-            entry = self._call_port("get_institutional_memory_entry", entry_id)
+            entry = self._port().get_institutional_memory_entry(entry_id)
             if not entry:
                 missing_entries = True
                 continue
@@ -916,7 +897,7 @@ class ResearchRouterService:
             "created_at": snap,
             "updated_at": snap,
         }
-        created = self._call_port("create_research_note", note)
+        created = self._port().create_research_note(note)
         if created is None:
             self._raise_error(
                 503,
@@ -950,7 +931,7 @@ class ResearchRouterService:
             if val_attachment_type is not None and attachment_ref is not None
             else None
         )
-        notes = list(self._call_port("list_research_notes") or [])
+        notes = list(self._port().list_research_notes() or [])
         port = self._port()
         notes_dataset_available = getattr(port, "dataset_source", lambda _d: "missing")("research_notes") != "missing"
         if owner_ref:
@@ -983,7 +964,7 @@ class ResearchRouterService:
     def get_research_note(self, note_id: str, *, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         identifier = str(note_id or "").strip()
-        record = self._call_port("get_research_note", identifier)
+        record = self._port().get_research_note(identifier)
         if not record:
             self._not_found("Research record", identifier)
         return self._research_note_detail_payload(record, snapshot_at=snap)
@@ -1112,7 +1093,7 @@ class ResearchRouterService:
             if normalized_verified not in {"true", "false"}:
                 self._bad_request("Invalid verified", "verified must be a boolean", "verified")
             verified = normalized_verified == "true"
-        records = list(self._call_port("list_evidence_refs") or [])
+        records = list(self._port().list_evidence_refs() or [])
         if val_entity_type:
             records = [item for item in records if str(((item.get("linked_object_summary") or {}).get("entity_type")) or "").lower() == val_entity_type]
         if linked_entity_ref is not None:
@@ -1154,7 +1135,7 @@ class ResearchRouterService:
     def get_evidence_ref(self, ref_id: str, *, identity: Any = None, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         identifier = str(ref_id or "").strip()
-        record = self._call_port("get_evidence_ref_detail", identifier)
+        record = self._port().get_evidence_ref_detail(identifier)
         if not record:
             self._not_found("Research record", identifier)
         return self._evidence_detail_payload(record, ref_id=identifier, identity=identity, snapshot_at=snap)
@@ -1322,7 +1303,7 @@ class ResearchRouterService:
         effective_recency = self._validate_choice(recency or "all", field="recency", allowed=_KW04_RECENCY_VALUES)
         val_entity_type = self._validate_choice(linked_entity_type, field="linked_entity_type", allowed=_KW04_LINKED_ENTITY_TYPES) if linked_entity_type is not None else None
         effective_min_conf = confidence_min if confidence_min is not None else min_confidence
-        records = list(self._call_port("list_insight_cards") or [])
+        records = list(self._port().list_insight_cards() or [])
         port = self._port()
         available = getattr(port, "dataset_source", lambda _d: "missing")("insight_cards") != "missing"
         filter_metadata = self._insight_filter_metadata(records)
@@ -1387,7 +1368,7 @@ class ResearchRouterService:
     def get_insight_card(self, insight_id: str, *, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         identifier = str(insight_id or "").strip()
-        record = self._call_port("get_insight_card_detail", identifier)
+        record = self._port().get_insight_card_detail(identifier)
         if not record:
             self._not_found("Research record", identifier)
         return self._insight_detail_payload(record, snapshot_at=snap)
@@ -1439,7 +1420,7 @@ class ResearchRouterService:
             "include_retired": include_retired,
             "include_fixture_pack": False,
         }
-        records = list(self._call_port("list_strategy_specs", **kwargs) or [])
+        records = list(self._port().list_strategy_specs(**kwargs) or [])
         port = self._port()
         source_fn = getattr(port, "dataset_source", None)
         dataset_available = str(source_fn("strategy_specs") or "missing") != "missing" if callable(source_fn) else bool(records)
@@ -1463,8 +1444,9 @@ class ResearchRouterService:
 
     def get_strategy_spec_versions(self, strategy_id: str, *, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
-        records = list(self._call_port("list_strategy_spec_versions", strategy_id) or [])
-        if not records and not self._call_port("get_strategy_spec", strategy_id):
+        port = self._port()
+        records = list(port.list_strategy_spec_versions(strategy_id) or [])
+        if not records and not port.get_strategy_spec(strategy_id):
             self._not_found("Strategy spec", strategy_id)
         return {
             "strategy_id": strategy_id,
@@ -1502,8 +1484,9 @@ class ResearchRouterService:
                 "left_version and right_version must identify different versions",
                 precondition_failed="left_version",
             )
-        left_detail = self._call_port("get_strategy_spec_detail", strategy_id, version_selector=left)
-        right_detail = self._call_port("get_strategy_spec_detail", strategy_id, version_selector=right)
+        port = self._port()
+        left_detail = port.get_strategy_spec_detail(strategy_id, version_selector=left)
+        right_detail = port.get_strategy_spec_detail(strategy_id, version_selector=right)
         if not left_detail or not right_detail:
             self._not_found("Strategy spec version", strategy_id)
         if not (left_detail.get("allowedActions") or {}).get("canCompare") or not (
@@ -1516,7 +1499,7 @@ class ResearchRouterService:
                 "Compare accepts only candidate, approved, or retired strategy spec versions",
                 precondition_failed="lifecycle_state",
             )
-        comparison = self._call_port("compare_strategy_spec_versions", strategy_id, left_selector=left, right_selector=right)
+        comparison = port.compare_strategy_spec_versions(strategy_id, left_selector=left, right_selector=right)
         if not comparison:
             self._not_found("Strategy spec version", strategy_id)
         payload = dict(comparison)
@@ -1537,9 +1520,10 @@ class ResearchRouterService:
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         identifier = str(strategy_id or "").strip()
-        if not self._call_port("get_strategy_spec", identifier):
+        port = self._port()
+        if not port.get_strategy_spec(identifier):
             self._not_found("Strategy spec", identifier)
-        record = self._call_port("get_strategy_spec_detail", identifier, version_selector=version_selector or "current")
+        record = port.get_strategy_spec_detail(identifier, version_selector=version_selector or "current")
         if not record:
             self._not_found("Strategy spec version", identifier)
         detail_surface = self._knowledge_surface_state("strategy_specs", snapshot_at=snap, has_data=True)
@@ -1590,7 +1574,7 @@ class ResearchRouterService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
-        records = list(self._call_port("list_institutional_memory_entries") or [])
+        records = list(self._port().list_institutional_memory_entries() or [])
         if knowledge_type:
             records = [item for item in records if str(item.get("knowledge_type") or "") == knowledge_type]
         if scope:
@@ -1661,7 +1645,7 @@ class ResearchRouterService:
     def get_institutional_memory_entry(self, entry_id: str, *, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         identifier = str(entry_id or "").strip()
-        record = self._call_port("get_institutional_memory_entry", identifier)
+        record = self._port().get_institutional_memory_entry(identifier)
         if not record:
             self._not_found("Research record", identifier)
         source_event = record.get("source_event") if isinstance(record.get("source_event"), dict) else {}
@@ -1791,8 +1775,7 @@ class ResearchRouterService:
             except TypeError:
                 records = list(list_reader() or [])
         elif callable(getattr(port, "list_synthesis_conflict_logs", None)):
-            records = list(self._call_port(
-                "list_synthesis_conflict_logs",
+            records = list(port.list_synthesis_conflict_logs(
                 capital_pool_id=capital_pool_id,
                 scope_ref=scope_ref,
                 proposal_id=proposal_id,
@@ -1837,7 +1820,7 @@ class ResearchRouterService:
         if get_reader is not None:
             record = get_reader(clean_id)
         elif callable(getattr(port, "get_synthesis_conflict_log", None)):
-            record = self._call_port("get_synthesis_conflict_log", clean_id)
+            record = port.get_synthesis_conflict_log(clean_id)
         else:
             self._raise_error(
                 503,
@@ -1965,10 +1948,26 @@ class ResearchRouterService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
-        data = self._call_port(
-            "get_research_oss_preactivation_snapshot",
-            activity_limit=activity_limit,
-        ) or {}
+        port = self._port()
+        fn = getattr(port, "get_research_oss_preactivation_snapshot", None)
+        if not callable(fn):
+            self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Research store port missing get_research_oss_preactivation_snapshot",
+                f"Port {type(port).__name__} does not implement get_research_oss_preactivation_snapshot",
+            )
+        try:
+            data = fn(activity_limit=activity_limit) or {}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Research port get_research_oss_preactivation_snapshot failed",
+                str(exc),
+            )
         service_surfaces = {
             service: {
                 key: value
@@ -2013,8 +2012,7 @@ class ResearchRouterService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
-        data = self._call_port(
-            "get_source_ops_snapshot",
+        data = self._port().get_source_ops_snapshot(
             crawl_run_limit=crawl_run_limit,
             dlq_status=dlq_status,
             frontier_status=frontier_status,
@@ -2031,7 +2029,7 @@ class ResearchRouterService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
-        data = self._call_port("get_search_ops_snapshot", pipeline_run_limit=pipeline_run_limit)
+        data = self._port().get_search_ops_snapshot(pipeline_run_limit=pipeline_run_limit)
         meta = self.snapshot_meta(snap)
         meta["surfaces"] = {"search_ops": self._surface("search_ops", snapshot_at=snap, has_data=bool(data))}
         return {"data": data, "meta": meta}
@@ -2073,8 +2071,7 @@ class ResearchRouterService:
         created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = created_at or self.utc_now()
-        ticket = self._call_port(
-            "create_research_ticket",
+        ticket = self._port().create_research_ticket(
             title=title,
             description=description,
             priority=priority,
@@ -2094,7 +2091,7 @@ class ResearchRouterService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
-        records = list(self._call_port("list_research_tickets", statuses=statuses, owner=owner, include_fixture_pack=False) or [])
+        records = list(self._port().list_research_tickets(statuses=statuses, owner=owner, include_fixture_pack=False) or [])
         surface_state = self._ticket_surface_state(snapshot_at=snap)
         if surface_state == "unavailable":
             items, next_token, total = [], None, 0
@@ -2113,12 +2110,7 @@ class ResearchRouterService:
         if source == "local_snapshot":
             ticket = None
         else:
-            ticket = self._call_port(
-                "get_research_ticket",
-                ticket_id,
-                include_snapshot_fallback=False,
-                include_local_fallback=False,
-            )
+            ticket = port.get_research_ticket(ticket_id)
         if not ticket:
             self._not_found("Research ticket", ticket_id)
         payload = dict(ticket)
@@ -2145,7 +2137,7 @@ class ResearchRouterService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
-        ticket = self._call_port("get_research_ticket", ticket_id)
+        ticket = self._port().get_research_ticket(ticket_id)
         if not ticket:
             self._not_found("Research ticket", ticket_id)
 
@@ -2258,7 +2250,7 @@ class ResearchRouterService:
                 precondition_failed="payload_shape",
             )
 
-        updated = self._call_port("patch_research_ticket", ticket_id, patch=patch, actor_id=actor_id, updated_at=snap)
+        updated = self._port().patch_research_ticket(ticket_id, patch=patch, actor_id=actor_id, updated_at=snap)
         if not updated:
             self._raise_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Research ticket store unavailable", "Research ticket update store is unavailable")
         return {key: updated.get(key) for key in ("ticket_id", "status", "updated_at", "allowedActions")}
@@ -2275,7 +2267,8 @@ class ResearchRouterService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
-        index = self._call_port("get_research_search_index")
+        port = self._port()
+        index = port.get_research_search_index()
         if not index:
             self._raise_error(
                 503,
@@ -2284,21 +2277,20 @@ class ResearchRouterService:
                 "SEARCH_RESULTS_UNAVAILABLE",
                 surfaces={"search_results": "unavailable"},
             )
-        records = list(self._call_port("list_research_search_results", query=query, match_type=match_type, status=status, date_range=date_range) or [])
+        records = list(port.list_research_search_results(query=query, match_type=match_type, status=status, date_range=date_range) or [])
         items, next_token = self.page_slice(records, page_token, page_size)
         meta = dict(self.snapshot_meta(snap))
         meta["surfaces"] = {"search_results": self._surface("research_search", snapshot_at=snap, has_data=bool(records))}
         meta["index_adapter"] = index
-        port = self._port()
         if hasattr(port, "get_last_governed_search_refs"):
-            governed = self._call_port("get_last_governed_search_refs")
+            governed = port.get_last_governed_search_refs()
             if governed:
                 meta["governed_evidence"] = governed
         return {"data": items, "page_info": {"next_page_token": next_token, "total": len(records)}, "meta": meta}
 
     def get_source_connectors(self, *, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
-        registry = self._call_port("get_source_connector_registry") or {}
+        registry = self._port().get_source_connector_registry() or {}
         meta = dict(self.snapshot_meta(snap))
         meta["surfaces"] = {"source_connector_registry": self._surface("source_connectors", snapshot_at=snap, has_data=bool(registry.get("connectors")))}
         meta.update({
@@ -2317,8 +2309,7 @@ class ResearchRouterService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
-        result = self._call_port(
-            "get_source_change_proposals",
+        result = self._port().get_source_change_proposals(
             status=status,
             proposal_type=proposal_type,
             source_kind=source_kind,

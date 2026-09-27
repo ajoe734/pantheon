@@ -1492,6 +1492,14 @@ def test_five_domain_routers_have_no_direct_store_access() -> None:
         "provisioning_store",
         "workshop_store",
         "dataset_store",
+        "research_store",
+        "strategy_store",
+        "trading_room_store",
+        "research_plan_store",
+        "seed_store",
+        "knowledge_store",
+        "ticket_store",
+        "memory_store",
     }
     domains = [
         "personas/routes",
@@ -1513,53 +1521,88 @@ def test_five_domain_routers_have_no_direct_store_access() -> None:
             for node in ast.walk(tree):
                 if isinstance(node, ast.Attribute) and node.attr in store_attrs:
                     violations.append(f"{py_path.relative_to(BFF_DIR)}:{node.lineno} accesses .{node.attr}")
+                elif (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "getattr"
+                    and len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                    and node.args[1].value in store_attrs
+                ):
+                    violations.append(f"{py_path.relative_to(BFF_DIR)}:{node.lineno} calls getattr with '{node.args[1].value}'")
     assert scanned_files == 20, f"Expected 20 subrouter files across 5 domains, found {scanned_files}"
     assert not violations, f"Subrouter handlers must not access store attributes directly: {violations}"
 
 
 def test_five_domain_router_handlers_have_no_duplicate_ast_bodies() -> None:
     """Requirement BFF-ROUTER-USECASE-CORRECTIVE-001: Ensure no duplicate AST handler
-    bodies exist across the five decomposed router domains (no mechanical copy-paste).
+    bodies exist across the five decomposed router domains (no mechanical copy-paste),
+    and route handlers do not copy application service method bodies.
     """
     from collections import defaultdict
 
     domains = [
-        "personas/routes",
-        "strategies/routes",
-        "research/routes",
-        "agora/research/routes",
-        "agora/trading_room/routes",
+        ("personas/routes", "personas/service.py"),
+        ("strategies/routes", "strategies/service.py"),
+        ("research/routes", "research/service.py"),
+        ("agora/research/routes", "agora/research/service.py"),
+        ("agora/trading_room/routes", "agora/trading_room/service.py"),
     ]
     bodies: Dict[str, List[str]] = defaultdict(list)
+    service_bodies: Dict[str, List[str]] = defaultdict(list)
     scanned_handlers = 0
-    for d in domains:
-        route_dir = BFF_DIR / d
+    scanned_services = 0
+
+    def _extract_func_bodies(py_path: Path) -> List[Tuple[str, int, str]]:
+        results = []
+        tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                stmts = node.body
+                if (
+                    stmts
+                    and isinstance(stmts[0], ast.Expr)
+                    and isinstance(stmts[0].value, ast.Constant)
+                    and isinstance(stmts[0].value.value, str)
+                ):
+                    stmts = stmts[1:]
+                if len(stmts) >= 4:
+                    dump = ast.dump(
+                        ast.Module(body=stmts, type_ignores=[]),
+                        annotate_fields=False,
+                        include_attributes=False,
+                    )
+                    results.append((node.name, len(stmts), dump))
+        return results
+
+    for route_rel, svc_rel in domains:
+        route_dir = BFF_DIR / route_rel
         for py_path in sorted(route_dir.glob("*.py")):
             if py_path.name in ("__init__.py", "common.py"):
                 continue
-            tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    stmts = node.body
-                    if (
-                        stmts
-                        and isinstance(stmts[0], ast.Expr)
-                        and isinstance(stmts[0].value, ast.Constant)
-                        and isinstance(stmts[0].value.value, str)
-                    ):
-                        stmts = stmts[1:]
-                    if len(stmts) >= 4:
-                        scanned_handlers += 1
-                        dump = ast.dump(
-                            ast.Module(body=stmts, type_ignores=[]),
-                            annotate_fields=False,
-                            include_attributes=False,
-                        )
-                        bodies[dump].append(f"{py_path.relative_to(BFF_DIR)}:{node.name} ({len(stmts)} stmts)")
+            for name, n_stmts, dump in _extract_func_bodies(py_path):
+                scanned_handlers += 1
+                bodies[dump].append(f"{py_path.relative_to(BFF_DIR)}:{name} ({n_stmts} stmts)")
+
+        svc_path = BFF_DIR / svc_rel
+        if svc_path.exists():
+            for name, n_stmts, dump in _extract_func_bodies(svc_path):
+                scanned_services += 1
+                service_bodies[dump].append(f"{svc_path.relative_to(BFF_DIR)}:{name} ({n_stmts} stmts)")
 
     duplicates = {dump: locs for dump, locs in bodies.items() if len(locs) > 1}
     assert not duplicates, f"Found duplicate AST handler bodies: {duplicates}"
+
+    cross_duplicates = {}
+    for dump, h_locs in bodies.items():
+        if dump in service_bodies:
+            cross_duplicates[dump] = {
+                "handlers": h_locs,
+                "services": service_bodies[dump],
+            }
+    assert not cross_duplicates, f"Router handlers duplicate application service method bodies: {cross_duplicates}"
     assert scanned_handlers > 0, "Expected to scan substantive route handlers"
+    assert scanned_services > 0, "Expected to scan substantive application service methods"
 
 
 def test_five_domain_routers_preserve_two_instance_isolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1631,6 +1674,9 @@ def test_five_domain_routers_preserve_two_instance_isolation(monkeypatch: pytest
     assert res1["data"][0]["id"] == "p1"
     assert res2["data"][0]["id"] == "p2"
     assert res1_again["data"][0]["id"] == "p1"
+    assert res1["meta"]["surfaces"]["persona_list"]["source"] == "typed_store"
+    assert res2["meta"]["surfaces"]["persona_list"]["source"] == "other_store"
+    assert res1_again["meta"]["surfaces"]["persona_list"]["source"] == "typed_store"
 
     # 2. Strategies
     from services.control_plane.bff.strategies.router import create_strategies_router
@@ -1662,14 +1708,20 @@ def test_five_domain_routers_preserve_two_instance_isolation(monkeypatch: pytest
     assert res1["data"][0]["id"] == "s1"
     assert res2["data"][0]["id"] == "s2"
     assert res1_again["data"][0]["id"] == "s1"
+    assert res1["meta"]["surface"] == "strategy_specs"
+    assert res2["meta"]["surface"] == "strategy_specs"
+    assert res1["meta"]["total"] == 1
+    assert res2["meta"]["total"] == 1
 
     # 3. Research
     from services.control_plane.bff.research.router import create_research_router
 
     mock_rs1 = MagicMock()
     mock_rs1.list_research_tickets.return_value = [{"ticket_id": "t1", "title": "Ticket 1"}]
+    mock_rs1.dataset_source.return_value = "typed_store"
     mock_rs2 = MagicMock()
     mock_rs2.list_research_tickets.return_value = [{"ticket_id": "t2", "title": "Ticket 2"}]
+    mock_rs2.dataset_source.return_value = "local_snapshot"
     app_r1 = FastAPI()
     app_r1.include_router(create_research_router(**base_auth, get_read_store=lambda: mock_rs1))
     app_r2 = FastAPI()
@@ -1683,6 +1735,9 @@ def test_five_domain_routers_preserve_two_instance_isolation(monkeypatch: pytest
     assert res1["data"][0]["ticket_id"] == "t1"
     assert res2["data"][0]["ticket_id"] == "t2"
     assert res1_again["data"][0]["ticket_id"] == "t1"
+    assert res1["meta"]["surfaces"]["ticket_list"] == "fresh"
+    assert res2["meta"]["surfaces"]["ticket_list"] == "degraded"
+    assert res1_again["meta"]["surfaces"]["ticket_list"] == "fresh"
 
     # 4. Agora Research
     from services.control_plane.bff.agora.research.router import create_research_router as create_agora_research_router
@@ -1708,6 +1763,8 @@ def test_five_domain_routers_preserve_two_instance_isolation(monkeypatch: pytest
     assert res1["items"][0]["pool_id"] == "pool_1"
     assert res2["items"][0]["pool_id"] == "pool_2"
     assert res1_again["items"][0]["pool_id"] == "pool_1"
+    assert res1["meta"]["capability"] == "agora.research.v1"
+    assert res2["meta"]["capability"] == "agora.research.v1"
 
     # 5. Agora Trading Room
     from services.control_plane.bff.agora.trading_room.router import create_trading_room_router
@@ -1715,18 +1772,64 @@ def test_five_domain_routers_preserve_two_instance_isolation(monkeypatch: pytest
 
     store1 = make_trading_room_store()
     store2 = make_trading_room_store()
+    assert store1 is not store2, "Stores must be distinct instances"
+
+    def _make_tr_event(event_id: str, strategy_id: str) -> dict:
+        return {
+            "spec_version": "1.0",
+            "decision_event_id": event_id,
+            "event_kind": "entry",
+            "origin": "strategy_signal",
+            "strategy_id": strategy_id,
+            "strategy_spec_registry_id": "reg-001",
+            "subject": {"symbol": "AAPL"},
+            "state": "pending_review",
+            "triggered_at": "2026-06-22T10:00:00Z",
+            "confidence": {"value": 0.75, "basis": "model", "calibration_state": "calibrated", "sample_size": 120},
+            "probability": {"target_outcome": "breakout", "horizon": "5d", "value": 0.65, "ci_lower": 0.55, "ci_upper": 0.75},
+            "expected_value": {"horizon": "5d", "unit": "pct_return", "gross": 0.03, "cost": 0.001, "net": 0.029, "downside": -0.02},
+            "rationale": [{"claim": "Momentum signal", "confidence": 0.75, "evidence_refs": []}],
+            "invalidation": {"conditions": ["price < 150"], "current_state": "valid", "last_checked_at": "2026-06-22T09:55:00Z"},
+            "suggested_action": "enter",
+            "no_order_route_proof": "agora_decision_support_only",
+        }
+
+    store1.upsert_decision_event(_make_tr_event("evt-inst1", "strat-1"))
+    store2.upsert_decision_event(_make_tr_event("evt-inst2", "strat-2"))
+
     app_tr1 = FastAPI()
     app_tr1.include_router(create_trading_room_router(**base_auth, trading_room_store=store1))
     app_tr2 = FastAPI()
     app_tr2.include_router(create_trading_room_router(**base_auth, trading_room_store=store2))
-    c_tr1 = TestClient(app_tr1)
-    c_tr2 = TestClient(app_tr2)
+    c_tr1 = TestClient(app_tr1, raise_server_exceptions=False)
+    c_tr2 = TestClient(app_tr2, raise_server_exceptions=False)
 
     res1 = c_tr1.get("/bff/agora/trading-room", headers=auth_headers)
     res2 = c_tr2.get("/bff/agora/trading-room", headers=auth_headers)
     assert res1.status_code == 200
     assert res2.status_code == 200
     assert app_tr1.routes is not app_tr2.routes
+
+    # Distinct records and metadata provenance
+    r_list1 = c_tr1.get("/bff/agora/trading-room/decision-events", headers=auth_headers).json()
+    r_list2 = c_tr2.get("/bff/agora/trading-room/decision-events", headers=auth_headers).json()
+    assert [e["decision_event_id"] for e in r_list1["items"]] == ["evt-inst1"]
+    assert [e["decision_event_id"] for e in r_list2["items"]] == ["evt-inst2"]
+    assert r_list1["meta"]["capability"] == "agora.trading.v1"
+    assert r_list2["meta"]["capability"] == "agora.trading.v1"
+
+    # Interleaved reads
+    for _ in range(3):
+        e1 = c_tr1.get("/bff/agora/trading-room/decision-events/evt-inst1", headers=auth_headers)
+        e2 = c_tr2.get("/bff/agora/trading-room/decision-events/evt-inst2", headers=auth_headers)
+        assert e1.status_code == 200 and e1.json()["decision_event_id"] == "evt-inst1"
+        assert e2.status_code == 200 and e2.json()["decision_event_id"] == "evt-inst2"
+
+    # Negative tenant / missing ID isolation (cross-instance request returns 404)
+    neg1 = c_tr1.get("/bff/agora/trading-room/decision-events/evt-inst2", headers=auth_headers)
+    neg2 = c_tr2.get("/bff/agora/trading-room/decision-events/evt-inst1", headers=auth_headers)
+    assert neg1.status_code == 404, f"Instance 1 must not see Instance 2's event (got {neg1.status_code})"
+    assert neg2.status_code == 404, f"Instance 2 must not see Instance 1's event (got {neg2.status_code})"
 
 
 def test_five_domain_store_access_gate_catches_aliased_access() -> None:
@@ -1752,16 +1855,49 @@ def test_five_domain_store_access_gate_catches_aliased_access() -> None:
     store_attrs = {
         "store", "read_store", "command_store",
         "provisioning_store", "workshop_store", "dataset_store",
+        "research_store", "strategy_store", "trading_room_store",
+        "research_plan_store", "seed_store", "knowledge_store",
+        "ticket_store", "memory_store",
     }
     detected: List[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr in store_attrs:
             detected.append(f"bad_route.py:{node.lineno} accesses .{node.attr}")
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in store_attrs
+        ):
+            detected.append(f"bad_route.py:{node.lineno} calls getattr with '{node.args[1].value}'")
 
     assert detected, (
         "The store-access gate did NOT catch a direct .store attribute access. "
         "The negative regression guard is broken — update the gate logic."
     )
+
+    bad_getattr_src = textwrap.dedent("""
+        async def handler(ctx):
+            s = getattr(ctx, "trading_room_store")
+            return s.list_items()
+    """)
+    tree_ga = ast.parse(bad_getattr_src, filename="bad_getattr.py")
+    detected_ga: List[str] = []
+    for node in ast.walk(tree_ga):
+        if isinstance(node, ast.Attribute) and node.attr in store_attrs:
+            detected_ga.append(f"bad_getattr.py:{node.lineno} accesses .{node.attr}")
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in store_attrs
+        ):
+            detected_ga.append(f"bad_getattr.py:{node.lineno} calls getattr with '{node.args[1].value}'")
+    assert any("trading_room_store" in d for d in detected_ga), "Gate did not catch getattr(ctx, 'trading_room_store')"
 
 
 def test_five_domain_store_access_gate_catches_read_store_alias() -> None:
@@ -1782,6 +1918,9 @@ def test_five_domain_store_access_gate_catches_read_store_alias() -> None:
     store_attrs = {
         "store", "read_store", "command_store",
         "provisioning_store", "workshop_store", "dataset_store",
+        "research_store", "strategy_store", "trading_room_store",
+        "research_plan_store", "seed_store", "knowledge_store",
+        "ticket_store", "memory_store",
     }
     detected: List[str] = []
     for node in ast.walk(tree):
