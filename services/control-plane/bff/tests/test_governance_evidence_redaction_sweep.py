@@ -50,6 +50,14 @@ _APPROVAL_2: Dict[str, Any] = {
     "outcome": "approved",
     "evidence_refs": [],
 }
+_APPROVAL_3_DECISION_ONLY: Dict[str, Any] = {
+    "id": "approval-3",
+    "decision_id": "approval-3",
+    "decision_type": "DeploymentPlan",
+    "decision_state": "approved",
+    "outcome": "approved",
+    "evidence_refs": copy.deepcopy(_MIXED_REFS),
+}
 _AUDIT_1: Dict[str, Any] = {
     "id": "audit-1",
     "action_type": "approval.reviewed",
@@ -98,15 +106,24 @@ _TRANSCRIPT_1: Dict[str, Any] = {
 class _SweepStore:
     """Minimal read-store double exposing only what the router/service calls."""
 
-    def __init__(self, *, two_approval_pages: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        two_approval_pages: bool = False,
+        include_decision_only_entry: bool = False,
+    ) -> None:
         self._two_approval_pages = two_approval_pages
+        self._include_decision_only_entry = include_decision_only_entry
 
     def dataset_source(self, dataset: str) -> str:
         return "service_store"
 
     # Approval decisions ------------------------------------------------
     def list_approval_decisions(self, **_: Any) -> List[Dict[str, Any]]:
-        return [copy.deepcopy(_APPROVAL_1), copy.deepcopy(_APPROVAL_2)]
+        items = [copy.deepcopy(_APPROVAL_1), copy.deepcopy(_APPROVAL_2)]
+        if self._include_decision_only_entry:
+            items.append(copy.deepcopy(_APPROVAL_3_DECISION_ONLY))
+        return items
 
     def get_approval_decision(self, decision_id: str) -> Optional[Dict[str, Any]]:
         for item in (_APPROVAL_1, _APPROVAL_2):
@@ -250,6 +267,19 @@ def test_approval_decision_detail_redacts_for_low_capability_identity() -> None:
         assert payload["meta"]["redacted_evidence_count"] == 2
 
 
+def test_approval_decision_detail_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/approval-decisions/approval-1",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["data"]["evidence_refs"] == _MIXED_REFS
+        assert payload["meta"]["redacted_evidence_count"] == 0
+
+
 def test_approval_decision_detail_fails_closed_when_capabilities_unresolvable() -> None:
     def _boom(identity: Any) -> List[str]:
         raise RuntimeError("capability lookup unavailable")
@@ -370,6 +400,8 @@ def test_governance_audit_trail_passes_through_for_full_capability_identity() ->
         )
         assert response.status_code == 200, response.text
         payload = response.json()
+        by_id = {item["id"]: item for item in payload["items"]}
+        assert by_id["audit-1"]["evidence_refs"] == _MIXED_REFS
         assert payload["meta"]["redacted_evidence_count"] == 0
 
 
@@ -426,6 +458,8 @@ def test_bff_approvals_list_passes_through_for_full_capability_identity() -> Non
         )
         assert response.status_code == 200, response.text
         payload = response.json()
+        pending = next(item for item in payload["items"] if item["decision_id"] == "approval-1")
+        assert pending["evidence_refs"] == _MIXED_REFS
         assert payload["meta"]["redacted_evidence_count"] == 0
 
 
@@ -474,6 +508,42 @@ def test_governance_ledger_redacts_all_four_evidence_sources_for_low_capability_
         assert payload["meta"]["redacted_evidence_count"] == 6
 
 
+def test_governance_ledger_includes_decision_only_approval_entry() -> None:
+    # approval-3 only exists in the approval_decisions dataset (never in
+    # approval_queue_items), so it is not shadowed by the dedup keyed on
+    # decision_id and must surface with source_dataset=approval_decisions.
+    store = _SweepStore(include_decision_only_entry=True)
+
+    with _stub_auth_env():
+        low_client = TestClient(_build_app(store))
+        low_response = low_client.get(
+            "/bff/management/governance-ledger",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert low_response.status_code == 200, low_response.text
+        low_items = low_response.json()["data"]["items"]
+        decision_only_entry = next(
+            item for item in low_items
+            if item["source_type"] == "approval" and item["target_id"] == "approval-3"
+        )
+        assert decision_only_entry["source_dataset"] == "approval_decisions"
+        _assert_mixed_refs_redacted_for_low_capability(decision_only_entry["evidence_refs"])
+
+        full_client = TestClient(_build_app(store))
+        full_response = full_client.get(
+            "/bff/management/governance-ledger",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert full_response.status_code == 200, full_response.text
+        full_items = full_response.json()["data"]["items"]
+        decision_only_entry_full = next(
+            item for item in full_items
+            if item["source_type"] == "approval" and item["target_id"] == "approval-3"
+        )
+        assert decision_only_entry_full["source_dataset"] == "approval_decisions"
+        assert decision_only_entry_full["evidence_refs"] == _MIXED_REFS
+
+
 def test_governance_ledger_passes_through_for_full_capability_identity() -> None:
     with _stub_auth_env():
         client = TestClient(_build_app())
@@ -483,6 +553,12 @@ def test_governance_ledger_passes_through_for_full_capability_identity() -> None
         )
         assert response.status_code == 200, response.text
         payload = response.json()
+        items = payload["data"]["items"]
+        approval_entry = next(
+            item for item in items
+            if item["source_type"] == "approval" and item["target_id"] == "approval-1"
+        )
+        assert approval_entry["evidence_refs"] == _MIXED_REFS
         assert payload["meta"]["redacted_evidence_count"] == 0
 
 
@@ -551,6 +627,19 @@ def test_get_consultation_redacts_for_low_capability_identity() -> None:
         assert payload["meta"]["supporting_counts"]["redacted_evidence_count"] == 2
 
 
+def test_get_consultation_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/consultations/session-1",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["data"]["metadata"]["consultation"]["evidence_refs"] == _MIXED_REFS
+        assert payload["meta"]["supporting_counts"]["redacted_evidence_count"] == 0
+
+
 def test_get_consultation_participants_redacts_for_low_capability_identity() -> None:
     with _stub_auth_env():
         client = TestClient(_build_app())
@@ -565,6 +654,20 @@ def test_get_consultation_participants_redacts_for_low_capability_identity() -> 
             participant["metadata"]["consultation"]["evidence_refs"]
         )
         assert payload["meta"]["supporting_counts"]["redacted_evidence_count"] == 2
+
+
+def test_get_consultation_participants_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/consultations/session-1/participants",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        participant = payload["data"][0]
+        assert participant["metadata"]["consultation"]["evidence_refs"] == _MIXED_REFS
+        assert payload["meta"]["supporting_counts"]["redacted_evidence_count"] == 0
 
 
 def test_get_consultation_outcome_redacts_for_low_capability_identity() -> None:
