@@ -278,9 +278,17 @@ def _discover_all_py_files(root_dir: Path = BFF_DIR) -> List[Path]:
 
 
 def _module_dotted_path(rel_path: Path, root_dir: Path = BFF_DIR) -> str:
-    dotted = ".".join(rel_path.with_suffix("").parts)
+    """The dotted import path a Python statement elsewhere would use to
+    reach ``rel_path``. A package's ``__init__.py`` is addressed by its
+    *package* name (``from tests import app`` targets ``tests/__init__.py``,
+    not a literal ``tests.__init__`` module) -- resolving it as a literal
+    ``__init__`` submodule instead misses every package-level re-export
+    propagation (AC2)."""
+    parts = rel_path.parent.parts if rel_path.name == "__init__.py" else rel_path.with_suffix("").parts
+    dotted = ".".join(parts)
     if root_dir == BFF_DIR:
-        return "services.control_plane.bff." + dotted
+        prefix = "services.control_plane.bff"
+        return f"{prefix}.{dotted}" if dotted else prefix
     return dotted
 
 
@@ -307,6 +315,31 @@ def _module_level_bff_main_names(tree: ast.Module) -> Set[str]:
                     for assign_target in child.targets:
                         if isinstance(assign_target, ast.Name):
                             names.add(assign_target.id)
+            visit(child)
+
+    visit(tree)
+    return names
+
+
+def _module_level_main_attribute_reexports(tree: ast.Module) -> Set[str]:
+    """Module-level names bound to a *specific attribute* imported directly
+    from the composition root (``from services.control_plane.bff.main
+    import app``) -- i.e. a bare re-export of something main exposes.
+    Deliberately excludes a name bound to the main module object itself
+    (``import main as bm`` / ``from services.control_plane.bff import
+    main``): that whole-module-alias case is already handled by
+    ``_module_level_bff_main_names`` for the purpose of detecting functions
+    that *reference* it, but is not itself treated as a reaching "symbol" of
+    this module -- only an actual re-exported attribute is (AC2)."""
+    names: Set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if isinstance(child, ast.ImportFrom) and child.module and _is_bff_main_module_name(child.module):
+                for alias in child.names:
+                    names.add(alias.asname or alias.name)
             visit(child)
 
     visit(tree)
@@ -374,8 +407,15 @@ def _call_graph(tree: ast.Module) -> Dict[str, Set[str]]:
 
 def _reaches_main_symbols_from_tree(tree: ast.Module) -> Set[str]:
     """All top-level function/method names in ``tree`` that reach the BFF
-    composition root, directly or transitively through same-module calls."""
+    composition root, directly or transitively through same-module calls,
+    plus any module-level name bound directly to the composition root or to
+    an attribute imported from it (a bare re-export, e.g. ``from
+    services.control_plane.bff.main import app``). Such a name is reachable
+    by any importer of this module even though it is not itself a function,
+    so a helper module that does nothing but re-export a main-derived
+    object must still be recorded as reaching (AC2)."""
     reaching = _functions_calling_bff_main(tree)
+    reaching |= _module_level_main_attribute_reexports(tree)
     graph = _call_graph(tree)
     changed = True
     while changed:
@@ -433,6 +473,52 @@ def _cross_file_imported_reaching_names(
     return local_reaching
 
 
+def _cross_file_imported_reaching_modules(
+    tree: ast.Module, pkg_parts: List[str], helper_symbols: Dict[str, Set[str]], root_dir: Path = BFF_DIR
+) -> Dict[str, Set[str]]:
+    """Local names this file binds (via ``import``/``from ... import``) to a
+    *submodule* that itself reaches main, as opposed to
+    ``_cross_file_imported_reaching_names`` above, which resolves a directly
+    imported symbol. Covers ``import pkg.sub``, ``import pkg.sub as x``,
+    ``from pkg import sub``, and ``from . import sub`` (a bare submodule
+    import with no ``node.module``): a same-module function that only calls
+    ``sub.<reaching_symbol>()`` -- an attribute access on the imported
+    submodule object, not a bare name -- must still be recognized as
+    reaching, so a wrapper module that re-exposes another helper's accessor
+    through its own function still propagates a two-hop wrapper chain
+    (AC2/AC3)."""
+    modules: Dict[str, Set[str]] = {}
+
+    def record(local_name: str, dotted_mod: str) -> None:
+        reaching = helper_symbols.get(dotted_mod)
+        if reaching:
+            modules.setdefault(local_name, set()).update(reaching)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local_name = alias.asname or alias.name.split(".")[0]
+                if root_dir == BFF_DIR:
+                    record(local_name, "services.control_plane.bff." + alias.name)
+                record(local_name, alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                base = node.module.split(".") if node.module else []
+            else:
+                base = pkg_parts[: max(0, len(pkg_parts) - (node.level - 1))]
+                if node.module:
+                    base = base + node.module.split(".")
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                local_name = alias.asname or alias.name
+                sub_dotted = ".".join(base + [alias.name]) if base else alias.name
+                if root_dir == BFF_DIR:
+                    record(local_name, "services.control_plane.bff." + sub_dotted)
+                record(local_name, sub_dotted)
+    return modules
+
+
 def _find_main_reaching_helper_modules(root_dir: Path = BFF_DIR) -> Dict[str, Set[str]]:
     """Non-test support modules under the tree that expose symbols
     reaching the composition root (directly or transitively), keyed by their
@@ -485,19 +571,22 @@ def _find_main_reaching_helper_modules(root_dir: Path = BFF_DIR) -> Dict[str, Se
 
     # Cross-file propagation is scoped to test-support infrastructure only
     # (fixtures/doubles/harnesses under ``tests/`` or an owned
-    # ``*_test_support.py`` sibling), and even then only follows a
-    # *bare-name* call of the specific imported symbol (``get_main()``),
-    # never an attribute/method call (``self.execute()``/``obj.get_main()``)
-    # matched by name alone. Production application/service modules
-    # (``main.py``, ``governance/service.py``, router/service layers, etc.)
-    # legitimately use late-bound/deferred imports of ``main`` in places for
-    # circular-import avoidance; those are pre-existing architecture, not a
-    # test-authored composition-root import, and are out of this task's
-    # scope (no production source changes). Applying cross-file propagation
-    # tree-wide would misclassify every test that imports a public function
-    # from one of those service modules, because hundreds of unrelated
-    # production call sites share common names -- so propagation is bounded
-    # to the actual surfaces this task owns: test support helpers.
+    # ``*_test_support.py`` sibling). An attribute/method call
+    # (``obj.get_main()``) is only ever treated as reaching when ``obj`` is a
+    # local name this same file bound, via an import statement, to a
+    # specific *other* helper module already confirmed to reach main
+    # (``_cross_file_imported_reaching_modules``) -- never by matching
+    # ``.attr`` names alone tree-wide. Production application/service
+    # modules (``main.py``, ``governance/service.py``, router/service
+    # layers, etc.) legitimately use late-bound/deferred imports of ``main``
+    # in places for circular-import avoidance; those are pre-existing
+    # architecture, not a test-authored composition-root import, and are out
+    # of this task's scope (no production source changes). Applying
+    # cross-file propagation tree-wide would misclassify every test that
+    # imports a public function from one of those service modules, because
+    # hundreds of unrelated production call sites share common names -- so
+    # propagation is bounded to the actual surfaces this task owns: test
+    # support helpers.
     changed = True
     while changed:
         changed = False
@@ -506,18 +595,46 @@ def _find_main_reaching_helper_modules(root_dir: Path = BFF_DIR) -> Dict[str, Se
             cross_reaching_names = _cross_file_imported_reaching_names(
                 tree, pkg_parts_map[dotted], helpers, root_dir=root_dir
             )
-            if not cross_reaching_names:
+            cross_reaching_modules = _cross_file_imported_reaching_modules(
+                tree, pkg_parts_map[dotted], helpers, root_dir=root_dir
+            )
+            if not cross_reaching_names and not cross_reaching_modules:
                 continue
-            reaching = set(helpers.get(dotted, set()))
+            # A directly imported reaching symbol that no function in this
+            # file ever calls is itself a bare re-export -- reachable as a
+            # module-level name of *this* module too (e.g. a package
+            # ``__init__.py`` doing ``from .helper import app`` with no
+            # wrapping function at all). A symbol that *is* called by a
+            # local function is left to the call-graph propagation below,
+            # which records the calling function as reaching instead: that
+            # keeps a plain "helper imports X and one function uses it"
+            # module from also exposing the raw imported name itself as an
+            # independent reaching symbol (AC2).
+            called_names: Set[str] = set()
+            for call_node in ast.walk(tree):
+                if isinstance(call_node, ast.Call) and isinstance(call_node.func, ast.Name):
+                    called_names.add(call_node.func.id)
+            bare_reexports = cross_reaching_names - called_names
+            reaching = set(helpers.get(dotted, set())) | bare_reexports
             bare_name_graph: Dict[str, Set[str]] = {}
             for node in ast.walk(tree):
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
                 callees: Set[str] = set()
+                direct_hit = False
                 for inner in ast.walk(node):
-                    if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
-                        callees.add(inner.func.id)
+                    if not isinstance(inner, ast.Call):
+                        continue
+                    func = inner.func
+                    if isinstance(func, ast.Name):
+                        callees.add(func.id)
+                    elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                        mod_reaching = cross_reaching_modules.get(func.value.id)
+                        if mod_reaching and func.attr in mod_reaching:
+                            direct_hit = True
                 bare_name_graph[node.name] = callees
+                if direct_hit:
+                    reaching.add(node.name)
             local_changed = True
             while local_changed:
                 local_changed = False
@@ -1169,6 +1286,95 @@ def test_scanner_detects_relative_helper_main_import(tmp_path: Path) -> None:
 
     offenders_after = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
     assert "pkg/test_safe.py" not in offenders_after
+
+
+def test_helper_graph_detects_bare_module_level_reexport_of_main(tmp_path: Path) -> None:
+    """AC2 regression (defect fix): a helper module that does nothing but
+    bind a name at module level to an object imported from main (a bare
+    re-export, e.g. ``from services.control_plane.bff.main import app``,
+    with no wrapping function) must still be recorded as reaching, and a
+    test file importing that name must be flagged. Previously
+    ``_reaches_main_symbols_from_tree`` only inspected top-level
+    function/method names, so a helper with no functions at all produced an
+    empty reaching set and the importing test file was invisible to the
+    scanner."""
+    (tmp_path / "helper.py").write_text(
+        "from services.control_plane.bff.main import app\n", encoding="utf-8"
+    )
+    (tmp_path / "test_client.py").write_text(
+        "from helper import app\n", encoding="utf-8"
+    )
+
+    helpers = _find_main_reaching_helper_modules(root_dir=tmp_path)
+    assert helpers.get("helper") == {"app"}
+
+    offenders = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
+    assert "test_client.py" in offenders
+
+
+def test_helper_graph_detects_submodule_attribute_wrapper_chain(tmp_path: Path) -> None:
+    """AC2/AC3 regression (defect fix): a two-hop wrapper where the second
+    hop imports the *submodule itself* (``from . import source``) rather
+    than a specific symbol, then reaches main only via an attribute call on
+    that submodule (``source.get_app()``), must still propagate. Previously
+    cross-file propagation only recognized a directly imported *symbol*
+    bound to a bare name; a submodule import used only through attribute
+    access was invisible, so the wrapper's own function was never marked as
+    reaching and a real test importing the wrapper's function was missed."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "__init__.py").write_text("", encoding="utf-8")
+    (tests_dir / "source.py").write_text(
+        "import importlib\n"
+        "def get_app():\n"
+        "    return importlib.import_module('services.control_plane.bff.main')\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "wrapper.py").write_text(
+        "from . import source\n"
+        "def make_app():\n"
+        "    return source.get_app()\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_client.py").write_text(
+        "from tests.wrapper import make_app\n"
+        "make_app()\n",
+        encoding="utf-8",
+    )
+
+    helpers = _find_main_reaching_helper_modules(root_dir=tmp_path)
+    assert helpers.get("tests.wrapper") == {"make_app"}
+
+    offenders = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
+    assert "tests/test_client.py" in offenders
+
+
+def test_helper_graph_propagates_through_package_init_reexport(tmp_path: Path) -> None:
+    """AC2 regression (defect fix): a package ``__init__.py`` that re-exports
+    a main-reaching name from a sibling helper module (``from .helper import
+    app``) must itself be addressable by its *package* dotted path (e.g.
+    ``tests``, not ``tests.__init__``), so a test file doing
+    ``from tests import app`` is flagged. Previously ``_module_dotted_path``
+    resolved ``tests/__init__.py`` to the literal module ``tests.__init__``,
+    which never matches the ``tests`` candidate a real importer resolves to,
+    so the re-export never propagated."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "helper.py").write_text(
+        "from services.control_plane.bff.main import app\n", encoding="utf-8"
+    )
+    (tests_dir / "__init__.py").write_text(
+        "from .helper import app\n", encoding="utf-8"
+    )
+    (tests_dir / "test_client.py").write_text(
+        "from tests import app\n", encoding="utf-8"
+    )
+
+    helpers = _find_main_reaching_helper_modules(root_dir=tmp_path)
+    assert helpers.get("tests") == {"app"}
+
+    offenders = _live_scan_non_whitelisted_main_importers(set(), root_dir=tmp_path)
+    assert "tests/test_client.py" in offenders
 
 
 def test_knowledge_read_port_fixtures_architecture_compliance() -> None:
