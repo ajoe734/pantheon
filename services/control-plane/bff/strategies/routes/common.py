@@ -102,6 +102,7 @@ def default_read_surface_meta(
 
 @dataclass
 class StrategyRouteContext:
+    service: Optional[Any] = None
     read_surface: Optional[Any] = None
     get_read_store: Optional[Callable[[], Any]] = None
     extract_identity: Callable[..., Any] = default_extract_identity
@@ -182,6 +183,9 @@ class StrategyRouteContext:
         }
 
     def ensure_strategy_exists(self, strategy_id: str) -> None:
+        if self.service is not None:
+            self.service.ensure_strategy_exists(strategy_id)
+            return
         read_store = self.get_read_store_port()
         found = False
         getter = getattr(read_store, "get_strategy_spec", None)

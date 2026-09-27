@@ -28,6 +28,7 @@ from .routes.common import (
 from .routes.collection import build_collection_router
 from .routes.detail import build_detail_router
 from .routes.seeds import build_seeds_router
+from .service import StrategiesService
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def create_strategies_router(
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     strategy_write_owner: Optional[Any] = None,
     get_strategy_write_owner: Optional[Callable[[], Any]] = None,
+    service: Optional[Any] = None,
 ) -> APIRouter:
     if strategy_overlay is not None:
         raise AttributeError("strategy_overlay is retired; process-local state overlays are deleted")
@@ -92,7 +94,17 @@ def create_strategies_router(
         else {}
     )
 
+    _service = service or StrategiesService(
+        read_surface=read_surface,
+        get_read_store=get_read_store,
+        strategy_write_owner=strategy_write_owner,
+        get_strategy_write_owner=get_strategy_write_owner,
+        list_strategy_summaries=list_strategy_summaries,
+        bff_error=_bff_error,
+    )
+
     ctx = StrategyRouteContext(
+        service=_service,
         read_surface=read_surface,
         get_read_store=get_read_store,
         extract_identity=_extract_identity,

@@ -28,9 +28,8 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         """BFF: strategy list (execute-plans Strategy DTO compatibility)."""
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
-        read_store = ctx.get_read_store_port()
         snapshot_at = ctx.utc_now()
-        summaries = ctx.list_strategy_summaries_records()
+        summaries = ctx.service.list_strategy_summaries() if ctx.service else ctx.list_strategy_summaries_records()
         if persona_id:
             summaries = [
                 s for s in summaries
@@ -39,7 +38,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         items = []
         for summary in summaries:
             strategy_id = str(summary.get("strategy_id") or "")
-            detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
+            detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
             items.append(ctx.project_strategy_dto(summary, detail=detail))
         if state:
             items = [s for s in items if s.get("state") == state]
@@ -107,40 +106,11 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 idempotency_key=resolved_key,
                 evidence_kind="strategy.create",
             )
-        writer = ctx.get_strategy_write_owner_port()
-        if writer is None:
-            raise ctx.bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Canonical strategy writer unavailable",
-                "Cannot persist strategy without an authoritative domain store",
-            )
-        written = False
-        try:
-            res = None
-            if hasattr(writer, "upsert_strategy"):
-                res = writer.upsert_strategy({**record, "actor": principal, "command_key": resolved_key})
-            elif hasattr(writer, "create_strategy_spec"):
-                res = writer.create_strategy_spec({**record, "actor": principal, "command_key": resolved_key})
-            if res:
-                written = True
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise ctx.bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Canonical strategy persistence failed",
-                str(exc),
-            ) from exc
-
-        if not written:
-            raise ctx.bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Canonical strategy writer unavailable",
-                "Cannot persist strategy without an authoritative domain store",
-            )
+        ctx.service.persist_strategy(
+            record,
+            actor=principal,
+            command_key=resolved_key,
+        )
         result = {
             "data": record,
             "meta": {"snapshot_at": snapshot_at},

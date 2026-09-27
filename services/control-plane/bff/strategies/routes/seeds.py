@@ -17,7 +17,6 @@ from services.source_ingestion.replication_bridge import (
 from services.source_ingestion.strategy_seed_store import (
     SeedReviewDecision,
     StrategySpecSeedReviewError,
-    StrategySpecSeedStore,
     StrategySpecSeedStoreError,
 )
 
@@ -330,14 +329,13 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
             log.warning("Persona read surface unavailable for seed inbox suggestions: %s", exc)
             return suggestions
 
-        read_store = ctx.get_read_store_port()
         for persona in personas:
             persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
             if not persona_id:
                 continue
             try:
-                route_policy = read_store.get_route_policy_for_persona(persona_id) or {}
-                capability_snapshot = read_store.get_capability_snapshot_for_persona(persona_id) or {}
+                route_policy = ctx.service.get_persona_route_policy(persona_id) if ctx.service else {}
+                capability_snapshot = ctx.service.get_persona_capability_snapshot(persona_id) if ctx.service else {}
                 profile = extract_persona_strategy_profile(
                     persona,
                     route_policy=route_policy,
@@ -585,10 +583,9 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshot_at = ctx.utc_now()
-        store = StrategySpecSeedStore()
         seeds = [
             seed
-            for seed in store.list_all()
+            for seed in (ctx.service.list_seeds() if ctx.service else [])
             if _strategy_seed_matches_filters(
                 seed,
                 status=status,
@@ -603,6 +600,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
             for seed in seeds
         ]
         page_items, next_page_token = ctx.page_slice(cards, page_token, page_size)
+        store_path = ctx.service.get_seed_store_path() if ctx.service else ""
         return {
             "data": {
                 "id": "management_strategy_seeds",
@@ -621,7 +619,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
             },
             "meta": {
                 "snapshot_at": snapshot_at,
-                "store_path": str(store.path),
+                "store_path": store_path,
                 "count": len(cards),
                 "filters": {
                     "status": status,
@@ -641,8 +639,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshot_at = ctx.utc_now()
-        store = StrategySpecSeedStore()
-        seed = store.get(seed_id)
+        seed = ctx.service.get_seed(seed_id) if ctx.service else None
         if seed is None:
             raise ctx.bff_error(
                 404,
@@ -651,6 +648,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
                 f"StrategySpecSeed not found: {seed_id}",
                 precondition_failed="seed_id",
             )
+        store_path = ctx.service.get_seed_store_path() if ctx.service else ""
         return {
             "data": _strategy_seed_card(
                 seed,
@@ -660,7 +658,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
             ),
             "meta": {
                 "snapshot_at": snapshot_at,
-                "store_path": str(store.path),
+                "store_path": store_path,
                 "research_only": True,
                 "execution_route": "none",
             },
@@ -777,7 +775,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
             return cached
         snapshot_at = ctx.utc_now()
         try:
-            updated, decision = StrategySpecSeedStore().record_review_decision(
+            updated, decision = ctx.service.record_seed_review_decision(
                 seed_id,
                 decision=action,
                 reviewer_id=identity.operator_id,
@@ -837,7 +835,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
             return cached
         snapshot_at = ctx.utc_now()
         try:
-            updated, decision = StrategySpecSeedStore().merge_seed(
+            updated, decision = ctx.service.merge_seed(
                 seed_id,
                 target_seed_id=target_seed_id,
                 reviewer_id=identity.operator_id,
