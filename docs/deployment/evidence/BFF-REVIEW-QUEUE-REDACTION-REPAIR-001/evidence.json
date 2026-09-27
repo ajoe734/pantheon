@@ -1,0 +1,172 @@
+{
+  "task_id": "BFF-REVIEW-QUEUE-REDACTION-REPAIR-001",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "base_branch": "dev",
+  "base_commit": "c067863776f0a273443378dfd9fdb0a1b60a46b5",
+  "task_branch": "task/BFF-REVIEW-QUEUE-REDACTION-REPAIR-001",
+  "defect_summary": "GovernanceService.list_review_queue() returns raw store items with no evidence-ref redaction. The two BFF routes that serve it directly from governance/router.py -- GET /api/v1/operator/governance/review-queue and the /bff/reviews compatibility alias over the same data -- never called redact_evidence_refs()/capabilities_for_identity() on review_summary.evidence_refs, so a caller lacking a required capability (e.g. metric.read, job.read) received every evidence ref unredacted. BFF-FINAL-007 (commit 4a14129b9) originally enforced this redaction on the review-queue endpoint in main.py; the seam extractions BFF-MAIN-COMPOSITION-SEAM-EXTRACTION-002 (eea73dd09) and BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001 (3f88e5fa7) moved the endpoint's implementation out of main.py into governance/router.py + governance/service.py without carrying the redaction call forward.",
+  "root_cause_commits": {
+    "original_enforcement": "4a14129b9f733aaa9e8f62251e527a0d16006dfa",
+    "seam_extraction_1": "eea73dd09f12963994140cd0fdb5f4765fcf7f46",
+    "seam_extraction_2": "3f88e5fa7"
+  },
+  "reproduction_before_fix": {
+    "method": "Real create_governance_router() composition (services/control-plane/bff/governance/router.py), wired exactly like core/app_factory.py: redact_evidence_refs=models.redact_evidence_refs, capabilities_for_identity=auth.policy.capabilities_for_identity, extract_identity=auth.policy.extract_identity. Store double returns one review-queue item with review_summary.evidence_refs = [alert, metric, job].",
+    "request": "GET /api/v1/operator/governance/review-queue  Authorization: Bearer op-review-1:operator  (operator role capabilities = runtime.read, risk.incident.read, risk.alert.read, artifact.read -- lacks metric.read and job.read)",
+    "response_before_fix": {
+      "status": 200,
+      "items[0].review_summary.evidence_refs": [
+        {"ref_id": "ref-alert-ev", "type": "alert"},
+        {"ref_id": "ref-metric-ev", "type": "metric"},
+        {"ref_id": "ref-job-ev", "type": "job"}
+      ],
+      "meta.redacted_evidence_count": "absent (key not present)"
+    },
+    "verification_command": "PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_kw03_strict_contract_check.py::test_bff_final_007_review_queue_redacts_evidence_refs_for_insufficient_capability (temp copy of the strict contract test from task/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001, run against this task's HEAD before the fix)",
+    "verification_result": "FAILED -- KeyError: 'redacted' on ev_refs[1] (metric ref returned unredacted, all 3 refs passed through verbatim)"
+  },
+  "fix_summary": "services/control-plane/bff/governance/router.py: added a _redact_review_queue_items(identity, items) helper that deep-copies each review-queue item, redacts review_summary.evidence_refs through the existing _safe_redact() closure (which already wraps the injected canonical redact_evidence_refs from models.py and capabilities_for_identity from auth/policy.py, exactly as wired by core/app_factory.py), and sums a redacted_evidence_count. Wired this helper into list_governance_review_queue (GET /api/v1/operator/governance/review-queue), bff_list_reviews (GET /bff/reviews), and bff_get_review (GET /bff/reviews/{review_id}) -- all three serve the same underlying GovernanceService.list_review_queue()/get_review() data and would otherwise leave the /bff/reviews* compatibility surface as a trivial bypass of the review-queue fix. No changes to models.py, auth/policy.py, core/app_factory.py, governance/service.py, human_inbox.py, management_read_models/service.py, incidents/service.py, or main.py -- the canonical redaction policy owner and its wiring were already correct; only the two/three route handlers were missing the call. Redaction fails closed: _safe_redact already treats a capability-lookup failure as an empty capability set, so every capability-gated ref is withheld rather than disclosed.",
+  "changed_files": [
+    "services/control-plane/bff/governance/router.py",
+    "services/control-plane/bff/tests/test_review_queue_evidence_redaction.py",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "docs/deployment/evidence/BFF-REVIEW-QUEUE-REDACTION-REPAIR-001/evidence.json"
+  ],
+  "bff_final_007_surface_audit": [
+    {
+      "surface": "GET /api/v1/operator/governance/review-queue",
+      "owner_file": "services/control-plane/bff/governance/router.py",
+      "original_bff_final_007_coverage": true,
+      "status_before_fix": "BROKEN -- review_summary.evidence_refs returned unredacted, no redacted_evidence_count in meta",
+      "status_after_fix": "FIXED -- redact_evidence_refs applied per item via _redact_review_queue_items(); redacted_evidence_count added to meta",
+      "verified_by": "test_kw03_evidence_refs_contract.py::test_bff_final_007_review_queue_redacts_evidence_refs_for_insufficient_capability (strict branch copy and current-HEAD copy), tests/test_review_queue_evidence_redaction.py"
+    },
+    {
+      "surface": "GET /api/v1/knowledge/evidence (list)",
+      "owner_file": "services/control-plane/bff/research/routes/knowledge.py",
+      "original_bff_final_007_coverage": true,
+      "status_before_fix": "OK -- still calls redact_evidence_refs(identity, page_items, capabilities=...) and reports redacted_evidence_count",
+      "status_after_fix": "OK -- unchanged",
+      "verified_by": "test_kw03_evidence_refs_contract.py::test_bff_final_007_knowledge_evidence_list_redacts_items_for_insufficient_capability"
+    },
+    {
+      "surface": "GET /api/v1/knowledge/evidence/{ref_id} (detail, linked_decisions)",
+      "owner_file": "services/control-plane/bff/research/routes/knowledge.py",
+      "original_bff_final_007_coverage": true,
+      "status_before_fix": "OK -- still calls redact_evidence_refs on annotated linked_decisions and reports redacted_evidence_count",
+      "status_after_fix": "OK -- unchanged",
+      "verified_by": "test_kw03_evidence_refs_contract.py::test_bff_final_007_knowledge_evidence_detail_redacts_linked_decisions_for_insufficient_capability"
+    }
+  ],
+  "additional_surfaces_fixed_in_contract": [
+    {
+      "surface": "GET /bff/reviews (compatibility alias, added after BFF-FINAL-007 in BFF-LUV-GAP-003, never had redaction)",
+      "owner_file": "services/control-plane/bff/governance/router.py",
+      "reason_fixed": "Serves the identical GovernanceService.list_review_queue() items as the primary review-queue endpoint; leaving it unredacted would be a trivial bypass of this task's fix, defeating the security repair.",
+      "status_after_fix": "FIXED -- same _redact_review_queue_items() helper applied; redacted_evidence_count added to meta"
+    },
+    {
+      "surface": "GET /bff/reviews/{review_id} (single-item compatibility read)",
+      "owner_file": "services/control-plane/bff/governance/router.py",
+      "reason_fixed": "Serves GovernanceService.get_review(), a thin wrapper over list_review_queue(); same bypass risk as above.",
+      "status_after_fix": "FIXED -- redacted via _redact_review_queue_items(); redacted_evidence_count added to meta.data envelope"
+    }
+  ],
+  "surfaces_outside_contract_reported_not_fixed": [
+    {
+      "surface": "GET /bff/management/governance-ledger",
+      "owner_file": "services/control-plane/bff/governance/service.py (governance_ledger method, ~line 1380-1477)",
+      "finding": "Aggregates evidence_refs from approval_queue/approval_decisions/interventions/audit_events into ledger entries without ever calling redact_evidence_refs. Introduced in OPGAP-BE-GOVERNANCE-ROUTER-V2-20260830 (2026-08-30), well after BFF-FINAL-007 (2026-05-07); it never had redaction, so this is a newly discovered gap rather than a regression of BFF-FINAL-007's original three surfaces.",
+      "disposition": "Reported through governed coordination (this evidence file) per acceptance criterion 4; left unfixed to keep this task's diff scoped to the review-queue regression and its direct bypass surfaces. Recommend a follow-up task scoped to governance_ledger."
+    }
+  ],
+  "governance_service_incidents_human_inbox_audit": {
+    "governance/human_inbox.py": "No evidence_refs redaction concern found; the only evidence_refs reference is a static empty-list placeholder in a projection stub.",
+    "incidents/service.py": "No evidence_refs handling found in this file.",
+    "management_read_models/service.py": "Already redacts correctly (management-evidence surface calls redact_evidence_refs with capabilities_for_identity, guarded by an except-fallback); no change needed.",
+    "core/app_factory.py": "Already wires redact_evidence_refs=models.redact_evidence_refs and capabilities_for_identity=auth.policy.capabilities_for_identity into create_governance_router(); no change needed.",
+    "auth/policy.py": "capabilities_for_identity() and role/capability maps unchanged and already correct; no change needed.",
+    "models.py": "redact_evidence_refs() and RedactedEvidenceRef unchanged and already correct; no change needed."
+  },
+  "terminal_commands_and_results": [
+    {
+      "command": "git rev-parse HEAD origin/dev",
+      "result": "c067863776f0a273443378dfd9fdb0a1b60a46b5 (both identical -- task branch started from current dev tip)"
+    },
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+      "result": "provisioned .venv-pantheon; verified pytest importable from a foreign cwd with no PYTHONPATH"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_kw03_strict_contract_check.py  (temp copy of test_kw03_evidence_refs_contract.py fetched from origin/task/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 @ cc14d84e1, run against this task's head, then deleted before commit)",
+      "result": "12 passed, 1 warning in 9.66s"
+    },
+    {
+      "command": "same strict contract file with governance/router.py fix reverted (git stash), single test: test_bff_final_007_review_queue_redacts_evidence_refs_for_insufficient_capability",
+      "result": "FAILED -- KeyError: 'redacted' (confirms defect reproduces without the fix)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_review_queue_evidence_redaction.py",
+      "result": "6 passed, 3 warnings in 3.28s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py",
+      "result": "3 failed (test_consultation_session_and_policy_read_routes, test_bff_approval_review_and_governance_ledger_compatibility, test_single_and_batch_approval_decisions_validate_and_report_partial_results -- all pre-existing 503s in build_client()'s default submit_action stub, reproduced identically with the fix reverted; unrelated to this task's scope), 26 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_console_data_incidents_reviews.py services/control-plane/bff/tests/test_evochain_005_governance_writes.py services/control-plane/bff/tests/test_lifecycle_telemetry_governance_ports.py services/control-plane/bff/tests/test_persona_governance_caller_contract.py services/control-plane/bff/tests/test_mutation_review_projection_policy.py services/control-plane/bff/tests/test_promotion_review_production_defects.py services/control-plane/bff/tests/test_bff_governance_subrules_contract.py",
+      "result": "80 passed, 3 warnings in 37.54s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_kw03_evidence_refs_contract.py  (current-HEAD version of the file, main.py-composition-root based)",
+      "result": "6 failed, 6 passed -- test_bff_final_007_review_queue_redacts_evidence_refs_for_insufficient_capability PASSES with the fix; the remaining 6 failures (list/detail contract-shape and knowledge-evidence redaction tests unrelated to the review queue) reproduce identically with the fix reverted, confirming they are pre-existing environment/fixture failures out of this task's scope"
+    }
+  ],
+  "acceptance_notes": {
+    "fail_closed": "Confirmed by tests/test_review_queue_evidence_redaction.py::test_review_queue_redaction_fails_closed_when_capabilities_unresolvable -- when capabilities_for_identity raises, _safe_redact() (pre-existing in governance/router.py) substitutes an empty capability set, so every capability-gated ref is withheld rather than disclosed.",
+    "never_widens_disclosure": "No change to models.redact_evidence_refs, EVIDENCE_CAPABILITY_MAP, or any role/capability mapping in auth/policy.py; only route handlers that previously called nothing now call the pre-existing canonical redactor.",
+    "no_duplicate_symbols_or_routers": "Single _redact_review_queue_items helper reused by all three fixed route handlers inside the existing create_governance_router() closure; no new router, store, or fallback path created.",
+    "main_py_edits": "None. main.py already delegates to governance/router.py via core/app_factory.py's create_governance_router() call; the defect and its fix both live entirely in governance/router.py."
+  },
+  "pagination_regression_repair": {
+    "reopened_by": "Codex",
+    "base_commit": "e12df34aa150fa3818d47523609b54925dfceaf0",
+    "reviewed_pr": 5985,
+    "reviewed_pr_head": "e12df34aa150fa3818d47523609b54925dfceaf0",
+    "defect_summary": "The fix above redacted/counted the entire filtered (unpaged) review-queue result before _paged() selected the returned page: list_governance_review_queue and bff_list_reviews called _redact_review_queue_items(identity, items) on the full filtered list, then passed the already-redacted list into _paged(). Both routes therefore returned only the current page's items but reported meta.redacted_evidence_count for the whole filtered queue, not the returned page. Reproduced with a two-item store (item 1 alert-only, item 2 metric+job): GET /api/v1/operator/governance/review-queue?page_size=1 and GET /bff/reviews?page_size=1 both returned item 1 (zero redacted refs) with meta.redacted_evidence_count=2.",
+    "fix_summary": "In services/control-plane/bff/governance/router.py, reordered list_governance_review_queue and bff_list_reviews to call _paged(items, ...) first (on the raw, unredacted, filtered list) and then run _redact_review_queue_items(identity, response[\"items\"]) only on the page actually returned, overwriting response[\"items\"] and computing meta.redacted_evidence_count from that page alone. page_info.total is still computed by _paged() from the full filtered list length, so pagination totals are unchanged. Availability projection is preserved: when the dataset surface is unavailable, _paged() already returns page_items=[] before redaction runs, so redacted_evidence_count correctly reports 0 for a withheld page instead of counting refs that were never returned.",
+    "regression_coverage_added": [
+      "test_operator_governance_review_queue_redacted_count_scoped_to_returned_page (multipage: page 1 alert-only item -> redacted_evidence_count 0, total 2; page 2 metric/job item -> redacted_evidence_count 2, total 2)",
+      "test_bff_reviews_redacted_count_scoped_to_returned_page (same multipage scenario through the /bff/reviews compatibility alias)",
+      "test_operator_governance_review_queue_empty_result_has_zero_redacted_count (empty filtered queue)",
+      "test_operator_governance_review_queue_unavailable_surface_has_zero_redacted_count (dataset surface unavailable -> page withheld, count must not reflect unreturned items)"
+    ],
+    "terminal_commands_and_results": [
+      {
+        "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+        "result": "provisioned .venv-pantheon; verified pytest importable from a foreign cwd with no PYTHONPATH"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_review_queue_evidence_redaction.py",
+        "result": "10 passed, 3 warnings in 5.09s (6 pre-existing + 4 new pagination/empty/unavailable regression tests)"
+      },
+      {
+        "command": "ad-hoc reproduction script: real create_governance_router() composition, two-item store, GET .../review-queue?page_size=1 and GET /bff/reviews?page_size=1 with operator (low-capability) identity",
+        "result": "both return item gov-review-redaction-002 (alert-only), redacted_evidence_count=0, page_info.total=2 -- confirms the pagination defect no longer reproduces"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py",
+        "result": "24 passed, 2 warnings in 36.20s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q <temp copy of test_kw03_evidence_refs_contract.py fetched from origin/task/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 @ cc14d84e1, swapped into services/control-plane/bff/test_kw03_evidence_refs_contract.py, run, then restored>",
+        "result": "12 passed, 1 warning in 8.97s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/tests/test_bff_governance_subrules_contract.py",
+        "result": "3 failed (test_consultation_session_and_policy_read_routes, test_bff_approval_review_and_governance_ledger_compatibility, test_single_and_batch_approval_decisions_validate_and_report_partial_results), 44 passed -- the 3 failures reproduce identically with governance/router.py reverted to its pre-fix (PR #5985 head) content, confirming they are pre-existing 503s in build_client()'s default submit_action stub, unrelated to this repair"
+      }
+    ]
+  }
+}
