@@ -2739,6 +2739,13 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
+      "file": "tests/test_review_queue_evidence_redaction.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-REVIEW-QUEUE-REDACTION-REPAIR-001 regression: exercises create_governance_router directly with the real models.redact_evidence_refs and auth.policy.capabilities_for_identity; never imports main"
+    },
+    {
       "file": "tests/test_runtime_router.py",
       "layer": "router",
       "imports_main": false,
