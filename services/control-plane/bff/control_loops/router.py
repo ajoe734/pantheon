@@ -14,7 +14,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Body, Header, Query, Request
 
-from services.control_plane.bff.evidence_redaction import redact_evidence_field_items
 from services.control_plane.bff.loop_inventory import (
     LoopHealthDetailEnvelope,
     LoopHealthListEnvelope,
@@ -27,6 +26,7 @@ from services.control_plane.bff.models import (
     InterventionListResponse,
     ObjectType,
     OperatorIdentity,
+    redact_evidence_field_items,
     redact_evidence_refs as _default_redact_evidence_refs,
 )
 

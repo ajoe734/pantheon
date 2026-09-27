@@ -28,7 +28,7 @@ from typing import (
     Union,
 )
 
-from ..evidence_redaction import safe_redact_evidence_refs
+from ..models import safe_redact_evidence_refs
 
 
 class ApprovalQueueReaderPort(Protocol):

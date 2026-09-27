@@ -5,7 +5,7 @@
   "base_branch": "dev",
   "base_commit": "9bffba8cbf5d73b71ea8079f520fcbae31c550de",
   "head_commit_before_task_commit": "9bffba8cbf5d73b71ea8079f520fcbae31c550de",
-  "head_commit_note": "This value intentionally equals base_commit: it names the branch tip immediately before this task's own implementation commit(s) existed, not a claim that the base commit is the reviewed implementation. The actual reviewed implementation head is the exact task-branch commit that adds the control_loops/router.py + governance/service.py redaction fixes, the shared evidence_redaction.py helper module, the new regression test file, and this evidence file; per .orchestrator/skills/task-closeout-finalization.md that exact head SHA is frozen at owner handoff via REVIEW_HEAD_SHA/REVIEW_PR and will differ from base_commit. Do not read this field as the implementation-head binding -- read the canonical task row's frozen PR/head at handoff time instead.",
+  "head_commit_note": "This value intentionally equals base_commit: it names the branch tip immediately before this task's own implementation commit(s) existed, not a claim that the base commit is the reviewed implementation. The actual reviewed implementation head is the exact task-branch commit that adds the control_loops/router.py + governance/service.py redaction fixes, the shared safe_redact_evidence_refs/redact_evidence_field_items helpers added to models.py, the new regression test file, and this evidence file; per .orchestrator/skills/task-closeout-finalization.md that exact head SHA is frozen at owner handoff via REVIEW_HEAD_SHA/REVIEW_PR and will differ from base_commit. Do not read this field as the implementation-head binding -- read the canonical task row's frozen PR/head at handoff time instead.",
   "task_branch": "task/BFF-CONTROL-LOOPS-EVIDENCE-REDACTION-SWEEP-001",
   "defect_summary": "Follow-up to BFF-GOVERNANCE-EVIDENCE-REDACTION-SWEEP-001, whose independent reviewer recorded two out-of-contract findings: (1) the same discarded-identity pattern exists in control_loops/router.py (9 handlers call _read_identity(authorization) and discard the return value) and in core/app_factory.py's inline settings handlers (2 handlers call extract_identity(authorization) and discard it); (2) GovernanceService.committee_projection returns linked_evidence unredacted on the committee detail route despite already receiving identity as a parameter. This task audits all 9 control-loops handlers plus the 2 settings handlers plus the committee detail route, redacts every surface whose response structurally carries evidence-ref-shaped content, and documents why the remaining surfaces carry none.",
   "surface_audit": [
@@ -110,18 +110,18 @@
     "note": "control_loops_redacted (5) = OODA packets list, OODA packet detail, v5 intervention detail, sentinel finding detail, control-room. control_loops_no_op_documented (4) = v5 interventions list (response_model-enforced), loop-inventory list, loop-inventory detail, downstream-health (all three structurally bounded read models with no evidence-ref-shaped field). 5 + 4 = all 9 acceptance-listed control-loops surfaces."
   },
   "changed_files": [
-    "services/control-plane/bff/evidence_redaction.py",
     "services/control-plane/bff/control_loops/router.py",
     "services/control-plane/bff/governance/router.py",
     "services/control-plane/bff/governance/service.py",
     "services/control-plane/bff/core/app_factory.py",
+    "services/control-plane/bff/models.py",
     "services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py",
     "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
     "docs/deployment/evidence/BFF-CONTROL-LOOPS-EVIDENCE-REDACTION-SWEEP-001/evidence.json"
   ],
   "shared_helper_extraction": {
-    "new_module": "services/control-plane/bff/evidence_redaction.py",
-    "reason": "The task brief explicitly requires reusing governance/router.py's existing fail-closed capability-resolution wrapper (previously a private closure named _safe_redact) rather than duplicating it into control_loops/router.py. Moved the wrapper (safe_redact_evidence_refs) and a generic top-level list-field redaction helper (redact_evidence_field_items, mirroring governance/router.py's pre-existing _redact_evidence_field_items) into this new shared module.",
+    "location": "services/control-plane/bff/models.py (already inside the task's declared artifact contract; a standalone evidence_redaction.py module was drafted first but rejected by the artifact-contract gate as an undeclared path, so the helpers were folded into models.py instead, alongside the existing redact_evidence_refs/EVIDENCE_CAPABILITY_MAP/RedactedEvidenceRef it already owns)",
+    "reason": "The task brief explicitly requires reusing governance/router.py's existing fail-closed capability-resolution wrapper (previously a private closure named _safe_redact) rather than duplicating it into control_loops/router.py. Added the wrapper (safe_redact_evidence_refs) and a generic top-level list-field redaction helper (redact_evidence_field_items, mirroring governance/router.py's pre-existing _redact_evidence_field_items) to models.py.",
     "governance_router_change": "governance/router.py's _safe_redact is now a two-line delegation to the shared safe_redact_evidence_refs(); behavior is unchanged (verified by the full, unmodified 33-test test_governance_evidence_redaction_sweep.py suite still passing byte-for-byte).",
     "governance_service_change": "governance/service.py's committee_projection now calls the same shared safe_redact_evidence_refs() (via self.redact_evidence_refs/self.capabilities_for_identity, its own existing DI-injected collaborators) instead of copying linked_evidence unredacted.",
     "control_loops_router_change": "control_loops/router.py gained two new optional constructor parameters (redact_evidence_refs, capabilities_for_identity) with the same DI defaults as governance/router.py (models.redact_evidence_refs / lambda identity: []), wired through core/app_factory.py exactly like the governance router already is."
@@ -149,7 +149,7 @@
   "acceptance_notes": {
     "fail_closed": "Confirmed by test_v5_intervention_detail_fails_closed_when_capabilities_unresolvable and test_committee_detail_fails_closed_when_capabilities_unresolvable -- when capabilities_for_identity raises, safe_redact_evidence_refs() substitutes an empty capability set, so every capability-gated ref is withheld (each carrying redacted:true and its own required_capability from models.RedactedEvidenceRef) rather than disclosed.",
     "never_widens_disclosure": "No change to models.redact_evidence_refs, EVIDENCE_CAPABILITY_MAP, or any role/capability mapping in auth/policy.py; only route handlers/service methods that previously discarded identity or skipped redaction now route their payload through the pre-existing canonical redactor.",
-    "no_duplicate_symbols_or_routers": "The fail-closed capability-resolution wrapper exists in exactly one place (evidence_redaction.py::safe_redact_evidence_refs); governance/router.py's former private copy was replaced with a delegating call, not left as a second implementation. No new router, store, or fallback path was created; no symbol is defined twice.",
+    "no_duplicate_symbols_or_routers": "The fail-closed capability-resolution wrapper exists in exactly one place (models.py::safe_redact_evidence_refs); governance/router.py's former private copy was replaced with a delegating call, not left as a second implementation. No new router, store, or fallback path was created; no symbol is defined twice.",
     "redaction_after_pagination": "Verified for GET /bff/ooda/packets (dedicated multipage test) -- redaction is applied to response['items']/response['data'] after in-router page slicing (_page()), not to the full unpaginated dataset.",
     "bff_final_007_shape_match": "Every withheld ref in this task's tests asserts redacted:true, required_capability, reason==\"insufficient_capability\", and each fixed surface's meta reports redacted_evidence_count -- produced entirely by the unmodified models.redact_evidence_refs/RedactedEvidenceRef (BFF-FINAL-007, commit 4a14129b9).",
     "list_vs_detail_verified_separately": "list_v5_interventions and its sibling detail route were audited and tested independently, surfacing a genuine structural difference between them (response_model-enforced schema on the list route vs. raw pass-through on the detail route) rather than assuming identical treatment -- the exact failure mode the task brief warned against (a prior sweep misclassified a detail route as safe using a list/empty baseline)."
@@ -164,7 +164,7 @@
       "result": "9bffba8cbf5d73b71ea8079f520fcbae31c550de (task branch started from current origin/dev tip)"
     },
     {
-      "command": "python3 -c \"import ast; [ast.parse(open(f).read()) for f in ['services/control-plane/bff/control_loops/router.py','services/control-plane/bff/governance/router.py','services/control-plane/bff/governance/service.py','services/control-plane/bff/evidence_redaction.py','services/control-plane/bff/core/app_factory.py']]\"",
+      "command": "python3 -c \"import ast; [ast.parse(open(f).read()) for f in ['services/control-plane/bff/control_loops/router.py','services/control-plane/bff/governance/router.py','services/control-plane/bff/governance/service.py','services/control-plane/bff/core/app_factory.py']]\"",
       "result": "OK -- no syntax errors introduced"
     },
     {
@@ -176,7 +176,7 @@
       "result": "18 passed, 3 warnings in 8.53s"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py -- run against the unmodified BASE (control_loops/router.py, governance/router.py, governance/service.py, core/app_factory.py restored to git show HEAD:<path> content and evidence_redaction.py removed; new test file kept)",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py -- run against the unmodified BASE (control_loops/router.py, governance/router.py, governance/service.py, core/app_factory.py, and models.py all restored to `git show 9bffba8cb:<path>` content -- 9bffba8cb is base_commit/HEAD~1, the exact pre-task-commit tip of origin/dev; new test file kept, evidence_redaction.py deleted since base never had it)",
       "result": "18 failed (every test) -- TypeError: create_control_loops_router() got an unexpected keyword argument 'redact_evidence_refs', proving the test file cannot pass without this task's implementation, not merely asserting a tautology"
     },
     {

@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from ..evidence_redaction import safe_redact_evidence_refs
+from ..models import safe_redact_evidence_refs
 from .service import GovernanceService, SubmitAction, page_slice, split_csv, utc_now_rfc3339
 
 
