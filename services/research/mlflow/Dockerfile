@@ -1,7 +1,8 @@
 FROM python:3.11-slim
 WORKDIR /app
-COPY requirements.txt entrypoint.py ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt ./requirements.lock
+RUN pip install --no-cache-dir -r requirements.lock
+COPY entrypoint.py ./entrypoint.py
 RUN addgroup --system pantheon \
     && adduser --system --ingroup pantheon --home /home/pantheon pantheon \
     && chown -R pantheon:pantheon /app /home/pantheon

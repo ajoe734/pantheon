@@ -4,8 +4,8 @@
 # a test W&B project, and WANDB_API_KEY; see WANDB_ACTIVATION.md.
 FROM python:3.11-slim
 WORKDIR /app
-COPY services/registry/experiments/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY dependencies/locks/services-registry-experiments.txt ./requirements.lock
+RUN pip install --no-cache-dir -r requirements.lock
 COPY services/registry/experiments/adapter.py ./adapter.py
 COPY services/registry/experiments/config.py ./config.py
 COPY services/registry/experiments/smoke_test.py ./smoke_test.py
