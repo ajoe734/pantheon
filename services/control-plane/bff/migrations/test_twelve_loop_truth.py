@@ -698,3 +698,421 @@ def test_postgres_older_stimulus_cannot_steal_live_next_consumer(provenance: str
         before["next_consumer_receipt_id"],
         before["observed_at"],
     )
+
+
+def test_postgres_scoped_migration_and_honest_legacy_handling() -> None:
+    """Acceptance: Forward migration 003 preserves legacy unscoped rows honestly without invented provenance or cross-tenant leakage."""
+    import json
+    from uuid import uuid4
+    from services.control_plane.bff.migrations.twelve_loop_truth import (
+        MIGRATION_002_SQL_PATH,
+        MIGRATION_003_SQL_PATH,
+    )
+
+    schema = f"test_mig_{uuid4().hex[:8]}"
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
+
+    # 1. Apply Migration 002 alone
+    sql_002 = MIGRATION_002_SQL_PATH.read_text(encoding="utf-8").replace("loop_truth_projection", schema)
+    with store._connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql_002)
+        conn.commit()
+
+    # 2. Seed legacy unscoped rows under 002 schema
+    release_id = f"rel-legacy-{uuid4().hex[:6]}"
+    corr_id = f"corr-legacy-{uuid4().hex[:6]}"
+    now = datetime.now(timezone.utc)
+    with store._connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO {schema}.loop_receipts (
+                    receipt_id, receipt_type, loop_id, correlation_id, release_id,
+                    owner, provenance, status, observed_at, causation_id, payload
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                ("legacy-rcpt-001", "terminal", 1, corr_id, release_id, "test", "live", "completed", now, "cause-001", json.dumps({"legacy": True}))
+            )
+            cur.execute(
+                f"""
+                INSERT INTO {schema}.twelve_loop_observations (
+                    release_id, correlation_id, loop_id, owner,
+                    terminal_id, terminal_status, terminal_observed_at,
+                    status, freshness_status, provenance, observed_at,
+                    causation_id, receipt_ids
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (release_id, corr_id, 1, "test", "legacy-rcpt-001", "completed", now, "complete", "fresh", "live", now, "cause-001", json.dumps(["legacy-rcpt-001"]))
+            )
+        conn.commit()
+
+    # 3. Apply Migration 003 forward
+    sql_003 = MIGRATION_003_SQL_PATH.read_text(encoding="utf-8").replace("loop_truth_projection", schema)
+    with store._connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql_003)
+        conn.commit()
+
+    try:
+        # 4. Verify legacy observation preserves honest NULL tenant_id and environment
+        legacy_obs = store.get_observation(release_id, corr_id, 1)
+        assert legacy_obs is not None
+        assert legacy_obs.tenant_id is None
+        assert legacy_obs.environment is None
+        assert legacy_obs.terminal_id == "legacy-rcpt-001"
+        assert legacy_obs.provenance == "live"
+
+        # 5. Scoped queries MUST NOT see legacy rows (zero cross-tenant leakage)
+        assert store.get_observation(release_id, corr_id, 1, tenant_id="tenant-alpha", environment="production") is None
+        assert store.list_receipts(tenant_id="tenant-alpha", release_id=release_id) == []
+        assert store.list_observations(tenant_id="tenant-alpha", release_id=release_id) == []
+
+        # 6. Unscoped queries honestly return legacy rows
+        unscoped_rcpts = store.list_receipts(release_id=release_id)
+        assert len(unscoped_rcpts) == 1
+        assert unscoped_rcpts[0].receipt_id == "legacy-rcpt-001"
+        assert unscoped_rcpts[0].tenant_id is None
+
+        # 7. Insert scoped receipt & observation on identical (release_id, correlation_id, loop_id)
+        tenant_rcpt = CanonicalLoopReceipt(
+            receipt_id="tenant-alpha-rcpt-001",
+            receipt_type="terminal",
+            loop_id=1,
+            correlation_id=corr_id,
+            release_id=release_id,
+            owner="test-alpha",
+            provenance="live",
+            status="completed",
+            observed_at=now,
+            tenant_id="tenant-alpha",
+            environment="production",
+        )
+        store.record_receipt(tenant_rcpt)
+
+        obs_alpha = LoopObservation(
+            release_id=release_id,
+            correlation_id=corr_id,
+            loop_id=1,
+            owner="test-alpha",
+            terminal_id="tenant-alpha-rcpt-001",
+            terminal_status="completed",
+            status="complete",
+            freshness_status="fresh",
+            provenance="live",
+            observed_at=now,
+            receipt_ids=["tenant-alpha-rcpt-001"],
+            tenant_id="tenant-alpha",
+            environment="production",
+        )
+        store.upsert_observation(obs_alpha)
+
+        # 8. Both coexist peacefully without collision
+        legacy_after = store.get_observation(release_id, corr_id, 1)
+        assert legacy_after is not None
+        assert legacy_after.tenant_id is None
+        assert legacy_after.terminal_id == "legacy-rcpt-001"
+
+        alpha_after = store.get_observation(release_id, corr_id, 1, tenant_id="tenant-alpha", environment="production")
+        assert alpha_after is not None
+        assert alpha_after.tenant_id == "tenant-alpha"
+        assert alpha_after.environment == "production"
+        assert alpha_after.terminal_id == "tenant-alpha-rcpt-001"
+    finally:
+        with store._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+            conn.commit()
+
+
+def test_postgres_scoped_persistence_multi_tenant_streaming_and_rebuild_equivalence() -> None:
+    """Acceptance: Multi-tenant streaming, fresh process restart/reload, and rebuild equivalence on PostgreSQL."""
+    from uuid import uuid4
+
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    shared_rel = f"rel-multi-{uuid4().hex[:6]}"
+    shared_corr = f"corr-multi-{uuid4().hex[:6]}"
+    now = datetime.now(timezone.utc)
+
+    # Tenant Alpha (production)
+    alpha_stim = CanonicalLoopReceipt(
+        receipt_id=f"alpha-stim-{uuid4().hex[:6]}",
+        receipt_type="stimulus",
+        loop_id=1,
+        correlation_id=shared_corr,
+        release_id=shared_rel,
+        owner="alpha-stim",
+        provenance="live",
+        observed_at=now,
+        tenant_id="tenant-alpha",
+        environment="production",
+    )
+    alpha_term = CanonicalLoopReceipt(
+        receipt_id=f"alpha-term-{uuid4().hex[:6]}",
+        receipt_type="terminal",
+        loop_id=1,
+        correlation_id=shared_corr,
+        release_id=shared_rel,
+        owner="alpha-term",
+        provenance="live",
+        status="completed",
+        observed_at=now + timedelta(seconds=1),
+        tenant_id="tenant-alpha",
+        environment="production",
+    )
+    alpha_next = CanonicalLoopReceipt(
+        receipt_id=f"alpha-next-{uuid4().hex[:6]}",
+        receipt_type="next_consumer",
+        loop_id=1,
+        correlation_id=shared_corr,
+        release_id=shared_rel,
+        owner="alpha-next",
+        provenance="live",
+        status="accepted",
+        observed_at=now + timedelta(seconds=2),
+        tenant_id="tenant-alpha",
+        environment="production",
+    )
+
+    # Tenant Beta (staging) on identical release_id and correlation_id
+    beta_stim = CanonicalLoopReceipt(
+        receipt_id=f"beta-stim-{uuid4().hex[:6]}",
+        receipt_type="stimulus",
+        loop_id=1,
+        correlation_id=shared_corr,
+        release_id=shared_rel,
+        owner="beta-stim",
+        provenance="live",
+        observed_at=now,
+        tenant_id="tenant-beta",
+        environment="staging",
+    )
+    beta_term = CanonicalLoopReceipt(
+        receipt_id=f"beta-term-{uuid4().hex[:6]}",
+        receipt_type="terminal",
+        loop_id=1,
+        correlation_id=shared_corr,
+        release_id=shared_rel,
+        owner="beta-term",
+        provenance="live",
+        status="failed",
+        observed_at=now + timedelta(seconds=1),
+        tenant_id="tenant-beta",
+        environment="staging",
+    )
+
+    # Stream through scoped projectors
+    proj_alpha = TwelveLoopTruthProjector(store=store, tenant_id="tenant-alpha", environment="production", auto_load=False)
+    proj_beta = TwelveLoopTruthProjector(store=store, tenant_id="tenant-beta", environment="staging", auto_load=False)
+
+    proj_alpha.ingest_receipts([alpha_stim, alpha_term, alpha_next])
+    proj_beta.ingest_receipts([beta_stim, beta_term])
+
+    obs_alpha = proj_alpha.get_observation(shared_rel, shared_corr, 1)
+    obs_beta = proj_beta.get_observation(shared_rel, shared_corr, 1)
+
+    assert obs_alpha is not None
+    assert obs_alpha.tenant_id == "tenant-alpha"
+    assert obs_alpha.environment == "production"
+    assert obs_alpha.status == "complete"
+    assert obs_alpha.terminal_status == "completed"
+
+    assert obs_beta is not None
+    assert obs_beta.tenant_id == "tenant-beta"
+    assert obs_beta.environment == "staging"
+    assert obs_beta.status == "failed"
+    assert obs_beta.terminal_status == "failed"
+
+    # Simulate fresh process restart with auto_load=True
+    fresh_alpha = TwelveLoopTruthProjector(store=store, tenant_id="tenant-alpha", environment="production", auto_load=True)
+    fresh_beta = TwelveLoopTruthProjector(store=store, tenant_id="tenant-beta", environment="staging", auto_load=True)
+
+    reloaded_alpha = fresh_alpha.get_observation(shared_rel, shared_corr, 1)
+    reloaded_beta = fresh_beta.get_observation(shared_rel, shared_corr, 1)
+
+    assert reloaded_alpha is not None
+    assert reloaded_beta is not None
+    assert reloaded_alpha.to_dict() == obs_alpha.to_dict()
+    assert reloaded_beta.to_dict() == obs_beta.to_dict()
+
+    # Rebuild equivalence from store receipts
+    rebuilt_alpha = fresh_alpha.rebuild()
+    alpha_matches = [o for o in rebuilt_alpha if o.release_id == shared_rel and o.correlation_id == shared_corr and o.loop_id == 1]
+    assert len(alpha_matches) == 1
+    assert alpha_matches[0].to_dict() == obs_alpha.to_dict()
+
+    # Durable store observations match exactly
+    durable_alpha = store.get_observation(shared_rel, shared_corr, 1, tenant_id="tenant-alpha", environment="production")
+    durable_beta = store.get_observation(shared_rel, shared_corr, 1, tenant_id="tenant-beta", environment="staging")
+    assert durable_alpha is not None
+    assert durable_beta is not None
+    assert durable_alpha.to_dict() == obs_alpha.to_dict()
+    assert durable_beta.to_dict() == obs_beta.to_dict()
+
+
+def test_postgres_scoped_cross_tenant_collisions_and_duplicate_receipt_handling() -> None:
+    """P1: Duplicate receipts and cross-tenant collision invariants against PostgreSQL store."""
+    from uuid import uuid4
+
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    shared_rcpt_id = f"rcpt-collision-{uuid4().hex}"
+    now = datetime.now(timezone.utc)
+
+    # Ingest for Tenant A
+    rcpt_a = CanonicalLoopReceipt(
+        receipt_id=shared_rcpt_id,
+        receipt_type="stimulus",
+        loop_id=1,
+        correlation_id="corr-coll-1",
+        release_id="rel-coll-1",
+        owner="owner-a",
+        provenance="live",
+        observed_at=now,
+        tenant_id="tenant-a",
+        environment="prod",
+    )
+    store.record_receipt(rcpt_a)
+
+    # Attempt to insert same receipt_id for Tenant B in Postgres store
+    rcpt_b = CanonicalLoopReceipt(
+        receipt_id=shared_rcpt_id,
+        receipt_type="stimulus",
+        loop_id=1,
+        correlation_id="corr-coll-1",
+        release_id="rel-coll-1",
+        owner="owner-b",
+        provenance="live",
+        observed_at=now,
+        tenant_id="tenant-b",
+        environment="prod",
+    )
+    store.record_receipt(rcpt_b)
+
+    # Store must preserve Tenant A receipt unchanged (ON CONFLICT DO NOTHING)
+    stored = store.get_receipt(shared_rcpt_id)
+    assert stored is not None
+    assert stored.tenant_id == "tenant-a"
+    assert stored.owner == "owner-a"
+
+    # Projector scope mismatch raises ValueError
+    proj_a = TwelveLoopTruthProjector(tenant_id="tenant-a", environment="prod")
+    proj_a.ingest_receipt(rcpt_a)
+    with pytest.raises(ValueError, match="conflicts with projector scoped tenant"):
+        proj_a.ingest_receipt(rcpt_b)
+
+    # Projector duplicate receipt_id with different scope raises ValueError
+    unscoped_proj = TwelveLoopTruthProjector()
+    unscoped_proj.ingest_receipt(rcpt_a)
+    with pytest.raises(ValueError, match="Conflicting receipt identity"):
+        unscoped_proj.ingest_receipt(rcpt_b)
+
+
+def test_postgres_scoped_out_of_order_and_provenance_fencing() -> None:
+    """P1: Out-of-order delivery and provenance fencing with explicit tenant and environment on PostgreSQL."""
+    from uuid import uuid4
+
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    key = f"pg-ooo-{uuid4().hex[:8]}"
+    tenant_id = "tenant-fence"
+    env = "staging"
+    now = datetime.now(timezone.utc)
+
+    # Next consumer arrives BEFORE stimulus and terminal
+    next_rcpt = CanonicalLoopReceipt(
+        receipt_id=f"{key}-next",
+        receipt_type="next_consumer",
+        loop_id=2,
+        correlation_id=key,
+        release_id=key,
+        owner="next-connector",
+        provenance="live",
+        status="completed",
+        observed_at=now + timedelta(seconds=10),
+        tenant_id=tenant_id,
+        environment=env,
+    )
+    stimulus = CanonicalLoopReceipt(
+        receipt_id=f"{key}-stim",
+        receipt_type="stimulus",
+        loop_id=2,
+        correlation_id=key,
+        release_id=key,
+        owner="stim-connector",
+        provenance="live",
+        observed_at=now,
+        tenant_id=tenant_id,
+        environment=env,
+    )
+    terminal = CanonicalLoopReceipt(
+        receipt_id=f"{key}-term",
+        receipt_type="terminal",
+        loop_id=2,
+        correlation_id=key,
+        release_id=key,
+        owner="stim-connector",
+        provenance="live",
+        status="completed",
+        observed_at=now + timedelta(seconds=5),
+        tenant_id=tenant_id,
+        environment=env,
+    )
+
+    proj = TwelveLoopTruthProjector(store=store, tenant_id=tenant_id, environment=env, auto_load=False)
+    # Ingest out of order: next_consumer -> stimulus -> terminal
+    proj.ingest_receipt(next_rcpt)
+    obs_early = proj.get_observation(key, key, 2)
+    assert obs_early is not None
+    assert obs_early.status == "open"
+    assert obs_early.next_consumer_receipt_id == next_rcpt.receipt_id
+
+    proj.ingest_receipt(stimulus)
+    proj.ingest_receipt(terminal)
+    obs_done = proj.get_observation(key, key, 2)
+    assert obs_done is not None
+    assert obs_done.status == "complete"
+    assert obs_done.terminal_id == terminal.receipt_id
+    assert obs_done.next_consumer_receipt_id == next_rcpt.receipt_id
+
+    # Ingest an older replay stimulus; must NOT downgrade provenance or overwrite observed_at
+    replay_stim = CanonicalLoopReceipt(
+        receipt_id=f"{key}-replay-stim",
+        receipt_type="stimulus",
+        loop_id=2,
+        correlation_id=key,
+        release_id=key,
+        owner="stim-connector",
+        provenance="replay",
+        observed_at=now - timedelta(seconds=60),
+        tenant_id=tenant_id,
+        environment=env,
+    )
+    proj.ingest_receipt(replay_stim)
+    obs_fenced = store.get_observation(key, key, 2, tenant_id=tenant_id, environment=env)
+    assert obs_fenced is not None
+    assert obs_fenced.provenance == "live"
+    assert obs_fenced.status == "complete"
+
+
+def test_postgres_scoped_failed_persistence_raises() -> None:
+    """P1: Failed persistence on unreachable DSN raises exception cleanly without corrupted store state."""
+    broken_store = PostgresTwelveLoopStore("postgresql://invalid:invalid@127.0.0.1:59999/broken")
+    obs = LoopObservation(
+        release_id="rel-fail",
+        correlation_id="corr-fail",
+        loop_id=1,
+        owner="test",
+        status="open",
+        freshness_status="fresh",
+        provenance="live",
+        observed_at=datetime.now(timezone.utc),
+        tenant_id="tenant-fail",
+        environment="staging",
+    )
+    with pytest.raises(Exception):
+        broken_store.upsert_observation(obs)

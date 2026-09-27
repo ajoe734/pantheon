@@ -38,7 +38,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-MIGRATION_SQL_PATH = Path(__file__).resolve().parent / "002_create_twelve_loop_truth_schema.sql"
+MIGRATIONS_DIR = Path(__file__).resolve().parent
+MIGRATION_SQL_PATH = MIGRATIONS_DIR / "002_create_twelve_loop_truth_schema.sql"
+MIGRATION_002_SQL_PATH = MIGRATIONS_DIR / "002_create_twelve_loop_truth_schema.sql"
+MIGRATION_003_SQL_PATH = MIGRATIONS_DIR / "003_scope_twelve_loop_truth_receipts.sql"
 
 
 class TwelveLoopStore:
@@ -53,6 +56,8 @@ class TwelveLoopStore:
     def list_receipts(
         self,
         *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
         release_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
         loop_id: Optional[int] = None,
@@ -63,13 +68,21 @@ class TwelveLoopStore:
         raise NotImplementedError
 
     def get_observation(
-        self, release_id: str, correlation_id: str, loop_id: int
+        self,
+        release_id: str,
+        correlation_id: str,
+        loop_id: int,
+        *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
     ) -> Optional[LoopObservation]:
         raise NotImplementedError
 
     def list_observations(
         self,
         *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
         release_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
         loop_id: Optional[int] = None,
@@ -85,7 +98,7 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
 
     def __init__(self) -> None:
         self._receipts: Dict[str, CanonicalLoopReceipt] = {}
-        self._observations: Dict[Tuple[str, str, int], LoopObservation] = {}
+        self._observations: Dict[Tuple[Optional[str], Optional[str], str, str, int], LoopObservation] = {}
 
     def record_receipt(self, receipt: CanonicalLoopReceipt) -> None:
         if receipt.receipt_id not in self._receipts:
@@ -97,21 +110,27 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
     def list_receipts(
         self,
         *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
         release_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
         loop_id: Optional[int] = None,
     ) -> List[CanonicalLoopReceipt]:
         items = list(self._receipts.values())
+        if tenant_id is not None:
+            items = [r for r in items if r.tenant_id == tenant_id]
+        if environment is not None:
+            items = [r for r in items if r.environment == environment]
         if release_id:
             items = [r for r in items if r.release_id == release_id]
         if correlation_id:
             items = [r for r in items if r.correlation_id == correlation_id]
         if loop_id is not None:
             items = [r for r in items if r.loop_id == loop_id]
-        return sorted(items, key=lambda r: (r.release_id, r.correlation_id, r.loop_id, r.observed_at))
+        return sorted(items, key=lambda r: (r.tenant_id or "", r.environment or "", r.release_id, r.correlation_id, r.loop_id, r.observed_at))
 
     def upsert_observation(self, obs: LoopObservation) -> None:
-        key = (obs.release_id, obs.correlation_id, obs.loop_id)
+        key = (obs.tenant_id, obs.environment, obs.release_id, obs.correlation_id, obs.loop_id)
         existing = self._observations.get(key)
         if existing is not None:
             # 1. Receipt-set ordering: new observation must contain all receipts of existing observation
@@ -129,25 +148,37 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
         self._observations[key] = copy.copy(obs)
 
     def get_observation(
-        self, release_id: str, correlation_id: str, loop_id: int
+        self,
+        release_id: str,
+        correlation_id: str,
+        loop_id: int,
+        *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
     ) -> Optional[LoopObservation]:
-        return self._observations.get((release_id, correlation_id, loop_id))
+        return self._observations.get((tenant_id, environment, release_id, correlation_id, loop_id))
 
     def list_observations(
         self,
         *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
         release_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
         loop_id: Optional[int] = None,
     ) -> List[LoopObservation]:
         items = list(self._observations.values())
+        if tenant_id is not None:
+            items = [o for o in items if o.tenant_id == tenant_id]
+        if environment is not None:
+            items = [o for o in items if o.environment == environment]
         if release_id:
             items = [o for o in items if o.release_id == release_id]
         if correlation_id:
             items = [o for o in items if o.correlation_id == correlation_id]
         if loop_id is not None:
             items = [o for o in items if o.loop_id == loop_id]
-        return sorted(items, key=lambda o: (o.release_id, o.correlation_id, o.loop_id))
+        return sorted(items, key=lambda o: (o.tenant_id or "", o.environment or "", o.release_id, o.correlation_id, o.loop_id))
 
     def clear_observations(self) -> None:
         self._observations.clear()
@@ -165,10 +196,15 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         return psycopg.connect(self.dsn)
 
     def apply_migration_sync(self) -> None:
-        sql = MIGRATION_SQL_PATH.read_text(encoding="utf-8")
+        sql_002 = MIGRATION_002_SQL_PATH.read_text(encoding="utf-8")
+        sql_003 = MIGRATION_003_SQL_PATH.read_text(encoding="utf-8")
+        if self.schema != "loop_truth_projection":
+            sql_002 = sql_002.replace("loop_truth_projection", self.schema)
+            sql_003 = sql_003.replace("loop_truth_projection", self.schema)
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql)
+                cur.execute(sql_002)
+                cur.execute(sql_003)
             conn.commit()
 
     async def apply_migration(self) -> None:
@@ -176,8 +212,13 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
             import asyncpg
             conn = await asyncpg.connect(self.dsn)
             try:
-                sql = MIGRATION_SQL_PATH.read_text(encoding="utf-8")
-                await conn.execute(sql)
+                sql_002 = MIGRATION_002_SQL_PATH.read_text(encoding="utf-8")
+                sql_003 = MIGRATION_003_SQL_PATH.read_text(encoding="utf-8")
+                if self.schema != "loop_truth_projection":
+                    sql_002 = sql_002.replace("loop_truth_projection", self.schema)
+                    sql_003 = sql_003.replace("loop_truth_projection", self.schema)
+                await conn.execute(sql_002)
+                await conn.execute(sql_003)
             finally:
                 await conn.close()
         except Exception:
@@ -188,8 +229,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
             INSERT INTO {self.schema}.loop_receipts (
                 receipt_id, receipt_type, loop_id, correlation_id, release_id,
                 owner, provenance, status, observed_at, degradation_reason,
-                causation_id, payload
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                causation_id, payload, tenant_id, environment
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (receipt_id) DO NOTHING;
         """
         with self._connect() as conn:
@@ -209,6 +250,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                         receipt.degradation_reason,
                         receipt.causation_id,
                         json.dumps(receipt.payload),
+                        receipt.tenant_id,
+                        receipt.environment,
                     ),
                 )
             conn.commit()
@@ -222,8 +265,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                     INSERT INTO {self.schema}.loop_receipts (
                         receipt_id, receipt_type, loop_id, correlation_id, release_id,
                         owner, provenance, status, observed_at, degradation_reason,
-                        causation_id, payload
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        causation_id, payload, tenant_id, environment
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                     ON CONFLICT (receipt_id) DO NOTHING;
                 """
                 await conn.execute(
@@ -240,6 +283,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                     receipt.degradation_reason,
                     receipt.causation_id,
                     json.dumps(receipt.payload),
+                    receipt.tenant_id,
+                    receipt.environment,
                 )
             finally:
                 await conn.close()
@@ -250,7 +295,7 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         query = f"""
             SELECT receipt_id, receipt_type, loop_id, correlation_id, release_id,
                    owner, provenance, status, observed_at, degradation_reason,
-                   causation_id, payload
+                   causation_id, payload, tenant_id, environment
             FROM {self.schema}.loop_receipts
             WHERE receipt_id = %s;
         """
@@ -279,6 +324,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                     degradation_reason=row[9],
                     causation_id=row[10],
                     payload=payload if isinstance(payload, dict) else {},
+                    tenant_id=row[12],
+                    environment=row[13],
                 )
 
     async def get_receipt_async(self, receipt_id: str) -> Optional[CanonicalLoopReceipt]:
@@ -289,7 +336,7 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                 query = f"""
                     SELECT receipt_id, receipt_type, loop_id, correlation_id, release_id,
                            owner, provenance, status, observed_at, degradation_reason,
-                           causation_id, payload
+                           causation_id, payload, tenant_id, environment
                     FROM {self.schema}.loop_receipts
                     WHERE receipt_id = $1;
                 """
@@ -315,6 +362,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                     degradation_reason=row["degradation_reason"],
                     causation_id=row["causation_id"],
                     payload=payload if isinstance(payload, dict) else {},
+                    tenant_id=row["tenant_id"],
+                    environment=row["environment"],
                 )
             finally:
                 await conn.close()
@@ -324,12 +373,20 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
     def list_receipts(
         self,
         *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
         release_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
         loop_id: Optional[int] = None,
     ) -> List[CanonicalLoopReceipt]:
         clauses = []
         params = []
+        if tenant_id is not None:
+            clauses.append("tenant_id = %s")
+            params.append(tenant_id)
+        if environment is not None:
+            clauses.append("environment = %s")
+            params.append(environment)
         if release_id:
             clauses.append("release_id = %s")
             params.append(release_id)
@@ -343,7 +400,7 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         query = f"""
             SELECT receipt_id, receipt_type, loop_id, correlation_id, release_id,
                    owner, provenance, status, observed_at, degradation_reason,
-                   causation_id, payload
+                   causation_id, payload, tenant_id, environment
             FROM {self.schema}.loop_receipts
             {where_clause}
             ORDER BY observed_at ASC, receipt_id ASC;
@@ -374,6 +431,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                             degradation_reason=row[9],
                             causation_id=row[10],
                             payload=payload if isinstance(payload, dict) else {},
+                            tenant_id=row[12],
+                            environment=row[13],
                         )
                     )
         return results
@@ -381,16 +440,16 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
     def upsert_observation(self, obs: LoopObservation) -> None:
         query = f"""
             INSERT INTO {self.schema}.twelve_loop_observations (
-                release_id, correlation_id, loop_id, owner,
+                tenant_id, environment, release_id, correlation_id, loop_id, owner,
                 stimulus_id, stimulus_observed_at,
                 terminal_id, terminal_status, terminal_observed_at,
                 next_consumer_receipt_id, next_consumer_observed_at,
                 status, freshness_status, provenance, observed_at,
                 degradation_reason, causation_id, receipt_ids, updated_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp()
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp()
             )
-            ON CONFLICT (release_id, correlation_id, loop_id) DO UPDATE SET
+            ON CONFLICT (tenant_id, environment, release_id, correlation_id, loop_id) DO UPDATE SET
                 owner = EXCLUDED.owner,
                 stimulus_id = EXCLUDED.stimulus_id,
                 stimulus_observed_at = EXCLUDED.stimulus_observed_at,
@@ -418,6 +477,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                 cur.execute(
                     query,
                     (
+                        obs.tenant_id,
+                        obs.environment,
                         obs.release_id,
                         obs.correlation_id,
                         obs.loop_id,
@@ -447,16 +508,16 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
             try:
                 query = f"""
                     INSERT INTO {self.schema}.twelve_loop_observations (
-                        release_id, correlation_id, loop_id, owner,
+                        tenant_id, environment, release_id, correlation_id, loop_id, owner,
                         stimulus_id, stimulus_observed_at,
                         terminal_id, terminal_status, terminal_observed_at,
                         next_consumer_receipt_id, next_consumer_observed_at,
                         status, freshness_status, provenance, observed_at,
                         degradation_reason, causation_id, receipt_ids, updated_at
                     ) VALUES (
-                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, clock_timestamp()
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, clock_timestamp()
                     )
-                    ON CONFLICT (release_id, correlation_id, loop_id) DO UPDATE SET
+                    ON CONFLICT (tenant_id, environment, release_id, correlation_id, loop_id) DO UPDATE SET
                         owner = EXCLUDED.owner,
                         stimulus_id = EXCLUDED.stimulus_id,
                         stimulus_observed_at = EXCLUDED.stimulus_observed_at,
@@ -481,6 +542,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                 """
                 await conn.execute(
                     query,
+                    obs.tenant_id,
+                    obs.environment,
                     obs.release_id,
                     obs.correlation_id,
                     obs.loop_id,
@@ -506,21 +569,41 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
             self.upsert_observation(obs)
 
     def get_observation(
-        self, release_id: str, correlation_id: str, loop_id: int
+        self,
+        release_id: str,
+        correlation_id: str,
+        loop_id: int,
+        *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
     ) -> Optional[LoopObservation]:
+        clauses = ["release_id = %s", "correlation_id = %s", "loop_id = %s"]
+        params: List[Any] = [release_id, correlation_id, loop_id]
+        if tenant_id is not None:
+            clauses.append("tenant_id = %s")
+            params.append(tenant_id)
+        else:
+            clauses.append("tenant_id IS NULL")
+        if environment is not None:
+            clauses.append("environment = %s")
+            params.append(environment)
+        else:
+            clauses.append("environment IS NULL")
+        where_clause = "WHERE " + " AND ".join(clauses)
         query = f"""
             SELECT release_id, correlation_id, loop_id, owner,
                    stimulus_id, stimulus_observed_at,
                    terminal_id, terminal_status, terminal_observed_at,
                    next_consumer_receipt_id, next_consumer_observed_at,
                    status, freshness_status, provenance, observed_at,
-                   degradation_reason, causation_id, receipt_ids
+                   degradation_reason, causation_id, receipt_ids,
+                   tenant_id, environment
             FROM {self.schema}.twelve_loop_observations
-            WHERE release_id = %s AND correlation_id = %s AND loop_id = %s;
+            {where_clause};
         """
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (release_id, correlation_id, loop_id))
+                cur.execute(query, tuple(params))
                 row = cur.fetchone()
                 if not row:
                     return None
@@ -549,17 +632,27 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                     degradation_reason=row[15],
                     causation_id=row[16],
                     receipt_ids=list(receipt_ids or []),
+                    tenant_id=row[18],
+                    environment=row[19],
                 )
 
     def list_observations(
         self,
         *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
         release_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
         loop_id: Optional[int] = None,
     ) -> List[LoopObservation]:
         clauses = []
         params = []
+        if tenant_id is not None:
+            clauses.append("tenant_id = %s")
+            params.append(tenant_id)
+        if environment is not None:
+            clauses.append("environment = %s")
+            params.append(environment)
         if release_id:
             clauses.append("release_id = %s")
             params.append(release_id)
@@ -576,7 +669,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                    terminal_id, terminal_status, terminal_observed_at,
                    next_consumer_receipt_id, next_consumer_observed_at,
                    status, freshness_status, provenance, observed_at,
-                   degradation_reason, causation_id, receipt_ids
+                   degradation_reason, causation_id, receipt_ids,
+                   tenant_id, environment
             FROM {self.schema}.twelve_loop_observations
             {where_clause}
             ORDER BY release_id ASC, correlation_id ASC, loop_id ASC;
@@ -613,6 +707,8 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                             degradation_reason=row[15],
                             causation_id=row[16],
                             receipt_ids=list(receipt_ids or []),
+                            tenant_id=row[18],
+                            environment=row[19],
                         )
                     )
         return results

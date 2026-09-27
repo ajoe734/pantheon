@@ -1,0 +1,75 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "LOOP-RECEIPT-SCOPE-STORAGE-001",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "base_ref": "dev@3bb04edb292a171457c49bc608104c3d2174e704",
+  "depends_on": {
+    "LOOP-TRUTH-001": "done",
+    "BFF-TEST-PREEXISTING-FAILURE-TRIAGE-001": "done"
+  },
+  "normative_plan": "Audit at /tmp/pantheon-dependency-audit-20260927/REPORT.zh-TW.md; narrow implementation prerequisite extracted from LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001",
+  "implementation": {
+    "files_modified": [
+      "services/control-plane/bff/migrations/003_scope_twelve_loop_truth_receipts.sql",
+      "services/control-plane/bff/migrations/twelve_loop_truth.py",
+      "services/control-plane/bff/management_read_models/twelve_loop_projector.py",
+      "services/control-plane/bff/management_read_models/test_twelve_loop_projector.py",
+      "services/control-plane/bff/migrations/test_twelve_loop_truth.py",
+      "docs/deployment/evidence/LOOP-RECEIPT-SCOPE-STORAGE-001/evidence.json"
+    ],
+    "summary": "Scope existing twelve-loop receipt schema and durable store with explicit tenant_id and environment before producer/read integration. Preserves honest legacy unscoped rows without invented provenance, enforces zero cross-tenant leakage, rejects conflicting receipt identity, and establishes durable PostgreSQL persistence and rebuild equivalence.",
+    "current_fix": "Forward migration 003 adds nullable tenant_id and environment columns to loop_receipts and twelve_loop_observations. Replaces pkey with NULLS NOT DISTINCT unique index on twelve_loop_observations (tenant_id, environment, release_id, correlation_id, loop_id). TwelveLoopStore and TwelveLoopTruthProjector enforce trusted caller scope boundaries, rejecting scope tampering and cross-tenant receipt collisions while preserving terminal-plus-next-consumer invariants.",
+    "regressions": "PostgreSQL migration 002-to-003 upgrade and legacy row preservation, multi-tenant streaming and fresh process reload rebuild equivalence, cross-tenant collision rejection, out-of-order delivery with provenance fencing, and failed persistence error handling.",
+    "boundary": "Scoped receipt schema, storage, and read models only; no hosted deployment, no production-data migration, no credential changes, no second store or projector.",
+    "rollback_plan": "Forward migration 003 is additive. Older unscoped rows retain NULL tenant/environment. Rollback to 002 schema can be achieved by removing scoped indexes and restoring twelve_loop_observations_pkey."
+  },
+  "verification": {
+    "tested_at_utc": "2026-09-27T17:44:00Z",
+    "collection": "Every listed batch was run in bounded foreground execution and terminal exit status was collected.",
+    "commands": [
+      {
+        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py",
+        "exit_code": 0,
+        "result": "25 passed in 50.39s",
+        "passed": 25,
+        "failed": 0
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py",
+        "exit_code": 0,
+        "result": "49 passed in 9.04s",
+        "passed": 49,
+        "failed": 0
+      },
+      {
+        "command": "PYTHONPATH=services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
+        "exit_code": 0,
+        "result": "43 passed, 3 warnings in 36.19s",
+        "passed": 43,
+        "failed": 0
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "result": "clean, no whitespace errors"
+      }
+    ],
+    "limitations": [
+      "Parent LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001 retains all genuine producer ingestion and mounted authenticated read wiring and 12-loop coverage.",
+      "No hosted deployment or live/capital-affecting write was performed; verification conducted against isolated containerized PostgreSQL 16."
+    ]
+  },
+  "acceptance_check": {
+    "scoped_schema_migration_003": "Forward migration 003 declared and validated; honest handling of legacy rows with NULLS NOT DISTINCT unique index",
+    "zero_cross_tenant_leakage": "Scoped queries never return legacy or foreign-tenant rows; verified in test_postgres_scoped_migration_and_honest_legacy_handling",
+    "durable_store_and_rebuild_equivalence": "Multi-tenant streaming, process restart, and incremental-vs-rebuild equivalence verified in test_postgres_scoped_persistence_multi_tenant_streaming_and_rebuild_equivalence",
+    "collision_and_tampering_rejection": "Conflicting receipt identity and scope mismatches rejected with ValueError; verified in unit and postgres integration tests",
+    "out_of_order_and_provenance_fencing": "Provenance fencing and out-of-order receipt reduction preserved under scope; verified in test_postgres_scoped_out_of_order_and_provenance_fencing",
+    "independent_review": "pending Codex2 exact-head review"
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "decision": "pending independent exact-head review; no approval claimed"
+  }
+}

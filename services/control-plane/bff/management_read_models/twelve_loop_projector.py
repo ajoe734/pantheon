@@ -96,6 +96,8 @@ class CanonicalLoopReceipt:
     release_id: str
     owner: str
     provenance: Literal["live", "replay", "backfill"]
+    tenant_id: Optional[str] = None
+    environment: Optional[str] = None
     status: str = ""
     observed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     degradation_reason: Optional[str] = None
@@ -115,6 +117,11 @@ class CanonicalLoopReceipt:
         observed_at = parse_timestamp(raw_ts) or datetime.now(timezone.utc)
         owner = str(data.get("owner") or "").strip() or CANONICAL_TWELVE_LOOPS[loop_id][2]
 
+        raw_tenant = data.get("tenant_id")
+        tenant_id = str(raw_tenant).strip() if raw_tenant is not None and str(raw_tenant).strip() else None
+        raw_env = data.get("environment")
+        environment = str(raw_env).strip() if raw_env is not None and str(raw_env).strip() else None
+
         return cls(
             receipt_id=str(data["receipt_id"]).strip(),
             receipt_type=receipt_type,
@@ -123,6 +130,8 @@ class CanonicalLoopReceipt:
             release_id=str(data["release_id"]).strip(),
             owner=owner,
             provenance=provenance,
+            tenant_id=tenant_id,
+            environment=environment,
             status=str(data.get("status") or "").strip().lower(),
             observed_at=observed_at,
             degradation_reason=data.get("degradation_reason"),
@@ -138,6 +147,8 @@ class CanonicalLoopReceipt:
             "canonical_id": LOOP_INT_TO_ID.get(self.loop_id),
             "correlation_id": self.correlation_id,
             "release_id": self.release_id,
+            "tenant_id": self.tenant_id,
+            "environment": self.environment,
             "owner": self.owner,
             "provenance": self.provenance,
             "status": self.status,
@@ -154,6 +165,8 @@ class LoopObservation:
     correlation_id: str
     loop_id: int
     owner: str
+    tenant_id: Optional[str] = None
+    environment: Optional[str] = None
     stimulus_id: Optional[str] = None
     stimulus_observed_at: Optional[datetime] = None
     terminal_id: Optional[str] = None
@@ -184,6 +197,8 @@ class LoopObservation:
             "loop_id": self.loop_id,
             "canonical_id": self.canonical_id,
             "loop_name": self.loop_name,
+            "tenant_id": self.tenant_id,
+            "environment": self.environment,
             "owner": self.owner,
             "stimulus_id": self.stimulus_id,
             "stimulus_observed_at": format_timestamp(self.stimulus_observed_at),
@@ -219,19 +234,23 @@ class TwelveLoopTruthProjector:
         self,
         store: Optional[Any] = None,
         *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
         max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
         max_future_skew_seconds: int = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
         auto_load: bool = True,
     ) -> None:
         self.store = store
+        self.tenant_id = tenant_id
+        self.environment = environment
         self.max_age_seconds = max_age_seconds
         self.max_future_skew_seconds = max_future_skew_seconds
         # raw receipts: receipt_id -> CanonicalLoopReceipt
         self._receipts: Dict[str, CanonicalLoopReceipt] = {}
-        # projected observations: (release_id, correlation_id, loop_id) -> LoopObservation
-        self._observations: Dict[Tuple[str, str, int], LoopObservation] = {}
-        # receipt receipts-by-key index: (release_id, correlation_id, loop_id) -> dict[receipt_id, CanonicalLoopReceipt]
-        self._receipts_by_key: Dict[Tuple[str, str, int], Dict[str, CanonicalLoopReceipt]] = {}
+        # projected observations: (tenant_id, environment, release_id, correlation_id, loop_id) -> LoopObservation
+        self._observations: Dict[Tuple[Optional[str], Optional[str], str, str, int], LoopObservation] = {}
+        # receipt receipts-by-key index: (tenant_id, environment, release_id, correlation_id, loop_id) -> dict[receipt_id, CanonicalLoopReceipt]
+        self._receipts_by_key: Dict[Tuple[Optional[str], Optional[str], str, str, int], Dict[str, CanonicalLoopReceipt]] = {}
         # Rollback toggle: when disabled, read projections return degraded / fallback.
         env_enable = os.environ.get("PANTHEON_ENABLE_RECEIPT_LOOP_TRUTH", "true").strip().lower()
         self._enabled = env_enable not in {"false", "0", "no", "off"}
@@ -254,10 +273,13 @@ class TwelveLoopTruthProjector:
         if self.store is None:
             return
         try:
-            stored_receipts = self.store.list_receipts()
+            stored_receipts = self.store.list_receipts(
+                tenant_id=self.tenant_id,
+                environment=self.environment,
+            )
             for r in stored_receipts:
                 self._receipts[r.receipt_id] = r
-                key = (r.release_id, r.correlation_id, r.loop_id)
+                key = (r.tenant_id, r.environment, r.release_id, r.correlation_id, r.loop_id)
                 self._receipts_by_key.setdefault(key, {})[r.receipt_id] = r
             self.rebuild()
         except Exception as exc:
@@ -265,7 +287,38 @@ class TwelveLoopTruthProjector:
 
     def ingest_receipt(self, receipt: CanonicalLoopReceipt) -> LoopObservation:
         """Ingest a single receipt incrementally and update projection."""
-        key = (receipt.release_id, receipt.correlation_id, receipt.loop_id)
+        # Enforce trusted caller contract: reject conflicting receipt scope if projector is scoped
+        if self.tenant_id is not None and receipt.tenant_id is not None and receipt.tenant_id != self.tenant_id:
+            raise ValueError(
+                f"Receipt tenant_id '{receipt.tenant_id}' conflicts with projector scoped tenant '{self.tenant_id}'"
+            )
+        if self.environment is not None and receipt.environment is not None and receipt.environment != self.environment:
+            raise ValueError(
+                f"Receipt environment '{receipt.environment}' conflicts with projector scoped environment '{self.environment}'"
+            )
+
+        # Bind effective scope from trusted caller contract
+        effective_tenant = receipt.tenant_id if receipt.tenant_id is not None else self.tenant_id
+        effective_env = receipt.environment if receipt.environment is not None else self.environment
+        if (receipt.tenant_id != effective_tenant) or (receipt.environment != effective_env):
+            receipt = CanonicalLoopReceipt(
+                receipt_id=receipt.receipt_id,
+                receipt_type=receipt.receipt_type,
+                loop_id=receipt.loop_id,
+                correlation_id=receipt.correlation_id,
+                release_id=receipt.release_id,
+                owner=receipt.owner,
+                provenance=receipt.provenance,
+                tenant_id=effective_tenant,
+                environment=effective_env,
+                status=receipt.status,
+                observed_at=receipt.observed_at,
+                degradation_reason=receipt.degradation_reason,
+                causation_id=receipt.causation_id,
+                payload=receipt.payload,
+            )
+
+        key = (receipt.tenant_id, receipt.environment, receipt.release_id, receipt.correlation_id, receipt.loop_id)
 
         # 0. Check for existing receipt identity in-memory or store
         existing_receipt: Optional[CanonicalLoopReceipt] = self._receipts.get(receipt.receipt_id)
@@ -276,18 +329,20 @@ class TwelveLoopTruthProjector:
                 logger.debug("Failed checking store for existing receipt %s: %s", receipt.receipt_id, exc)
 
         if existing_receipt is not None:
-            # Reject conflicting identities across keys or types
+            # Reject conflicting identities across keys or types or scope
             if (
-                existing_receipt.release_id != receipt.release_id
+                existing_receipt.tenant_id != receipt.tenant_id
+                or existing_receipt.environment != receipt.environment
+                or existing_receipt.release_id != receipt.release_id
                 or existing_receipt.correlation_id != receipt.correlation_id
                 or existing_receipt.loop_id != receipt.loop_id
                 or existing_receipt.receipt_type != receipt.receipt_type
             ):
                 raise ValueError(
                     f"Conflicting receipt identity: receipt_id '{receipt.receipt_id}' already registered with key "
-                    f"(release_id={existing_receipt.release_id}, correlation_id={existing_receipt.correlation_id}, loop_id={existing_receipt.loop_id}, type={existing_receipt.receipt_type}), "
+                    f"(tenant={existing_receipt.tenant_id}, env={existing_receipt.environment}, release_id={existing_receipt.release_id}, correlation_id={existing_receipt.correlation_id}, loop_id={existing_receipt.loop_id}, type={existing_receipt.receipt_type}), "
                     f"cannot re-ingest under conflicting key "
-                    f"(release_id={receipt.release_id}, correlation_id={receipt.correlation_id}, loop_id={receipt.loop_id}, type={receipt.receipt_type})"
+                    f"(tenant={receipt.tenant_id}, env={receipt.environment}, release_id={receipt.release_id}, correlation_id={receipt.correlation_id}, loop_id={receipt.loop_id}, type={receipt.receipt_type})"
                 )
             # Never reduce unpersisted conflicting content: bind to the persisted receipt
             receipt = existing_receipt
@@ -304,20 +359,22 @@ class TwelveLoopTruthProjector:
             self.store.record_receipt(receipt)
             # Atomically resolve persisted identity/content after insert:
             # In concurrent race where a duplicate was inserted after get_receipt but before/during record_receipt,
-            # bind to the actual persisted receipt and reject conflicting key/type.
+            # bind to the actual persisted receipt and reject conflicting key/type/scope.
             persisted = self.store.get_receipt(receipt.receipt_id)
             if persisted is not None:
                 if (
-                    persisted.release_id != receipt.release_id
+                    persisted.tenant_id != receipt.tenant_id
+                    or persisted.environment != receipt.environment
+                    or persisted.release_id != receipt.release_id
                     or persisted.correlation_id != receipt.correlation_id
                     or persisted.loop_id != receipt.loop_id
                     or persisted.receipt_type != receipt.receipt_type
                 ):
                     raise ValueError(
                         f"Conflicting receipt identity: receipt_id '{receipt.receipt_id}' already registered with key "
-                        f"(release_id={persisted.release_id}, correlation_id={persisted.correlation_id}, loop_id={persisted.loop_id}, type={persisted.receipt_type}), "
+                        f"(tenant={persisted.tenant_id}, env={persisted.environment}, release_id={persisted.release_id}, correlation_id={persisted.correlation_id}, loop_id={persisted.loop_id}, type={persisted.receipt_type}), "
                         f"cannot re-ingest under conflicting key "
-                        f"(release_id={receipt.release_id}, correlation_id={receipt.correlation_id}, loop_id={receipt.loop_id}, type={receipt.receipt_type})"
+                        f"(tenant={receipt.tenant_id}, env={receipt.environment}, release_id={receipt.release_id}, correlation_id={receipt.correlation_id}, loop_id={receipt.loop_id}, type={receipt.receipt_type})"
                     )
                 # Never overwrite persisted content with incoming data
                 receipt = persisted
@@ -325,6 +382,8 @@ class TwelveLoopTruthProjector:
         # 2. Serialize reduction against canonical stored receipts
         if self.store is not None:
             stored_receipts = self.store.list_receipts(
+                tenant_id=receipt.tenant_id,
+                environment=receipt.environment,
                 release_id=receipt.release_id,
                 correlation_id=receipt.correlation_id,
                 loop_id=receipt.loop_id,
@@ -340,12 +399,20 @@ class TwelveLoopTruthProjector:
         # 3. Persist observation to store if store is present (fenced against stale writers)
         if self.store is not None:
             self.store.upsert_observation(obs)
-            durable_obs = self.store.get_observation(receipt.release_id, receipt.correlation_id, receipt.loop_id)
+            durable_obs = self.store.get_observation(
+                receipt.release_id,
+                receipt.correlation_id,
+                receipt.loop_id,
+                tenant_id=receipt.tenant_id,
+                environment=receipt.environment,
+            )
             if durable_obs is not None:
                 obs = durable_obs
                 self._recompute_freshness(obs, now=datetime.now(timezone.utc))
                 if set(durable_obs.receipt_ids) != set(key_receipts.keys()):
                     stored_receipts = self.store.list_receipts(
+                        tenant_id=receipt.tenant_id,
+                        environment=receipt.environment,
                         release_id=receipt.release_id,
                         correlation_id=receipt.correlation_id,
                         loop_id=receipt.loop_id,
@@ -361,6 +428,8 @@ class TwelveLoopTruthProjector:
 
         return obs
 
+        return obs
+
     def ingest_receipts(self, receipts: Sequence[CanonicalLoopReceipt]) -> List[LoopObservation]:
         results = []
         for r in receipts:
@@ -369,12 +438,16 @@ class TwelveLoopTruthProjector:
 
     def _reduce_key(
         self,
-        key: Tuple[str, str, int],
+        key: Tuple[Any, ...],
         receipts_dict: Dict[str, CanonicalLoopReceipt],
         now: Optional[datetime] = None,
     ) -> LoopObservation:
         """Deterministic reduction over all receipts for a single key."""
-        release_id, correlation_id, loop_id = key
+        if len(key) == 5:
+            tenant_id, environment, release_id, correlation_id, loop_id = key
+        else:
+            tenant_id, environment = None, None
+            release_id, correlation_id, loop_id = key
         curr_time = now or datetime.now(timezone.utc)
         receipts = list(receipts_dict.values())
 
@@ -385,6 +458,8 @@ class TwelveLoopTruthProjector:
                 correlation_id=correlation_id,
                 loop_id=loop_id,
                 owner=default_owner,
+                tenant_id=tenant_id,
+                environment=environment,
                 status="unobserved",
                 freshness_status="unavailable",
                 provenance="live",
@@ -598,6 +673,8 @@ class TwelveLoopTruthProjector:
             correlation_id=correlation_id,
             loop_id=loop_id,
             owner=owner,
+            tenant_id=tenant_id,
+            environment=environment,
             stimulus_id=chosen_stimulus.receipt_id if chosen_stimulus else None,
             stimulus_observed_at=chosen_stimulus.observed_at if chosen_stimulus else None,
             terminal_id=chosen_terminal.receipt_id if chosen_terminal else None,
@@ -699,7 +776,13 @@ class TwelveLoopTruthProjector:
             if self.store is not None:
                 try:
                     self.store.upsert_observation(obs)
-                    durable_obs = self.store.get_observation(obs.release_id, obs.correlation_id, obs.loop_id)
+                    durable_obs = self.store.get_observation(
+                        obs.release_id,
+                        obs.correlation_id,
+                        obs.loop_id,
+                        tenant_id=obs.tenant_id,
+                        environment=obs.environment,
+                    )
                 except Exception as exc:
                     logger.warning("Failed to upsert observation to store during rebuild: %s", exc)
                     # Fence: do not cache an observation that failed to persist durably.
@@ -722,10 +805,15 @@ class TwelveLoopTruthProjector:
         release_id: str,
         correlation_id: str,
         loop_id: int,
+        *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
     ) -> Optional[LoopObservation]:
         if not self._enabled:
             return None
-        obs = self._observations.get((release_id, correlation_id, loop_id))
+        target_tenant = tenant_id if tenant_id is not None else self.tenant_id
+        target_env = environment if environment is not None else self.environment
+        obs = self._observations.get((target_tenant, target_env, release_id, correlation_id, loop_id))
         if obs is not None:
             self._recompute_freshness(obs, now=datetime.now(timezone.utc))
         return obs
@@ -733,6 +821,8 @@ class TwelveLoopTruthProjector:
     def list_observations(
         self,
         *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
         release_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
         loop_id: Optional[int] = None,
@@ -740,21 +830,30 @@ class TwelveLoopTruthProjector:
         if not self._enabled:
             return []
         now = datetime.now(timezone.utc)
+        target_tenant = tenant_id if tenant_id is not None else self.tenant_id
+        target_env = environment if environment is not None else self.environment
         items = list(self._observations.values())
         for obs in items:
             self._recompute_freshness(obs, now=now)
+        if target_tenant is not None:
+            items = [obs for obs in items if obs.tenant_id == target_tenant]
+        if target_env is not None:
+            items = [obs for obs in items if obs.environment == target_env]
         if release_id:
             items = [obs for obs in items if obs.release_id == release_id]
         if correlation_id:
             items = [obs for obs in items if obs.correlation_id == correlation_id]
         if loop_id is not None:
             items = [obs for obs in items if obs.loop_id == loop_id]
-        return sorted(items, key=lambda obs: (obs.release_id, obs.correlation_id, obs.loop_id))
+        return sorted(items, key=lambda obs: (obs.tenant_id or "", obs.environment or "", obs.release_id, obs.correlation_id, obs.loop_id))
 
     def project_twelve_canonical_loops(
         self,
         release_id: str,
         correlation_id: Optional[str] = None,
+        *,
+        tenant_id: Optional[str] = None,
+        environment: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Project exactly the twelve canonical loop rows for release and correlation.
 
@@ -764,6 +863,8 @@ class TwelveLoopTruthProjector:
         """
         rows: List[Dict[str, Any]] = []
         now = datetime.now(timezone.utc)
+        target_tenant = tenant_id if tenant_id is not None else self.tenant_id
+        target_env = environment if environment is not None else self.environment
 
         if not self._enabled:
             # Rollback: Return typed unavailable / degraded rows while preserving underlying receipts
@@ -774,6 +875,8 @@ class TwelveLoopTruthProjector:
                     "canonical_id": canonical_id,
                     "loop_name": name,
                     "owner": owner,
+                    "tenant_id": target_tenant,
+                    "environment": target_env,
                     "release_id": release_id,
                     "correlation_id": correlation_id,
                     "stimulus_id": None,
@@ -792,8 +895,8 @@ class TwelveLoopTruthProjector:
 
         # Find matching observations for this release_id (and correlation_id if given)
         obs_by_loop: Dict[int, LoopObservation] = {}
-        for (rel, corr, loop_id), obs in self._observations.items():
-            if rel == release_id:
+        for (t_id, env, rel, corr, loop_id), obs in self._observations.items():
+            if t_id == target_tenant and env == target_env and rel == release_id:
                 if correlation_id is None or corr == correlation_id:
                     self._recompute_freshness(obs, now=now)
                     existing = obs_by_loop.get(loop_id)
@@ -820,6 +923,8 @@ class TwelveLoopTruthProjector:
                     "canonical_id": canonical_id,
                     "loop_name": name,
                     "owner": owner,
+                    "tenant_id": target_tenant,
+                    "environment": target_env,
                     "release_id": release_id,
                     "correlation_id": correlation_id,
                     "stimulus_id": None,
