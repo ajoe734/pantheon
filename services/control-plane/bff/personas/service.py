@@ -14187,7 +14187,15 @@ def _build_persona_health_items_impl(
 # ---------------------------------------------------------------------------
 
 class PersonaService:
-    """Canonical domain application service for persona operations."""
+    """Canonical domain application service for persona operations.
+
+    Note on cohesive size exception (SD4.2A/section D):
+    PersonaService intentionally consolidates all persona application use cases,
+    including league table composition, quarterly ranking orchestration,
+    recommendations, and promotion review decisions, to ensure single-responsibility
+    write-owner mediation and transaction boundaries without fragmented mechanical
+    sub-service splitting.
+    """
 
     def __init__(
         self,
@@ -15118,7 +15126,7 @@ class PersonaService:
             client_idempotency_key=client_idempotency_key,
         )
 
-    def get_quarterly_ranking_recommendations(
+    def _compose_quarterly_ranking_context(
         self,
         *,
         quarter: Optional[str],
@@ -15149,20 +15157,533 @@ class PersonaService:
             surface="quarterly",
             period=quarter_window["quarter"],
         )
-        recommendations = _pm12_quarterly_recommendations(
-            ranked_items,
-            quarter_window=quarter_window,
-            evidence_refs=public_evidence_refs,
-        )
         return {
-            "recommendations": recommendations,
-            "ranked_items": ranked_items,
-            "rows": rows,
-            "public_evidence_refs": public_evidence_refs,
+            "snap": snap,
             "quarter_window": quarter_window,
+            "rows": rows,
+            "ranked_items": ranked_items,
+            "public_evidence_refs": public_evidence_refs,
+            "canonical_evidence_refs": canonical_evidence_refs,
             "redacted_count": redacted_count,
             "evidence_dataset_available": evidence_dataset_available,
             "ranking_snapshot_id": ranking_snapshot_id,
+        }
+
+    def get_quarterly_ranking_recommendations(
+        self,
+        *,
+        quarter: Optional[str],
+        identity: Any,
+        caller_tenant_id: str,
+        snapshot_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        ctx = self._compose_quarterly_ranking_context(
+            quarter=quarter,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            snapshot_at=snapshot_at,
+        )
+        recommendations = _pm12_quarterly_recommendations(
+            ctx["ranked_items"],
+            quarter_window=ctx["quarter_window"],
+            evidence_refs=ctx["public_evidence_refs"],
+        )
+        return {
+            "recommendations": recommendations,
+            "ranked_items": ctx["ranked_items"],
+            "rows": ctx["rows"],
+            "public_evidence_refs": ctx["public_evidence_refs"],
+            "quarter_window": ctx["quarter_window"],
+            "redacted_count": ctx["redacted_count"],
+            "evidence_dataset_available": ctx["evidence_dataset_available"],
+            "ranking_snapshot_id": ctx["ranking_snapshot_id"],
+        }
+
+    def get_quarterly_ranking(
+        self,
+        *,
+        quarter: Optional[str],
+        identity: Any,
+        caller_tenant_id: str,
+        state: Optional[str] = None,
+        archetype: Optional[str] = None,
+        q: str = "",
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+        persona_id: Optional[str] = None,
+        persona: Optional[str] = None,
+        runtime_id: Optional[str] = None,
+        runtime: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        strategy: Optional[str] = None,
+        capital_pool_id: Optional[str] = None,
+        pool: Optional[str] = None,
+        sleeve_id: Optional[str] = None,
+        sleeve: Optional[str] = None,
+        artifact_id: Optional[str] = None,
+        artifact: Optional[str] = None,
+        broker_id: Optional[str] = None,
+        broker: Optional[str] = None,
+        stage: Optional[str] = None,
+        period: Optional[str] = None,
+        as_of: Optional[str] = None,
+        snapshot_at: Optional[str] = None,
+        page_slice_fn: Optional[Callable[..., Any]] = None,
+    ) -> Dict[str, Any]:
+        slice_fn = page_slice_fn or _page_slice
+        ctx = self._compose_quarterly_ranking_context(
+            quarter=quarter,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            snapshot_at=snapshot_at,
+        )
+        snapshot_at = ctx["snap"]
+        ranked_items = ctx["ranked_items"]
+        quarter_window = ctx["quarter_window"]
+        rows = ctx["rows"]
+        ranking_snapshot_id = ctx["ranking_snapshot_id"]
+        public_evidence_refs = ctx["public_evidence_refs"]
+        redacted_count = ctx["redacted_count"]
+        evidence_dataset_available = ctx["evidence_dataset_available"]
+
+        # Apply common filters after the immutable full-universe snapshot is built.
+        enriched_items = _pm12_filter_persona_items(
+            ranked_items,
+            state=state,
+            archetype=archetype,
+            q=q,
+        )
+        filtered_items = _filter_by_common_identifiers(
+            enriched_items,
+            persona_id=persona_id, persona=persona,
+            runtime_id=runtime_id, runtime=runtime,
+            strategy_id=strategy_id, strategy=strategy,
+            capital_pool_id=capital_pool_id, pool=pool,
+            sleeve_id=sleeve_id, sleeve=sleeve,
+            artifact_id=artifact_id, artifact=artifact,
+            broker_id=broker_id, broker=broker,
+            stage=stage, period=period, as_of=as_of,
+        )
+        total = len(filtered_items)
+        page_items, next_page_token = slice_fn(filtered_items, page_token, page_size)
+
+        formula = _pm12_quarter_formula_payload()
+        source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+        formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+        evidence_surface = self._dataset_surface_status(
+            "evidence_refs",
+            snapshot_at=snapshot_at,
+            has_data=evidence_dataset_available,
+            missing_message="Evidence reference read surface is unavailable.",
+        )
+        quarterly_surface = _aggregate_group_surface(
+            "quarterly_ranking",
+            [*source_surfaces.values(), formula_surface, evidence_surface],
+            snapshot_at=snapshot_at,
+            unavailable_message="Quarterly ranking aggregate unavailable.",
+            degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+        )
+        quarterly_surfaces = {
+            name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+            for name, surface in {
+                "quarterly_ranking": quarterly_surface,
+                "formula": formula_surface,
+                "evidence_refs": evidence_surface,
+                "knowledge_evidence": evidence_surface,
+                **source_surfaces,
+            }.items()
+        }
+        top_item = filtered_items[0] if filtered_items else None
+        summary = {
+            "quarter": quarter_window["quarter"],
+            "formula_version": formula["formula_version"],
+            "persona_count": total,
+            "ranking_universe_count": len(rows),
+            "ranked_count": total,
+            "returned_count": len(page_items),
+            "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
+            "evidence_ref_count": len(public_evidence_refs),
+            "redacted_evidence_count": redacted_count,
+            "basis": formula["basis"],
+            "ranking_snapshot_id": ranking_snapshot_id,
+        }
+        data = {
+            "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
+            "ranking_snapshot_id": ranking_snapshot_id,
+            "quarter": quarter_window["quarter"],
+            "quarter_window": quarter_window,
+            "formula": formula,
+            "items": page_items,
+            "evidence_refs": public_evidence_refs,
+            "summary": summary,
+        }
+        return {
+            "data": data,
+            "page_info": {
+                "next_page_token": next_page_token,
+                "total": total,
+                "page_size": page_size,
+            },
+            "meta": {
+                **self._snapshot_meta(snapshot_at),
+                "ranking_snapshot_id": ranking_snapshot_id,
+                "surfaces": quarterly_surfaces,
+                "composition_sources": [
+                    "GET /bff/management/persona-league",
+                    "GET /bff/management/persona-league/rankings",
+                    "GET /bff/management/persona-league/tiers",
+                    "GET /api/v1/knowledge/evidence",
+                ],
+                "policy": "read_only_governance_advisory",
+                "redacted_evidence_count": redacted_count,
+            },
+        }
+
+    def get_quarterly_ranking_drilldown(
+        self,
+        *,
+        quarter: Optional[str],
+        identity: Any,
+        caller_tenant_id: str,
+        resolved_persona_id: str,
+        correlation_id: str,
+        state: Optional[str] = None,
+        archetype: Optional[str] = None,
+        q: str = "",
+        persona: Optional[str] = None,
+        runtime_id: Optional[str] = None,
+        runtime: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        strategy: Optional[str] = None,
+        capital_pool_id: Optional[str] = None,
+        pool: Optional[str] = None,
+        sleeve_id: Optional[str] = None,
+        sleeve: Optional[str] = None,
+        artifact_id: Optional[str] = None,
+        artifact: Optional[str] = None,
+        broker_id: Optional[str] = None,
+        broker: Optional[str] = None,
+        stage: Optional[str] = None,
+        period: Optional[str] = None,
+        as_of: Optional[str] = None,
+        snapshot_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        ctx = self._compose_quarterly_ranking_context(
+            quarter=quarter,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            snapshot_at=snapshot_at,
+        )
+        snapshot_at = ctx["snap"]
+        quarter_window = ctx["quarter_window"]
+        rows = ctx["rows"]
+        ranked_items = ctx["ranked_items"]
+        ranking_snapshot_id = ctx["ranking_snapshot_id"]
+        redacted_count = ctx["redacted_count"]
+        evidence_dataset_available = ctx["evidence_dataset_available"]
+
+        ranking_item = _pm12_quarterly_find_persona_item(ranked_items, resolved_persona_id)
+        if ranking_item is None:
+            raise self._bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Quarterly ranking persona not found",
+                f"Persona {resolved_persona_id} is not present in the requested quarterly ranking.",
+                precondition_failed="personaId",
+                correlation_id=correlation_id,
+            )
+
+        legacy_filtered_results = _pm12_filter_persona_items(
+            [ranking_item],
+            state=state,
+            archetype=archetype,
+            q=q,
+        )
+        filtered_results = _filter_by_common_identifiers(
+            legacy_filtered_results,
+            persona_id=resolved_persona_id, persona=persona,
+            runtime_id=runtime_id, runtime=runtime,
+            strategy_id=strategy_id, strategy=strategy,
+            capital_pool_id=capital_pool_id, pool=pool,
+            sleeve_id=sleeve_id, sleeve=sleeve,
+            artifact_id=artifact_id, artifact=artifact,
+            broker_id=broker_id, broker=broker,
+            stage=stage, period=period, as_of=as_of,
+        )
+        if not filtered_results:
+            raise self._bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Quarterly ranking persona not found matching filter criteria",
+                f"Persona {resolved_persona_id} does not match the requested filter criteria.",
+                precondition_failed="personaId",
+                correlation_id=correlation_id,
+            )
+
+        ranking_item = filtered_results[0]
+        row = _pm12_quarterly_find_persona_row(rows, resolved_persona_id)
+        item_evidence_refs = list(ranking_item.get("evidence_refs") or [])
+        drilldown = _pm12_quarterly_drilldown_payload(
+            item=ranking_item,
+            row=row,
+            quarter_window=quarter_window,
+            ranked_count=len(ranked_items),
+            evidence_refs=item_evidence_refs,
+        )
+
+        source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+        formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+        evidence_surface = self._dataset_surface_status(
+            "evidence_refs",
+            snapshot_at=snapshot_at,
+            has_data=evidence_dataset_available,
+            missing_message="Evidence reference read surface is unavailable.",
+        )
+        quarterly_surface = _aggregate_group_surface(
+            "quarterly_ranking",
+            [*source_surfaces.values(), formula_surface, evidence_surface],
+            snapshot_at=snapshot_at,
+            unavailable_message="Quarterly ranking aggregate unavailable.",
+            degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+        )
+        drilldown_surface = _aggregate_group_surface(
+            "quarterly_ranking_drilldown",
+            [quarterly_surface, formula_surface, evidence_surface, *source_surfaces.values()],
+            snapshot_at=snapshot_at,
+            unavailable_message="Quarterly ranking drilldown aggregate unavailable.",
+            degraded_message="Quarterly ranking drilldown is degraded because one or more source surfaces are degraded.",
+        )
+        summary = dict(drilldown["summary"])
+        summary["redacted_evidence_count"] = redacted_count
+
+        return {
+            "data": drilldown,
+            "item": ranking_item,
+            "ranking_item": ranking_item,
+            "contributions": drilldown["contributions"],
+            "contribution_breakdown": drilldown["contribution_breakdown"],
+            "source_breakdown": drilldown["source_breakdown"],
+            "formula": drilldown["formula"],
+            "quarter_window": quarter_window,
+            "evidence_refs": item_evidence_refs,
+            "summary": summary,
+            "meta": {
+                **self._snapshot_meta(snapshot_at),
+                "ranking_snapshot_id": ranking_snapshot_id,
+                "correlation_id": correlation_id,
+                "surfaces": {
+                    "quarterly_ranking_drilldown": drilldown_surface,
+                    "quarterly_ranking": quarterly_surface,
+                    "formula": formula_surface,
+                    "evidence_refs": evidence_surface,
+                    "knowledge_evidence": evidence_surface,
+                    **source_surfaces,
+                },
+                "composition_sources": [
+                    "GET /bff/management/quarterly-ranking",
+                    "GET /bff/management/quarterly-ranking/drilldown",
+                    "GET /api/v1/knowledge/evidence",
+                ],
+                "policy": "read_only_governance_advisory",
+            },
+        }
+
+    def get_persona_league(
+        self,
+        *,
+        caller_tenant_id: str,
+        state: Optional[str] = None,
+        archetype: Optional[str] = None,
+        q: str = "",
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+        snapshot_at: Optional[str] = None,
+        page_slice_fn: Optional[Callable[..., Any]] = None,
+    ) -> Dict[str, Any]:
+        snap = snapshot_at or self._utc_now()
+        slice_fn = page_slice_fn or _page_slice
+        all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
+        ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+            [_pm12_persona_league_ranking_item(row) for row in all_rows],
+            surface="rolling",
+            period="short_cycle",
+        )
+        ranking_by_persona = {
+            str(item.get("persona_id") or ""): item
+            for item in ranking_basis
+            if str(item.get("persona_id") or "")
+        }
+        rows = _pm12_filter_persona_items(
+            [
+                {
+                    **row,
+                    **{
+                        field: ranking_by_persona.get(str(row.get("persona_id") or ""), {}).get(field)
+                        for field in (
+                            "eligible",
+                            "exclusion_reason",
+                            "exclusion_reasons",
+                            "exclusion_codes",
+                            "evidence_coverage",
+                            "evidence_refs",
+                            "source_confidence",
+                            "ranking_snapshot_id",
+                        )
+                    },
+                }
+                for row in all_rows
+            ],
+            state=state,
+            archetype=archetype,
+            q=q,
+        )
+        total = len(rows)
+        page_items, next_page_token = slice_fn(rows, page_token, page_size)
+        summary = {
+            "persona_count": total,
+            "returned_count": len(page_items),
+            "ranking_snapshot_id": ranking_snapshot_id,
+        }
+        persona_surface = self._dataset_surface_status("personas", snapshot_at=snap)
+        surfaces = {
+            "persona_league": _composed_surface_status(snapshot_at=snap),
+            "personas": persona_surface,
+            "route_policies": _composed_surface_status(snapshot_at=snap),
+            "capability_snapshots": self._dataset_surface_status("capability_snapshots", snapshot_at=snap),
+            "persona_bindings": self._dataset_surface_status("persona_bindings", snapshot_at=snap),
+            "persona_sessions": self._dataset_surface_status("sessions", snapshot_at=snap),
+            "teaching_sessions": self._dataset_surface_status("teaching_sessions", snapshot_at=snap),
+            "persona_memory": _composed_surface_status(snapshot_at=snap),
+            "persona_health": dict(persona_surface),
+        }
+        return {
+            "data": {
+                "id": "management-persona-league",
+                "ranking_snapshot_id": ranking_snapshot_id,
+                "items": page_items,
+                "summary": summary,
+            },
+            "page_info": {"next_page_token": next_page_token, "total": total},
+            "meta": {
+                "snapshot_at": snap,
+                "ranking_snapshot_id": ranking_snapshot_id,
+                "total": total,
+                "surfaces": surfaces,
+                "composition_sources": [
+                    "GET /bff/personas",
+                    "GET /bff/personas/{id}/route-policy",
+                    "GET /bff/personas/{id}/capabilities",
+                    "GET /bff/personas/{id}/activity",
+                    "GET /bff/personas/{id}/evaluations",
+                    "GET /bff/personas/{id}/memory",
+                    "GET /bff/v5/execution/persona-health",
+                ],
+            },
+        }
+
+    def get_persona_league_rankings(
+        self,
+        *,
+        caller_tenant_id: str,
+        state: Optional[str] = None,
+        archetype: Optional[str] = None,
+        q: str = "",
+        criteria: Optional[str] = None,
+        limit: int = 20,
+        persona_id: Optional[str] = None,
+        persona: Optional[str] = None,
+        runtime_id: Optional[str] = None,
+        runtime: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        strategy: Optional[str] = None,
+        capital_pool_id: Optional[str] = None,
+        pool: Optional[str] = None,
+        sleeve_id: Optional[str] = None,
+        sleeve: Optional[str] = None,
+        artifact_id: Optional[str] = None,
+        artifact: Optional[str] = None,
+        broker_id: Optional[str] = None,
+        broker: Optional[str] = None,
+        stage: Optional[str] = None,
+        period: Optional[str] = None,
+        as_of: Optional[str] = None,
+        snapshot_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        snap = snapshot_at or self._utc_now()
+        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
+
+        # Pre-enrich and filter the base league rows represented as ranking items
+        base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+            [_pm12_persona_league_ranking_item(row) for row in rows],
+            surface="rolling",
+            period="short_cycle",
+        )
+        enriched_items = _pm12_filter_persona_items(
+            base_items,
+            state=state,
+            archetype=archetype,
+            q=q,
+        )
+        filtered_items = _filter_by_common_identifiers(
+            enriched_items,
+            persona_id=persona_id, persona=persona,
+            runtime_id=runtime_id, runtime=runtime,
+            strategy_id=strategy_id, strategy=strategy,
+            capital_pool_id=capital_pool_id, pool=pool,
+            sleeve_id=sleeve_id, sleeve=sleeve,
+            artifact_id=artifact_id, artifact=artifact,
+            broker_id=broker_id, broker=broker,
+            stage=stage, period=period, as_of=as_of,
+        )
+
+        blocks = _pm12_persona_league_rankings(
+            rows,
+            criteria=criteria,
+            limit=limit,
+            base_items=filtered_items,
+        )
+        for block in blocks:
+            block["ranking_snapshot_id"] = ranking_snapshot_id
+        source_surfaces = _pm12_persona_league_source_surfaces(snap)
+        rankings_surface = _aggregate_group_surface(
+            "persona_league_rankings",
+            list(source_surfaces.values()),
+            snapshot_at=snap,
+            unavailable_message="Persona league rankings aggregate unavailable.",
+            degraded_message="Persona league rankings are degraded because one or more source surfaces are degraded.",
+        )
+        top_item = (blocks[0].get("items") or [None])[0] if blocks else None
+        summary = {
+            "persona_count": len(filtered_items),
+            "criteria": [block["criteria"] for block in blocks],
+            "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
+            "ranking_snapshot_id": ranking_snapshot_id,
+        }
+        return {
+            "data": {
+                "id": "management-persona-league-rankings",
+                "ranking_snapshot_id": ranking_snapshot_id,
+                "items": blocks,
+                "summary": summary,
+            },
+            "page_info": {"next_page_token": None, "total": len(blocks), "page_size": len(blocks)},
+            "meta": {
+                "snapshot_at": snap,
+                "ranking_snapshot_id": ranking_snapshot_id,
+                "surfaces": {
+                    name: _performance_ranking_source_surface(surface, snapshot_at=snap)
+                    for name, surface in {
+                        "persona_league_rankings": rankings_surface,
+                        **source_surfaces,
+                    }.items()
+                },
+                "composition_sources": [
+                    "GET /bff/management/persona-league",
+                    "GET /bff/management/persona-league/tiers",
+                    "GET /bff/personas",
+                    "GET /bff/v5/execution/persona-health",
+                ],
+            },
         }
 
 

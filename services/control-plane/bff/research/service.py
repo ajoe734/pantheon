@@ -31,6 +31,7 @@ try:
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
     )
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 except (ImportError, ValueError):
     from ..models import (  # type: ignore[no-redef]
         ErrorCode,
@@ -41,6 +42,7 @@ except (ImportError, ValueError):
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
     )
+    from ..ports.read_surface_ports import ReadSurfacePorts  # type: ignore[no-redef]
 
 log = logging.getLogger(__name__)
 
@@ -203,373 +205,653 @@ def _filter_legacy_artifacts(
 class ResearchPortWiring(ResearchKnowledgeSourcePort):
     """Explicit domain-specific typed dependency wiring for Research domain.
 
-    Exposes declared research operations without arbitrary attribute forwarding.
+    Binds declared research operations directly to typed owner dependencies
+    (ReadSurfacePorts, ResearchKnowledgeSourcePort) with concrete parameter signatures
+    and explicit owner bindings, without generic runtime forwarding.
     """
 
-    def __init__(self, raw_port: Any, knowledge_source: Optional[ResearchKnowledgeSourcePort] = None) -> None:
-        self._raw_port = raw_port
-        self._ks = knowledge_source
-        if hasattr(raw_port, "list_experiments_bff"):
-            self.list_experiments_bff = raw_port.list_experiments_bff
-        if hasattr(raw_port, "get_experiment_bff"):
-            self.get_experiment_bff = raw_port.get_experiment_bff
-        if hasattr(raw_port, "create_experiment_bff"):
-            self.create_experiment_bff = raw_port.create_experiment_bff
-        if hasattr(raw_port, "get_experiment_logs"):
-            self.get_experiment_logs = raw_port.get_experiment_logs
-        if hasattr(raw_port, "get_experiment_metrics"):
-            self.get_experiment_metrics = raw_port.get_experiment_metrics
-        if hasattr(raw_port, "get_experiment_artifacts"):
-            self.get_experiment_artifacts = raw_port.get_experiment_artifacts
-        if hasattr(raw_port, "get_research_oss_preactivation_snapshot"):
-            self.get_research_oss_preactivation_snapshot = raw_port.get_research_oss_preactivation_snapshot
-        if hasattr(raw_port, "list_synthesis_conflict_logs"):
-            self.list_synthesis_conflict_logs = raw_port.list_synthesis_conflict_logs
-        if hasattr(raw_port, "get_synthesis_conflict_log"):
-            self.get_synthesis_conflict_log = raw_port.get_synthesis_conflict_log
-        if hasattr(raw_port, "list_strategies"):
-            self.list_strategies = raw_port.list_strategies
-        if hasattr(raw_port, "list_strategy_summaries"):
-            self.list_strategy_summaries = raw_port.list_strategy_summaries
-        if hasattr(raw_port, "list_personas"):
-            self.list_personas = raw_port.list_personas
-        if hasattr(raw_port, "list_capital_pools"):
-            self.list_capital_pools = raw_port.list_capital_pools
+    def __init__(
+        self,
+        read_surface: Optional[ReadSurfacePorts] = None,
+        knowledge_source: Optional[ResearchKnowledgeSourcePort] = None,
+    ) -> None:
+        self._read_surface: Optional[ReadSurfacePorts] = read_surface
+        self._ks: Optional[ResearchKnowledgeSourcePort] = knowledge_source
 
-    def _dispatch(self, raw_fn: Any, ks_fn: Any, *args: Any, **kwargs: Any) -> Any:
-        if callable(raw_fn):
-            return raw_fn(*args, **kwargs)
-        if callable(ks_fn):
-            return ks_fn(*args, **kwargs)
-        raise AttributeError("Research port operation not implemented")
+    # -------------------------------------------------------------------------
+    # Surface & Dataset metadata
+    # -------------------------------------------------------------------------
+    def dataset_source(self, dataset: str) -> str:
+        if self._read_surface is not None and hasattr(self._read_surface, "dataset_source"):
+            try:
+                res = self._read_surface.dataset_source(dataset)
+                if res and res != "missing":
+                    return res
+            except (AttributeError, NotImplementedError):
+                pass
+        if self._ks is not None and hasattr(self._ks, "dataset_source"):
+            try:
+                res = self._ks.dataset_source(dataset)
+                if res:
+                    return res
+            except (AttributeError, NotImplementedError):
+                pass
+        return "missing"
 
-    def dataset_source(self, *args: Any, **kwargs: Any) -> str:
-        return self._dispatch(
-            getattr(self._raw_port, "dataset_source", None),
-            getattr(self._ks, "dataset_source", None),
-            *args,
-            **kwargs,
+    def dataset_surface_status(
+        self,
+        dataset: str,
+        *,
+        snapshot_at: str,
+        source: Optional[str] = None,
+        has_data: bool = True,
+        missing_message: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "dataset_surface_status"):
+            return self._read_surface.dataset_surface_status(
+                dataset,
+                snapshot_at=snapshot_at,
+                source=source,
+                has_data=has_data,
+                missing_message=missing_message,
+            )
+        if self._ks is not None and hasattr(self._ks, "dataset_surface_status"):
+            return self._ks.dataset_surface_status(
+                dataset,
+                snapshot_at=snapshot_at,
+                source=source,
+                has_data=has_data,
+                missing_message=missing_message,
+            )
+        raise AttributeError("Research port operation 'dataset_surface_status' not implemented")
+
+    # -------------------------------------------------------------------------
+    # Knowledge & Evidence (KW-02, KW-03, KW-04, KW-05)
+    # -------------------------------------------------------------------------
+    def list_research_notes(self) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_research_notes"):
+            return self._read_surface.list_research_notes()
+        if self._ks is not None and hasattr(self._ks, "list_research_notes"):
+            return self._ks.list_research_notes()
+        raise AttributeError("Research port operation 'list_research_notes' not implemented")
+
+    def get_research_note(self, note_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_research_note"):
+            return self._read_surface.get_research_note(note_id)
+        if self._ks is not None and hasattr(self._ks, "get_research_note"):
+            return self._ks.get_research_note(note_id)
+        raise AttributeError("Research port operation 'get_research_note' not implemented")
+
+    def create_research_note(self, note: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "create_research_note"):
+            return self._read_surface.create_research_note(note)
+        if self._ks is not None and hasattr(self._ks, "create_research_note"):
+            return self._ks.create_research_note(note)
+        raise AttributeError("Research port operation 'create_research_note' not implemented")
+
+    def list_evidence_refs(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        include_tenant_agnostic: bool = True,
+        linked_entities: Optional[set[tuple[str, str]]] = None,
+        source_types: Optional[set[str]] = None,
+        include_scope_metadata: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_evidence_refs"):
+            return self._read_surface.list_evidence_refs(
+                tenant_id=tenant_id,
+                include_tenant_agnostic=include_tenant_agnostic,
+                linked_entities=linked_entities,
+                source_types=source_types,
+                include_scope_metadata=include_scope_metadata,
+            )
+        if self._ks is not None and hasattr(self._ks, "list_evidence_refs"):
+            return self._ks.list_evidence_refs(
+                tenant_id=tenant_id,
+                include_tenant_agnostic=include_tenant_agnostic,
+                linked_entities=linked_entities,
+                source_types=source_types,
+                include_scope_metadata=include_scope_metadata,
+            )
+        raise AttributeError("Research port operation 'list_evidence_refs' not implemented")
+
+    def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_evidence_ref"):
+            return self._read_surface.get_evidence_ref(ref_id)
+        if self._ks is not None and hasattr(self._ks, "get_evidence_ref"):
+            return self._ks.get_evidence_ref(ref_id)
+        raise AttributeError("Research port operation 'get_evidence_ref' not implemented")
+
+    def get_evidence_ref_detail(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_evidence_ref_detail"):
+            return self._read_surface.get_evidence_ref_detail(ref_id)
+        if self._ks is not None and hasattr(self._ks, "get_evidence_ref_detail"):
+            return self._ks.get_evidence_ref_detail(ref_id)
+        raise AttributeError("Research port operation 'get_evidence_ref_detail' not implemented")
+
+    def list_insight_cards(self) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_insight_cards"):
+            return self._read_surface.list_insight_cards()
+        if self._ks is not None and hasattr(self._ks, "list_insight_cards"):
+            return self._ks.list_insight_cards()
+        raise AttributeError("Research port operation 'list_insight_cards' not implemented")
+
+    def get_insight_card(self, insight_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_insight_card"):
+            return self._read_surface.get_insight_card(insight_id)
+        if self._ks is not None and hasattr(self._ks, "get_insight_card"):
+            return self._ks.get_insight_card(insight_id)
+        raise AttributeError("Research port operation 'get_insight_card' not implemented")
+
+    def get_insight_card_detail(self, insight_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_insight_card_detail"):
+            return self._read_surface.get_insight_card_detail(insight_id)
+        if self._ks is not None and hasattr(self._ks, "get_insight_card_detail"):
+            return self._ks.get_insight_card_detail(insight_id)
+        raise AttributeError("Research port operation 'get_insight_card_detail' not implemented")
+
+    def list_strategy_specs(
+        self,
+        *,
+        lifecycle_state: Optional[str] = None,
+        source_kind: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        include_retired: bool = False,
+        include_fixture_pack: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_strategy_specs"):
+            return self._read_surface.list_strategy_specs(
+                lifecycle_state=lifecycle_state,
+                source_kind=source_kind,
+                persona_id=persona_id,
+                include_retired=include_retired,
+                include_fixture_pack=include_fixture_pack,
+            )
+        if self._ks is not None and hasattr(self._ks, "list_strategy_specs"):
+            return self._ks.list_strategy_specs(
+                lifecycle_state=lifecycle_state,
+                source_kind=source_kind,
+                persona_id=persona_id,
+                include_retired=include_retired,
+                include_fixture_pack=include_fixture_pack,
+            )
+        raise AttributeError("Research port operation 'list_strategy_specs' not implemented")
+
+    def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_strategy_spec"):
+            return self._read_surface.get_strategy_spec(strategy_id)
+        if self._ks is not None and hasattr(self._ks, "get_strategy_spec"):
+            return self._ks.get_strategy_spec(strategy_id)
+        raise AttributeError("Research port operation 'get_strategy_spec' not implemented")
+
+    def get_strategy_spec_detail(
+        self,
+        strategy_id: Optional[str],
+        *,
+        version_selector: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_strategy_spec_detail"):
+            return self._read_surface.get_strategy_spec_detail(strategy_id, version_selector=version_selector)
+        if self._ks is not None and hasattr(self._ks, "get_strategy_spec_detail"):
+            return self._ks.get_strategy_spec_detail(strategy_id, version_selector=version_selector)
+        raise AttributeError("Research port operation 'get_strategy_spec_detail' not implemented")
+
+    def list_strategy_spec_versions(self, strategy_id: Optional[str]) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_strategy_spec_versions"):
+            return self._read_surface.list_strategy_spec_versions(strategy_id)
+        if self._ks is not None and hasattr(self._ks, "list_strategy_spec_versions"):
+            return self._ks.list_strategy_spec_versions(strategy_id)
+        raise AttributeError("Research port operation 'list_strategy_spec_versions' not implemented")
+
+    def compare_strategy_spec_versions(
+        self,
+        strategy_id: Optional[str],
+        *,
+        left_selector: str,
+        right_selector: str,
+    ) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "compare_strategy_spec_versions"):
+            return self._read_surface.compare_strategy_spec_versions(
+                strategy_id, left_selector=left_selector, right_selector=right_selector
+            )
+        if self._ks is not None and hasattr(self._ks, "compare_strategy_spec_versions"):
+            return self._ks.compare_strategy_spec_versions(
+                strategy_id, left_selector=left_selector, right_selector=right_selector
+            )
+        raise AttributeError("Research port operation 'compare_strategy_spec_versions' not implemented")
+
+    # -------------------------------------------------------------------------
+    # Institutional Memory
+    # -------------------------------------------------------------------------
+    def list_institutional_memory_entries(self) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_institutional_memory_entries"):
+            return self._read_surface.list_institutional_memory_entries()
+        if self._ks is not None and hasattr(self._ks, "list_institutional_memory_entries"):
+            return self._ks.list_institutional_memory_entries()
+        raise AttributeError("Research port operation 'list_institutional_memory_entries' not implemented")
+
+    def get_institutional_memory_entry(self, entry_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_institutional_memory_entry"):
+            return self._read_surface.get_institutional_memory_entry(entry_id)
+        if self._ks is not None and hasattr(self._ks, "get_institutional_memory_entry"):
+            return self._ks.get_institutional_memory_entry(entry_id)
+        raise AttributeError("Research port operation 'get_institutional_memory_entry' not implemented")
+
+    # -------------------------------------------------------------------------
+    # Research Tickets (RW-01)
+    # -------------------------------------------------------------------------
+    def list_research_tickets(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        include_fixture_pack: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_research_tickets"):
+            return self._read_surface.list_research_tickets(
+                statuses=statuses, owner=owner, include_fixture_pack=include_fixture_pack
+            )
+        if self._ks is not None and hasattr(self._ks, "list_research_tickets"):
+            return self._ks.list_research_tickets(
+                statuses=statuses, owner=owner, include_fixture_pack=include_fixture_pack
+            )
+        raise AttributeError("Research port operation 'list_research_tickets' not implemented")
+
+    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_research_ticket"):
+            return self._read_surface.get_research_ticket(ticket_id)
+        if self._ks is not None and hasattr(self._ks, "get_research_ticket"):
+            return self._ks.get_research_ticket(ticket_id)
+        raise AttributeError("Research port operation 'get_research_ticket' not implemented")
+
+    def create_research_ticket(
+        self,
+        *,
+        title: str,
+        description: str,
+        priority: str,
+        owner: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "create_research_ticket"):
+            return self._read_surface.create_research_ticket(
+                title=title,
+                description=description,
+                priority=priority,
+                owner=owner,
+                actor_id=actor_id,
+                created_at=created_at,
+            )
+        if self._ks is not None and hasattr(self._ks, "create_research_ticket"):
+            return self._ks.create_research_ticket(
+                title=title,
+                description=description,
+                priority=priority,
+                owner=owner,
+                actor_id=actor_id,
+                created_at=created_at,
+            )
+        raise AttributeError("Research port operation 'create_research_ticket' not implemented")
+
+    def patch_research_ticket(
+        self,
+        ticket_id: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: str,
+        updated_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "patch_research_ticket"):
+            return self._read_surface.patch_research_ticket(
+                ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at
+            )
+        if self._ks is not None and hasattr(self._ks, "patch_research_ticket"):
+            return self._ks.patch_research_ticket(
+                ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at
+            )
+        raise AttributeError("Research port operation 'patch_research_ticket' not implemented")
+
+    # -------------------------------------------------------------------------
+    # Research Analyses (RW-03)
+    # -------------------------------------------------------------------------
+    def list_research_analyses(
+        self,
+        *,
+        ticket_id: Optional[str] = None,
+        experiment_id: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        date_range: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_research_analyses"):
+            return self._read_surface.list_research_analyses(
+                ticket_id=ticket_id, experiment_id=experiment_id, statuses=statuses, date_range=date_range
+            )
+        if self._ks is not None and hasattr(self._ks, "list_research_analyses"):
+            return self._ks.list_research_analyses(
+                ticket_id=ticket_id, experiment_id=experiment_id, statuses=statuses, date_range=date_range
+            )
+        raise AttributeError("Research port operation 'list_research_analyses' not implemented")
+
+    def get_research_analysis(self, analysis_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_research_analysis"):
+            return self._read_surface.get_research_analysis(analysis_id)
+        if self._ks is not None and hasattr(self._ks, "get_research_analysis"):
+            return self._ks.get_research_analysis(analysis_id)
+        raise AttributeError("Research port operation 'get_research_analysis' not implemented")
+
+    # -------------------------------------------------------------------------
+    # Research Experiments (RW-04)
+    # -------------------------------------------------------------------------
+    def list_research_experiments(
+        self,
+        *,
+        ticket_id: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_research_experiments"):
+            return self._read_surface.list_research_experiments(ticket_id=ticket_id, status=status)
+        if self._ks is not None and hasattr(self._ks, "list_research_experiments"):
+            return self._ks.list_research_experiments(ticket_id=ticket_id, status=status)
+        raise AttributeError("Research port operation 'list_research_experiments' not implemented")
+
+    def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_research_experiment"):
+            return self._read_surface.get_research_experiment(experiment_id)
+        if self._ks is not None and hasattr(self._ks, "get_research_experiment"):
+            return self._ks.get_research_experiment(experiment_id)
+        raise AttributeError("Research port operation 'get_research_experiment' not implemented")
+
+    def create_research_experiment(
+        self,
+        *,
+        ticket_id: str,
+        experiment_name: str,
+        strategy_selector: Dict[str, Any],
+        parameter_set: Dict[str, Any],
+        run_config: Dict[str, Any],
+        launch_context: Dict[str, Any],
+        queued_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "create_research_experiment"):
+            return self._read_surface.create_research_experiment(
+                ticket_id=ticket_id,
+                experiment_name=experiment_name,
+                strategy_selector=strategy_selector,
+                parameter_set=parameter_set,
+                run_config=run_config,
+                launch_context=launch_context,
+                queued_at=queued_at,
+            )
+        if self._ks is not None and hasattr(self._ks, "create_research_experiment"):
+            return self._ks.create_research_experiment(
+                ticket_id=ticket_id,
+                experiment_name=experiment_name,
+                strategy_selector=strategy_selector,
+                parameter_set=parameter_set,
+                run_config=run_config,
+                launch_context=launch_context,
+                queued_at=queued_at,
+            )
+        raise AttributeError("Research port operation 'create_research_experiment' not implemented")
+
+    def cancel_research_experiment(
+        self,
+        experiment_id: str,
+        *,
+        completed_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "cancel_research_experiment"):
+            return self._read_surface.cancel_research_experiment(experiment_id, completed_at=completed_at)
+        if self._ks is not None and hasattr(self._ks, "cancel_research_experiment"):
+            return self._ks.cancel_research_experiment(experiment_id, completed_at=completed_at)
+        raise AttributeError("Research port operation 'cancel_research_experiment' not implemented")
+
+    # -------------------------------------------------------------------------
+    # Research Artifacts (RW-05)
+    # -------------------------------------------------------------------------
+    def list_research_artifacts(
+        self,
+        *,
+        artifact_type: Optional[str] = None,
+        status: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        author: Optional[str] = None,
+        date_range: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_research_artifacts"):
+            return self._read_surface.list_research_artifacts(
+                artifact_type=artifact_type, status=status, tags=tags, author=author, date_range=date_range
+            )
+        if self._ks is not None and hasattr(self._ks, "list_research_artifacts"):
+            return self._ks.list_research_artifacts(
+                artifact_type=artifact_type, status=status, tags=tags, author=author, date_range=date_range
+            )
+        raise AttributeError("Research port operation 'list_research_artifacts' not implemented")
+
+    def get_research_artifact(self, artifact_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_research_artifact"):
+            return self._read_surface.get_research_artifact(artifact_id)
+        if self._ks is not None and hasattr(self._ks, "get_research_artifact"):
+            return self._ks.get_research_artifact(artifact_id)
+        raise AttributeError("Research port operation 'get_research_artifact' not implemented")
+
+    def compare_research_artifacts(self, artifact_ids: List[str]) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "compare_research_artifacts"):
+            return self._read_surface.compare_research_artifacts(artifact_ids)
+        if self._ks is not None and hasattr(self._ks, "compare_research_artifacts"):
+            return self._ks.compare_research_artifacts(artifact_ids)
+        raise AttributeError("Research port operation 'compare_research_artifacts' not implemented")
+
+    # -------------------------------------------------------------------------
+    # Search & Governed Search (RW-02)
+    # -------------------------------------------------------------------------
+    def get_research_search_index(self) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_research_search_index"):
+            return self._read_surface.get_research_search_index()
+        if self._ks is not None and hasattr(self._ks, "get_research_search_index"):
+            return self._ks.get_research_search_index()
+        raise AttributeError("Research port operation 'get_research_search_index' not implemented")
+
+    def get_last_governed_search_refs(self) -> Dict[str, Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_last_governed_search_refs"):
+            return self._read_surface.get_last_governed_search_refs()
+        if self._ks is not None and hasattr(self._ks, "get_last_governed_search_refs"):
+            return self._ks.get_last_governed_search_refs()
+        raise AttributeError("Research port operation 'get_last_governed_search_refs' not implemented")
+
+    def list_research_search_results(
+        self,
+        *,
+        query: str,
+        match_type: str = "all",
+        status: Optional[str] = None,
+        date_range: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_research_search_results"):
+            return self._read_surface.list_research_search_results(
+                query=query, match_type=match_type, status=status, date_range=date_range
+            )
+        if self._ks is not None and hasattr(self._ks, "list_research_search_results"):
+            return self._ks.list_research_search_results(
+                query=query, match_type=match_type, status=status, date_range=date_range
+            )
+        raise AttributeError("Research port operation 'list_research_search_results' not implemented")
+
+    def get_search_ops_snapshot(
+        self,
+        *,
+        pipeline_run_limit: int = 50,
+    ) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_search_ops_snapshot"):
+            return self._read_surface.get_search_ops_snapshot(pipeline_run_limit=pipeline_run_limit)
+        if self._ks is not None and hasattr(self._ks, "get_search_ops_snapshot"):
+            return self._ks.get_search_ops_snapshot(pipeline_run_limit=pipeline_run_limit)
+        raise AttributeError("Research port operation 'get_search_ops_snapshot' not implemented")
+
+    # -------------------------------------------------------------------------
+    # Source Ingestion & Ops (SVC-SOURCE-SEARCH-OPS-BFF)
+    # -------------------------------------------------------------------------
+    def get_source_connector_registry(self) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_source_connector_registry"):
+            return self._read_surface.get_source_connector_registry()
+        if self._ks is not None and hasattr(self._ks, "get_source_connector_registry"):
+            return self._ks.get_source_connector_registry()
+        raise AttributeError("Research port operation 'get_source_connector_registry' not implemented")
+
+    def get_source_change_proposals(
+        self,
+        *,
+        status: Optional[str] = None,
+        proposal_type: Optional[str] = None,
+        source_kind: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_source_change_proposals"):
+            return self._read_surface.get_source_change_proposals(
+                status=status, proposal_type=proposal_type, source_kind=source_kind
+            )
+        if self._ks is not None and hasattr(self._ks, "get_source_change_proposals"):
+            return self._ks.get_source_change_proposals(
+                status=status, proposal_type=proposal_type, source_kind=source_kind
+            )
+        raise AttributeError("Research port operation 'get_source_change_proposals' not implemented")
+
+    def get_source_ops_snapshot(
+        self,
+        *,
+        crawl_run_limit: int = 50,
+        dlq_status: Optional[str] = None,
+        frontier_status: Optional[str] = None,
+        audit_limit: int = 20,
+    ) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_source_ops_snapshot"):
+            return self._read_surface.get_source_ops_snapshot(
+                crawl_run_limit=crawl_run_limit,
+                dlq_status=dlq_status,
+                frontier_status=frontier_status,
+                audit_limit=audit_limit,
+            )
+        if self._ks is not None and hasattr(self._ks, "get_source_ops_snapshot"):
+            return self._ks.get_source_ops_snapshot(
+                crawl_run_limit=crawl_run_limit,
+                dlq_status=dlq_status,
+                frontier_status=frontier_status,
+                audit_limit=audit_limit,
+            )
+        raise AttributeError("Research port operation 'get_source_ops_snapshot' not implemented")
+
+    def get_source_health_usage_snapshot(self) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_source_health_usage_snapshot"):
+            return self._read_surface.get_source_health_usage_snapshot()
+        if self._ks is not None and hasattr(self._ks, "get_source_health_usage_snapshot"):
+            return self._ks.get_source_health_usage_snapshot()
+        raise AttributeError("Research port operation 'get_source_health_usage_snapshot' not implemented")
+
+    # -------------------------------------------------------------------------
+    # Optional Surface & Host Bindings
+    # -------------------------------------------------------------------------
+    def get_experiment_bff(self, exp_id: str) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_experiment_bff"):
+            return self._read_surface.get_experiment_bff(exp_id)
+        if self._ks is not None and hasattr(self._ks, "get_research_experiment"):
+            return self._ks.get_research_experiment(exp_id)
+        raise AttributeError("Research port operation 'get_experiment_bff' not implemented")
+
+    def list_experiments_bff(self, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_experiments_bff"):
+            return self._read_surface.list_experiments_bff(status=status)
+        return self.list_research_experiments(status=status)
+
+    def create_experiment_bff(
+        self,
+        *,
+        name: str,
+        actor_id: Optional[str] = None,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        status: str = "active",
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "create_experiment_bff"):
+            return self._read_surface.create_experiment_bff(
+                name=name,
+                actor_id=actor_id,
+                created_at=created_at,
+                params=params,
+                status=status,
+                **kwargs,
+            )
+        ticket_id = str((params or {}).get("ticket_id") or "")
+        return self.create_research_experiment(
+            ticket_id=ticket_id,
+            experiment_name=name,
+            strategy_selector=(params or {}).get("strategy_selector") or {},
+            parameter_set=(params or {}).get("parameter_set") or {},
+            run_config=(params or {}).get("run_config") or {},
+            launch_context=(params or {}).get("launch_context") or {"actor_id": actor_id or "system"},
+            queued_at=created_at,
         )
 
-    def dataset_surface_status(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        return self._dispatch(
-            getattr(self._raw_port, "dataset_surface_status", None),
-            getattr(self._ks, "dataset_surface_status", None),
-            *args,
-            **kwargs,
-        )
+    def get_experiment_logs(self, experiment_id: str) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_experiment_logs"):
+            return self._read_surface.get_experiment_logs(experiment_id)
+        return []
 
-    def list_research_notes(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_research_notes", None),
-            getattr(self._ks, "list_research_notes", None),
-            *args,
-            **kwargs,
-        )
+    def get_experiment_metrics(self, experiment_id: str) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_experiment_metrics"):
+            return self._read_surface.get_experiment_metrics(experiment_id)
+        return {}
 
-    def get_research_note(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_research_note", None),
-            getattr(self._ks, "get_research_note", None),
-            *args,
-            **kwargs,
-        )
+    def get_experiment_artifacts(self, experiment_id: str) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_experiment_artifacts"):
+            return self._read_surface.get_experiment_artifacts(experiment_id)
+        return []
 
-    def create_research_note(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "create_research_note", None),
-            getattr(self._ks, "create_research_note", None),
-            *args,
-            **kwargs,
-        )
+    def get_research_oss_preactivation_snapshot(self) -> Dict[str, Any]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_research_oss_preactivation_snapshot"):
+            return self._read_surface.get_research_oss_preactivation_snapshot()
+        raise AttributeError("Research port operation 'get_research_oss_preactivation_snapshot' not implemented")
 
-    def list_evidence_refs(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_evidence_refs", None),
-            getattr(self._ks, "list_evidence_refs", None),
-            *args,
-            **kwargs,
-        )
+    def list_synthesis_conflict_logs(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_synthesis_conflict_logs"):
+            return self._read_surface.list_synthesis_conflict_logs(**kwargs)
+        if self._ks is not None and hasattr(self._ks, "list_synthesis_conflict_logs"):
+            return self._ks.list_synthesis_conflict_logs(**kwargs)
+        return []
 
-    def get_evidence_ref(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_evidence_ref", None),
-            getattr(self._ks, "get_evidence_ref", None),
-            *args,
-            **kwargs,
-        )
+    def get_synthesis_conflict_log(self, log_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_synthesis_conflict_log"):
+            return self._read_surface.get_synthesis_conflict_log(log_id, **kwargs)
+        if self._ks is not None and hasattr(self._ks, "get_synthesis_conflict_log"):
+            return self._ks.get_synthesis_conflict_log(log_id, **kwargs)
+        return None
 
-    def get_evidence_ref_detail(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_evidence_ref_detail", None),
-            getattr(self._ks, "get_evidence_ref_detail", None),
-            *args,
-            **kwargs,
-        )
+    def list_strategies(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_strategies"):
+            return self._read_surface.list_strategies(**kwargs)
+        raise AttributeError("Research port operation 'list_strategies' not implemented")
 
-    def list_insight_cards(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_insight_cards", None),
-            getattr(self._ks, "list_insight_cards", None),
-            *args,
-            **kwargs,
-        )
+    def list_strategy_summaries(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_strategy_summaries"):
+            return self._read_surface.list_strategy_summaries(**kwargs)
+        raise AttributeError("Research port operation 'list_strategy_summaries' not implemented")
 
-    def get_insight_card(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_insight_card", None),
-            getattr(self._ks, "get_insight_card", None),
-            *args,
-            **kwargs,
-        )
+    def list_personas(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_personas"):
+            return self._read_surface.list_personas(**kwargs)
+        raise AttributeError("Research port operation 'list_personas' not implemented")
 
-    def get_insight_card_detail(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_insight_card_detail", None),
-            getattr(self._ks, "get_insight_card_detail", None),
-            *args,
-            **kwargs,
-        )
+    def list_capital_pools(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "list_capital_pools"):
+            return self._read_surface.list_capital_pools(**kwargs)
+        raise AttributeError("Research port operation 'list_capital_pools' not implemented")
 
-    def list_strategy_specs(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_strategy_specs", None),
-            getattr(self._ks, "list_strategy_specs", None),
-            *args,
-            **kwargs,
-        )
+    def get_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._read_surface is not None and hasattr(self._read_surface, "get_persona"):
+            return self._read_surface.get_persona(persona_id)
+        return None
 
-    def get_strategy_spec(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_strategy_spec", None),
-            getattr(self._ks, "get_strategy_spec", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_strategy_spec_detail(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_strategy_spec_detail", None),
-            getattr(self._ks, "get_strategy_spec_detail", None),
-            *args,
-            **kwargs,
-        )
-
-    def list_strategy_spec_versions(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_strategy_spec_versions", None),
-            getattr(self._ks, "list_strategy_spec_versions", None),
-            *args,
-            **kwargs,
-        )
-
-    def compare_strategy_spec_versions(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        return self._dispatch(
-            getattr(self._raw_port, "compare_strategy_spec_versions", None),
-            getattr(self._ks, "compare_strategy_spec_versions", None),
-            *args,
-            **kwargs,
-        )
-
-    def list_institutional_memory_entries(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_institutional_memory_entries", None),
-            getattr(self._ks, "list_institutional_memory_entries", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_institutional_memory_entry(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_institutional_memory_entry", None),
-            getattr(self._ks, "get_institutional_memory_entry", None),
-            *args,
-            **kwargs,
-        )
-
-    def list_research_tickets(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_research_tickets", None),
-            getattr(self._ks, "list_research_tickets", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_research_ticket(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_research_ticket", None),
-            getattr(self._ks, "get_research_ticket", None),
-            *args,
-            **kwargs,
-        )
-
-    def create_research_ticket(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "create_research_ticket", None),
-            getattr(self._ks, "create_research_ticket", None),
-            *args,
-            **kwargs,
-        )
-
-    def patch_research_ticket(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "patch_research_ticket", None),
-            getattr(self._ks, "patch_research_ticket", None),
-            *args,
-            **kwargs,
-        )
-
-    def list_research_analyses(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_research_analyses", None),
-            getattr(self._ks, "list_research_analyses", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_research_analysis(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_research_analysis", None),
-            getattr(self._ks, "get_research_analysis", None),
-            *args,
-            **kwargs,
-        )
-
-    def list_research_experiments(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_research_experiments", None),
-            getattr(self._ks, "list_research_experiments", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_research_experiment(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_research_experiment", None),
-            getattr(self._ks, "get_research_experiment", None),
-            *args,
-            **kwargs,
-        )
-
-    def create_research_experiment(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        return self._dispatch(
-            getattr(self._raw_port, "create_research_experiment", None),
-            getattr(self._ks, "create_research_experiment", None),
-            *args,
-            **kwargs,
-        )
-
-    def cancel_research_experiment(self, *args: Any, **kwargs: Any) -> bool:
-        return self._dispatch(
-            getattr(self._raw_port, "cancel_research_experiment", None),
-            getattr(self._ks, "cancel_research_experiment", None),
-            *args,
-            **kwargs,
-        )
-
-    def list_research_artifacts(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_research_artifacts", None),
-            getattr(self._ks, "list_research_artifacts", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_research_artifact(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_research_artifact", None),
-            getattr(self._ks, "get_research_artifact", None),
-            *args,
-            **kwargs,
-        )
-
-    def compare_research_artifacts(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        return self._dispatch(
-            getattr(self._raw_port, "compare_research_artifacts", None),
-            getattr(self._ks, "compare_research_artifacts", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_research_search_index(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_research_search_index", None),
-            getattr(self._ks, "get_research_search_index", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_last_governed_search_refs(self, *args: Any, **kwargs: Any) -> List[str]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_last_governed_search_refs", None),
-            getattr(self._ks, "get_last_governed_search_refs", None),
-            *args,
-            **kwargs,
-        )
-
-    def list_research_search_results(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_research_search_results", None),
-            getattr(self._ks, "list_research_search_results", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_search_ops_snapshot(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_search_ops_snapshot", None),
-            getattr(self._ks, "get_search_ops_snapshot", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_source_connector_registry(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_source_connector_registry", None),
-            getattr(self._ks, "get_source_connector_registry", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_source_change_proposals(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_source_change_proposals", None),
-            getattr(self._ks, "get_source_change_proposals", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_source_ops_snapshot(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_source_ops_snapshot", None),
-            getattr(self._ks, "get_source_ops_snapshot", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_source_health_usage_snapshot(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_source_health_usage_snapshot", None),
-            getattr(self._ks, "get_source_health_usage_snapshot", None),
-            *args,
-            **kwargs,
-        )
-
-    def list_synthesis_conflict_logs(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "list_synthesis_conflict_logs", None),
-            getattr(self._ks, "list_synthesis_conflict_logs", None),
-            *args,
-            **kwargs,
-        )
-
-    def get_synthesis_conflict_log(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        return self._dispatch(
-            getattr(self._raw_port, "get_synthesis_conflict_log", None),
-            getattr(self._ks, "get_synthesis_conflict_log", None),
-            *args,
-            **kwargs,
-        )
 
 
 @dataclass
@@ -596,7 +878,7 @@ class ResearchRouterService:
             return None  # type: ignore[return-value]
         ks = getattr(port, "research_knowledge_source", None)
         if ks is not None and ks is not port:
-            return ResearchPortWiring(port, ks)
+            return ResearchPortWiring(read_surface=port, knowledge_source=ks)
         return port
 
     @contextmanager

@@ -1544,6 +1544,16 @@ def scan_route_source_for_store_access(
         "invoke_port",
         "forward_port",
         "resolve_knowledge_fn",
+        "_dispatch",
+        "dispatch_port",
+        "forward_dispatch",
+    }
+    forbidden_route_persistence_helpers = {
+        "_pm12_attach_ranking_snapshot",
+        "attach_ranking_snapshot",
+        "put_ranking_snapshot",
+        "attach_ranking_snapshot_record",
+        "persist_ranking_snapshot",
     }
     allowed_context_methods = {
         "__init__",
@@ -1573,6 +1583,11 @@ def scan_route_source_for_store_access(
                 violations.append(f"{filename}:{node.lineno} defines forbidden forwarder '{node.name}'")
             if node.name in ("__getattr__", "__getattribute__"):
                 violations.append(f"{filename}:{node.lineno} defines forbidden dynamic attribute fallback '{node.name}'")
+            if self.current_class and ("Wiring" in self.current_class or "Adapter" in self.current_class):
+                if node.args.vararg and node.args.kwarg and len(node.args.args) <= 1:
+                    violations.append(
+                        f"{filename}:{node.lineno} in {self.current_class}.{node.name} uses generic *args/**kwargs forwarding instead of concrete domain signature"
+                    )
             prev_fn = self.current_function
             self.current_function = node.name
             self.generic_visit(node)
@@ -1583,6 +1598,11 @@ def scan_route_source_for_store_access(
                 violations.append(f"{filename}:{node.lineno} defines forbidden forwarder '{node.name}'")
             if node.name in ("__getattr__", "__getattribute__"):
                 violations.append(f"{filename}:{node.lineno} defines forbidden dynamic attribute fallback '{node.name}'")
+            if self.current_class and ("Wiring" in self.current_class or "Adapter" in self.current_class):
+                if node.args.vararg and node.args.kwarg and len(node.args.args) <= 1:
+                    violations.append(
+                        f"{filename}:{node.lineno} in {self.current_class}.{node.name} uses generic *args/**kwargs forwarding instead of concrete domain signature"
+                    )
             prev_fn = self.current_function
             self.current_function = node.name
             self.generic_visit(node)
@@ -1609,22 +1629,38 @@ def scan_route_source_for_store_access(
                 ):
                     violations.append(f"{filename}:{node.lineno} calls getattr with forbidden forwarder '{node.args[1].value}'")
 
+            callee_name = None
+            if isinstance(node.func, ast.Name):
+                callee_name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                callee_name = node.func.attr
+            if callee_name and callee_name in forbidden_forwarders:
+                violations.append(f"{filename}:{node.lineno} calls forbidden forwarder '{callee_name}'")
+
             if not is_service:
                 is_allowed = self._is_allowed_common_scope()
                 if not is_allowed:
+                    if callee_name and (
+                        callee_name in forbidden_route_persistence_helpers
+                        or "attach_ranking_snapshot" in callee_name
+                        or "put_ranking_snapshot" in callee_name
+                    ):
+                        violations.append(
+                            f"{filename}:{node.lineno} calls snapshot persistence helper '{callee_name}' in route handler"
+                        )
                     if isinstance(node.func, ast.Name) and node.func.id == "get_read_store":
                         violations.append(f"{filename}:{node.lineno} calls get_read_store()")
                     elif isinstance(node.func, ast.Attribute) and node.func.attr == "get_read_store":
                         violations.append(f"{filename}:{node.lineno} calls .{node.func.attr}()")
 
                     # Direct bridge construction or invocation
-                    callee_name = None
+                    bridge_callee = None
                     if isinstance(node.func, ast.Name) and (node.func.id.endswith("Bridge") or "Bridge" in node.func.id):
-                        callee_name = node.func.id
+                        bridge_callee = node.func.id
                     elif isinstance(node.func, ast.Attribute) and (node.func.attr.endswith("Bridge") or "Bridge" in node.func.attr):
-                        callee_name = node.func.attr
-                    if callee_name:
-                        violations.append(f"{filename}:{node.lineno} directly accesses or constructs bridge '{callee_name}'")
+                        bridge_callee = node.func.attr
+                    if bridge_callee:
+                        violations.append(f"{filename}:{node.lineno} directly accesses or constructs bridge '{bridge_callee}'")
 
                     # Router-owned persistence mutation calls (.pop, .setdefault, .update, .clear)
                     if isinstance(node.func, ast.Attribute) and node.func.attr in {"pop", "setdefault", "update", "clear"}:
@@ -1731,9 +1767,89 @@ def test_five_domain_routers_have_no_direct_store_access() -> None:
     assert not violations, f"Routes and application services must not use dynamic forwarders or unmediated store access: {violations}"
 
 
+def scan_route_source_for_duplicate_business_statement_blocks(
+    source: str,
+    filename: str = "<unknown>",
+    window_size: int = 5,
+) -> Dict[str, List[str]]:
+    """Scan Python AST for duplicate business statement blocks of window_size or more statements.
+
+    Catches duplicated multi-statement business workflow logic blocks (5+ consecutive statements)
+    across handlers, while ignoring trivial route preflight/auth/boilerplate.
+    """
+    from collections import defaultdict
+
+    preflight_names = {
+        "extract_identity",
+        "_extract_identity",
+        "require_read_role",
+        "_require_read_role",
+        "require_write_role",
+        "_require_write_role",
+        "_check_write_auth",
+        "_require_admin_role",
+        "_require_role",
+        "utc_now",
+        "write_scope",
+        "read_scope",
+        "require_idempotency_key",
+        "_require_idempotency_key",
+        "check_idempotency",
+        "require_room",
+        "require_pool_access",
+        "require_room_access",
+        "_ensure_persona_exists",
+        "require_candidate_pool_if_match",
+        "_require_if_match",
+        "_require_x_request_id",
+        "reject_body_idempotency_key",
+        "resolve_final_idempotency_key",
+    }
+
+    def _is_preflight(stmt: ast.stmt) -> bool:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Name) and node.id in preflight_names:
+                return True
+            if isinstance(node, ast.Attribute) and node.attr in preflight_names:
+                return True
+        return False
+
+    tree = ast.parse(source, filename=filename)
+    blocks: Dict[str, List[str]] = defaultdict(list)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name.startswith("build_") or node.name.endswith("_router"):
+                continue
+            stmts = node.body
+            if (
+                stmts
+                and isinstance(stmts[0], ast.Expr)
+                and isinstance(stmts[0].value, ast.Constant)
+                and isinstance(stmts[0].value.value, str)
+            ):
+                stmts = stmts[1:]
+            biz_stmts = [s for s in stmts if not _is_preflight(s)]
+            if len(biz_stmts) >= window_size:
+                for i in range(len(biz_stmts) - window_size + 1):
+                    window = biz_stmts[i : i + window_size]
+                    dump = ast.dump(
+                        ast.Module(body=window, type_ignores=[]),
+                        annotate_fields=False,
+                        include_attributes=False,
+                    )
+                    blocks[dump].append(f"{node.name}:{window[0].lineno}")
+    duplicates = {}
+    for dump, locs in blocks.items():
+        distinct_funcs = set(loc.split(":")[0] for loc in locs)
+        if len(distinct_funcs) > 1:
+            duplicates[dump] = locs
+    return duplicates
+
+
 def test_five_domain_router_handlers_have_no_duplicate_ast_bodies() -> None:
     """Requirement BFF-ROUTER-USECASE-CORRECTIVE-001: Ensure no duplicate AST handler
     bodies exist across the five decomposed router domains (no mechanical copy-paste),
+    no multi-statement business logic blocks are duplicated across handlers,
     and route handlers do not copy application service method bodies.
     """
     from collections import defaultdict
@@ -1772,11 +1888,20 @@ def test_five_domain_router_handlers_have_no_duplicate_ast_bodies() -> None:
                     results.append((node.name, len(stmts), dump))
         return results
 
+    business_block_dupes = {}
     for route_rel, svc_rel in domains:
         route_dir = BFF_DIR / route_rel
         for py_path in sorted(route_dir.glob("*.py")):
             if py_path.name in ("__init__.py", "common.py"):
                 continue
+            src = py_path.read_text(encoding="utf-8")
+            fdupes = scan_route_source_for_duplicate_business_statement_blocks(
+                src,
+                filename=str(py_path.relative_to(BFF_DIR)),
+                window_size=5,
+            )
+            if fdupes:
+                business_block_dupes[str(py_path.relative_to(BFF_DIR))] = fdupes
             for name, n_stmts, dump in _extract_func_bodies(py_path):
                 scanned_handlers += 1
                 bodies[dump].append(f"{py_path.relative_to(BFF_DIR)}:{name} ({n_stmts} stmts)")
@@ -1786,6 +1911,8 @@ def test_five_domain_router_handlers_have_no_duplicate_ast_bodies() -> None:
             for name, n_stmts, dump in _extract_func_bodies(svc_path):
                 scanned_services += 1
                 service_bodies[dump].append(f"{svc_path.relative_to(BFF_DIR)}:{name} ({n_stmts} stmts)")
+
+    assert not business_block_dupes, f"Found duplicate multi-statement business blocks: {business_block_dupes}"
 
     duplicates = {dump: locs for dump, locs in bodies.items() if len(locs) > 1}
     assert not duplicates, f"Found duplicate AST handler bodies: {duplicates}"
@@ -2237,6 +2364,95 @@ def test_five_domain_store_access_gate_catches_dynamic_getattr_and_fallbacks() -
     """)
     legit_violations = scan_route_source_for_store_access(legit_service_src, filename="personas/service.py", is_service=True)
     assert not legit_violations, f"Gate incorrectly flagged legitimate service store access: {legit_violations}"
+
+
+def test_five_domain_store_access_gate_catches_snapshot_persistence_helper() -> None:
+    """Negative regression: verify scan_route_source_for_store_access catches
+    route handlers invoking snapshot persistence helpers (_pm12_attach_ranking_snapshot,
+    attach_ranking_snapshot, put_ranking_snapshot) directly instead of delegating to
+    the application service.
+    """
+    import textwrap
+
+    bad_ranking_route_src = textwrap.dedent("""
+        @router.get("/api/v1/ranking/quarterly")
+        async def bff_management_quarterly_ranking(quarter: str):
+            quarter_window = _pm12_quarter_window(quarter, "2026-01-01T00:00:00Z")
+            ranked_items = _pm12_quarterly_ranking_items([], quarter_window=quarter_window)
+            ranked_items, snapshot_id = _pm12_attach_ranking_snapshot(
+                ranked_items, surface="quarterly", period=quarter
+            )
+            return {"data": ranked_items, "snapshot_id": snapshot_id}
+    """)
+    detected = scan_route_source_for_store_access(
+        bad_ranking_route_src, filename="personas/routes/ranking.py", is_service=False
+    )
+    assert any("snapshot persistence helper" in d or "_pm12_attach_ranking_snapshot" in d for d in detected), (
+        f"Gate missed route snapshot persistence helper call: {detected}"
+    )
+
+
+def test_five_domain_store_access_gate_catches_generic_runtime_forwarder() -> None:
+    """Negative regression: verify scan_route_source_for_store_access catches
+    generic _dispatch forwarders and *args/**kwargs forwarder methods on wiring/adapter
+    classes instead of concrete domain operation signatures.
+    """
+    import textwrap
+
+    bad_dispatch_wiring_src = textwrap.dedent("""
+        class ResearchPortWiring(ResearchKnowledgeSourcePort):
+            def __init__(self, raw_port, ks):
+                self._raw = raw_port
+                self._ks = ks
+            def _dispatch(self, raw_fn, ks_fn, *args, **kwargs):
+                if callable(raw_fn):
+                    return raw_fn(*args, **kwargs)
+                return ks_fn(*args, **kwargs)
+            def dataset_source(self, *args, **kwargs):
+                return self._dispatch(self._raw.dataset_source, self._ks.dataset_source, *args, **kwargs)
+    """)
+    detected = scan_route_source_for_store_access(
+        bad_dispatch_wiring_src, filename="research/service.py", is_service=True
+    )
+    assert any("_dispatch" in d for d in detected), f"Gate missed _dispatch definition/call: {detected}"
+    assert any("generic *args/**kwargs forwarding" in d for d in detected), (
+        f"Gate missed generic *args/**kwargs forwarding method: {detected}"
+    )
+
+
+def test_five_domain_duplicate_body_gate_catches_duplicate_business_blocks() -> None:
+    """Negative regression: verify scan_route_source_for_duplicate_business_statement_blocks
+    catches duplicated multi-statement business blocks (5+ consecutive statements)
+    across handlers, including the identical 6-statement quarter ranking block.
+    """
+    import textwrap
+
+    bad_duplicate_business_block_src = textwrap.dedent("""
+        @router.get("/api/v1/ranking/quarterly")
+        async def bff_management_quarterly_ranking(quarter: str):
+            quarter_window = _pm12_quarter_window(quarter, "2026-01-01")
+            rows = _pm12_persona_league_rows(tenant_id="test")
+            ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+            public_refs, canon_refs, red_count, avail = _pm12_public_quarter_evidence_refs("id", quarter_window)
+            ranked_items = _pm12_attach_ranking_evidence(ranked_items, public_refs, canonical_evidence_refs=canon_refs)
+            ranked_items, snap_id = _pm12_attach_ranking_snapshot(ranked_items, surface="quarterly", period=quarter)
+            return {"items": ranked_items}
+
+        @router.get("/api/v1/ranking/quarterly/drilldown")
+        async def bff_management_quarterly_ranking_drilldown(quarter: str):
+            quarter_window = _pm12_quarter_window(quarter, "2026-01-01")
+            rows = _pm12_persona_league_rows(tenant_id="test")
+            ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+            public_refs, canon_refs, red_count, avail = _pm12_public_quarter_evidence_refs("id", quarter_window)
+            ranked_items = _pm12_attach_ranking_evidence(ranked_items, public_refs, canonical_evidence_refs=canon_refs)
+            ranked_items, snap_id = _pm12_attach_ranking_snapshot(ranked_items, surface="quarterly", period=quarter)
+            return {"drilldown": ranked_items}
+    """)
+    detected = scan_route_source_for_duplicate_business_statement_blocks(
+        bad_duplicate_business_block_src, filename="personas/routes/ranking.py", window_size=5
+    )
+    assert len(detected) > 0, f"Scanner missed identical 6-statement quarter ranking block: {detected}"
+
 
 
 def test_research_kw04_insight_cards_contract_regressions() -> None:

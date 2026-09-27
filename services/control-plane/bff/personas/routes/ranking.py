@@ -22,7 +22,6 @@ from ..service import (
     _performance_ranking_source_surface,
     _persona_league_payload,
     _pm12_attach_ranking_evidence,
-    _pm12_attach_ranking_snapshot,
     _pm12_filter_persona_items,
     _pm12_heatmap_buckets,
     _pm12_normalize_mover_direction,
@@ -309,85 +308,15 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        snapshot_at = utc_now()
-        all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
-        ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
-            [_pm12_persona_league_ranking_item(row) for row in all_rows],
-            surface="rolling",
-            period="short_cycle",
-        )
-        ranking_by_persona = {
-            str(item.get("persona_id") or ""): item
-            for item in ranking_basis
-            if str(item.get("persona_id") or "")
-        }
-        rows = _pm12_filter_persona_items(
-            [
-            {
-                **row,
-                **{
-                    field: ranking_by_persona.get(str(row.get("persona_id") or ""), {}).get(field)
-                    for field in (
-                        "eligible",
-                        "exclusion_reason",
-                        "exclusion_reasons",
-                        "exclusion_codes",
-                        "evidence_coverage",
-                        "evidence_refs",
-                        "source_confidence",
-                        "ranking_snapshot_id",
-                    )
-                },
-            }
-            for row in all_rows
-            ],
+        return _service.get_persona_league(
+            caller_tenant_id=caller_tenant_id,
             state=state,
             archetype=archetype,
             q=q,
+            page_token=page_token,
+            page_size=page_size,
+            page_slice_fn=_page_slice,
         )
-        total = len(rows)
-        page_items, next_page_token = _page_slice(rows, page_token, page_size)
-        summary = {
-            "persona_count": total,
-            "returned_count": len(page_items),
-            "ranking_snapshot_id": ranking_snapshot_id,
-        }
-        persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-        surfaces = {
-            "persona_league": _composed_surface_status(snapshot_at=snapshot_at),
-            "personas": persona_surface,
-            "route_policies": _composed_surface_status(snapshot_at=snapshot_at),
-            "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at),
-            "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
-            "persona_sessions": _dataset_surface_status("sessions", snapshot_at=snapshot_at),
-            "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
-            "persona_memory": _composed_surface_status(snapshot_at=snapshot_at),
-            "persona_health": dict(persona_surface),
-        }
-        return {
-            "data": {
-                "id": "management-persona-league",
-                "ranking_snapshot_id": ranking_snapshot_id,
-                "items": page_items,
-                "summary": summary,
-            },
-            "page_info": {"next_page_token": next_page_token, "total": total},
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "ranking_snapshot_id": ranking_snapshot_id,
-                "total": total,
-                "surfaces": surfaces,
-                "composition_sources": [
-                    "GET /bff/personas",
-                    "GET /bff/personas/{id}/route-policy",
-                    "GET /bff/personas/{id}/capabilities",
-                    "GET /bff/personas/{id}/activity",
-                    "GET /bff/personas/{id}/evaluations",
-                    "GET /bff/personas/{id}/memory",
-                    "GET /bff/v5/execution/persona-health",
-                ],
-            },
-        }
 
 
     @router.get("/bff/management/persona-league/rankings")
@@ -421,23 +350,13 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        snapshot_at = utc_now()
-        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
-
-        # Pre-enrich and filter the base league rows represented as ranking items
-        base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
-            [_pm12_persona_league_ranking_item(row) for row in rows],
-            surface="rolling",
-            period="short_cycle",
-        )
-        enriched_items = _pm12_filter_persona_items(
-            base_items,
+        return _service.get_persona_league_rankings(
+            caller_tenant_id=caller_tenant_id,
             state=state,
             archetype=archetype,
             q=q,
-        )
-        filtered_items = _filter_by_common_identifiers(
-            enriched_items,
+            criteria=criteria,
+            limit=limit,
             persona_id=persona_id, persona=persona,
             runtime_id=runtime_id, runtime=runtime,
             strategy_id=strategy_id, strategy=strategy,
@@ -445,58 +364,8 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
             sleeve_id=sleeve_id, sleeve=sleeve,
             artifact_id=artifact_id, artifact=artifact,
             broker_id=broker_id, broker=broker,
-            stage=stage, period=period, as_of=as_of
+            stage=stage, period=period, as_of=as_of,
         )
-
-        blocks = _pm12_persona_league_rankings(
-            rows,
-            criteria=criteria,
-            limit=limit,
-            base_items=filtered_items,
-        )
-        for block in blocks:
-            block["ranking_snapshot_id"] = ranking_snapshot_id
-        source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
-        rankings_surface = _aggregate_group_surface(
-            "persona_league_rankings",
-            list(source_surfaces.values()),
-            snapshot_at=snapshot_at,
-            unavailable_message="Persona league rankings aggregate unavailable.",
-            degraded_message="Persona league rankings are degraded because one or more source surfaces are degraded.",
-        )
-        top_item = (blocks[0].get("items") or [None])[0] if blocks else None
-        summary = {
-            "persona_count": len(filtered_items),
-            "criteria": [block["criteria"] for block in blocks],
-            "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
-            "ranking_snapshot_id": ranking_snapshot_id,
-        }
-        return {
-            "data": {
-                "id": "management-persona-league-rankings",
-                "ranking_snapshot_id": ranking_snapshot_id,
-                "items": blocks,
-                "summary": summary,
-            },
-            "page_info": {"next_page_token": None, "total": len(blocks), "page_size": len(blocks)},
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "ranking_snapshot_id": ranking_snapshot_id,
-                "surfaces": {
-                    name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
-                    for name, surface in {
-                        "persona_league_rankings": rankings_surface,
-                        **source_surfaces,
-                    }.items()
-                },
-                "composition_sources": [
-                    "GET /bff/management/persona-league",
-                    "GET /bff/management/persona-league/tiers",
-                    "GET /bff/personas",
-                    "GET /bff/v5/execution/persona-health",
-                ],
-            },
-        }
 
 
     @router.get("/bff/management/persona-league/movers")
@@ -810,39 +679,15 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        snapshot_at = utc_now()
-        quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
-        ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
-        (
-            public_evidence_refs,
-            canonical_evidence_refs,
-            redacted_count,
-            evidence_dataset_available,
-        ) = _pm12_public_quarter_evidence_refs(
-            identity,
-            quarter_window,
-        )
-        ranked_items = _pm12_attach_ranking_evidence(
-            ranked_items,
-            public_evidence_refs,
-            canonical_evidence_refs=canonical_evidence_refs,
-        )
-        ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
-            ranked_items,
-            surface="quarterly",
-            period=quarter_window["quarter"],
-        )
-
-        # Apply common filters after the immutable full-universe snapshot is built.
-        enriched_items = _pm12_filter_persona_items(
-            ranked_items,
+        return _service.get_quarterly_ranking(
+            quarter=quarter,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
             state=state,
             archetype=archetype,
             q=q,
-        )
-        filtered_items = _filter_by_common_identifiers(
-            enriched_items,
+            page_token=page_token,
+            page_size=page_size,
             persona_id=persona_id, persona=persona,
             runtime_id=runtime_id, runtime=runtime,
             strategy_id=strategy_id, strategy=strategy,
@@ -850,82 +695,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
             sleeve_id=sleeve_id, sleeve=sleeve,
             artifact_id=artifact_id, artifact=artifact,
             broker_id=broker_id, broker=broker,
-            stage=stage, period=period, as_of=as_of
+            stage=stage, period=period, as_of=as_of,
+            page_slice_fn=_page_slice,
         )
-        total = len(filtered_items)
-        page_items, next_page_token = _page_slice(filtered_items, page_token, page_size)
-
-        formula = _pm12_quarter_formula_payload()
-        source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
-        formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
-        evidence_surface = _dataset_surface_status(
-            "evidence_refs",
-            snapshot_at=snapshot_at,
-            has_data=evidence_dataset_available,
-            missing_message="Evidence reference read surface is unavailable.",
-        )
-        quarterly_surface = _aggregate_group_surface(
-            "quarterly_ranking",
-            [*source_surfaces.values(), formula_surface, evidence_surface],
-            snapshot_at=snapshot_at,
-            unavailable_message="Quarterly ranking aggregate unavailable.",
-            degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
-        )
-        quarterly_surfaces = {
-            name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
-            for name, surface in {
-                "quarterly_ranking": quarterly_surface,
-                "formula": formula_surface,
-                "evidence_refs": evidence_surface,
-                "knowledge_evidence": evidence_surface,
-                **source_surfaces,
-            }.items()
-        }
-        top_item = filtered_items[0] if filtered_items else None
-        summary = {
-            "quarter": quarter_window["quarter"],
-            "formula_version": formula["formula_version"],
-            "persona_count": total,
-            "ranking_universe_count": len(rows),
-            "ranked_count": total,
-            "returned_count": len(page_items),
-            "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
-            "evidence_ref_count": len(public_evidence_refs),
-            "redacted_evidence_count": redacted_count,
-            "basis": formula["basis"],
-            "ranking_snapshot_id": ranking_snapshot_id,
-        }
-        data = {
-            "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
-            "ranking_snapshot_id": ranking_snapshot_id,
-            "quarter": quarter_window["quarter"],
-            "quarter_window": quarter_window,
-            "formula": formula,
-            "items": page_items,
-            "evidence_refs": public_evidence_refs,
-            "summary": summary,
-        }
-        return {
-            "data": data,
-            "page_info": {
-                "next_page_token": next_page_token,
-                "total": total,
-                "page_size": page_size,
-            },
-            "meta": {
-                **_snapshot_meta(snapshot_at),
-                "ranking_snapshot_id": ranking_snapshot_id,
-                "surfaces": quarterly_surfaces,
-                "composition_sources": [
-                    "GET /bff/management/persona-league",
-                    "GET /bff/management/persona-league/rankings",
-                    "GET /bff/management/persona-league/tiers",
-                    "GET /api/v1/knowledge/evidence",
-                ],
-                "policy": "read_only_governance_advisory",
-                "redacted_evidence_count": redacted_count,
-            },
-        }
 
 
     @router.get("/bff/management/quarterly-ranking/drilldown")
@@ -975,138 +747,24 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
                 correlation_id=correlation_id,
             )
 
-        snapshot_at = utc_now()
-        quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
-        ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
-        (
-            public_evidence_refs,
-            canonical_evidence_refs,
-            redacted_count,
-            evidence_dataset_available,
-        ) = _pm12_public_quarter_evidence_refs(
-            identity,
-            quarter_window,
-        )
-        ranked_items = _pm12_attach_ranking_evidence(
-            ranked_items,
-            public_evidence_refs,
-            canonical_evidence_refs=canonical_evidence_refs,
-        )
-        ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
-            ranked_items,
-            surface="quarterly",
-            period=quarter_window["quarter"],
-        )
-        ranking_item = _pm12_quarterly_find_persona_item(ranked_items, resolved_persona_id)
-        if ranking_item is None:
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Quarterly ranking persona not found",
-                f"Persona {resolved_persona_id} is not present in the requested quarterly ranking.",
-                precondition_failed="personaId",
-                correlation_id=correlation_id,
-            )
-
-        legacy_filtered_results = _pm12_filter_persona_items(
-            [ranking_item],
+        return _service.get_quarterly_ranking_drilldown(
+            quarter=quarter,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            resolved_persona_id=resolved_persona_id,
+            correlation_id=correlation_id,
             state=state,
             archetype=archetype,
             q=q,
-        )
-        filtered_results = _filter_by_common_identifiers(
-            legacy_filtered_results,
-            persona_id=resolved_persona_id, persona=persona,
+            persona=persona,
             runtime_id=runtime_id, runtime=runtime,
             strategy_id=strategy_id, strategy=strategy,
             capital_pool_id=capital_pool_id, pool=pool,
             sleeve_id=sleeve_id, sleeve=sleeve,
             artifact_id=artifact_id, artifact=artifact,
             broker_id=broker_id, broker=broker,
-            stage=stage, period=period, as_of=as_of
+            stage=stage, period=period, as_of=as_of,
         )
-        if not filtered_results:
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Quarterly ranking persona not found matching filter criteria",
-                f"Persona {resolved_persona_id} does not match the requested filter criteria.",
-                precondition_failed="personaId",
-                correlation_id=correlation_id,
-            )
-
-        ranking_item = filtered_results[0]
-
-        row = _pm12_quarterly_find_persona_row(rows, resolved_persona_id)
-        item_evidence_refs = list(ranking_item.get("evidence_refs") or [])
-        drilldown = _pm12_quarterly_drilldown_payload(
-            item=ranking_item,
-            row=row,
-            quarter_window=quarter_window,
-            ranked_count=len(ranked_items),
-            evidence_refs=item_evidence_refs,
-        )
-
-        source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
-        formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
-        evidence_surface = _dataset_surface_status(
-            "evidence_refs",
-            snapshot_at=snapshot_at,
-            has_data=evidence_dataset_available,
-            missing_message="Evidence reference read surface is unavailable.",
-        )
-        quarterly_surface = _aggregate_group_surface(
-            "quarterly_ranking",
-            [*source_surfaces.values(), formula_surface, evidence_surface],
-            snapshot_at=snapshot_at,
-            unavailable_message="Quarterly ranking aggregate unavailable.",
-            degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
-        )
-        drilldown_surface = _aggregate_group_surface(
-            "quarterly_ranking_drilldown",
-            [quarterly_surface, formula_surface, evidence_surface, *source_surfaces.values()],
-            snapshot_at=snapshot_at,
-            unavailable_message="Quarterly ranking drilldown aggregate unavailable.",
-            degraded_message="Quarterly ranking drilldown is degraded because one or more source surfaces are degraded.",
-        )
-        summary = dict(drilldown["summary"])
-        summary["redacted_evidence_count"] = redacted_count
-
-        return {
-            "data": drilldown,
-            "item": ranking_item,
-            "ranking_item": ranking_item,
-            "contributions": drilldown["contributions"],
-            "contribution_breakdown": drilldown["contribution_breakdown"],
-            "source_breakdown": drilldown["source_breakdown"],
-            "formula": drilldown["formula"],
-            "quarter_window": quarter_window,
-            "evidence_refs": item_evidence_refs,
-            "summary": summary,
-            "meta": {
-                **_snapshot_meta(snapshot_at),
-                "ranking_snapshot_id": ranking_snapshot_id,
-                "correlation_id": correlation_id,
-                "surfaces": {
-                    "quarterly_ranking_drilldown": drilldown_surface,
-                    "quarterly_ranking": quarterly_surface,
-                    "formula": formula_surface,
-                    "evidence_refs": evidence_surface,
-                    "knowledge_evidence": evidence_surface,
-                    **source_surfaces,
-                },
-                "composition_sources": [
-                    "GET /bff/management/quarterly-ranking",
-                    "GET /bff/management/persona-league",
-                    "GET /bff/management/persona-league/rankings",
-                    "GET /bff/management/persona-league/tiers",
-                    "GET /api/v1/knowledge/evidence",
-                ],
-                "policy": "read_only_governance_advisory",
-                "redacted_evidence_count": redacted_count,
-            },
-        }
 
 
     @router.get("/bff/management/quarterly-ranking/recommendations")
