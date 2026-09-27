@@ -1,164 +1,113 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001",
-  "worker": "Antigravity",
+  "owner": "PiAstra",
   "reviewer": "Codex",
-  "governing_spec": {
-    "document": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md",
-    "section": "Residual F07: Packaged Journal Owner and Durable Backend Configuration",
-    "normative_plan": "reaudit-task-intake-20260909/EXECUTION_PLAN.md"
-  },
-  "predecessors": {
-    "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001": {
+  "delivery_status": "ready_for_independent_review",
+  "repository": "ajoe734/pantheon",
+  "pr": 5991,
+  "source_commit": "2e9f295f1cb937f85bdb67165d24cdf978e55631",
+  "base_sha": "b45c8d2a2a88d35ae257a1bc4cbde584bc8245a6",
+  "resumed_head": "76de491f7b6075e2c59811b96d97da5dd5927b07",
+  "verification_date": "2026-09-27",
+  "identity_note": "source_commit contains all tested source. The subsequent evidence-only commit is bound as the exact PR head by canonical handoff; no independent approval or merge is claimed here.",
+  "normative_plan": "reaudit-task-intake-20260909/SA_SD.md: JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001, F07; canonical artifact grant additionally includes core/app_factory.py",
+  "predecessors": [
+    {
+      "task_id": "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
       "status": "done",
-      "satisfied": true
+      "merge_commit": "0565b5f1615078a57c93eab2c7897b0afedb36ee",
+      "evidence_sha256": "891788816ed12570382864af6dac9ac5364c20a977cc74b50d13ae8121edf89c",
+      "consumed": "Existing governance journal transactions, CAS, tenant/idempotency scope, read-only snapshots, canonical reader and retired Agora writers. No transaction engine or migration rewrite. Original domain and adapter suites rerun, including actual read-only Docker consumer tests."
     },
-    "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001": {
+    {
+      "task_id": "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
       "status": "done",
-      "satisfied": true
+      "merge_commit": "8e91733aca2243d22b38c4efbfa3a80ef548efba",
+      "evidence_sha256": "270a07443a8760ffa5e7691878cc62a104b5cbf198d0ee1e9f6fc3b071425414",
+      "consumed": "Unchanged common record_store.py atomic replacement/file locking and mounted freeze/rollback/human-gate/consultation consumers. Four predecessor suites rerun without reimplementation."
     },
-    "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001": {
+    {
+      "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
       "status": "done",
-      "satisfied": true
+      "merge_commit": "67172443840510bfe0a65259825d9e95e318e935",
+      "evidence_sha256": "8b107995bb6b5b42d5ef11bc7dc8ec26170a1d1d47bf48a5d3d14986da4bc2c1",
+      "consumed": "AppDependencies/compose_bff_app seams and architecture gate; new runtime tests do not import main.py or introduce compatibility main-module shims. Existing failure triage remains with BFF-TEST-PREEXISTING-FAILURE-TRIAGE-001."
     }
-  },
-  "reviewer_rejection_repairs": {
-    "repair_cycle": 2,
-    "pr_rejected": "PR #5991 head d0a0642fab7076fc40fdf37591a42f7b398fe683",
-    "defects_addressed": [
-      {
-        "id": "P1-AC4-AC6-backend-propagation",
-        "severity": "P1",
-        "description": "services/governance/decision_journal.py:551-554 resolved postgres backend via resolve_decision_journal_backend() but then delegated to build_governance_record_store() which independently re-read GOVERNANCE_STORE_BACKEND and defaulted to json. Reproduced: isolated env with only DATABASE_URL, only GOVERNANCE_STORE_DSN, or AGORA_GOVERNANCE_STORE_BACKEND=postgres plus AGORA_GOVERNANCE_STORE_DSN resulted in JsonGovernanceRecordStore.",
-        "fix": "_build_journal_record_store now accepts explicit backend/dsn/bootstrap parameters from build_decision_journal_stores which resolves once and propagates. PostgresGovernanceRecordStore is constructed directly with pre-resolved DSN; build_governance_record_store is not delegated to for postgres. CoordinatingJsonGovernanceRecordStore is still used for json backend.",
-        "files_changed": [
-          "services/governance/decision_journal.py"
-        ],
-        "test_proving_fix": "test_postgres_backend_propagation_builds_postgres_store in services/control-plane/bff/tests/test_journal_runtime_contract.py"
-      },
-      {
-        "id": "P1-AC4-AC5-bff-wiring",
-        "severity": "P1",
-        "description": "main.py:7749-7752 checked router.service but create_agora_router exposes router.agora_service; the attribute was never found so the injected owner was never wired. core/app_factory.py:1578 compose_bff_app did not pass app_deps.decision_journal_write_owner to create_agora_router, so the factory always built a new default owner. Reproduced: compose_bff_app(app_deps=AppDependencies.create_default(decision_journal_write_owner=injected)) had selected owner injected=False, selected path default-journal.",
-        "fix": "main.py attribute check corrected to 'agora_service'. create_agora_router call in app_factory.py now passes journal_write_owner=getattr(app_deps, 'decision_journal_write_owner', None).",
-        "files_changed": [
-          "services/control-plane/bff/main.py",
-          "services/control-plane/bff/core/app_factory.py"
-        ],
-        "test_proving_fix": "test_bff_factory_wires_injected_owner_into_agora_service in services/control-plane/bff/tests/test_journal_runtime_contract.py"
-      },
-      {
-        "id": "P2-AC5-storage-health-honesty",
-        "severity": "P2",
-        "description": "decision_journal_write_owner.py:79-95 is_storage_healthy checked only filesystem write-access via storage_path attribute. Postgres stores (PostgresGovernanceRecordStore) have no storage_path, so the check fell through to return True even when the DB was unreachable. Reproduced: GOVERNANCE_STORE_BOOTSTRAP=0 with localhost:1 target, list_all raised OperationalError, health still True.",
-        "fix": "is_storage_healthy now has two branches: (1) JSON stores: unchanged filesystem check via storage_path; (2) non-JSON stores (no storage_path): real connectivity probe via entries.list_all(); any exception maps to False.",
-        "files_changed": [
-          "services/control-plane/bff/governance/decision_journal_write_owner.py"
-        ],
-        "test_proving_fix": "test_postgres_storage_health_false_for_unreachable_db in services/control-plane/bff/tests/test_journal_runtime_contract.py"
-      },
-      {
-        "id": "evidence-count-correction",
-        "severity": "P2",
-        "description": "Prior evidence.json claimed 42+4+2+9=57 pytest tests, but reviewer-independent validation found 53 passed. Actual counts: test_decision_journal_write_owner.py=38, test_agora_write_owner.py=4, test_agora_decision_journal_patch.py=2, test_journal_runtime_contract.py=9. Evidence corrected and 3 new tests added to runtime contract file.",
-        "fix": "Evidence counts corrected per actual pytest --collect-only output. New tests bring total to 38+4+2+12=56."
-      }
-    ]
-  },
-  "residual_f07_closure": {
-    "compose_contract_alignment": {
-      "status": "satisfied",
-      "details": "docker-compose.yml and docker-compose.control.yml operator-bff service supplies GOVERNANCE_STORE_BACKEND (${GOVERNANCE_STORE_BACKEND:-postgres}), GOVERNANCE_STORE_DSN (${GOVERNANCE_STORE_DSN:-${DATABASE_URL:-postgresql://...}}), GOVERNANCE_STORE_BOOTSTRAP (${GOVERNANCE_STORE_BOOTSTRAP:-1}), and PANTHEON_DECISION_JOURNAL_DATA_DIR. Preserves read-only /data/governance:ro volume mount. scripts/test_journal_compose_contract.py validates rendered config at exit 0."
-    },
-    "backend_selection_and_legacy_reconciliation": {
-      "status": "satisfied",
-      "details": "resolve_decision_journal_backend() supports 'json' and 'postgres'. When GOVERNANCE_STORE_BACKEND is unset, presence of DATABASE_URL or GOVERNANCE_STORE_DSN selects 'postgres'. Unsupported legacy aliases raise ValueError. Conflicting backends raise ValueError. Backend resolved once in build_decision_journal_stores and propagated through _build_journal_record_store without secondary env-read."
-    },
-    "fail_closed_storage_honesty": {
-      "status": "satisfied",
-      "details": "JSON stores: CoordinatingJsonGovernanceRecordStore write operations fail closed with PermissionError on read-only mounts. Postgres stores: is_storage_healthy probes via list_all(); any OperationalError or connection failure returns False. Both storage types checked by tests."
-    },
-    "bff_composition_root_wiring": {
-      "status": "satisfied",
-      "details": "AppDependencies.create_default() accepts and validates decision_journal_write_owner. app_factory.py create_agora_router call now passes journal_write_owner=getattr(app_deps, 'decision_journal_write_owner', None). main.py corrected to check router.agora_service (not router.service). Injected owner propagates through the real factory and is observable at agora_service._get_journal_write_owner()."
-    },
-    "restart_parity_and_isolation": {
-      "status": "satisfied",
-      "details": "Fresh DecisionJournalOwnerAdapter on same data directory reads previously committed entries. Tenant, actor, idempotency, and CAS isolation preserved across restarts. Tests in test_decision_journal_write_owner.py and test_journal_runtime_contract.py cover these paths."
-    }
-  },
-  "verification_results": {
-    "command_pytest": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_decision_journal_write_owner.py tests/agora_write_owner/test_agora_write_owner.py tests/agora_write_owner/test_agora_decision_journal_patch.py services/control-plane/bff/tests/test_journal_runtime_contract.py",
-    "command_compose_contract": "timeout 30 .venv-pantheon/bin/python3 scripts/test_journal_compose_contract.py",
-    "suites": [
-      {
-        "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
-        "runner": ".venv-pantheon/bin/python3 -m pytest",
-        "tests": 38,
-        "subtests": 9,
-        "failures": 0,
-        "errors": 0,
-        "exit_code": 0,
-        "status": "PASSED"
-      },
-      {
-        "name": "tests/agora_write_owner/test_agora_write_owner.py",
-        "runner": ".venv-pantheon/bin/python3 -m pytest",
-        "tests": 4,
-        "failures": 0,
-        "errors": 0,
-        "exit_code": 0,
-        "status": "PASSED"
-      },
-      {
-        "name": "tests/agora_write_owner/test_agora_decision_journal_patch.py",
-        "runner": ".venv-pantheon/bin/python3 -m pytest",
-        "tests": 2,
-        "failures": 0,
-        "errors": 0,
-        "exit_code": 0,
-        "status": "PASSED"
-      },
-      {
-        "name": "services/control-plane/bff/tests/test_journal_runtime_contract.py",
-        "runner": ".venv-pantheon/bin/python3 -m pytest",
-        "tests": 12,
-        "failures": 0,
-        "errors": 0,
-        "exit_code": 0,
-        "status": "PASSED",
-        "note": "9 original + 3 new tests proving P1-AC4/AC6 backend propagation, P1-AC4/AC5 BFF factory wiring, and P2-AC5 storage health honesty"
-      },
-      {
-        "name": "scripts/test_journal_compose_contract.py",
-        "runner": ".venv-pantheon/bin/python3",
-        "tests": 1,
-        "failures": 0,
-        "errors": 0,
-        "exit_code": 0,
-        "status": "PASSED"
-      }
-    ],
-    "total_pytest_tests_passed": 56,
-    "total_pytest_subtests_passed": 9,
-    "overall_status": "PASSED",
-    "run_timestamp": "2026-09-27T09:37:00Z",
-    "interpreter": ".venv-pantheon/bin/python3"
-  },
-  "artifacts": [
-    "docker-compose.yml",
-    "docker-compose.control.yml",
-    "services/control-plane/bff/governance/decision_journal_write_owner.py",
-    "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
-    "services/control-plane/bff/main.py",
-    "services/control-plane/bff/core/app_factory.py",
-    "tests/agora_write_owner/test_agora_write_owner.py",
-    "tests/agora_write_owner/test_agora_decision_journal_patch.py",
-    "services/control-plane/bff/bootstrap/dependencies.py",
-    "services/governance/decision_journal.py",
-    "services/control-plane/bff/tests/test_journal_runtime_contract.py",
-    "scripts/test_journal_compose_contract.py",
-    "docs/deployment/evidence/JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001/evidence.json"
   ],
-  "source_contract_handoff_to": "DEV-DELIVERY-001"
+  "runtime_contract": {
+    "backend": "GOVERNANCE_STORE_BACKEND selects json or postgres. Without an explicit backend, GOVERNANCE_STORE_DSN or DATABASE_URL selects postgres. The resolved backend/DSN is passed directly to every canonical journal record store; no secondary factory silently defaults to JSON.",
+    "packaged_boundary": "Both Compose files set PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND=postgres. Even matching explicit json backend overrides are rejected before files are created, preventing a second BFF-local packaged authority. Isolated local JSON fixtures remain supported without this requirement.",
+    "transport": "Existing in-process typed adapter delegates to services.governance.decision_journal and governance.decision_journal_* Postgres tables. This is not a new journal service, HTTP transport, truth store or transaction engine.",
+    "factory": "AppDependencies creates the owner once. compose_bff_app passes an explicit getter to the real Agora router, retains the selected instance on app.state, and returns DEPENDENCY_UNAVAILABLE/503 if it is absent or unhealthy. main.py no longer constructs a fallback owner or mutates the Agora service private getter after composition.",
+    "storage": "The shared governance consumer mount stays /data/governance:ro, including control overlay !override. /data/bff is writable for BFF state and the existing journal bundle lock. Journal records reside in the shared Postgres owner, not JSON under either mount.",
+    "legacy": "AGORA_GOVERNANCE_STORE_BACKEND json/postgres is bounded compatibility; unsupported values and conflict with GOVERNANCE_STORE_BACKEND are rejected. AGORA_GOVERNANCE_STORE_DSN alone is explicitly rejected; operators must specify GOVERNANCE_STORE_DSN or DATABASE_URL. Retired PANTHEON_BFF_DECISION_JOURNAL_STORE is removed from Compose and rejected by the writer resolver because canonical readers never consumed it. PANTHEON_DECISION_JOURNAL_DATA_DIR is the shared read/write path setting.",
+    "unavailable": "Unreachable Postgres with bootstrap disabled reports unhealthy and mounted POST returns 503/DEPENDENCY_UNAVAILABLE. No JSON fallback or success receipt is created. Misconfigured backends fail startup. Read-only JSON denial preserves EROFS errno required by the accepted real-mount consumer contract."
+  },
+  "verification": [
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped editable distribution verified from foreign cwd, no shared interpreter rebind. Initial default discovery failed because the supervisor main checkout has no dependency venv; explicit dependency interpreter resolved it."
+    },
+    {
+      "command": "timeout 200 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_journal_runtime_contract.py services/control-plane/bff/governance/test_decision_journal_write_owner.py tests/agora_write_owner/ services/governance/test_decision_journal.py services/governance/test_record_store_isolation.py services/governance/test_freeze_rollback_store.py services/governance/test_consultation_handoff.py services/governance/test_human_gate_api.py",
+      "exit_code": 0,
+      "passed": 183,
+      "subtests_passed": 11,
+      "warnings": 3,
+      "duration_seconds": 108.75
+    },
+    {
+      "command": "timeout 320 .venv-pantheon/bin/python3 scripts/test_journal_compose_contract.py --runtime",
+      "exit_code": 0,
+      "result": "Actual docker compose config --format json for base and merged control files, default and overridden DSNs; four fresh mounted BFF processes: create, restart/replay/tenant/CAS, reread version 2, and DB-down 503. No timeout, skipped scenario, background test handle or pending output.",
+      "runtime_fixture": {
+        "bff_dependency_image": "pantheon-bff-test@sha256:025291be8416697612fdbe42ae1f152541142bba9f62d4f64524b60315aa340b",
+        "postgres_image": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+        "source": "Exact task checkout bind-mounted read-only at /workspace; existing BFF image supplies Python dependencies, not delivery source identity. This is not a newly built or hosted release image claim.",
+        "safety": "Disposable internal Docker network, no published ports, dummy local DB credentials only, fresh task-owned Postgres, non-root BFF processes with read-only root and cap-drop ALL. Each BFF process proves EROFS from actual /data/governance:ro. All fixture containers/network removed in finally; consumer directory stays empty.",
+        "composition": "Real AppDependencies.create_default and compose_bff_app, default canonical journal owner and read ports; only authenticated paper identity is injected at the test seam. No production auth configuration changed. Rendered journal environment and mount posture are consumed; unrelated hosted services are not started."
+      }
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "passed": 24,
+      "duration_seconds": 37.52
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "nonpassing_checks_disclosed": [
+    {
+      "scope": "services/control-plane/bff/tests/test_bff_main_composition.py",
+      "candidate_command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py services/governance/test_record_store_isolation.py services/governance/test_freeze_rollback_store.py services/governance/test_consultation_handoff.py services/governance/test_human_gate_api.py",
+      "candidate_source": "3619312f3fc7fa740ddd92765fbe9112a0a2c828",
+      "candidate_exit_code": 1,
+      "candidate_result": "4 failed, 61 passed (20 composition and 41 governance passed)",
+      "base_command": "cd /tmp/journal-runtime-baseline-b45c8d2a && timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
+      "base_sha": "b45c8d2a2a88d35ae257a1bc4cbde584bc8245a6",
+      "base_exit_code": 1,
+      "base_result": "Same 4 failed, 20 passed; standalone shared-object clone with separately provisioned import mapping, not source swapping in the task worktree",
+      "same_failures": [
+        "test_all_canonical_domain_routers_mounted",
+        "test_training_v3_router_mounted",
+        "test_zero_unreferenced_dead_functions_in_main_py",
+        "test_main_py_zero_lambda_read_store_service_locator_seams"
+      ],
+      "disposition": "Existing baseline failures, not counted as passed or fixed. Remain with the predecessor's governed BFF-TEST-PREEXISTING-FAILURE-TRIAGE-001 scope. Final added packaged-backend guard does not change these route inventory/static assertions."
+    },
+    {
+      "scope": "Earlier task-head read-only regression",
+      "result": "The resumed task's new PermissionError lacked errno; broad predecessor run failed 1 test (139 passed). Fixed to preserve EROFS, then reran the full final suite successfully."
+    }
+  ],
+  "delivery_handoff": {
+    "recipient": "DEV-DELIVERY-001",
+    "source_contract": "Use the eventual exact canonical-approved and merged PR #5991 identity. The source contract requires shared Postgres and retains read-only governance consumers. Supply genuine reviewed DSN/auth/deployment configuration in the existing delivery lane.",
+    "not_claimed": "Independent Codex approval, CI completion on the evidence head, integration merge, hosted deployment/acceptance, live trading, or production authorization. Canonical handoff and supervisor integrator remain authoritative."
+  }
 }
