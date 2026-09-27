@@ -28,6 +28,8 @@ from typing import (
     Union,
 )
 
+from ..evidence_redaction import safe_redact_evidence_refs
+
 
 class ApprovalQueueReaderPort(Protocol):
     """Typed read port protocol for approval queue items."""
@@ -670,6 +672,12 @@ class GovernanceService:
         snap = snapshot_at or self.utc_now()
         surface_state = self._committee_surface_state(committee, snapshot_at=snap)
         allowed_actions = self._committee_allowed_actions(committee, identity=identity, surface_state=surface_state)
+        linked_evidence, redacted_count = safe_redact_evidence_refs(
+            identity,
+            copy.deepcopy(committee.get("linked_evidence") or []),
+            redact_fn=self.redact_evidence_refs,
+            capabilities_fn=self.capabilities_for_identity,
+        )
         return {
             "committee_id": committee.get("committee_id"),
             "committee_ref": committee.get("committee_ref"),
@@ -685,12 +693,13 @@ class GovernanceService:
             "sponsor_decided_at": committee.get("sponsor_decided_at"),
             "sponsor_decided_by": committee.get("sponsor_decided_by"),
             "synthesis_summary": copy.deepcopy(committee.get("synthesis_summary") or {}),
-            "linked_evidence": copy.deepcopy(committee.get("linked_evidence") or []),
+            "linked_evidence": linked_evidence,
             "service_handoff": copy.deepcopy(committee.get("service_handoff") or {}),
             "allowedActions": allowed_actions,
             "meta": {
                 "snapshot_at": snap,
                 "surfaces": {"committee_board": surface_state},
+                "redacted_evidence_count": redacted_count,
             },
         }
 

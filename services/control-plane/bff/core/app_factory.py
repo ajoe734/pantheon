@@ -1546,6 +1546,8 @@ def mount_bff_routers(
             require_operator_role=_dep("_require_operator_role"),
             bff_error=_dep("_bff_error"),
             utc_now_fn=_dep("utc_now"),
+            redact_evidence_refs=_dep("redact_evidence_refs"),
+            capabilities_for_identity=_dep("_capabilities_for_identity"),
         )
     )
 
