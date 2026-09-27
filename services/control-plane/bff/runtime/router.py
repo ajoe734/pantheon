@@ -1231,14 +1231,29 @@ def create_runtime_router(
                 )
         data = _project_runtime_create_response(record)
         if cmd_id:
+            status_val = record.get("status") or "executed"
             data["command_id"] = cmd_id
+            data["commandId"] = cmd_id
             data["aggregate_type"] = "RuntimeBinding"
             data["aggregate_id"] = data["id"]
             data["aggregate_version"] = 1
+            data["status"] = status_val
             data["event_id"] = f"evt-{cmd_id}"
             data["correlation_id"] = cmd_id
             data["owner"] = "runtime"
             data["committed_at"] = snapshot_at
+            data["receipt"] = {
+                "command_id": cmd_id,
+                "commandId": cmd_id,
+                "aggregate_type": "RuntimeBinding",
+                "aggregate_id": data["id"],
+                "aggregate_version": 1,
+                "status": status_val,
+                "event_id": f"evt-{cmd_id}",
+                "correlation_id": cmd_id,
+                "owner": "runtime",
+                "committed_at": snapshot_at,
+            }
         surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
         meta = _snapshot_meta(snapshot_at)
         meta["surfaces"] = {"runtimes": surface}

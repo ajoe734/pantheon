@@ -710,114 +710,16 @@ class CommandAdapterService:
         command_type: CommandType,
         target_type: ObjectType,
         target_id: str,
-        payload: Dict[str, Any],
+        payload: Optional[Dict[str, Any]],
         identity: OperatorIdentity,
-        idempotency_key: Optional[str],
+        idempotency_key: Optional[str] = None,
         x_idempotency_key: Optional[str] = None,
         status_code: int = 202,
-        server_generated_target: bool = False,
         terminal_on_persist: bool = False,
+        server_generated_target: bool = False,
         trusted_evidence_producer: Optional[str] = None,
     ) -> JSONResponse:
-        payload = dict(payload or {})
-        _reject_body_idempotency_key(payload)
-        clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        hash_body: Dict[str, Any] = {
-            "command": command_type.value,
-            "target_type": target_type.value,
-            "payload": payload,
-        }
-        if not server_generated_target:
-            hash_body["target_id"] = target_id
-        request_hash = _stable_json_hash(hash_body)
-        cache_key = f"{identity.operator_id}\x00{clean_key}"
-
-        existing = self._final_contract_idempotency.get(cache_key)
-        if existing:
-            if existing.get("request_hash") != request_hash:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key was reused with a different command payload",
-                    "The idempotency key already belongs to another command payload",
-                    precondition_failed="idempotency_key",
-                )
-            replay = dict(existing["result"])
-            replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
-            return JSONResponse(status_code=status_code, content=replay)
-
         store = self.command_store
-        if store is not None:
-            existing_record = store.get_command_by_idempotency_key(
-                clean_key,
-                operator_id=identity.operator_id,
-            )
-            if existing_record:
-                stored_hash = (existing_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
-                if stored_hash and stored_hash != request_hash:
-                    raise self._raise_error(
-                        409,
-                        ErrorCode.IDEMPOTENCY_CONFLICT,
-                        "Idempotency key was reused with a different command payload",
-                        "The idempotency key already belongs to another command payload",
-                        precondition_failed="idempotency_key",
-                    )
-                now = self._utc_now()
-                response_data = {
-                    "command_id": existing_record.get("command_id"),
-                    "status": "accepted",
-                    "data": {
-                        "command_id": existing_record.get("command_id"),
-                        "commandId": existing_record.get("command_id"),
-                        "command": command_type.value,
-                        "target": {"type": target_type.value, "id": target_id},
-                        "receipt": {
-                            "receipt_id": f"rcpt-{existing_record.get('command_id', '')}",
-                            "status": "accepted",
-                            "command": command_type.value,
-                            "target": {"type": target_type.value, "id": target_id},
-                            "submitted_at": existing_record.get("submitted_at") or now,
-                            "accepted_at": now,
-                        },
-                    },
-                    "meta": {
-                        "idempotency": {"idempotencyKey": clean_key, "replayed": True},
-                        "snapshot_at": now,
-                    },
-                }
-                return JSONResponse(status_code=status_code, content=response_data)
-
-        now = self._utc_now()
-        command_id = f"cmd-{uuid.uuid4().hex[:16]}"
-        receipt = {
-            "receipt_id": f"rcpt-{command_id}",
-            "status": "accepted",
-            "command": command_type.value,
-            "target": {"type": target_type.value, "id": target_id},
-            "submitted_at": now,
-            "accepted_at": now,
-        }
-        foundation_ctx = {
-            "idempotency_record": {
-                "idempotency_key": clean_key,
-                "request_hash": request_hash,
-                "status": "succeeded",
-            }
-        }
-        if trusted_evidence_producer:
-            foundation_ctx["trusted_evidence_producer"] = trusted_evidence_producer
-        audit_ctx = {
-            "actor": identity.operator_id,
-            "operator_id": identity.operator_id,
-            "command_id": command_id,
-            "reason": str(payload.get("reason") or command_type.value),
-            "foundation": foundation_ctx,
-        }
-        if trusted_evidence_producer:
-            audit_ctx["trusted_evidence_producer"] = trusted_evidence_producer
-        if "live_capital_mutation" in payload:
-            audit_ctx["live_capital_side_effects"] = bool(payload.get("live_capital_mutation"))
-
         if store is None:
             raise self._raise_error(
                 503,
@@ -826,6 +728,122 @@ class CommandAdapterService:
                 "CommandStore is not configured; refusing to accept unpersisted command",
                 precondition_failed="command_store_unconfigured",
             )
+
+        payload = dict(payload or {})
+        _reject_body_idempotency_key(payload)
+        clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        hash_body: Dict[str, Any] = {
+            "command": command_type.value if hasattr(command_type, "value") else str(command_type),
+            "target_type": target_type.value if hasattr(target_type, "value") else str(target_type),
+            "payload": payload,
+        }
+        if not server_generated_target:
+            hash_body["target_id"] = target_id
+        request_hash = _stable_json_hash(hash_body)
+
+        tenant_id = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+        clean_tenant_id = str(tenant_id or "").strip() or None
+        caller_op_id = getattr(identity, "operator_id", None)
+        expected_cmd = command_type.value if hasattr(command_type, "value") else str(command_type)
+        expected_target_type = target_type.value if hasattr(target_type, "value") else str(target_type)
+
+        existing_record = None
+        if clean_key:
+            existing_record = store.get_command_by_idempotency_key(
+                clean_key,
+                operator_id=caller_op_id,
+                tenant_id=clean_tenant_id,
+            )
+
+        if existing_record is not None:
+            self._revalidate_admitted_command_record(
+                existing_record,
+                resolved_key=clean_key,
+                identity=identity,
+                command_type=command_type,
+                entity_type=target_type,
+                target_id=target_id,
+                request_hash=request_hash,
+                server_generated_target=server_generated_target,
+            )
+            admitted_target = existing_record.get("target") or {}
+            admitted_target_id = admitted_target.get("id") or target_id
+            admitted_target_type = admitted_target.get("type") or expected_target_type
+            admitted_command_id = existing_record.get("command_id")
+            admitted_submitted_at = existing_record.get("submitted_at") or self._utc_now()
+            owner_name = "deployment" if "deployment" in str(admitted_target_type).lower() else str(admitted_target_type)
+
+            canonical_receipt = {
+                "receipt_id": f"rcpt-{admitted_command_id}",
+                "command_id": admitted_command_id,
+                "commandId": admitted_command_id,
+                "aggregate_type": admitted_target_type,
+                "aggregate_id": admitted_target_id,
+                "aggregate_version": 1,
+                "status": "accepted",
+                "event_id": f"evt-{admitted_command_id}",
+                "correlation_id": clean_key or admitted_command_id,
+                "owner": owner_name,
+                "committed_at": admitted_submitted_at,
+                "command": expected_cmd,
+                "target": {"type": admitted_target_type, "id": admitted_target_id},
+                "submitted_at": admitted_submitted_at,
+                "accepted_at": admitted_submitted_at,
+            }
+            response_data = {
+                "command_id": admitted_command_id,
+                "status": "accepted",
+                "data": {
+                    "command_id": admitted_command_id,
+                    "commandId": admitted_command_id,
+                    "aggregate_type": admitted_target_type,
+                    "aggregate_id": admitted_target_id,
+                    "aggregate_version": 1,
+                    "status": "accepted",
+                    "event_id": f"evt-{admitted_command_id}",
+                    "correlation_id": clean_key or admitted_command_id,
+                    "owner": owner_name,
+                    "committed_at": admitted_submitted_at,
+                    "command": expected_cmd,
+                    "target": {"type": admitted_target_type, "id": admitted_target_id},
+                    "receipt": canonical_receipt,
+                },
+                "meta": {
+                    "idempotency": {"idempotencyKey": clean_key, "replayed": True},
+                    "snapshot_at": self._utc_now(),
+                },
+            }
+            if not existing_record.get("result"):
+                store.update_status(admitted_command_id, CommandStatus.SUBMITTED, result=response_data)
+            return JSONResponse(status_code=status_code, content=response_data)
+
+        now = self._utc_now()
+        command_id = f"cmd-{uuid.uuid4().hex[:16]}"
+        foundation_ctx = {
+            "idempotency_record": {
+                "idempotency_key": clean_key,
+                "request_hash": request_hash,
+                "status": "succeeded",
+                "tenant_id": clean_tenant_id,
+                "operator_id": caller_op_id,
+            }
+        }
+        if trusted_evidence_producer:
+            foundation_ctx["trusted_evidence_producer"] = trusted_evidence_producer
+        audit_ctx = {
+            "actor": caller_op_id,
+            "operator_id": caller_op_id,
+            "tenant_id": clean_tenant_id,
+            "command_id": command_id,
+            "reason": str(payload.get("reason") or expected_cmd),
+            "foundation": foundation_ctx,
+            "idempotency_key": clean_key,
+            "request_hash": request_hash,
+        }
+        if trusted_evidence_producer:
+            audit_ctx["trusted_evidence_producer"] = trusted_evidence_producer
+        if "live_capital_mutation" in payload:
+            audit_ctx["live_capital_side_effects"] = bool(payload.get("live_capital_mutation"))
 
         target_obj = TargetObject(type=target_type, id=target_id)
         if terminal_on_persist and hasattr(store, "submit_terminal_command_if_no_active_target"):
@@ -883,25 +901,77 @@ class CommandAdapterService:
                 suggestion="Wait for the in-flight command to complete or time out before retrying",
             )
 
+        assert record is not None
+        is_replayed = False
+        if record.get("command_id") != command_id:
+            is_replayed = True
+            self._revalidate_admitted_command_record(
+                record,
+                resolved_key=clean_key,
+                identity=identity,
+                command_type=command_type,
+                entity_type=target_type,
+                target_id=target_id,
+                request_hash=request_hash,
+                server_generated_target=server_generated_target,
+            )
+
+        admitted_command_id = record["command_id"]
+        admitted_target = record.get("target") or {}
+        admitted_target_id = admitted_target.get("id") or target_id
+        admitted_target_type = admitted_target.get("type") or expected_target_type
+        admitted_submitted_at = record.get("submitted_at") or now
+        owner_name = "deployment" if "deployment" in str(admitted_target_type).lower() else str(admitted_target_type)
+
+        canonical_receipt = {
+            "receipt_id": f"rcpt-{admitted_command_id}",
+            "command_id": admitted_command_id,
+            "commandId": admitted_command_id,
+            "aggregate_type": admitted_target_type,
+            "aggregate_id": admitted_target_id,
+            "aggregate_version": 1,
+            "status": "accepted",
+            "event_id": f"evt-{admitted_command_id}",
+            "correlation_id": clean_key or admitted_command_id,
+            "owner": owner_name,
+            "committed_at": admitted_submitted_at,
+            "command": expected_cmd,
+            "target": {"type": admitted_target_type, "id": admitted_target_id},
+            "submitted_at": admitted_submitted_at,
+            "accepted_at": admitted_submitted_at,
+        }
         result_content = {
-            "command_id": command_id,
+            "command_id": admitted_command_id,
             "status": "accepted",
             "data": {
-                "command_id": command_id,
-                "commandId": command_id,
-                "command": command_type.value,
-                "target": {"type": target_type.value, "id": target_id},
-                "receipt": receipt,
+                "command_id": admitted_command_id,
+                "commandId": admitted_command_id,
+                "aggregate_type": admitted_target_type,
+                "aggregate_id": admitted_target_id,
+                "aggregate_version": 1,
+                "status": "accepted",
+                "event_id": f"evt-{admitted_command_id}",
+                "correlation_id": clean_key or admitted_command_id,
+                "owner": owner_name,
+                "committed_at": admitted_submitted_at,
+                "command": expected_cmd,
+                "target": {"type": admitted_target_type, "id": admitted_target_id},
+                "receipt": canonical_receipt,
             },
             "meta": {
-                "idempotency": {"idempotencyKey": clean_key, "replayed": False},
+                "idempotency": {"idempotencyKey": clean_key, "replayed": is_replayed},
                 "snapshot_at": now,
             },
         }
-        self._final_contract_idempotency[cache_key] = {"request_hash": request_hash, "result": result_content}
+        if not is_replayed or not record.get("result"):
+            store.update_status(
+                admitted_command_id,
+                CommandStatus.EXECUTED if terminal_on_persist else CommandStatus.SUBMITTED,
+                result=result_content,
+            )
         return JSONResponse(status_code=status_code, content=result_content)
 
-    def _revalidate_governance_admitted_record(
+    def _revalidate_admitted_command_record(
         self,
         record: Dict[str, Any],
         *,
@@ -911,6 +981,7 @@ class CommandAdapterService:
         entity_type: Any,
         target_id: str,
         request_hash: str,
+        server_generated_target: bool = False,
     ) -> None:
         foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
         idem_rec = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
@@ -927,8 +998,8 @@ class CommandAdapterService:
                 suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
             )
 
-        saved_tenant = idem_rec.get("tenant_id") or audit.get("tenant_id")
-        caller_tenant = getattr(identity, "tenant_id", None)
+        saved_tenant = idem_rec.get("tenant_id") or audit.get("tenant_id") or (record.get("params") or {}).get("tenant_id")
+        caller_tenant = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
         if saved_tenant != caller_tenant:
             raise self._raise_error(
                 409,
@@ -938,7 +1009,7 @@ class CommandAdapterService:
                 precondition_failed="tenant_mismatch",
             )
 
-        saved_op = idem_rec.get("operator_id") or audit.get("operator_id")
+        saved_op = idem_rec.get("operator_id") or audit.get("operator_id") or (record.get("params") or {}).get("operator_id")
         if saved_op and saved_op != identity.operator_id:
             raise self._raise_error(
                 409,
@@ -971,7 +1042,7 @@ class CommandAdapterService:
                 f"Key {resolved_key!r} is bound to target type {saved_target_type!r}",
                 precondition_failed="target_type_mismatch",
             )
-        if saved_target_id and str(saved_target_id) != str(target_id):
+        if not server_generated_target and saved_target_id and str(saved_target_id) != str(target_id):
             raise self._raise_error(
                 409,
                 ErrorCode.IDEMPOTENCY_CONFLICT,
@@ -979,6 +1050,66 @@ class CommandAdapterService:
                 f"Key {resolved_key!r} is bound to target {saved_target_id!r}",
                 precondition_failed="target_id_mismatch",
             )
+
+    def _revalidate_governance_admitted_record(
+        self,
+        record: Dict[str, Any],
+        *,
+        resolved_key: str,
+        identity: OperatorIdentity,
+        command_type: Any,
+        entity_type: Any,
+        target_id: str,
+        request_hash: str,
+        server_generated_target: bool = False,
+    ) -> None:
+        return self._revalidate_admitted_command_record(
+            record,
+            resolved_key=resolved_key,
+            identity=identity,
+            command_type=command_type,
+            entity_type=entity_type,
+            target_id=target_id,
+            request_hash=request_hash,
+            server_generated_target=server_generated_target,
+        )
+
+    def _populate_governance_receipt_fields(
+        self,
+        res_dict: Dict[str, Any],
+        *,
+        command_id: str,
+        entity_type: Any,
+        target_id: str,
+        action_id: str,
+        idempotency_key: str,
+        submitted_at: str,
+    ) -> None:
+        agg_type = entity_type.value if hasattr(entity_type, "value") else str(entity_type)
+        receipt_fields = {
+            "command_id": command_id,
+            "commandId": command_id,
+            "aggregate_type": agg_type,
+            "aggregate_id": target_id,
+            "aggregate_version": 1,
+            "status": "accepted",
+            "event_id": f"evt-{command_id}",
+            "correlation_id": idempotency_key or command_id,
+            "owner": "governance",
+            "committed_at": submitted_at,
+        }
+        if isinstance(res_dict, dict):
+            if isinstance(res_dict.get("data"), dict):
+                res_dict["data"].setdefault("action", action_id)
+                for k, v in receipt_fields.items():
+                    res_dict["data"][k] = v
+                if isinstance(res_dict["data"].get("receipt"), dict):
+                    for k, v in receipt_fields.items():
+                        res_dict["data"]["receipt"][k] = v
+                else:
+                    res_dict["data"]["receipt"] = dict(receipt_fields)
+            for k, v in receipt_fields.items():
+                res_dict.setdefault(k, v)
 
     def submit_governance_action(
         self,
@@ -1057,8 +1188,15 @@ class CommandAdapterService:
                 staleness_warning=self.check_read_surface_state(),
             )
             res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
-            if isinstance(res_dict, dict) and isinstance(res_dict.get("data"), dict):
-                res_dict["data"].setdefault("action", action_id)
+            self._populate_governance_receipt_fields(
+                res_dict,
+                command_id=admitted_command_id,
+                entity_type=entity_type,
+                target_id=target_id,
+                action_id=action_id,
+                idempotency_key=resolved_key,
+                submitted_at=admitted_submitted_at,
+            )
             store.update_status(admitted_command_id, CommandStatus.SUBMITTED, result=res_dict)
             return res_dict
 
@@ -1149,8 +1287,15 @@ class CommandAdapterService:
             staleness_warning=staleness_warning,
         )
         res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
-        if isinstance(res_dict, dict) and isinstance(res_dict.get("data"), dict):
-            res_dict["data"].setdefault("action", action_id)
+        self._populate_governance_receipt_fields(
+            res_dict,
+            command_id=admitted_command_id,
+            entity_type=entity_type,
+            target_id=target_id,
+            action_id=action_id,
+            idempotency_key=resolved_key,
+            submitted_at=admitted_submitted_at,
+        )
         store.update_status(admitted_command_id, CommandStatus.SUBMITTED, result=res_dict)
         return res_dict
 

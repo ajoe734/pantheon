@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace
 from unittest.mock import patch
+import inspect
 import pytest
 
 from fastapi import FastAPI, HTTPException
@@ -14,6 +15,7 @@ from services.control_plane.bff.capital.service import DefaultCapitalAuthority
 from services.control_plane.bff.runtime.router import create_runtime_router
 from services.control_plane.bff.runtime.service import _resolve_default_runtime_owner_port
 from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.deployment.router import create_deployment_router
 
 PAYLOAD = {"plan_id": "review-plan", "decision": "approve", "memo": "isolated reviewer check"}
 IDENTITY = SimpleNamespace(operator_id="reviewer-test", roles=["admin", "approver", "operator"])
@@ -491,4 +493,73 @@ def test_capital_pool_receipt_keeps_command_identity(tmp_path, monkeypatch):
     assert r.status_code == 201, r.text
     row = store._get_all_commands()[0]
     assert row['result'].get('command_id') == row['command_id'], row
+
+
+def deployment_client(store, identity):
+    service = CommandAdapterService(command_store=store)
+    deps = {name: (lambda *a, **kw: None) for name, p in inspect.signature(create_deployment_router).parameters.items() if p.default is inspect.Parameter.empty}
+    deps.update(queries=SimpleNamespace(), extract_identity=lambda auth: identity, sem_command_response=service.sem_command_response)
+    app = FastAPI()
+    app.include_router(create_deployment_router(**deps))
+    return TestClient(app)
+
+
+@pytest.mark.parametrize('restart', [False, True])
+def test_mounted_deployment_tenant_isolation(tmp_path, restart):
+    path = str(tmp_path / 'commands.jsonl')
+    headers = {'Idempotency-Key': 'review-52ce-key'}
+    identity = SimpleNamespace(operator_id='shared-actor', tenant_id='tenant-a', roles=['admin'])
+    client = deployment_client(CommandStore(path), identity)
+    first = client.post('/bff/deployments', json={'name': 'test'}, headers=headers)
+    identity.tenant_id = 'tenant-b'
+    if restart:
+        client = deployment_client(CommandStore(path), identity)
+    second = client.post('/bff/deployments', json={'name': 'test'}, headers=headers)
+    rows = CommandStore(path)._get_all_commands()
+    ids = [r.json()['command_id'] for r in (first, second)]
+    assert first.status_code == second.status_code == 201
+    assert len(rows) == 2 and ids[0] != ids[1], {'response_ids': ids, 'rows': len(rows), 'stored_tenants': [CommandStore._tenant_id_from_command(r) for r in rows]}
+
+
+@pytest.mark.parametrize('different', [False, True])
+def test_mounted_deployment_concurrent_admission(tmp_path, different):
+    path = str(tmp_path / 'commands.jsonl')
+    headers = {'Idempotency-Key': 'review-52ce-key'}
+    identity = SimpleNamespace(operator_id='shared-actor', tenant_id='tenant-a', roles=['admin'])
+    clients = [deployment_client(CommandStore(path), identity) for _ in range(2)]
+    barrier = Barrier(2)
+    original = CommandStore.submit_command_if_no_active_target
+    def synchronized(self, *args, **kwargs):
+        barrier.wait(timeout=5)
+        return original(self, *args, **kwargs)
+    with patch.object(CommandStore, 'submit_command_if_no_active_target', synchronized):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda i: clients[i].post('/bff/deployments', json={'name': f'name-{i if different else 0}'}, headers=headers), range(2)))
+    rows = CommandStore(path)._get_all_commands()
+    ids = [r.json().get('command_id') for r in responses]
+    evidence = {'statuses': [r.status_code for r in responses], 'response_ids': ids, 'durable_ids': [r['command_id'] for r in rows]}
+    if different:
+        assert sorted(r.status_code for r in responses) == [201, 409], evidence
+    else:
+        assert ids == [rows[0]['command_id']] * 2, evidence
+
+
+@pytest.mark.parametrize('route', ['review', 'runtime'])
+def test_mounted_canonical_receipt(tmp_path, monkeypatch, route):
+    monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path))
+    headers = {'Idempotency-Key': 'review-52ce-key'}
+    required = {'command_id', 'aggregate_type', 'aggregate_id', 'aggregate_version', 'status', 'event_id', 'correlation_id', 'owner', 'committed_at'}
+    store = CommandStore(str(tmp_path / 'commands.jsonl'))
+    if route == 'review':
+        response = review_client(store).post('/bff/reviews', json={'review_id': 'isolated-review'}, headers=headers)
+    else:
+        response = _isolated_runtime_client([]).post('/bff/runtimes', json=RUNTIME_REG_PAYLOAD, headers=headers)
+    assert response.status_code < 300
+    row = store._get_all_commands()[0]
+    data = response.json().get('data', {})
+    result = row.get('result') or {}
+    candidates = [data, data.get('receipt') or {}, result, result.get('data') or {}, (row.get('foundation') or {}).get('receipt') or {}]
+    missing = [sorted(required - set(x)) for x in candidates]
+    assert any(required <= set(x) for x in candidates), {'route': route, 'missing': missing}
+
 

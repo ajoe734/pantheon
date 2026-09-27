@@ -120,6 +120,18 @@
     "defect_29_capital_pool_receipt_command_identity": {
       "problem": "capital/service.py:465-486 POST /bff/capital-pools persisted and returned raw owner body without command_id and without canonical status when absent upstream.",
       "remediation": "Ensured command_id, commandId, status ('executed'), and canonical SD 4.4 aggregate/event metadata are populated on result before CommandStore.update_status, preserving command identity across store persistence and response envelopes."
+    },
+    "defect_30_sem_command_response_tenant_isolation": {
+      "problem": "command_adapters/service.py:733-805 sem_command_response used actor-only process cache and actor-only durable lookup and never persisted authenticated tenant. POST /bff/deployments with same actor/key/body in tenant A then B returned the same command ID and one tenantless row, both warm and after new CommandStore/router.",
+      "remediation": "Bound all lookup, admission, and receipts to authenticated tenant_id, persisted tenant_id in foundation.idempotency_record and audit context, and retired process-local authority cache."
+    },
+    "defect_31_sem_command_response_concurrent_admission_revalidation": {
+      "problem": "command_adapters/service.py:829-901 ignored deduplicated admission record. Two concurrent POST /bff/deployments with same key returned 201/201 with two response IDs but only one durable row; different payloads also returned 201/201 rather than 201/409.",
+      "remediation": "Revalidated admitted tenant, actor, command type, target, and request hash against deduplicated record in sem_command_response; raises 409 IDEMPOTENCY_CONFLICT on payload or identity mismatch, and projects admitted command ID and server-generated target on replay."
+    },
+    "defect_32_canonical_receipt_sd44_coverage": {
+      "problem": "SD 4.4 receipt coverage remained incomplete: POST /bff/reviews response/persisted result lacked aggregate identity/version, event/correlation, owner, and committed_at; POST /bff/runtimes response/persisted receipt lacked status (runtime/router.py:1232-1241). Mutation caller inventory omitted live POST/PATCH /bff/deployments.",
+      "remediation": "Populated and persisted complete canonical SD 4.4 receipts (command_id, aggregate_type, aggregate_id, aggregate_version, status, event_id, correlation_id, owner, committed_at) for POST /bff/reviews and POST /bff/runtimes; updated mutation caller inventory to include live POST/PATCH /bff/deployments."
     }
   },
   "mutation_caller_inventory": {
@@ -135,6 +147,8 @@
     },
     "deployment_plan": {
       "routes": [
+        "POST /bff/deployments",
+        "PATCH /bff/deployments/{deployment_id}",
         "POST /bff/deployment/plans",
         "POST /bff/deployment/plans/{id}/approve",
         "POST /bff/deployment/plans/{id}/execute",
@@ -203,7 +217,9 @@
       "routes": [
         "POST /bff/governance/approvals/{id}/decide",
         "POST /bff/approvals/batch-decide",
-        "POST /api/v1/approval-decisions"
+        "POST /api/v1/approval-decisions",
+        "POST /bff/reviews",
+        "POST /bff/reviews/{review_id}/actions/{action_id}"
       ],
       "selected_owner": "services/control-plane/bff/governance/service.py (GovernanceService) and GovernanceCommandAdapter backed by CommandStore",
       "durability_mechanism": "CommandStore persistence for approval decisions and action receipts; fail-closed 503 if store unconfigured; durable tenant+actor+command+request idempotency replay; anti-forgery preservation of genuine governance controller metadata (session_id, candidate_digest, proof_digest, controller_record_ref, recorded_at, authority_status)."
@@ -353,6 +369,24 @@
         "result": "105 passed, 7 warnings in 62.32s",
         "executed": 105,
         "collected": 105
+      },
+      {
+        "command": "env PYTHONPATH=.:/tmp /tmp/venv-bff-test/bin/pytest -v /tmp/test_domain_review_52ce.py",
+        "result": "6 passed, 1 warning in 3.48s",
+        "executed": 6,
+        "collected": 6
+      },
+      {
+        "command": "env PYTHONPATH=.:/tmp /tmp/venv-bff-test/bin/pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py /tmp/test_domain_review_a356.py /tmp/test_domain_review_52ce.py",
+        "result": "122 passed, 6 warnings in 65.31s",
+        "executed": 122,
+        "collected": 122
+      },
+      {
+        "command": "env PYTHONPATH=.:/tmp /tmp/venv-bff-test/bin/pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "38 passed, 2 warnings in 21.33s",
+        "executed": 38,
+        "collected": 38
       }
     ]
   },
@@ -390,7 +424,10 @@
     "defect_26_governance_atomic_terminal_command_submission_resolved": true,
     "defect_27_governance_action_admission_identity_and_restart_parity_resolved": true,
     "defect_28_sd44_approval_decision_canonical_receipt_resolved": true,
-    "defect_29_capital_pool_receipt_command_identity_resolved": true
+    "defect_29_capital_pool_receipt_command_identity_resolved": true,
+    "defect_30_sem_command_response_tenant_isolation_resolved": true,
+    "defect_31_sem_command_response_concurrent_admission_revalidation_resolved": true,
+    "defect_32_canonical_receipt_sd44_coverage_resolved": true
   },
   "review": {
     "reviewer": "Codex",
