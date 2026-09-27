@@ -127,7 +127,10 @@ _OODA_PACKET_1: Dict[str, Any] = {
         "allocation_proposal_refs": [],
         "risk_adjudication_ref": None,
         "persona_proposal_refs": [],
-        "evidence_bundle_refs": [],
+        "evidence_bundle_refs": [
+            "support/evidence/MGMT-PAPER-002-paper-approval-decision.json",
+            "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json",
+        ],
     },
     "decide": {
         "approval_decision_id": "appr-clc-1",
@@ -140,7 +143,9 @@ _OODA_PACKET_1: Dict[str, Any] = {
     "act": {
         "runtime_binding_id": "runtime-1",
         "command_receipt_refs": [],
-        "broker_evidence_refs": [],
+        "broker_evidence_refs": [
+            "paper-broker://logged-only-order/review-order",
+        ],
         "rollback_refs": [],
         "safe_mode_refs": [],
         "live_capital_side_effects": False,
@@ -329,8 +334,22 @@ def test_ooda_packets_list_redacts_for_low_capability_identity() -> None:
             ref_id="ref-postmortem-clc",
             required_capability="postmortem.read",
         )
+        _assert_redacted(
+            by_id["ooda-1"]["orient"]["evidence_bundle_refs"][0],
+            ref_id="support/evidence/MGMT-PAPER-002-paper-approval-decision.json",
+            required_capability="approval.read",
+        )
+        assert (
+            by_id["ooda-1"]["orient"]["evidence_bundle_refs"][1]
+            == "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json"
+        )
+        _assert_redacted(
+            by_id["ooda-1"]["act"]["broker_evidence_refs"][0],
+            ref_id="paper-broker://logged-only-order/review-order",
+            required_capability="audit.read",
+        )
         assert by_id["ooda-1"]["observe"]["incident_refs"] == ["ref-incident-clc"]
-        assert payload["meta"]["redacted_evidence_count"] == 4
+        assert payload["meta"]["redacted_evidence_count"] == 6
         # populated production-shaped baseline: non-evidence stage data stays intact
         assert by_id["ooda-1"]["act"]["runtime_binding_id"] == "runtime-1"
 
@@ -348,6 +367,13 @@ def test_ooda_packets_list_passes_through_for_full_capability_identity() -> None
         assert by_id["ooda-1"]["evidence_refs"] == _MIXED_REFS
         assert by_id["ooda-1"]["audit_refs"] == ["ref-audit-clc"]
         assert by_id["ooda-1"]["learn"]["postmortem_refs"] == ["ref-postmortem-clc"]
+        assert by_id["ooda-1"]["orient"]["evidence_bundle_refs"] == [
+            "support/evidence/MGMT-PAPER-002-paper-approval-decision.json",
+            "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json",
+        ]
+        assert by_id["ooda-1"]["act"]["broker_evidence_refs"] == [
+            "paper-broker://logged-only-order/review-order",
+        ]
         assert by_id["ooda-1"]["observe"]["incident_refs"] == ["ref-incident-clc"]
         assert payload["meta"]["redacted_evidence_count"] == 0
 
@@ -364,7 +390,7 @@ def test_ooda_packets_list_redacted_count_scoped_to_returned_page() -> None:
         page1_payload = page1.json()
         assert len(page1_payload["items"]) == 1
         assert page1_payload["items"][0]["packet_id"] == "ooda-1"
-        assert page1_payload["meta"]["redacted_evidence_count"] == 4
+        assert page1_payload["meta"]["redacted_evidence_count"] == 6
 
         next_token = page1_payload["page_info"]["next_page_token"]
         assert next_token
@@ -395,8 +421,22 @@ def test_ooda_packet_detail_redacts_for_low_capability_identity() -> None:
             ref_id="ref-postmortem-clc",
             required_capability="postmortem.read",
         )
+        _assert_redacted(
+            payload["data"]["orient"]["evidence_bundle_refs"][0],
+            ref_id="support/evidence/MGMT-PAPER-002-paper-approval-decision.json",
+            required_capability="approval.read",
+        )
+        assert (
+            payload["data"]["orient"]["evidence_bundle_refs"][1]
+            == "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json"
+        )
+        _assert_redacted(
+            payload["data"]["act"]["broker_evidence_refs"][0],
+            ref_id="paper-broker://logged-only-order/review-order",
+            required_capability="audit.read",
+        )
         assert payload["data"]["observe"]["incident_refs"] == ["ref-incident-clc"]
-        assert payload["meta"]["redacted_evidence_count"] == 4
+        assert payload["meta"]["redacted_evidence_count"] == 6
 
 
 def test_ooda_packet_detail_passes_through_for_full_capability_identity() -> None:
@@ -411,6 +451,13 @@ def test_ooda_packet_detail_passes_through_for_full_capability_identity() -> Non
         assert payload["data"]["evidence_refs"] == _MIXED_REFS
         assert payload["data"]["audit_refs"] == ["ref-audit-clc"]
         assert payload["data"]["learn"]["postmortem_refs"] == ["ref-postmortem-clc"]
+        assert payload["data"]["orient"]["evidence_bundle_refs"] == [
+            "support/evidence/MGMT-PAPER-002-paper-approval-decision.json",
+            "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json",
+        ]
+        assert payload["data"]["act"]["broker_evidence_refs"] == [
+            "paper-broker://logged-only-order/review-order",
+        ]
         assert payload["data"]["observe"]["incident_refs"] == ["ref-incident-clc"]
         assert payload["meta"]["redacted_evidence_count"] == 0
 
@@ -433,9 +480,45 @@ def test_ooda_packet_detail_fails_closed_when_capabilities_unresolvable() -> Non
         assert all(ref["redacted"] is True for ref in payload["data"]["audit_refs"])
         assert len(payload["data"]["learn"]["postmortem_refs"]) == 1
         assert all(ref["redacted"] is True for ref in payload["data"]["learn"]["postmortem_refs"])
+        assert len(payload["data"]["orient"]["evidence_bundle_refs"]) == 2
+        assert all(ref["redacted"] is True for ref in payload["data"]["orient"]["evidence_bundle_refs"])
+        assert len(payload["data"]["act"]["broker_evidence_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["act"]["broker_evidence_refs"])
         assert len(payload["data"]["observe"]["incident_refs"]) == 1
         assert all(ref["redacted"] is True for ref in payload["data"]["observe"]["incident_refs"])
-        assert payload["meta"]["redacted_evidence_count"] == 6
+        assert len(payload["data"]["observe"]["source_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["observe"]["source_refs"])
+        assert len(payload["data"]["observe"]["telemetry_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["observe"]["telemetry_refs"])
+        assert payload["meta"]["redacted_evidence_count"] == 11
+
+
+def test_ooda_packet_detail_fails_closed_when_capabilities_returns_none() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(capabilities_for_identity=lambda _: None))
+        response = client.get(
+            "/bff/ooda/packets/ooda-1",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert len(payload["data"]["evidence_refs"]) == 3
+        assert all(ref["redacted"] is True for ref in payload["data"]["evidence_refs"])
+        assert len(payload["data"]["audit_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["audit_refs"])
+        assert len(payload["data"]["learn"]["postmortem_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["learn"]["postmortem_refs"])
+        assert len(payload["data"]["orient"]["evidence_bundle_refs"]) == 2
+        assert all(ref["redacted"] is True for ref in payload["data"]["orient"]["evidence_bundle_refs"])
+        assert len(payload["data"]["act"]["broker_evidence_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["act"]["broker_evidence_refs"])
+        assert len(payload["data"]["observe"]["incident_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["observe"]["incident_refs"])
+        assert len(payload["data"]["observe"]["source_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["observe"]["source_refs"])
+        assert len(payload["data"]["observe"]["telemetry_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["observe"]["telemetry_refs"])
+        assert payload["meta"]["redacted_evidence_count"] == 11
 
 
 # --- v5 interventions (list + detail) ---------------------------------------
@@ -684,6 +767,8 @@ def _build_settings_app(*, capabilities_for_identity: Any = None) -> tuple[FastA
     store = SettingsStore(os.path.join(tmpdir, "settings.json"))
     bundle = copy.deepcopy(DEFAULT_SETTINGS_BUNDLE)
     bundle["evidence_refs"] = copy.deepcopy(_MIXED_REFS)
+    bundle["linked_evidence"] = [{"ref_id": "review-metric", "type": "metric", "link": "/metrics/private"}]
+    bundle["risk"]["evidence_refs"] = [{"ref_id": "review-audit", "type": "audit", "link": "/audits/private"}]
     store.replace(bundle)
 
     app = FastAPI()
@@ -712,7 +797,19 @@ def test_settings_get_redacts_for_low_capability_identity() -> None:
         assert response.status_code == 200, response.text
         payload = response.json()
         _assert_mixed_refs_redacted_for_low_capability(payload["evidence_refs"])
-        assert payload["meta"]["redacted_evidence_count"] == 2
+        _assert_redacted(
+            payload["linked_evidence"][0],
+            ref_id="review-metric",
+            required_capability="metric.read",
+        )
+        assert "link" not in payload["linked_evidence"][0]
+        _assert_redacted(
+            payload["risk"]["evidence_refs"][0],
+            ref_id="review-audit",
+            required_capability="audit.read",
+        )
+        assert "link" not in payload["risk"]["evidence_refs"][0]
+        assert payload["meta"]["redacted_evidence_count"] == 4
         # populated production-shaped baseline: unrelated sections stay intact
         assert payload["general"]["language"] == "zh-TW"
 
@@ -728,6 +825,12 @@ def test_settings_get_passes_through_for_full_capability_identity() -> None:
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["evidence_refs"] == _MIXED_REFS
+        assert payload["linked_evidence"] == [
+            {"ref_id": "review-metric", "type": "metric", "link": "/metrics/private"}
+        ]
+        assert payload["risk"]["evidence_refs"] == [
+            {"ref_id": "review-audit", "type": "audit", "link": "/audits/private"}
+        ]
         assert payload["meta"]["redacted_evidence_count"] == 0
 
 
@@ -747,7 +850,35 @@ def test_settings_get_fails_closed_when_capabilities_unresolvable() -> None:
         refs = payload["evidence_refs"]
         assert len(refs) == 3
         assert all(ref["redacted"] is True for ref in refs)
-        assert payload["meta"]["redacted_evidence_count"] == 3
+        assert len(payload["linked_evidence"]) == 1
+        assert payload["linked_evidence"][0]["redacted"] is True
+        assert "link" not in payload["linked_evidence"][0]
+        assert len(payload["risk"]["evidence_refs"]) == 1
+        assert payload["risk"]["evidence_refs"][0]["redacted"] is True
+        assert "link" not in payload["risk"]["evidence_refs"][0]
+        assert payload["meta"]["redacted_evidence_count"] == 5
+
+
+def test_settings_get_fails_closed_when_capabilities_returns_none() -> None:
+    with _stub_auth_env():
+        app, _ = _build_settings_app(capabilities_for_identity=lambda _: None)
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/settings",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        refs = payload["evidence_refs"]
+        assert len(refs) == 3
+        assert all(ref["redacted"] is True for ref in refs)
+        assert len(payload["linked_evidence"]) == 1
+        assert payload["linked_evidence"][0]["redacted"] is True
+        assert "link" not in payload["linked_evidence"][0]
+        assert len(payload["risk"]["evidence_refs"]) == 1
+        assert payload["risk"]["evidence_refs"][0]["redacted"] is True
+        assert "link" not in payload["risk"]["evidence_refs"][0]
+        assert payload["meta"]["redacted_evidence_count"] == 5
 
 
 def test_settings_export_redacts_for_low_capability_identity() -> None:
@@ -762,7 +893,19 @@ def test_settings_export_redacts_for_low_capability_identity() -> None:
         payload = response.json()
         exported = json.loads(payload["jsonData"])
         _assert_mixed_refs_redacted_for_low_capability(exported["evidence_refs"])
-        assert payload["meta"]["redacted_evidence_count"] == 2
+        _assert_redacted(
+            exported["linked_evidence"][0],
+            ref_id="review-metric",
+            required_capability="metric.read",
+        )
+        assert "link" not in exported["linked_evidence"][0]
+        _assert_redacted(
+            exported["risk"]["evidence_refs"][0],
+            ref_id="review-audit",
+            required_capability="audit.read",
+        )
+        assert "link" not in exported["risk"]["evidence_refs"][0]
+        assert payload["meta"]["redacted_evidence_count"] == 4
 
 
 def test_settings_export_passes_through_for_full_capability_identity() -> None:
@@ -777,6 +920,12 @@ def test_settings_export_passes_through_for_full_capability_identity() -> None:
         payload = response.json()
         exported = json.loads(payload["jsonData"])
         assert exported["evidence_refs"] == _MIXED_REFS
+        assert exported["linked_evidence"] == [
+            {"ref_id": "review-metric", "type": "metric", "link": "/metrics/private"}
+        ]
+        assert exported["risk"]["evidence_refs"] == [
+            {"ref_id": "review-audit", "type": "audit", "link": "/audits/private"}
+        ]
         assert payload["meta"]["redacted_evidence_count"] == 0
 
 
@@ -797,7 +946,36 @@ def test_settings_export_fails_closed_when_capabilities_unresolvable() -> None:
         refs = exported["evidence_refs"]
         assert len(refs) == 3
         assert all(ref["redacted"] is True for ref in refs)
-        assert payload["meta"]["redacted_evidence_count"] == 3
+        assert len(exported["linked_evidence"]) == 1
+        assert exported["linked_evidence"][0]["redacted"] is True
+        assert "link" not in exported["linked_evidence"][0]
+        assert len(exported["risk"]["evidence_refs"]) == 1
+        assert exported["risk"]["evidence_refs"][0]["redacted"] is True
+        assert "link" not in exported["risk"]["evidence_refs"][0]
+        assert payload["meta"]["redacted_evidence_count"] == 5
+
+
+def test_settings_export_fails_closed_when_capabilities_returns_none() -> None:
+    with _stub_auth_env():
+        app, _ = _build_settings_app(capabilities_for_identity=lambda _: None)
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/settings/export",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        exported = json.loads(payload["jsonData"])
+        refs = exported["evidence_refs"]
+        assert len(refs) == 3
+        assert all(ref["redacted"] is True for ref in refs)
+        assert len(exported["linked_evidence"]) == 1
+        assert exported["linked_evidence"][0]["redacted"] is True
+        assert "link" not in exported["linked_evidence"][0]
+        assert len(exported["risk"]["evidence_refs"]) == 1
+        assert exported["risk"]["evidence_refs"][0]["redacted"] is True
+        assert "link" not in exported["risk"]["evidence_refs"][0]
+        assert payload["meta"]["redacted_evidence_count"] == 5
 
 
 # --- Governance committee detail: linked_evidence -----------------------

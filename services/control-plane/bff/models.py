@@ -690,6 +690,31 @@ def _resolve_evidence_kind_and_capability(
     if not kind_key and kind_map and ref_id in kind_map:
         kind_key = str(kind_map[ref_id]).strip()
 
+    if not kind_key and ref_id:
+        lower = ref_id.lower()
+        if lower.startswith(("paper-broker://", "broker-evidence://", "broker://")):
+            kind_key = "audit"
+        elif lower.startswith("signal://"):
+            kind_key = "signal"
+        elif lower.startswith("persona://"):
+            kind_key = "persona"
+        elif lower.startswith("telemetry-event://"):
+            kind_key = "metric"
+        elif "approval" in lower:
+            kind_key = "approval"
+        elif "postmortem" in lower:
+            kind_key = "postmortem"
+        elif "incident" in lower:
+            kind_key = "incident"
+        elif "audit" in lower:
+            kind_key = "audit"
+        elif "metric" in lower:
+            kind_key = "metric"
+        elif "policy" in lower:
+            kind_key = "policy"
+        elif "alert" in lower:
+            kind_key = "alert"
+
     if not kind_key and default_kind:
         kind_key = str(default_kind).strip()
 
@@ -803,7 +828,7 @@ def safe_redact_evidence_refs(
     except Exception:
         capabilities = None
     if capabilities is None:
-        capabilities = []
+        return fail_closed_redacted_refs(refs, default_kind=default_kind, kind_map=kind_map)
     try:
         kwargs: dict[str, Any] = {"capabilities": capabilities}
         if default_kind is not None:
@@ -917,7 +942,7 @@ def redact_ooda_packet(
     if isinstance(orient, dict):
         _redact_field(orient, "persona_proposal_refs", default_kind="persona")
         _redact_field(orient, "signal_inference_refs", default_kind="signal")
-        _redact_field(orient, "evidence_bundle_refs", default_kind=None)
+        _redact_field(orient, "evidence_bundle_refs", default_kind="artifact")
         for other_field in ("allocation_proposal_refs",):
             _redact_field(orient, other_field, default_kind=None)
 
@@ -929,7 +954,7 @@ def redact_ooda_packet(
     # ActBundle:
     act = packet_copy.get("act")
     if isinstance(act, dict):
-        _redact_field(act, "broker_evidence_refs", default_kind=None)
+        _redact_field(act, "broker_evidence_refs", default_kind="audit")
         for other_field in ("command_receipt_refs", "rollback_refs", "safe_mode_refs"):
             _redact_field(act, other_field, default_kind=None)
 
@@ -960,6 +985,53 @@ def redact_ooda_packet_items(
         redacted_packets.append(redacted_packet)
         total_redacted += count
     return redacted_packets, total_redacted
+
+
+def redact_settings_bundle(
+    identity: Any,
+    bundle: dict[str, Any],
+    *,
+    redact_fn: Callable[..., tuple[list[Any], int]],
+    capabilities_fn: Callable[[Any], Any],
+) -> tuple[dict[str, Any], int]:
+    """Redact evidence references across all supported locations in a settings bundle.
+
+    Scans top-level and nested sections (e.g. ``risk``, ``trading``, etc.) for
+    any capability-gated reference lists (``evidence_refs``, ``linked_evidence``),
+    redacts unauthorized entries while preserving authorized visibility, and
+    fails closed when capability resolution is unavailable. Returns the
+    redacted bundle copy and the total count of redacted references.
+    """
+    if not isinstance(bundle, dict):
+        return bundle, 0
+
+    bundle_copy = _copy.deepcopy(bundle)
+    total_redacted = 0
+
+    def _traverse(node: Any) -> None:
+        nonlocal total_redacted
+        if isinstance(node, dict):
+            for field in ("evidence_refs", "linked_evidence"):
+                raw = node.get(field)
+                if isinstance(raw, list) and raw:
+                    redacted_refs, count = safe_redact_evidence_refs(
+                        identity,
+                        raw,
+                        redact_fn=redact_fn,
+                        capabilities_fn=capabilities_fn,
+                    )
+                    node[field] = redacted_refs
+                    total_redacted += count
+            for val in node.values():
+                if isinstance(val, (dict, list)):
+                    _traverse(val)
+        elif isinstance(node, list):
+            for item in node:
+                if isinstance(item, (dict, list)):
+                    _traverse(item)
+
+    _traverse(bundle_copy)
+    return bundle_copy, total_redacted
 
 
 # --------------------------------------------------------------------------- #

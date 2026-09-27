@@ -306,17 +306,18 @@ def create_settings_router(
     """Create settings routes with no provider-readiness dependency."""
     router = APIRouter(tags=["settings"])
 
-    from ..models import redact_evidence_field_items
-    from ..models import redact_evidence_refs as _default_redact_evidence_refs
+    from ..models import (
+        redact_settings_bundle,
+        redact_evidence_refs as _default_redact_evidence_refs,
+    )
 
     _redact = redact_evidence_refs or _default_redact_evidence_refs
     _capabilities = capabilities_for_identity or (lambda identity: [])
 
     def _redact_settings_bundle(identity: Any, bundle: dict[str, Any]) -> tuple[dict[str, Any], int]:
-        redacted_items, redacted_count = redact_evidence_field_items(
-            identity, [bundle], field="evidence_refs", redact_fn=_redact, capabilities_fn=_capabilities
+        return redact_settings_bundle(
+            identity, bundle, redact_fn=_redact, capabilities_fn=_capabilities
         )
-        return redacted_items[0], redacted_count
 
     @router.get("/api/v1/settings")
     async def get_settings(authorization: Optional[str] = Header(default=None)):
