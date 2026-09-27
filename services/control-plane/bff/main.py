@@ -546,10 +546,7 @@ agora_audit_store = AgoraAuditStore()
 persona_write_owner = app_deps.persona_write_owner
 ranking_write_owner = app_deps.ranking_write_owner
 strategy_write_owner = app_deps.strategy_write_owner
-decision_journal_write_owner = getattr(app_deps, "decision_journal_write_owner", None)
-if decision_journal_write_owner is None:
-    from .governance.decision_journal_write_owner import build_decision_journal_write_owner
-    decision_journal_write_owner = build_decision_journal_write_owner()
+decision_journal_write_owner = app_deps.decision_journal_write_owner
 persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutationPort(
     persona_mutation_port=persona_write_owner,
 )
@@ -7744,12 +7741,6 @@ _events_router = app.state.events_router
 _deployment_router = app.state.deployment_router
 _agora_router = app.state.agora_router
 _runtime_router = app.state.runtime_router
-if hasattr(app, "state"):
-    app.state.decision_journal_write_owner = decision_journal_write_owner
-    if hasattr(app.state, "agora_router") and hasattr(app.state.agora_router, "agora_service"):
-        def _get_decision_journal_write_owner() -> Any:
-            return decision_journal_write_owner
-        app.state.agora_router.agora_service._get_journal_write_owner = _get_decision_journal_write_owner
 interaction_lifecycle = app.state.interaction_lifecycle
 workshop_store = app.state.workshop_store
 proposal_store = app.state.proposal_store

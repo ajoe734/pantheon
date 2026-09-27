@@ -41,17 +41,19 @@ def resolve_decision_journal_data_dir() -> str:
     Follows the direct-store convention used by BFF-side consumers of governance-owned
     durable state:
     1. Domain-specific override PANTHEON_DECISION_JOURNAL_DATA_DIR
-    2. BFF-specific decision journal store path PANTHEON_BFF_DECISION_JOURNAL_STORE
-    3. Shared governance data directory PANTHEON_GOVERNANCE_DATA_DIR / GOVERNANCE_DATA_DIR
-    4. Dev-only fallback /tmp/pantheon/governance
+    2. Shared governance data directory PANTHEON_GOVERNANCE_DATA_DIR / GOVERNANCE_DATA_DIR
+    3. Dev-only fallback /tmp/pantheon/governance
+
+    The retired BFF-only file override is rejected: the canonical read port
+    never consumed it, so accepting it splits reads and writes across owners.
     """
+    if os.getenv("PANTHEON_BFF_DECISION_JOURNAL_STORE"):
+        raise ValueError(
+            "PANTHEON_BFF_DECISION_JOURNAL_STORE is retired; use "
+            "PANTHEON_DECISION_JOURNAL_DATA_DIR for both reads and writes"
+        )
     if os.getenv("PANTHEON_DECISION_JOURNAL_DATA_DIR"):
         return os.environ["PANTHEON_DECISION_JOURNAL_DATA_DIR"]
-
-    bff_store = os.getenv("PANTHEON_BFF_DECISION_JOURNAL_STORE")
-    if bff_store:
-        path = Path(bff_store)
-        return str(path.parent if path.suffix else path)
 
     return (
         os.getenv("PANTHEON_GOVERNANCE_DATA_DIR")

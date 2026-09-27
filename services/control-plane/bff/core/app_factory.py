@@ -1637,6 +1637,7 @@ def mount_bff_routers(
     app.state.events_router = events_router
     app.state.deployment_router = deployment_router
     app.state.agora_router = agora_router
+    app.state.decision_journal_write_owner = agora_router.agora_service.journal_write_owner
     app.state.runtime_router = runtime_router
     app.state.interaction_lifecycle = agora_router.interaction_lifecycle
     app.state.workshop_store = agora_router.workshop_store

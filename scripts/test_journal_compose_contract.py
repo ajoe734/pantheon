@@ -1,151 +1,135 @@
 #!/usr/bin/env python3
-"""JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001: Local Compose contract validation.
+"""Render the real Compose contract; optionally prove it with local paper fixtures.
 
-Validates that docker-compose.yml and docker-compose.control.yml enforce the
-canonical journal runtime contract:
-1. operator-bff declares GOVERNANCE_STORE_BACKEND with default 'postgres'.
-2. operator-bff declares GOVERNANCE_STORE_DSN chained to DATABASE_URL.
-3. operator-bff declares GOVERNANCE_STORE_BOOTSTRAP=1.
-4. operator-bff declares PANTHEON_DECISION_JOURNAL_DATA_DIR.
-5. operator-bff preserves read-only mount '/data/governance:ro' (does NOT change to :rw).
-6. operator-bff mounts durable bff-data volume at '/data/bff'.
-7. docker-compose.control.yml operator-bff declares matching backend contract.
+No Compose deployment, hosted endpoint, or credentials are used. --runtime
+starts a disposable network-isolated Postgres and runs three fresh BFF factory
+processes with the rendered journal settings and actual read-only consumer
+mount. A fourth process verifies database failure without local fallback.
 """
 from __future__ import annotations
 
-import sys
+import argparse
+import json
+import os
 from pathlib import Path
-import yaml
+import subprocess
+import tempfile
+import time
+import uuid
 
 
-def validate_compose_contract(repo_root: Path) -> None:
-    compose_path = repo_root / "docker-compose.yml"
-    control_path = repo_root / "docker-compose.control.yml"
+ROOT = Path(__file__).resolve().parent.parent
+PROBE = "services/control-plane/bff/tests/test_journal_runtime_contract.py"
 
-    if not compose_path.exists():
-        raise FileNotFoundError(f"Missing docker-compose.yml at {compose_path}")
-    if not control_path.exists():
-        raise FileNotFoundError(f"Missing docker-compose.control.yml at {control_path}")
 
-    # 1. Inspect docker-compose.yml
-    with open(compose_path, "r", encoding="utf-8") as f:
-        compose_data = yaml.safe_load(f)
+def run(*args: str, env=None, timeout=60) -> str:
+    result = subprocess.run(args, cwd=ROOT, env=env, capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        # Fixtures contain only public dummy configuration, never host env secrets.
+        raise RuntimeError(f"command failed ({result.returncode}): {args[0:3]}\n{result.stdout}\n{result.stderr}")
+    return result.stdout.strip()
 
-    services = compose_data.get("services", {})
-    if "operator-bff" not in services:
-        raise AssertionError("operator-bff service not found in docker-compose.yml")
 
-    bff = services["operator-bff"]
-    env = bff.get("environment", {})
-    vols = bff.get("volumes", [])
+def render_compose(control: bool = False, overrides=None) -> dict:
+    # Never consume a host .env or inherited product/service credentials.
+    env = {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"],
+           "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL": "http://adapter.invalid",
+           "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN": "local-render-fixture-only",
+           "PANTHEON_PERSONA_SERVICE_TOKEN": "local-render-fixture-only"}
+    env.update(overrides or {})
+    args = ["docker", "compose", "--env-file", "/dev/null", "-f", "docker-compose.yml"]
+    if control:
+        args += ["-f", "docker-compose.control.yml"]
+    return json.loads(run(*args, "config", "--format", "json", env=env))
 
-    # Check env in docker-compose.yml
-    gov_backend = env.get("GOVERNANCE_STORE_BACKEND", "")
-    if "postgres" not in gov_backend:
-        raise AssertionError(
-            f"operator-bff GOVERNANCE_STORE_BACKEND must default to postgres, got: {gov_backend!r}"
-        )
 
-    gov_dsn = env.get("GOVERNANCE_STORE_DSN", "")
-    if not gov_dsn or "DATABASE_URL" not in gov_dsn:
-        raise AssertionError(
-            f"operator-bff GOVERNANCE_STORE_DSN must chain to DATABASE_URL, got: {gov_dsn!r}"
-        )
+def validate_compose_contract(repo_root: Path = ROOT) -> dict:
+    assert repo_root.resolve() == ROOT
+    for control in (False, True):
+        rendered = render_compose(control)
+        bff = rendered["services"]["operator-bff"]
+        env = bff["environment"]
+        assert env["GOVERNANCE_STORE_BACKEND"] == "postgres"
+        assert env["GOVERNANCE_STORE_DSN"] == rendered["services"]["governance"]["environment"]["DATABASE_URL"]
+        assert env["GOVERNANCE_STORE_BOOTSTRAP"] == "1"
+        assert env["PANTHEON_DECISION_JOURNAL_DATA_DIR"] == "/data/bff/decision_journal"
+        assert "PANTHEON_BFF_DECISION_JOURNAL_STORE" not in env
+        mounts = {row["target"]: row for row in bff["volumes"]}
+        assert mounts["/data/governance"]["read_only"] is True
+        assert not mounts["/data/bff"].get("read_only", False)
+        # Exact interpolation behavior, not substring matches against raw YAML.
+        custom = "postgresql://fixture:fixture@database.invalid/paper"
+        for variable in ("DATABASE_URL", "GOVERNANCE_STORE_DSN"):
+            changed = render_compose(control, {variable: custom})
+            assert changed["services"]["operator-bff"]["environment"]["GOVERNANCE_STORE_DSN"] == custom
+    print("PASS: base/control rendered Compose defaults, DSN overrides, and read-only consumer mount")
+    return rendered
 
-    gov_bootstrap = env.get("GOVERNANCE_STORE_BOOTSTRAP", "")
-    if "1" not in str(gov_bootstrap):
-        raise AssertionError(
-            f"operator-bff GOVERNANCE_STORE_BOOTSTRAP must default to 1, got: {gov_bootstrap!r}"
-        )
 
-    data_dir = env.get("PANTHEON_DECISION_JOURNAL_DATA_DIR", "")
-    if "/data/bff" not in str(data_dir):
-        raise AssertionError(
-            f"operator-bff PANTHEON_DECISION_JOURNAL_DATA_DIR must point under /data/bff, got: {data_dir!r}"
-        )
+def runtime_contract(rendered: dict, bff_image: str) -> None:
+    name = "journal-contract-" + uuid.uuid4().hex[:10]
+    network, database = name + "-net", name + "-pg"
+    bff_env = rendered["services"]["operator-bff"]["environment"]
+    with tempfile.TemporaryDirectory(prefix=name) as tmp:
+        consumer = Path(tmp) / "consumer"
+        writer = Path(tmp) / "writer"
+        consumer.mkdir()
+        writer.mkdir()
+        network_created = database_created = False
+        try:
+            run("docker", "network", "create", "--internal", network)
+            network_created = True
+            run("docker", "run", "-d", "--name", database, "--network", network,
+                "--network-alias", "postgres", "-e", "POSTGRES_USER=pantheon_app",
+                "-e", "POSTGRES_PASSWORD=pantheon_app", "-e", "POSTGRES_DB=pantheon", "postgres:16-alpine")
+            database_created = True
+            for _ in range(30):
+                probe = subprocess.run(["docker", "exec", database, "pg_isready", "-U", "pantheon_app"],
+                                       capture_output=True, timeout=10)
+                if probe.returncode == 0:
+                    break
+                time.sleep(1)
+            else:
+                raise RuntimeError("Disposable Postgres did not become ready")
 
-    # Check volumes in docker-compose.yml
-    has_gov_ro = any(
-        isinstance(v, str) and "/data/governance:ro" in v
-        for v in vols
-    )
-    if not has_gov_ro:
-        raise AssertionError(
-            "operator-bff must retain read-only /data/governance:ro volume mount"
-        )
+            def paper(phase: str):
+                args = ["docker", "run", "--rm", "--network", network, "--read-only", "--cap-drop", "ALL",
+                        "--security-opt", "no-new-privileges:true", "--user", f"{os.getuid()}:{os.getgid()}",
+                        "--tmpfs", "/tmp", "-v", f"{ROOT}:/workspace:ro",
+                        "-v", f"{consumer}:/data/governance:ro", "-v", f"{writer}:/data/bff:rw",
+                        "-w", "/workspace", "-e", "PYTHONPATH=/workspace", "-e", "PYTHONDONTWRITEBYTECODE=1",
+                        "-e", "BFF_DATA_DIR=/data/bff", "-e", "PANTHEON_ENV=test",
+                        "-e", "JOURNAL_REQUIRE_RO_MOUNT=1"]
+                for key in ("GOVERNANCE_STORE_BACKEND", "GOVERNANCE_STORE_DSN", "GOVERNANCE_STORE_BOOTSTRAP",
+                            "PANTHEON_DECISION_JOURNAL_DATA_DIR", "PANTHEON_GOVERNANCE_DATA_DIR"):
+                    value = bff_env[key]
+                    if key == "GOVERNANCE_STORE_DSN":
+                        value += "?connect_timeout=1"
+                    if phase == "unavailable" and key == "GOVERNANCE_STORE_BOOTSTRAP":
+                        value = "0"
+                    args += ["-e", f"{key}={value}"]
+                print(run(*args, "--entrypoint", "python", bff_image, PROBE, "--paper-probe", phase, timeout=90))
 
-    has_gov_rw = any(
-        isinstance(v, str) and "/data/governance" in v and ":ro" not in v
-        for v in vols
-    )
-    if has_gov_rw:
-        raise AssertionError(
-            "operator-bff must NOT mount /data/governance as read-write; merely changing :ro to :rw is forbidden"
-        )
-
-    has_bff_data = any(
-        isinstance(v, str) and "/data/bff" in v
-        for v in vols
-    )
-    if not has_bff_data:
-        raise AssertionError(
-            "operator-bff must mount /data/bff volume for local journal fallback"
-        )
-
-    # 2. Inspect docker-compose.control.yml
-    # Control file uses YAML !override tag; we load with a custom loader or ignore tags
-    class SafeLoaderIgnoreUnknown(yaml.SafeLoader):
-        pass
-
-    SafeLoaderIgnoreUnknown.add_constructor(
-        None,
-        lambda loader, node: loader.construct_scalar(node)
-        if isinstance(node, yaml.ScalarNode)
-        else (loader.construct_sequence(node) if isinstance(node, yaml.SequenceNode) else loader.construct_mapping(node)),
-    )
-
-    with open(control_path, "r", encoding="utf-8") as f:
-        control_data = yaml.load(f, Loader=SafeLoaderIgnoreUnknown)
-
-    ctrl_services = control_data.get("services", {})
-    if "operator-bff" not in ctrl_services:
-        raise AssertionError("operator-bff service not found in docker-compose.control.yml")
-
-    ctrl_bff = ctrl_services["operator-bff"]
-    ctrl_env = ctrl_bff.get("environment", {})
-
-    ctrl_gov_backend = ctrl_env.get("GOVERNANCE_STORE_BACKEND", "")
-    if "postgres" not in ctrl_gov_backend:
-        raise AssertionError(
-            f"docker-compose.control.yml operator-bff GOVERNANCE_STORE_BACKEND must default to postgres, got: {ctrl_gov_backend!r}"
-        )
-
-    ctrl_gov_dsn = ctrl_env.get("GOVERNANCE_STORE_DSN", "")
-    if not ctrl_gov_dsn or "DATABASE_URL" not in ctrl_gov_dsn:
-        raise AssertionError(
-            f"docker-compose.control.yml operator-bff GOVERNANCE_STORE_DSN must chain to DATABASE_URL, got: {ctrl_gov_dsn!r}"
-        )
-
-    ctrl_gov_bootstrap = ctrl_env.get("GOVERNANCE_STORE_BOOTSTRAP", "")
-    if "1" not in str(ctrl_gov_bootstrap):
-        raise AssertionError(
-            f"docker-compose.control.yml operator-bff GOVERNANCE_STORE_BOOTSTRAP must default to 1, got: {ctrl_gov_bootstrap!r}"
-        )
-
-    ctrl_data_dir = ctrl_env.get("PANTHEON_DECISION_JOURNAL_DATA_DIR", "")
-    if "/data/bff" not in str(ctrl_data_dir):
-        raise AssertionError(
-            f"docker-compose.control.yml operator-bff PANTHEON_DECISION_JOURNAL_DATA_DIR must point under /data/bff, got: {ctrl_data_dir!r}"
-        )
-
-    print("PASS: docker-compose.yml and docker-compose.control.yml journal runtime contract verified successfully.")
+            paper("create")
+            paper("restart")
+            paper("reread")
+            run("docker", "stop", "--time", "10", database)
+            paper("unavailable")
+            assert list(consumer.iterdir()) == [], "Read consumer mount was modified"
+            assert not list(writer.rglob("decision_journal*.json")), "Unexpected local authority"
+            print("PASS: mounted BFF paper create/restart/replay/tenant/CAS/unavailable; no JSON fallback")
+        finally:
+            if database_created:
+                run("docker", "rm", "-f", database)
+            if network_created:
+                run("docker", "network", "rm", network)
 
 
 if __name__ == "__main__":
-    repo_root = Path(__file__).resolve().parent.parent
-    try:
-        validate_compose_contract(repo_root)
-        sys.exit(0)
-    except Exception as exc:
-        print(f"FAIL: {exc}", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--bff-image", default="pantheon-bff-test")
+    args = parser.parse_args()
+    config = validate_compose_contract()
+    if args.runtime:
+        runtime_contract(config, args.bff_image)

@@ -400,6 +400,11 @@ def resolve_decision_journal_backend() -> str:
     raw_gov = os.getenv("GOVERNANCE_STORE_BACKEND")
     raw_agora = os.getenv("AGORA_GOVERNANCE_STORE_BACKEND")
     dsn = os.getenv("GOVERNANCE_STORE_DSN") or os.getenv("DATABASE_URL")
+    if os.getenv("AGORA_GOVERNANCE_STORE_DSN") and not dsn:
+        raise ValueError(
+            "AGORA_GOVERNANCE_STORE_DSN alone is not a Decision Journal DSN; "
+            "configure GOVERNANCE_STORE_DSN or DATABASE_URL explicitly"
+        )
 
     gov_backend = raw_gov.strip().lower() if raw_gov is not None and raw_gov.strip() else None
     agora_backend = raw_agora.strip().lower() if raw_agora is not None and raw_agora.strip() else None
