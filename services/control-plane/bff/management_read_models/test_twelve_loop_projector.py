@@ -1420,11 +1420,11 @@ class TestTwelveLoopProjectorScopeAndStorage:
         assert obs_beta.terminal_id == "beta-term"
 
         # Store queries respect scope
-        alpha_receipts = store.list_receipts(tenant_id="tenant-alpha")
+        alpha_receipts = store.list_receipts(tenant_id="tenant-alpha", environment="production")
         assert len(alpha_receipts) == 3
         assert all(r.tenant_id == "tenant-alpha" for r in alpha_receipts)
 
-        beta_receipts = store.list_receipts(tenant_id="tenant-beta")
+        beta_receipts = store.list_receipts(tenant_id="tenant-beta", environment="production")
         assert len(beta_receipts) == 2
         assert all(r.tenant_id == "tenant-beta" for r in beta_receipts)
 
@@ -1607,3 +1607,76 @@ class TestTwelveLoopProjectorScopeAndStorage:
         assert incremental_t2 == rebuilt_t2
         assert incremental_t1["status"] == "complete"
         assert incremental_t2["status"] == "failed"
+
+    def test_validate_scope_fail_closed_on_partial_scope(self) -> None:
+        """validate_scope fails closed on partial scope or blank strings."""
+        from services.control_plane.bff.management_read_models.twelve_loop_projector import validate_scope
+
+        # Fully scoped is valid
+        validate_scope("tenant-1", "production")
+
+        # Fully unscoped is valid
+        validate_scope(None, None)
+
+        # all_scopes explicitly permitted
+        validate_scope(None, None, allow_all_scopes=True)
+
+        # Partial scope fails closed
+        with pytest.raises(ValueError, match="Partial caller scope is invalid"):
+            validate_scope("tenant-1", None)
+
+        with pytest.raises(ValueError, match="Partial caller scope is invalid"):
+            validate_scope(None, "production")
+
+        # Blank strings fail closed
+        with pytest.raises(ValueError, match="tenant_id cannot be empty or blank"):
+            validate_scope("", "production")
+
+        with pytest.raises(ValueError, match="environment cannot be empty or blank"):
+            validate_scope("tenant-1", "   ")
+
+    def test_unscoped_legacy_stimulus_does_not_reduce_with_scoped_receipts_in_memory(self) -> None:
+        """Unscoped legacy receipts and scoped receipts on same release/correlation/loop never cross-reduce."""
+        store = MemoryTwelveLoopStore()
+        projector = TwelveLoopTruthProjector(store, auto_load=False)
+        now = _utc()
+
+        # Ingest scoped complete loop
+        projector.ingest_receipts([
+            CanonicalLoopReceipt("rcpt-s-scoped", "stimulus", 1, "c-cross", "r-cross", "owner", "live", tenant_id="tenant-a", environment="prod", observed_at=now),
+            CanonicalLoopReceipt("rcpt-t-scoped", "terminal", 1, "c-cross", "r-cross", "owner", "live", tenant_id="tenant-a", environment="prod", status="completed", observed_at=now + timedelta(seconds=1), causation_id="rcpt-s-scoped"),
+            CanonicalLoopReceipt("rcpt-n-scoped", "next_consumer", 1, "c-cross", "r-cross", "owner", "live", tenant_id="tenant-a", environment="prod", status="accepted", observed_at=now + timedelta(seconds=2), causation_id="rcpt-t-scoped"),
+        ])
+
+        # Ingest legacy unscoped stimulus
+        obs_legacy = projector.ingest_receipt(
+            CanonicalLoopReceipt("rcpt-s-legacy", "stimulus", 1, "c-cross", "r-cross", "owner", "live", observed_at=now)
+        )
+
+        # Legacy observation MUST NOT pick up the scoped terminal receipt
+        assert obs_legacy.tenant_id is None
+        assert obs_legacy.environment is None
+        assert obs_legacy.status == "open"
+        assert obs_legacy.terminal_id is None
+        assert obs_legacy.stimulus_id == "rcpt-s-legacy"
+
+        # Scoped observation remains complete
+        obs_scoped = projector.get_observation("r-cross", "c-cross", 1, tenant_id="tenant-a", environment="prod")
+        assert obs_scoped is not None
+        assert obs_scoped.tenant_id == "tenant-a"
+        assert obs_scoped.environment == "prod"
+        assert obs_scoped.status == "complete"
+        assert obs_scoped.terminal_id == "rcpt-t-scoped"
+
+    def test_scoped_projector_rejects_unscoped_and_mismatched_receipts(self) -> None:
+        """A projector configured for a specific tenant & env rejects unscoped or mismatched receipts."""
+        projector = TwelveLoopTruthProjector(tenant_id="tenant-x", environment="prod")
+        now = _utc()
+
+        unscoped = CanonicalLoopReceipt("rcpt-unscoped", "stimulus", 1, "c", "r", "owner", "live", observed_at=now)
+        with pytest.raises(ValueError, match="conflicts with projector scoped tenant"):
+            projector.ingest_receipt(unscoped)
+
+        mismatched_env = CanonicalLoopReceipt("rcpt-bad-env", "stimulus", 1, "c", "r", "owner", "live", tenant_id="tenant-x", environment="staging", observed_at=now)
+        with pytest.raises(ValueError, match="conflicts with projector scoped environment"):
+            projector.ingest_receipt(mismatched_env)

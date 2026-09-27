@@ -87,6 +87,29 @@ def resolve_loop_id_int(value: Any) -> int:
     raise ValueError(f"Invalid loop identifier: {value!r}. Must be 1..12 or one of {list(LOOP_ID_TO_INT.keys())}")
 
 
+def validate_scope(
+    tenant_id: Optional[str],
+    environment: Optional[str],
+    *,
+    allow_all_scopes: bool = False,
+) -> None:
+    """Validate caller scope: either fully scoped, fully unscoped (legacy), or all_scopes.
+
+    Fails closed on partial caller scope (where exactly one of tenant_id or environment is None).
+    """
+    if allow_all_scopes and tenant_id is None and environment is None:
+        return
+    if (tenant_id is None) != (environment is None):
+        raise ValueError(
+            f"Partial caller scope is invalid: tenant_id and environment must both be provided "
+            f"or both be None (got tenant_id={tenant_id!r}, environment={environment!r})"
+        )
+    if tenant_id is not None and not tenant_id.strip():
+        raise ValueError("tenant_id cannot be empty or blank")
+    if environment is not None and not environment.strip():
+        raise ValueError("environment cannot be empty or blank")
+
+
 @dataclass(frozen=True)
 class CanonicalLoopReceipt:
     receipt_id: str
@@ -103,6 +126,9 @@ class CanonicalLoopReceipt:
     degradation_reason: Optional[str] = None
     causation_id: Optional[str] = None
     payload: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        validate_scope(self.tenant_id, self.environment)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> CanonicalLoopReceipt:
@@ -121,6 +147,7 @@ class CanonicalLoopReceipt:
         tenant_id = str(raw_tenant).strip() if raw_tenant is not None and str(raw_tenant).strip() else None
         raw_env = data.get("environment")
         environment = str(raw_env).strip() if raw_env is not None and str(raw_env).strip() else None
+        validate_scope(tenant_id, environment)
 
         return cls(
             receipt_id=str(data["receipt_id"]).strip(),
@@ -182,6 +209,9 @@ class LoopObservation:
     causation_id: Optional[str] = None
     receipt_ids: List[str] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        validate_scope(self.tenant_id, self.environment)
+
     @property
     def loop_name(self) -> str:
         return CANONICAL_TWELVE_LOOPS.get(self.loop_id, ("", "", ""))[1]
@@ -239,10 +269,13 @@ class TwelveLoopTruthProjector:
         max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
         max_future_skew_seconds: int = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
         auto_load: bool = True,
+        all_scopes: bool = False,
     ) -> None:
+        validate_scope(tenant_id, environment, allow_all_scopes=all_scopes)
         self.store = store
         self.tenant_id = tenant_id
         self.environment = environment
+        self.all_scopes = all_scopes
         self.max_age_seconds = max_age_seconds
         self.max_future_skew_seconds = max_future_skew_seconds
         # raw receipts: receipt_id -> CanonicalLoopReceipt
@@ -276,6 +309,7 @@ class TwelveLoopTruthProjector:
             stored_receipts = self.store.list_receipts(
                 tenant_id=self.tenant_id,
                 environment=self.environment,
+                all_scopes=self.all_scopes,
             )
             for r in stored_receipts:
                 self._receipts[r.receipt_id] = r
@@ -287,36 +321,17 @@ class TwelveLoopTruthProjector:
 
     def ingest_receipt(self, receipt: CanonicalLoopReceipt) -> LoopObservation:
         """Ingest a single receipt incrementally and update projection."""
+        validate_scope(receipt.tenant_id, receipt.environment)
         # Enforce trusted caller contract: reject conflicting receipt scope if projector is scoped
-        if self.tenant_id is not None and receipt.tenant_id is not None and receipt.tenant_id != self.tenant_id:
-            raise ValueError(
-                f"Receipt tenant_id '{receipt.tenant_id}' conflicts with projector scoped tenant '{self.tenant_id}'"
-            )
-        if self.environment is not None and receipt.environment is not None and receipt.environment != self.environment:
-            raise ValueError(
-                f"Receipt environment '{receipt.environment}' conflicts with projector scoped environment '{self.environment}'"
-            )
-
-        # Bind effective scope from trusted caller contract
-        effective_tenant = receipt.tenant_id if receipt.tenant_id is not None else self.tenant_id
-        effective_env = receipt.environment if receipt.environment is not None else self.environment
-        if (receipt.tenant_id != effective_tenant) or (receipt.environment != effective_env):
-            receipt = CanonicalLoopReceipt(
-                receipt_id=receipt.receipt_id,
-                receipt_type=receipt.receipt_type,
-                loop_id=receipt.loop_id,
-                correlation_id=receipt.correlation_id,
-                release_id=receipt.release_id,
-                owner=receipt.owner,
-                provenance=receipt.provenance,
-                tenant_id=effective_tenant,
-                environment=effective_env,
-                status=receipt.status,
-                observed_at=receipt.observed_at,
-                degradation_reason=receipt.degradation_reason,
-                causation_id=receipt.causation_id,
-                payload=receipt.payload,
-            )
+        if not self.all_scopes and self.tenant_id is not None:
+            if receipt.tenant_id is None or receipt.tenant_id != self.tenant_id:
+                raise ValueError(
+                    f"Receipt tenant_id '{receipt.tenant_id}' conflicts with projector scoped tenant '{self.tenant_id}'"
+                )
+            if self.environment is not None and (receipt.environment is None or receipt.environment != self.environment):
+                raise ValueError(
+                    f"Receipt environment '{receipt.environment}' conflicts with projector scoped environment '{self.environment}'"
+                )
 
         key = (receipt.tenant_id, receipt.environment, receipt.release_id, receipt.correlation_id, receipt.loop_id)
 
@@ -387,6 +402,7 @@ class TwelveLoopTruthProjector:
                 release_id=receipt.release_id,
                 correlation_id=receipt.correlation_id,
                 loop_id=receipt.loop_id,
+                all_scopes=False,
             )
             key_receipts = {r.receipt_id: r for r in stored_receipts}
             key_receipts[receipt.receipt_id] = receipt
@@ -416,6 +432,7 @@ class TwelveLoopTruthProjector:
                         release_id=receipt.release_id,
                         correlation_id=receipt.correlation_id,
                         loop_id=receipt.loop_id,
+                        all_scopes=False,
                     )
                     key_receipts = {r.receipt_id: r for r in stored_receipts}
 
@@ -813,6 +830,7 @@ class TwelveLoopTruthProjector:
             return None
         target_tenant = tenant_id if tenant_id is not None else self.tenant_id
         target_env = environment if environment is not None else self.environment
+        validate_scope(target_tenant, target_env)
         obs = self._observations.get((target_tenant, target_env, release_id, correlation_id, loop_id))
         if obs is not None:
             self._recompute_freshness(obs, now=datetime.now(timezone.utc))
@@ -826,19 +844,28 @@ class TwelveLoopTruthProjector:
         release_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
         loop_id: Optional[int] = None,
+        all_scopes: bool = False,
     ) -> List[LoopObservation]:
         if not self._enabled:
             return []
-        now = datetime.now(timezone.utc)
+        effective_all = all_scopes or self.all_scopes
         target_tenant = tenant_id if tenant_id is not None else self.tenant_id
         target_env = environment if environment is not None else self.environment
+        validate_scope(target_tenant, target_env, allow_all_scopes=effective_all)
+        now = datetime.now(timezone.utc)
         items = list(self._observations.values())
         for obs in items:
             self._recompute_freshness(obs, now=now)
-        if target_tenant is not None:
-            items = [obs for obs in items if obs.tenant_id == target_tenant]
-        if target_env is not None:
-            items = [obs for obs in items if obs.environment == target_env]
+        if not effective_all:
+            if target_tenant is None and target_env is None:
+                items = [obs for obs in items if obs.tenant_id is None and obs.environment is None]
+            else:
+                items = [obs for obs in items if obs.tenant_id == target_tenant and obs.environment == target_env]
+        else:
+            if target_tenant is not None:
+                items = [obs for obs in items if obs.tenant_id == target_tenant]
+            if target_env is not None:
+                items = [obs for obs in items if obs.environment == target_env]
         if release_id:
             items = [obs for obs in items if obs.release_id == release_id]
         if correlation_id:
@@ -865,6 +892,7 @@ class TwelveLoopTruthProjector:
         now = datetime.now(timezone.utc)
         target_tenant = tenant_id if tenant_id is not None else self.tenant_id
         target_env = environment if environment is not None else self.environment
+        validate_scope(target_tenant, target_env)
 
         if not self._enabled:
             # Rollback: Return typed unavailable / degraded rows while preserving underlying receipts

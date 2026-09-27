@@ -8,7 +8,7 @@
     "LOOP-TRUTH-001": "done",
     "BFF-TEST-PREEXISTING-FAILURE-TRIAGE-001": "done"
   },
-  "normative_plan": "Audit at /tmp/pantheon-dependency-audit-20260927/REPORT.zh-TW.md; narrow implementation prerequisite extracted from LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001",
+  "normative_plan": "Audit at /tmp/pantheon-dependency-audit-20260927/REPORT.zh-TW.md; narrow implementation prerequisite extracted from LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001; re-opened to resolve Codex2 review defects",
   "implementation": {
     "files_modified": [
       "services/control-plane/bff/migrations/003_scope_twelve_loop_truth_receipts.sql",
@@ -18,34 +18,34 @@
       "services/control-plane/bff/migrations/test_twelve_loop_truth.py",
       "docs/deployment/evidence/LOOP-RECEIPT-SCOPE-STORAGE-001/evidence.json"
     ],
-    "summary": "Scope existing twelve-loop receipt schema and durable store with explicit tenant_id and environment before producer/read integration. Preserves honest legacy unscoped rows without invented provenance, enforces zero cross-tenant leakage, rejects conflicting receipt identity, and establishes durable PostgreSQL persistence and rebuild equivalence.",
-    "current_fix": "Forward migration 003 adds nullable tenant_id and environment columns to loop_receipts and twelve_loop_observations. Replaces pkey with NULLS NOT DISTINCT unique index on twelve_loop_observations (tenant_id, environment, release_id, correlation_id, loop_id). TwelveLoopStore and TwelveLoopTruthProjector enforce trusted caller scope boundaries, rejecting scope tampering and cross-tenant receipt collisions while preserving terminal-plus-next-consumer invariants.",
-    "regressions": "PostgreSQL migration 002-to-003 upgrade and legacy row preservation, multi-tenant streaming and fresh process reload rebuild equivalence, cross-tenant collision rejection, out-of-order delivery with provenance fencing, and failed persistence error handling.",
+    "summary": "Scope existing twelve-loop receipt schema and durable store with explicit tenant_id and environment before producer/read integration. Preserves honest legacy unscoped rows without invented provenance, enforces zero cross-tenant leakage, isolates unscoped legacy reduction from scoped partitions, provides non-lossy 002 rollback and pre-003 source compatibility, and establishes fresh-process restart and rebuild equivalence.",
+    "current_fix": "Forward migration 003 adds nullable tenant_id and environment columns to loop_receipts and twelve_loop_observations with NULLS NOT DISTINCT unique index. Fixed reviewer P1 defect 1 by enforcing exact partition queries (tenant_id IS NULL AND environment IS NULL for legacy; tenant_id = %s AND environment = %s for scoped) and fail-closed validation on partial scope, preventing legacy and scoped reduction mixing. Fixed reviewer P1 defect 2 by adding tested non-lossy rollback (rollback_to_002_schema_sync) which archives scoped rows to twelve_loop_observations_scoped_backup and restores twelve_loop_observations_pkey constraint, enabling pre-003 store operations without InvalidColumnReference or UniqueViolation, and automatically restoring scoped rows on re-migration. Fixed reviewer P2 defect 3 by adding a real child-process verification test proving fresh-process restart, multi-tenant/environment isolation, and rebuild equivalence.",
+    "regressions": "PostgreSQL migration 002-to-003 upgrade and honest legacy row preservation, unscoped legacy reduction isolation from tenant receipts, non-lossy rollback to 002 and pre-003 source compatibility, fresh-process child-process restart and rebuild equivalence, multi-tenant streaming, cross-tenant collision rejection, out-of-order delivery with provenance fencing, and failed persistence error handling.",
     "boundary": "Scoped receipt schema, storage, and read models only; no hosted deployment, no production-data migration, no credential changes, no second store or projector.",
-    "rollback_plan": "Forward migration 003 is additive. Older unscoped rows retain NULL tenant/environment. Rollback to 002 schema can be achieved by removing scoped indexes and restoring twelve_loop_observations_pkey."
+    "rollback_plan": "Execute rollback_to_002_schema_sync(): archives scoped rows to twelve_loop_observations_scoped_backup, drops scoped indexes, and restores twelve_loop_observations_pkey on (release_id, correlation_id, loop_id). Allows pre-003 store code to run without UniqueViolation or InvalidColumnReference. Forward re-migration 003 automatically restores all backed-up scoped rows without data loss."
   },
   "verification": {
-    "tested_at_utc": "2026-09-27T17:44:00Z",
+    "tested_at_utc": "2026-09-27T18:14:20Z",
     "collection": "Every listed batch was run in bounded foreground execution and terminal exit status was collected.",
     "commands": [
       {
-        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py",
+        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon .venv-pantheon/bin/python -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py",
         "exit_code": 0,
-        "result": "25 passed in 50.39s",
-        "passed": 25,
+        "result": "28 passed in 71.90s",
+        "passed": 28,
         "failed": 0
       },
       {
-        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py",
+        "command": ".venv-pantheon/bin/python -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py",
         "exit_code": 0,
-        "result": "49 passed in 9.04s",
-        "passed": 49,
+        "result": "52 passed in 10.19s",
+        "passed": 52,
         "failed": 0
       },
       {
-        "command": "PYTHONPATH=services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
+        "command": ".venv-pantheon/bin/python -m pytest services/control-plane/bff/tests/test_management_read_models_router.py",
         "exit_code": 0,
-        "result": "43 passed, 3 warnings in 36.19s",
+        "result": "43 passed, 3 warnings in 37.90s",
         "passed": 43,
         "failed": 0
       },
@@ -63,7 +63,9 @@
   "acceptance_check": {
     "scoped_schema_migration_003": "Forward migration 003 declared and validated; honest handling of legacy rows with NULLS NOT DISTINCT unique index",
     "zero_cross_tenant_leakage": "Scoped queries never return legacy or foreign-tenant rows; verified in test_postgres_scoped_migration_and_honest_legacy_handling",
-    "durable_store_and_rebuild_equivalence": "Multi-tenant streaming, process restart, and incremental-vs-rebuild equivalence verified in test_postgres_scoped_persistence_multi_tenant_streaming_and_rebuild_equivalence",
+    "unscoped_legacy_reduction_isolation": "Legacy unscoped receipts never reduce with scoped receipts at same key; verified in test_postgres_unscoped_legacy_reduction_isolated_from_scoped_receipts and test_unscoped_legacy_stimulus_does_not_reduce_with_scoped_receipts_in_memory",
+    "non_lossy_rollback_and_pre003_compat": "Non-lossy rollback archives scoped rows to backup table and restores 002 pkey constraint, enabling pre-003 store operations without errors, and restoring on re-migration; verified in test_postgres_non_lossy_rollback_to_002_and_pre003_source_compatibility",
+    "durable_store_and_rebuild_equivalence": "Multi-tenant streaming, fresh child-process restart, and incremental-vs-rebuild equivalence verified in test_postgres_fresh_process_restart_and_rebuild_equivalence",
     "collision_and_tampering_rejection": "Conflicting receipt identity and scope mismatches rejected with ValueError; verified in unit and postgres integration tests",
     "out_of_order_and_provenance_fencing": "Provenance fencing and out-of-order receipt reduction preserved under scope; verified in test_postgres_scoped_out_of_order_and_provenance_fencing",
     "independent_review": "pending Codex2 exact-head review"

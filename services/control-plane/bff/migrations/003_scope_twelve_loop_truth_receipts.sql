@@ -20,7 +20,12 @@ ALTER TABLE loop_truth_projection.twelve_loop_observations
     ADD COLUMN IF NOT EXISTS tenant_id TEXT,
     ADD COLUMN IF NOT EXISTS environment TEXT;
 
--- Drop legacy unscoped primary key constraint to allow cross-tenant rows
+-- Drop legacy unscoped primary key constraint to allow cross-tenant rows.
+-- NOTE ON SOURCE COMPATIBILITY: Dropping this primary key breaks pre-003 store
+-- code that relies on `ON CONFLICT (release_id, correlation_id, loop_id)`.
+-- To run pre-003 store code, execute the tested non-lossy rollback procedure
+-- (`rollback_to_002_schema_sync`) which archives scoped rows to
+-- `twelve_loop_observations_scoped_backup` and restores this primary key constraint.
 ALTER TABLE loop_truth_projection.twelve_loop_observations
     DROP CONSTRAINT IF EXISTS twelve_loop_observations_pkey;
 
@@ -32,3 +37,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_loop_obs_scoped_key
 
 CREATE INDEX IF NOT EXISTS idx_loop_obs_scope_release_corr
     ON loop_truth_projection.twelve_loop_observations (tenant_id, environment, release_id, correlation_id);
+
+-- 3. If re-applying migration 003 after a 002 rollback, restore any backed-up scoped observations
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'loop_truth_projection'
+          AND table_name = 'twelve_loop_observations_scoped_backup'
+    ) THEN
+        INSERT INTO loop_truth_projection.twelve_loop_observations
+        SELECT * FROM loop_truth_projection.twelve_loop_observations_scoped_backup
+        ON CONFLICT (tenant_id, environment, release_id, correlation_id, loop_id) DO NOTHING;
+
+        DROP TABLE loop_truth_projection.twelve_loop_observations_scoped_backup;
+    END IF;
+END $$;
