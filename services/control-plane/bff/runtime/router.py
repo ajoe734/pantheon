@@ -30,12 +30,15 @@ def create_runtime_router(
     get_read_store: Optional[Callable[[], Any]] = None,
     dependencies: Optional[Mapping[str, Any]] = None,
     runtime_owner_port: Optional[Any] = None,
+    command_store: Optional[Any] = None,
 ) -> APIRouter:
     """Build Runtime routes from composition-root supplied BFF ports."""
     router = APIRouter()
     deps = dict(dependencies) if dependencies else {}
     if runtime_owner_port is not None:
         deps.setdefault("runtime_owner_port", runtime_owner_port)
+    if command_store is not None:
+        deps.setdefault("command_store", command_store)
     service = RuntimeRouterService(
         read_surface=read_surface,
         get_read_store=get_read_store,
@@ -1116,7 +1119,14 @@ def create_runtime_router(
             "runtime_kind": runtime_kind,
             "created_at": snapshot_at,
         }
+        cmd_id = None
         if not dry_run:
+            if cmd_store is None:
+                raise _bff_error(
+                    503,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Runtime command store is unavailable; refusing to accept unpersisted runtime command",
+                )
             owner_port = (
                 service.dependency("runtime_owner_port", None)
                 or service.dependency("_runtime_owner_port", None)
@@ -1147,41 +1157,67 @@ def create_runtime_router(
                 "idempotency_key": resolved_key if resolved_key else None,
             }
 
-            if cmd_store is not None:
-                cmd_id = str(uuid.uuid4())
-                audit_ctx = {
-                    "operator_id": operator_id,
-                    "tenant_id": tenant_id if tenant_id else None,
+            cmd_id = str(uuid.uuid4())
+            audit_ctx = {
+                "operator_id": operator_id,
+                "tenant_id": tenant_id if tenant_id else None,
+                "idempotency_key": resolved_key,
+                "request_hash": request_hash,
+                "timestamp": snapshot_at,
+            }
+            foundation_ctx = {
+                "idempotency_record": {
                     "idempotency_key": resolved_key,
                     "request_hash": request_hash,
-                    "timestamp": snapshot_at,
+                    "operator_id": operator_id,
+                    "tenant_id": tenant_id if tenant_id else None,
                 }
-                foundation_ctx = {
-                    "idempotency_record": {
-                        "idempotency_key": resolved_key,
-                        "request_hash": request_hash,
-                        "operator_id": operator_id,
-                        "tenant_id": tenant_id if tenant_id else None,
-                    }
-                }
-                try:
-                    admitted = cmd_store.submit_command(
-                        command_id=cmd_id,
-                        command_type="RuntimeCreate",
-                        target={"type": "RuntimeBinding", "id": runtime_id},
-                        submitted_at=snapshot_at,
-                        params=deploy_req,
-                        audit_context=audit_ctx,
-                        foundation_context=foundation_ctx,
-                    )
-                    if admitted and isinstance(admitted, dict) and admitted.get("command_id"):
-                        cmd_id = admitted["command_id"]
-                except OSError as exc:
-                    raise _bff_error(
-                        500,
-                        ErrorCode.INTERNAL_ERROR,
-                        f"Admission storage failure: {exc}",
-                    )
+            }
+            try:
+                admitted = cmd_store.submit_command(
+                    command_id=cmd_id,
+                    command_type="RuntimeCreate",
+                    target={"type": "RuntimeBinding", "id": runtime_id},
+                    submitted_at=snapshot_at,
+                    params=deploy_req,
+                    audit_context=audit_ctx,
+                    foundation_context=foundation_ctx,
+                )
+                if admitted and isinstance(admitted, dict) and admitted.get("command_id"):
+                    admitted_id = admitted["command_id"]
+                    if admitted_id != cmd_id:
+                        saved_hash = (
+                            admitted.get("audit", {}).get("request_hash")
+                            or (admitted.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
+                        )
+                        if saved_hash and saved_hash != request_hash:
+                            raise _bff_error(
+                                409,
+                                ErrorCode.IDEMPOTENCY_CONFLICT,
+                                "Idempotency key already used with a different payload",
+                                f"Key {resolved_key!r} is bound to a different request hash",
+                                precondition_failed="idempotency_conflict",
+                                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                            )
+                        saved_target = (admitted.get("target") or {}).get("id")
+                        if runtime_id and saved_target and str(saved_target) != str(runtime_id):
+                            raise _bff_error(
+                                409,
+                                ErrorCode.IDEMPOTENCY_CONFLICT,
+                                "Idempotency key already used with a different target",
+                                f"Key {resolved_key!r} is bound to a different target",
+                                precondition_failed="idempotency_conflict",
+                                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                            )
+                        cmd_id = admitted_id
+                        if admitted.get("status") in ("executed", CommandStatus.EXECUTED.value) and admitted.get("result"):
+                            return admitted["result"]
+            except OSError as exc:
+                raise _bff_error(
+                    500,
+                    ErrorCode.INTERNAL_ERROR,
+                    f"Admission storage failure: {exc}",
+                )
 
             if hasattr(owner_port, "deploy") and callable(owner_port.deploy):
                 record = owner_port.deploy(deploy_req)
@@ -1194,6 +1230,15 @@ def create_runtime_router(
                     "Runtime owner authority is invalid",
                 )
         data = _project_runtime_create_response(record)
+        if cmd_id:
+            data["command_id"] = cmd_id
+            data["aggregate_type"] = "RuntimeBinding"
+            data["aggregate_id"] = data["id"]
+            data["aggregate_version"] = 1
+            data["event_id"] = f"evt-{cmd_id}"
+            data["correlation_id"] = cmd_id
+            data["owner"] = "runtime"
+            data["committed_at"] = snapshot_at
         surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
         meta = _snapshot_meta(snapshot_at)
         meta["surfaces"] = {"runtimes": surface}
@@ -1230,9 +1275,23 @@ def create_runtime_router(
         )
 
         result = {"data": data, "meta": meta}
-        if not dry_run and resolved_key:
-            if _GOV_BFF_IDEMPOTENCY is not None and not isinstance(_GOV_BFF_IDEMPOTENCY, _MissingRuntimeDependency) and scoped_cache_key:
-                _GOV_BFF_IDEMPOTENCY[scoped_cache_key] = {"request_hash": request_hash, "result": result}
+        if not dry_run:
+            if cmd_store is not None and cmd_id:
+                try:
+                    cmd_store.update_status(
+                        cmd_id,
+                        CommandStatus.EXECUTED,
+                        result=result,
+                    )
+                except OSError as exc:
+                    raise _bff_error(
+                        500,
+                        ErrorCode.INTERNAL_ERROR,
+                        f"Result storage failure: {exc}",
+                    )
+            if resolved_key:
+                if _GOV_BFF_IDEMPOTENCY is not None and not isinstance(_GOV_BFF_IDEMPOTENCY, _MissingRuntimeDependency) and scoped_cache_key:
+                    _GOV_BFF_IDEMPOTENCY[scoped_cache_key] = {"request_hash": request_hash, "result": result}
         return result
 
     @router.get("/bff/runtimes")

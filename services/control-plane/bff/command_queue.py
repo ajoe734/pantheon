@@ -162,21 +162,34 @@ class CommandStore:
         result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Append one already-complete command record without a crash window."""
-        target_dump = target.model_dump() if hasattr(target, "model_dump") else dict(target)
-        record = {
-            "command_id": command_id,
-            "type": command_type.value if hasattr(command_type, "value") else str(command_type),
-            "target": target_dump,
-            "submitted_at": submitted_at,
-            "status": CommandStatus.EXECUTED.value,
-            "params": params,
-            "audit": audit_context,
-            "foundation": foundation_context,
-            "result": result,
-            "error": None,
-        }
-        self._save_command(record)
-        return record
+        with self.serialized_transaction():
+            idem_key = (
+                (audit_context or {}).get("idempotency_key")
+                or (params or {}).get("idempotency_key")
+                or ((foundation_context or {}).get("idempotency_record") or {}).get("idempotency_key")
+            )
+            if idem_key:
+                op_id = self._operator_id_from_command({"audit": audit_context, "foundation": foundation_context, "params": params})
+                ten_id = self._tenant_id_from_command({"audit": audit_context, "foundation": foundation_context, "params": params})
+                existing = self.get_command_by_idempotency_key(idem_key, operator_id=op_id, tenant_id=ten_id)
+                if existing is not None:
+                    return existing
+
+            target_dump = target.model_dump() if hasattr(target, "model_dump") else dict(target)
+            record = {
+                "command_id": command_id,
+                "type": command_type.value if hasattr(command_type, "value") else str(command_type),
+                "target": target_dump,
+                "submitted_at": submitted_at,
+                "status": CommandStatus.EXECUTED.value,
+                "params": params,
+                "audit": audit_context,
+                "foundation": foundation_context,
+                "result": result,
+                "error": None,
+            }
+            self._save_command(record)
+            return record
 
     def submit_terminal_command_if_no_active_target(
         self,

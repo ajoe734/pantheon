@@ -430,6 +430,30 @@ class DefaultCapitalAuthority:
                     original_id = cmd_id
                     cmd_id = admitted["command_id"]
                     if cmd_id != original_id or admitted.get("status") in (CommandStatus.EXECUTED.value, "executed"):
+                        saved_target = (
+                            (admitted.get("target") or {}).get("id")
+                            or (admitted.get("foundation") or {}).get("idempotency_record", {}).get("target_id")
+                            or admitted.get("params", {}).get("rebalance_id")
+                            or admitted.get("params", {}).get("pool_id")
+                        )
+                        if target_id and saved_target and saved_target != "pending" and str(saved_target) != str(target_id):
+                            raise CapitalValidationError("Idempotency key was already used with a different target")
+                        saved_act = (
+                            admitted.get("audit", {}).get("action_id")
+                            or admitted.get("params", {}).get("action_id")
+                            or (admitted.get("foundation") or {}).get("idempotency_record", {}).get("action_id")
+                        )
+                        saved_op = (
+                            admitted.get("params", {}).get("operation")
+                            or admitted.get("audit", {}).get("operation")
+                            or (admitted.get("foundation") or {}).get("idempotency_record", {}).get("operation")
+                        )
+                        saved_type = (
+                            admitted.get("type")
+                            or (admitted.get("foundation") or {}).get("idempotency_record", {}).get("command_type")
+                        )
+                        if operation and not _matches_operation(operation, saved_op, saved_act, saved_type):
+                            raise CapitalValidationError("Idempotency key was already used with a different operation")
                         saved_hash = admitted.get("audit", {}).get("request_hash") or (admitted.get("foundation", {}).get("idempotency_record", {}).get("request_hash"))
                         if saved_hash and saved_hash != request_hash:
                             raise CapitalValidationError("Idempotency key was already used with a different request")

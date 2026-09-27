@@ -506,6 +506,7 @@ class GovernanceService:
                 "correlation_id": correlation_id,
                 "timestamp": decided_at,
                 "idempotency_key": idempotency_key,
+                "request_hash": request_hash,
             }
             if tenant_id:
                 audit_context["tenant_id"] = tenant_id
@@ -515,10 +516,13 @@ class GovernanceService:
                     "request_hash": request_hash,
                     "operator_id": operator_id,
                     "tenant_id": tenant_id,
+                    "command_type": cmd_type.value if hasattr(cmd_type, "value") else str(cmd_type),
+                    "plan_id": plan_id,
+                    "decision": decision,
                 },
                 "approval_record": copy.deepcopy(record),
             }
-            self.command_store.submit_terminal_command(
+            admitted = self.command_store.submit_terminal_command(
                 command_id=decision_id,
                 command_type=cmd_type,
                 target=TargetObject(type=ObjectType.APPROVAL_DECISION, id=decision_id),
@@ -528,6 +532,20 @@ class GovernanceService:
                 foundation_context=foundation_context,
                 result=copy.deepcopy(result),
             )
+            if admitted and isinstance(admitted, dict):
+                foundation = admitted.get("foundation") if isinstance(admitted.get("foundation"), dict) else {}
+                idem_rec = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
+                saved_hash = idem_rec.get("request_hash") or admitted.get("audit", {}).get("request_hash")
+                if saved_hash and saved_hash != request_hash:
+                    raise RuntimeError("idempotency_conflict")
+                saved_plan = (admitted.get("params") or {}).get("plan_id") or idem_rec.get("plan_id")
+                if plan_id and saved_plan and saved_plan != plan_id:
+                    raise RuntimeError("idempotency_conflict")
+                saved_dec = (admitted.get("params") or {}).get("decision") or idem_rec.get("decision")
+                if decision and saved_dec and saved_dec != decision:
+                    raise RuntimeError("idempotency_conflict")
+                if admitted.get("result"):
+                    return copy.deepcopy(admitted["result"])
         return result
 
     # Consultation requests, committees, and memos ---------------------

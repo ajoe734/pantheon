@@ -206,7 +206,8 @@ def test_sponsor_adapter_preserves_required_rationale():
     assert receipt["authoritative_readback"]["status"] == "rejected"
 
 
-def test_runtime_router_resolves_runtime_owner_port():
+def test_runtime_router_resolves_runtime_owner_port(tmp_path, monkeypatch):
+    monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path))
     recorded = []
     mock_port = SimpleNamespace(deploy=lambda req: (recorded.append(req), {"runtime_id": req["runtime_id"], "status": "running", **req})[1])
     app = FastAPI()
@@ -306,10 +307,13 @@ def test_runtime_authenticated_identity_cannot_be_overridden(tmp_path, monkeypat
 def test_runtime_cross_day_restart_keeps_identity(tmp_path, monkeypatch):
     monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path))
     calls = []
+    responses = []
     for date in ('2026-09-27T23:59:59Z', '2026-09-28T00:00:01Z'):
         response = _isolated_runtime_client(calls, date=date).post('/bff/runtimes', json=RUNTIME_REG_PAYLOAD, headers=RUNTIME_REG_HEADERS)
         assert response.status_code == 201
-    assert calls[0]['runtime_id'] == calls[1]['runtime_id'], calls
+        responses.append(response)
+    assert len(calls) == 1, "Restart replay must not redispatch to owner port"
+    assert responses[0].json()["data"]["id"] == responses[1].json()["data"]["id"]
 
 
 def test_capital_pool_create_replays_original_request(tmp_path, monkeypatch):
@@ -341,4 +345,81 @@ def test_capital_concurrent_admission_keeps_one_identity(tmp_path, monkeypatch):
     posts = [call for call in http.call_args_list if call.kwargs.get('method') == 'POST']
     ids = [call.kwargs['payload']['command_id'] for call in posts]
     assert len(set(ids)) == 1, {'statuses': [r.status_code for r in responses], 'command_ids': ids, 'rows': len(CommandStore(path)._get_all_commands())}
+
+
+def test_runtime_without_store_must_fail_closed(monkeypatch):
+    monkeypatch.delenv('BFF_DATA_DIR', raising=False)
+    calls = []
+    response = _isolated_runtime_client(calls).post('/bff/runtimes', json=RUNTIME_REG_PAYLOAD, headers=RUNTIME_REG_HEADERS)
+    assert response.status_code >= 500 and not calls, {'status': response.status_code, 'dispatches': calls}
+
+
+def test_runtime_success_persists_terminal_receipt(tmp_path, monkeypatch):
+    monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path))
+    calls = []
+    response = _isolated_runtime_client(calls).post('/bff/runtimes', json=RUNTIME_REG_PAYLOAD, headers=RUNTIME_REG_HEADERS)
+    assert response.status_code == 201
+    rows = CommandStore(str(tmp_path / 'commands.jsonl'))._get_all_commands()
+    assert len(rows) == 1
+    assert rows[0]['status'] == 'executed' and rows[0]['result'], rows[0]
+
+
+def test_runtime_concurrent_different_payload_must_conflict(tmp_path, monkeypatch):
+    monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path))
+    calls = []
+    clients = [_isolated_runtime_client(calls) for _ in range(2)]
+    barrier = Barrier(2)
+    original = CommandStore.submit_command
+
+    def synchronized(self, *args, **kwargs):
+        barrier.wait(timeout=10)
+        return original(self, *args, **kwargs)
+
+    with patch.object(CommandStore, 'submit_command', synchronized):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda i: clients[i].post('/bff/runtimes', json={**RUNTIME_REG_PAYLOAD, 'name': f'name-{i}'}, headers=RUNTIME_REG_HEADERS), range(2)))
+    assert sorted(r.status_code for r in responses) == [201, 409] and len(calls) == 1, {'statuses': [r.status_code for r in responses], 'dispatch_names': [x['name'] for x in calls], 'rows': len(CommandStore(str(tmp_path / 'commands.jsonl'))._get_all_commands())}
+
+
+@pytest.mark.parametrize('paths', [('/bff/rebalances/r1/approve', '/bff/rebalances/r2/approve'), ('/bff/rebalances/r1/approve', '/bff/rebalances/r1/two-man-sign')])
+def test_capital_concurrent_key_must_bind_target_and_operation(tmp_path, monkeypatch, paths):
+    monkeypatch.setenv('PANTHEON_CAPITAL_API_URL', 'http://isolated.invalid')
+    monkeypatch.setattr('services.control_plane.bff.command_adapters.capital_adapter.capital_url', lambda p: 'http://isolated.invalid' + p)
+    path = str(tmp_path / 'commands.jsonl')
+    clients = [capital_client(CommandStore(path)) for _ in range(2)]
+    barrier = Barrier(2)
+    dispatch_barrier = Barrier(2)
+    original = CommandStore.submit_command
+
+    def synchronized(self, *args, **kwargs):
+        barrier.wait(timeout=10)
+        return original(self, *args, **kwargs)
+
+    def http_response(url, **kwargs):
+        if kwargs.get('method') == 'POST':
+            dispatch_barrier.wait(timeout=2)
+        return {'rebalance_id': 'r1', 'status': 'approved'}
+
+    with patch.object(CommandStore, 'submit_command', synchronized), patch('services.control_plane.bff.command_adapters.capital_adapter.http_request_json', side_effect=http_response) as http:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda i: clients[i].post(paths[i], json={'memo': 'same'}, headers=RUNTIME_REG_HEADERS), range(2)))
+    posts = [c for c in http.call_args_list if c.kwargs.get('method') == 'POST']
+    assert len(posts) == 1 and any(r.status_code == 409 for r in responses), {'statuses': [r.status_code for r in responses], 'urls': [c.args[0] for c in posts], 'ids': [c.kwargs['payload']['command_id'] for c in posts]}
+
+
+def test_governance_concurrent_replay_keeps_single_durable_decision(tmp_path):
+    path = str(tmp_path / 'commands.jsonl')
+    clients = [governance_client(CommandStore(path))[0] for _ in range(2)]
+    barrier = Barrier(2)
+    original = CommandStore.submit_terminal_command
+
+    def synchronized(self, *args, **kwargs):
+        barrier.wait(timeout=10)
+        return original(self, *args, **kwargs)
+
+    with patch.object(CommandStore, 'submit_terminal_command', synchronized):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda client: client.post('/api/v1/approval-decisions', json={'plan_id': 'review-plan', 'decision': 'approve', 'memo': 'isolated reviewer check'}, headers={'Idempotency-Key': 'review-key'}), clients))
+    rows = CommandStore(path)._get_all_commands()
+    assert len(rows) == 1, {'statuses': [r.status_code for r in responses], 'ids': [r['command_id'] for r in rows]}
 

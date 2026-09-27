@@ -88,6 +88,26 @@
     "defect_21_runtime_router_deterministic_midnight_safe_runtime_id": {
       "problem": "POST /bff/runtimes derived runtime_id using current UTC date string (snapshot_at[:10]), which broke deterministic recovery across UTC midnight.",
       "remediation": "Derived deterministic runtime_id = f'runtime-{id_hash}' directly from stable request identity without date string, and recovered runtime_id from existing admitted command on retry."
+    },
+    "defect_22_runtime_store_fail_closed": {
+      "problem": "runtime/router.py:1150-1187 skipped admission when command_store was absent and BFF_DATA_DIR unset, yet dispatched and returned 201.",
+      "remediation": "Enforced durable CommandStore requirement and fail-closed 503 DEPENDENCY_UNAVAILABLE before calling runtime owner port when cmd_store is None and not dry_run."
+    },
+    "defect_23_runtime_receipt_and_restart_replay": {
+      "problem": "runtime/router.py:1232-1236 saved success only in process cache, leaving persisted CommandStore row in submitted state with result=null, missing canonical receipt, causing process restart to redispatch.",
+      "remediation": "Bound canonical SD 4.4 receipt fields (command_id, aggregate_type, aggregate_id, aggregate_version, event_id, correlation_id, owner, committed_at) to response data and updated command status to EXECUTED with result before returning; on restart, replays admitted command result without invoking owner."
+    },
+    "defect_24_runtime_concurrent_conflict_guard": {
+      "problem": "runtime/router.py:1177 accepted an existing concurrently admitted row without validating request hash or runtime target; same key with different names returned 201/201 and caused two owner dispatches against one row.",
+      "remediation": "Validated saved request hash and saved runtime target against concurrently admitted command record; rejects mismatched requests with 409 IDEMPOTENCY_CONFLICT."
+    },
+    "defect_25_capital_concurrent_target_and_operation_revalidation": {
+      "problem": "capital/service.py:429-437 checked only payload hash after concurrent dedup, omitting target and operation checks; concurrent requests with same key/payload but different targets or operations dispatched using one command_id (201/201 or 201/202).",
+      "remediation": "Revalidated full admitted identity (target_id, operation, and request_hash) against admitted command record in DefaultCapitalAuthority._execute_with_durability; raises CapitalValidationError (409) if any differ."
+    },
+    "defect_26_governance_atomic_terminal_command_submission": {
+      "problem": "governance/service.py:521 submit_terminal_command was not atomic with idempotency lookup; concurrent identical approval created 202/202 with two durable decision IDs.",
+      "remediation": "Wrapped CommandStore.submit_terminal_command inside serialized_transaction with atomic idempotency lookup returning existing command on duplicate key; revalidated tenant, actor, command, and request hash against admitted record, raising 409 on mismatch and replaying admitted result."
     }
   },
   "mutation_caller_inventory": {
@@ -291,6 +311,24 @@
         "result": "101 passed, 4 warnings in 51.97s",
         "executed": 101,
         "collected": 101
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 /tmp/test_domain_review_387b0.py",
+        "result": "6 passed in 7.96s",
+        "executed": 6,
+        "collected": 6
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "27 passed, 3 warnings in 18.53s",
+        "executed": 27,
+        "collected": 27
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "result": "100 passed, 6 warnings in 60.83s",
+        "executed": 100,
+        "collected": 100
       }
     ]
   },
@@ -320,7 +358,12 @@
     "defect_18_capital_atomic_concurrent_command_admission_resolved": true,
     "defect_19_runtime_service_owner_port_nameerror_resolved": true,
     "defect_20_capital_pool_replay_digest_and_id_preservation_resolved": true,
-    "defect_21_runtime_router_deterministic_midnight_safe_runtime_id_resolved": true
+    "defect_21_runtime_router_deterministic_midnight_safe_runtime_id_resolved": true,
+    "defect_22_runtime_store_fail_closed_resolved": true,
+    "defect_23_runtime_receipt_and_restart_replay_resolved": true,
+    "defect_24_runtime_concurrent_conflict_guard_resolved": true,
+    "defect_25_capital_concurrent_target_and_operation_revalidation_resolved": true,
+    "defect_26_governance_atomic_terminal_command_submission_resolved": true
   },
   "review": {
     "reviewer": "Codex",
