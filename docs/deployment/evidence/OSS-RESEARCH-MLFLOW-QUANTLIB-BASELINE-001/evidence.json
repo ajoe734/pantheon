@@ -42,6 +42,7 @@
         "services/registry/experiments/adapter.py",
         "services/registry/experiments/README.md",
         "services/research/mlflow/requirements.txt",
+        "services/research/mlflow/Dockerfile",
         "mlflow_adapter.py"
       ]
     },
@@ -120,7 +121,13 @@
     {
       "service": "services/research/mlflow",
       "image_tag": "pantheon-test-research-mlflow:latest",
-      "image_id": "sha256:363aa692e1e3b61e2f4c0d0dbfd1c4edb2bc95e041ecbb319e30b6d809a794e5",
+      "image_id": "sha256:64749bc99a48d2b07ac86932fe418a78c3d2de3da6b9a39464df875d96c90a6b",
+      "build_context": "services/research/mlflow",
+      "configured_build_commands": [
+        "docker compose --profile dormant-smoke build mlflow-dormant-smoke (exit: 0)",
+        "docker build -f services/research/mlflow/Dockerfile -t pantheon-stage0/mlflow-server services/research/mlflow (exit: 0)",
+        "docker build -f services/research/mlflow/Dockerfile -t pantheon-test-research-mlflow:latest services/research/mlflow (exit: 0)"
+      ],
       "verification_command": "docker run --rm --entrypoint python pantheon-test-research-mlflow:latest -c 'import mlflow, flask_wtf, pydantic, redis, numpy; print(f\"mlflow: {mlflow.__version__}, flask_wtf: {flask_wtf.__version__}, pydantic: {pydantic.__version__}, redis: {redis.__version__}, numpy: {numpy.__version__}\"); assert mlflow.__version__ == \"3.16.1\"; assert redis.__version__ == \"5.2.1\"; assert numpy.__version__ == \"1.26.4\"'",
       "exit_code": 0,
       "output": "mlflow: 3.16.1, flask_wtf: 1.3.0, pydantic: 2.13.5, redis: 5.2.1, numpy: 1.26.4"
@@ -143,7 +150,7 @@
       "failed": 0,
       "skipped": 0,
       "xfail": 0,
-      "elapsed_seconds": 51.75
+      "elapsed_seconds": 51.01
     },
     {
       "batch": "registry_experiments_smoke",
