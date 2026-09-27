@@ -82,8 +82,19 @@ class TestSemanticExtractionAdmission:
             assert decision.admitted is True
 
     # --- License Scope Admission ---
-    def test_prohibited_license_scopes_denied(self):
-        for bad_license in ("prohibited", "restricted_commercial", "expired", "none", "unauthorized", "unlicensed", ""):
+    def test_prohibited_and_unknown_license_scopes_denied(self):
+        for bad_license in (
+            "prohibited",
+            "restricted_commercial",
+            "expired",
+            "none",
+            "unauthorized",
+            "unlicensed",
+            "proprietary_unlicensed",
+            "PROPRIETARY_UNLICENSED",
+            "custom_unknown",
+            "",
+        ):
             req = _req(license_scope=bad_license)
             decision = SemanticExtractionAdmission.check(req)
             assert decision.admitted is False
@@ -94,6 +105,14 @@ class TestSemanticExtractionAdmission:
             req = _req(license_scope=good_license)
             decision = SemanticExtractionAdmission.check(req)
             assert decision.admitted is True
+
+    # --- Source Status Admission ---
+    def test_expired_and_rejected_source_status_denied(self):
+        for bad_status in ("rejected", "quarantined", "prohibited", "expired", "EXPIRED", "unverified"):
+            req = _req(source_status=bad_status)
+            decision = SemanticExtractionAdmission.check(req)
+            assert decision.admitted is False
+            assert decision.denial_code == "SOURCE_STATUS_REJECTED"
 
     # --- Point-in-Time (As-Of) Admission ---
     def test_point_in_time_event_before_or_on_as_of_admitted(self):
@@ -110,6 +129,25 @@ class TestSemanticExtractionAdmission:
         assert decision.admitted is False
         assert decision.denial_code == "POINT_IN_TIME_VIOLATION"
         assert "lookahead breach" in decision.denial_reason
+
+    def test_malformed_as_of_timestamp_denied(self):
+        for bad_ts in ("not-a-date", "2026-99-99", "invalid", "12345"):
+            req = _req(as_of=bad_ts)
+            decision = SemanticExtractionAdmission.check(req)
+            assert decision.admitted is False
+            assert decision.denial_code == "MALFORMED_TIMESTAMP"
+
+    def test_naive_vs_aware_timestamps_properly_compared(self):
+        # Naive as_of should be safely normalized to UTC without raising TypeError
+        req_naive = _req(event_time="2026-05-01T00:00:00Z", as_of="2026-05-02T00:00:00")
+        decision = SemanticExtractionAdmission.check(req_naive)
+        assert decision.admitted is True
+
+        # Naive lookahead breach
+        req_naive_breach = _req(event_time="2026-05-03T00:00:00Z", as_of="2026-05-02T00:00:00")
+        decision_breach = SemanticExtractionAdmission.check(req_naive_breach)
+        assert decision_breach.admitted is False
+        assert decision_breach.denial_code == "POINT_IN_TIME_VIOLATION"
 
     # --- Redaction / Sensitive Data Admission ---
     def test_pii_email_denied(self):
@@ -205,4 +243,32 @@ class TestZeroModelCallsOnAdmissionFailure:
         req_no_tenant = _req(tenant_id="")
         res_no_tenant = client.extract(req_no_tenant)
         assert res_no_tenant.is_abstained is True
+        assert len(calls) == 0
+
+        # 5. Denied via unknown/prohibited license PROPRIETARY_UNLICENSED (0 calls)
+        req_unlicensed = _req(license_scope="PROPRIETARY_UNLICENSED")
+        res_unlicensed = client.extract(req_unlicensed)
+        assert res_unlicensed.is_abstained is True
+        assert res_unlicensed.abstention_reason == AbstentionReason.ADMISSION_DENIED.value
+        assert len(calls) == 0
+
+        # 6. Denied via EXPIRED status (0 calls)
+        req_expired = _req(source_status="EXPIRED")
+        res_expired = client.extract(req_expired)
+        assert res_expired.is_abstained is True
+        assert res_expired.abstention_reason == AbstentionReason.ADMISSION_DENIED.value
+        assert len(calls) == 0
+
+        # 7. Denied via malformed as_of (0 calls)
+        req_bad_as_of = _req(as_of="malformed-date")
+        res_bad_as_of = client.extract(req_bad_as_of)
+        assert res_bad_as_of.is_abstained is True
+        assert res_bad_as_of.abstention_reason == AbstentionReason.ADMISSION_DENIED.value
+        assert len(calls) == 0
+
+        # 8. Denied via missing source_id (0 calls)
+        req_no_src = _req(source_id="")
+        res_no_src = client.extract(req_no_src)
+        assert res_no_src.is_abstained is True
+        assert res_no_src.abstention_reason == AbstentionReason.ADMISSION_DENIED.value
         assert len(calls) == 0

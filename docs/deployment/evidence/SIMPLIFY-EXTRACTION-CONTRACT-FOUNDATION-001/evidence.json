@@ -15,7 +15,7 @@
     },
     "frozen_evaluation_cases": {
       "file": "services/source_ingestion/evaluation/semantic_extraction_cases.jsonl",
-      "sha256": "c3b2a93296440ea6ea42f6512348307f0d334d53578218c7408d12113c1b673e",
+      "sha256": "f4d013763b8fc86fd1dd516c90ece31ab8a715f3dc86c38d7751a1c3998bb8f6",
       "total_cases": 210,
       "language_counts": {
         "zh-TW": 108,
@@ -26,20 +26,20 @@
         "validation": 42,
         "holdout": 42
       },
-      "detail": "210 deduplicated permissioned test cases covering all 9 canonical intent classes, strategy seeds, trade lessons, comprehensive extractions, and comprehensive negative/refusal/admission boundary cases (PII, API keys, bearer tokens, private note markers, raw transcripts, lookahead timestamps, missing/invalid tenants, rejected statuses, prohibited licenses)."
+      "detail": "210 deduplicated permissioned test cases covering all 9 canonical intent classes, strategy seeds, trade lessons, comprehensive extractions, and comprehensive negative/refusal/admission boundary cases (PII, API keys, bearer tokens, private note markers, raw transcripts, lookahead timestamps, missing/invalid tenants, rejected statuses, prohibited licenses). Source families partitioned disjointly across splits with synthetic timestamp provenance honestly marked and reviewed_by claims removed."
     },
     "evaluation_manifest_schema": {
       "file": "services/source_ingestion/evaluation/semantic_extraction_manifest.schema.json",
-      "sha256": "9eb796dc91c2256c6b18b1424c4dccf09e5f1aa3f6e8e2dc124b45cad7d8049a",
-      "detail": "Valid JSON Schema Draft-7 defining manifest metadata, case counts, aggregate metrics, acceptance thresholds, and auditable per-case result records."
+      "sha256": "0beeab431b1979f8ea69b6863888c21a31896aea4efe35afadc40c1a7e03fd75",
+      "detail": "Valid JSON Schema Draft-7 defining manifest metadata, full frozen corpus constraints (corpus_total_cases, corpus_split_counts, corpus_language_counts), evaluated subset metrics (total_cases, evaluated_split), acceptance thresholds, and auditable per-case result records."
     },
     "evaluation_runner_and_baseline": {
       "file": "services/source_ingestion/evaluation/run_semantic_extraction_eval.py",
-      "detail": "Harness executing 210 test cases against the deterministic baseline extractor or OpenClaw client, calculating aggregate macro-F1, field-F1, abstention recall, critical support, source validity, latency percentiles (p50/p95), and validating against the manifest schema."
+      "detail": "Harness executing test cases against the deterministic baseline extractor or OpenClaw client, calculating aggregate macro-F1, honest field-F1, abstention recall, critical support, source validity, latency percentiles (p50/p95), supporting full corpus and split-filtered (e.g. --split holdout) runs, and validating against the manifest schema."
     },
     "evaluation_documentation": {
       "file": "services/source_ingestion/evaluation/README.md",
-      "detail": "Complete documentation of evaluation dataset composition, partitions, intent categories, negative/refusal coverage, baseline metrics, downstream thresholds, manifest schema, and CLI execution instructions."
+      "detail": "Complete documentation of evaluation dataset composition, partitions, canonical intent categories, negative/refusal coverage, baseline metrics, downstream thresholds, manifest schema, and CLI execution instructions."
     },
     "business_rules_changed": false,
     "hosted_deployment_performed": false,
@@ -54,15 +54,21 @@
     },
     {
       "command": "/tmp/clean-bff-venv/bin/python -m pytest -v services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py",
-      "result": "32 passed, 0 failed in 5.59s",
-      "executed": 32,
-      "collected": 32
+      "result": "43 passed, 0 failed in 8.15s",
+      "executed": 43,
+      "collected": 43
     },
     {
       "command": "/tmp/clean-bff-venv/bin/python services/source_ingestion/evaluation/run_semantic_extraction_eval.py --manifest-out /tmp/eval_manifest_run.json",
       "result": "pass, 210 cases executed, critical support 100.0%, source validity 100.0%, breaches 0, manifest validated against Draft-7 schema",
       "executed": 210,
       "collected": 210
+    },
+    {
+      "command": "/tmp/clean-bff-venv/bin/python services/source_ingestion/evaluation/run_semantic_extraction_eval.py --split holdout",
+      "result": "pass, 42 holdout cases executed, manifest validated against Draft-7 schema",
+      "executed": 42,
+      "collected": 42
     }
   ],
   "downstream_thresholds_documented": {

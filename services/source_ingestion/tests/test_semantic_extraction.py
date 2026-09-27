@@ -8,9 +8,12 @@ incomplete response, timeout, budget breach), and bounded retry policy.
 
 from __future__ import annotations
 
+import http.server
 import json
+import threading
 import time
 from typing import Any, Dict
+import uuid
 import pytest
 
 from services.source_ingestion.interaction_intent_classifier import (
@@ -131,38 +134,32 @@ class TestSemanticExtractionContract:
 
 
 class TestDeterministicBaselineExtractor:
-    def test_traditional_chinese_momentum_extraction(self):
+    def test_english_mean_reversion_intent_extraction(self):
         req = _base_req(
-            text="台股期貨動能突破策略：當台指期突破20日高點且成交量放大時買進，停損2%，使用日K與價量資料。"
+            text="US equities mean reversion strategy: buy S&P 500 stocks when RSI < 25, exit when RSI > 50, using daily OHLCV candlestick data.",
+            task_type=ExtractionTaskType.INTENT,
         )
         res = DeterministicBaselineExtractor.extract(req)
         assert res.status == "completed"
         assert res.is_abstained is False
         assert res.intent is not None
-        assert res.intent.primary_intent in (
-            InteractionPrimaryIntent.STRATEGY_HYPOTHESIS.value,
-            InteractionPrimaryIntent.EXECUTION_POLICY.value,
-        )
-        assert res.strategy_seed is not None
-        assert "futures" in res.strategy_seed.asset_class
-        assert "tw" in res.strategy_seed.market_scope
-        assert "ohlcv" in res.strategy_seed.required_data
+        assert res.intent.primary_intent == InteractionPrimaryIntent.STRATEGY_HYPOTHESIS.value
+        assert res.strategy_seed is None
         assert len(res.source_spans) > 0
-        # All source spans must be valid
         for span in res.source_spans:
             assert span.is_valid(req.text) is True
 
-    def test_english_mean_reversion_extraction(self):
+    def test_traditional_chinese_unmatched_abstains(self):
         req = _base_req(
-            text="US equities mean reversion strategy: buy S&P 500 stocks when RSI < 25, exit when RSI > 50, using daily OHLCV candlestick data."
+            text="台股期貨動能突破策略：當台指期突破20日高點且成交量放大時買進，停損2%，使用日K與價量資料。"
         )
         res = DeterministicBaselineExtractor.extract(req)
-        assert res.status == "completed"
-        assert res.is_abstained is False
-        assert res.strategy_seed is not None
-        assert "equities" in res.strategy_seed.asset_class
-        assert "us" in res.strategy_seed.market_scope
-        assert "ohlcv" in res.strategy_seed.required_data
+        # Production baseline has no Traditional Chinese keywords, faithfully returns low confidence / abstention
+        assert res.is_abstained is True
+        assert res.abstention_reason in (
+            AbstentionReason.INSUFFICIENT_EVIDENCE.value,
+            AbstentionReason.CONFIDENCE_BELOW_THRESHOLD.value,
+        )
 
     def test_non_strategy_abstention(self):
         req = _base_req(
@@ -171,10 +168,7 @@ class TestDeterministicBaselineExtractor:
         )
         res = DeterministicBaselineExtractor.extract(req)
         assert res.is_abstained is True
-        assert res.abstention_reason in (
-            AbstentionReason.UNSUPPORTED_SOURCE.value,
-            AbstentionReason.CONFIDENCE_BELOW_THRESHOLD.value,
-        )
+        assert res.abstention_reason == AbstentionReason.UNSUPPORTED_SOURCE.value
 
 
 class TestSemanticExtractionClientBoundedFailures:
@@ -344,3 +338,180 @@ class TestSemanticExtractionClientBoundedFailures:
         assert res.strategy_seed.asset_class == ("futures",)
         assert res.cost_usd > 0.0
         assert len(res.source_spans) == 2
+
+    def test_real_transport_shape_empty_structured_data_fails_closed(self):
+        def empty_transport(payload: dict) -> dict:
+            return {"output": {"structured_data": {}}}
+
+        client = SemanticExtractionClient(transport_fn=empty_transport)
+        req = _base_req()
+        res = client.extract(req)
+        assert res.status == "failed"
+        assert res.failure_code == ExtractionFailureCode.INVALID_SCHEMA.value
+
+    def test_real_transport_shape_non_abstained_empty_spans_fails_closed(self):
+        def empty_spans_transport(payload: dict) -> dict:
+            return {
+                "output": {
+                    "structured_data": {
+                        "is_abstained": False,
+                        "intent": {
+                            "primary_intent": "strategy_hypothesis",
+                            "confidence": 0.9,
+                        },
+                        "source_spans": [],
+                    }
+                }
+            }
+
+        client = SemanticExtractionClient(transport_fn=empty_spans_transport)
+        req = _base_req(task_type=ExtractionTaskType.INTENT)
+        res = client.extract(req)
+        assert res.status == "failed"
+        assert res.failure_code == ExtractionFailureCode.INVALID_SCHEMA.value
+
+    def test_real_transport_shape_invalid_intent_enum_fails_closed(self):
+        def bad_enum_transport(payload: dict) -> dict:
+            return {
+                "output": {
+                    "structured_data": {
+                        "is_abstained": False,
+                        "intent": {
+                            "primary_intent": "INVALID_ENUM",
+                            "confidence": 2.5,
+                        },
+                        "source_spans": [
+                            {"field_name": "intent.primary_intent", "start_char": 0, "end_char": 4, "exact_text": "台股動能"}
+                        ],
+                    }
+                }
+            }
+
+        client = SemanticExtractionClient(transport_fn=bad_enum_transport)
+        req = _base_req(task_type=ExtractionTaskType.INTENT)
+        res = client.extract(req)
+        assert res.status == "failed"
+        assert res.failure_code == ExtractionFailureCode.INVALID_SCHEMA.value
+
+    def test_real_transport_shape_missing_payload_fails_closed(self):
+        def missing_payload_transport(payload: dict) -> dict:
+            return {
+                "output": {
+                    "structured_data": {
+                        "is_abstained": False,
+                        "source_spans": [
+                            {"field_name": "intent.primary_intent", "start_char": 0, "end_char": 4, "exact_text": "台股動能"}
+                        ],
+                    }
+                }
+            }
+
+        client = SemanticExtractionClient(transport_fn=missing_payload_transport)
+        req = _base_req(task_type=ExtractionTaskType.INTENT)
+        res = client.extract(req)
+        assert res.status == "failed"
+        assert res.failure_code == ExtractionFailureCode.INVALID_SCHEMA.value
+
+    def test_real_transport_shape_refusal_status_maps_to_abstained(self):
+        def refusal_transport(payload: dict) -> dict:
+            return {
+                "status": "refusal",
+                "output": {
+                    "refusal": "I cannot fulfill this request due to financial advice safety boundaries.",
+                },
+            }
+
+        client = SemanticExtractionClient(transport_fn=refusal_transport)
+        req = _base_req()
+        res = client.extract(req)
+        assert res.status == "abstained"
+        assert res.is_abstained is True
+        assert res.abstention_reason == AbstentionReason.MODEL_REFUSAL.value
+        assert res.failure_code == ExtractionFailureCode.REFUSAL.value
+
+    def test_real_transport_shape_absent_usage_preserves_none(self):
+        def no_usage_transport(payload: dict) -> dict:
+            return {
+                "output": {
+                    "structured_data": {
+                        "is_abstained": True,
+                        "abstention_reason": "insufficient_evidence",
+                        "source_spans": [],
+                    }
+                }
+            }
+
+        client = SemanticExtractionClient(transport_fn=no_usage_transport)
+        req = _base_req()
+        res = client.extract(req)
+        assert res.is_abstained is True
+        assert res.usage is None
+        assert res.cost_usd is None
+
+    def test_loopback_http_slow_trickle_wall_clock_timeout(self):
+        class SlowTrickleHandler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                for _ in range(20):
+                    time.sleep(0.01)
+                    try:
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                    except Exception:
+                        break
+                self.wfile.write(b"{}")
+                self.wfile.flush()
+
+            def log_message(self, format, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), SlowTrickleHandler)
+        port = server.server_port
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+
+        client = SemanticExtractionClient(
+            adapter_url=f"http://127.0.0.1:{port}",
+            target_timeout_seconds=0.04,
+            max_deadline_seconds=0.08,
+        )
+        req = _base_req(timeout_seconds=0.04, max_retries=0)
+        t0 = time.monotonic()
+        res = client.extract(req)
+        elapsed = time.monotonic() - t0
+        server.shutdown()
+
+        assert res.is_abstained is True
+        assert res.abstention_reason == AbstentionReason.TIMEOUT.value
+        assert res.failure_code == ExtractionFailureCode.TIMEOUT.value
+        assert elapsed < 0.2
+
+    def test_always_abstain_client_known_answer_eval_metrics(self, tmp_path):
+        from services.source_ingestion.evaluation.run_semantic_extraction_eval import run_evaluation
+
+        def always_abstain_transport(payload: dict) -> dict:
+            return {
+                "output": {
+                    "structured_data": {
+                        "is_abstained": True,
+                        "abstention_reason": "insufficient_evidence",
+                        "source_spans": [],
+                    }
+                }
+            }
+
+        client = SemanticExtractionClient(transport_fn=always_abstain_transport)
+        # Evaluate holdout with always-abstain client
+        manifest = run_evaluation(
+            split_filter="holdout",
+            client=client,
+            manifest_out=tmp_path / "always_abstain_manifest.json",
+        )
+        metrics = manifest["baseline_metrics"]
+        # Must score 0.0 for field F1, 0.0 for critical support, 0.0 for source validity (NOT 1.0 / 100%)
+        assert metrics["field_f1"] == 0.0
+        assert metrics["critical_support_pct"] == 0.0
+        assert metrics["source_validity_pct"] == 0.0
+

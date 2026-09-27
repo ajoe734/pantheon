@@ -2,8 +2,8 @@
 """Auditable evaluation runner for typed semantic extraction.
 
 SIMPLIFY-EXTRACTION-CONTRACT-FOUNDATION-001:
-Runs the deterministic baseline extractor against frozen evaluation inputs,
-computes per-case metrics, macro-F1, field-F1, abstention recall, critical support,
+Runs the deterministic baseline extractor or extraction client against frozen evaluation inputs,
+computes per-case metrics, macro-F1, honest field-F1, abstention recall, critical support,
 and zero-breach checks, and produces an auditable manifest conforming to
 services/source_ingestion/evaluation/semantic_extraction_manifest.schema.json.
 """
@@ -71,24 +71,40 @@ def run_evaluation(
     if not cases_path.exists():
         raise FileNotFoundError(f"Cases file not found: {cases_path}")
 
-    cases: list[dict[str, Any]] = []
+    all_cases: list[dict[str, Any]] = []
     with cases_path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
-                cases.append(json.loads(line))
+                all_cases.append(json.loads(line))
 
-    if split_filter and split_filter != "all":
-        cases = [c for c in cases if c.get("split") == split_filter]
+    # Frozen corpus statistics (full frozen input constraints)
+    corpus_total_cases = len(all_cases)
+    corpus_split_counts = {
+        "train": sum(1 for c in all_cases if c.get("split") == "train"),
+        "validation": sum(1 for c in all_cases if c.get("split") == "validation"),
+        "holdout": sum(1 for c in all_cases if c.get("split") == "holdout"),
+    }
+    corpus_language_counts = {
+        "zh-TW": sum(1 for c in all_cases if c.get("language") == "zh-TW"),
+        "en": sum(1 for c in all_cases if c.get("language") == "en"),
+    }
+
+    evaluated_split = split_filter if (split_filter and split_filter in ("train", "validation", "holdout")) else "all"
+    if evaluated_split != "all":
+        cases = [c for c in all_cases if c.get("split") == evaluated_split]
+    else:
+        cases = all_cases
 
     corpus_sha256 = _compute_sha256(cases_path)
     run_id = f"eval-run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
 
-    # Counts
+    # Evaluated run counters
     split_counts: dict[str, int] = defaultdict(int)
     lang_counts: dict[str, int] = defaultdict(int)
     task_type_counts: dict[str, int] = defaultdict(int)
     provenance_counts: dict[str, int] = defaultdict(int)
+    failure_counts: dict[str, int] = defaultdict(int)
 
     # Intent classification counters: per class tp, fp, fn
     all_classes: set[str] = set()
@@ -117,6 +133,8 @@ def run_evaluation(
     latencies_ms: list[float] = []
     costs_usd: list[float] = []
     case_results: list[dict[str, Any]] = []
+
+    last_res_sample: Optional[SemanticExtractionResult] = None
 
     for c in cases:
         case_id = c["case_id"]
@@ -152,8 +170,16 @@ def run_evaluation(
             res = DeterministicBaselineExtractor.extract(req)
         dur_ms = (time.monotonic() - t0) * 1000.0
 
+        last_res_sample = res
         latencies_ms.append(dur_ms)
-        costs_usd.append(res.cost_usd)
+        if res.cost_usd is not None:
+            costs_usd.append(res.cost_usd)
+
+        # Track failure / abstention codes
+        if res.is_abstained:
+            failure_counts[res.abstention_reason or "unknown_abstention"] += 1
+        elif res.status == "failed":
+            failure_counts[res.failure_code or "unknown_failure"] += 1
 
         # 1. Breach check: Did an unadmitted request produce data?
         should_admit = expected.get("should_admit", True)
@@ -161,7 +187,7 @@ def run_evaluation(
             tenant_source_breaches += 1
 
         # 2. Abstention check
-        expected_abstain = expected.get("is_abstained", False)
+        expected_abstain = expected.get("is_abstained", False) or not should_admit
         if expected_abstain:
             abstention_expected_count += 1
             if res.is_abstained:
@@ -175,38 +201,88 @@ def run_evaluation(
             if actual_intent:
                 all_classes.add(actual_intent)
 
-            if not res.is_abstained and actual_intent == exp_intent:
+            if not res.is_abstained and res.status == "completed" and actual_intent == exp_intent:
                 intent_tp[exp_intent] += 1
             else:
                 intent_fn[exp_intent] += 1
                 if actual_intent and actual_intent != exp_intent:
                     intent_fp[actual_intent] += 1
+        elif actual_intent and not res.is_abstained:
+            all_classes.add(actual_intent)
+            intent_fp[actual_intent] += 1
 
         # 4. Field evaluation (seed & lesson)
         exp_seed = expected.get("expected_seed")
-        if exp_seed and res.strategy_seed and not res.is_abstained:
-            if "asset_class" in exp_seed:
-                exp_assets = set(exp_seed["asset_class"])
-                act_assets = set(res.strategy_seed.asset_class)
-                field_tp += len(exp_assets.intersection(act_assets))
-                field_fp += len(act_assets - exp_assets)
-                field_fn += len(exp_assets - act_assets)
+        if exp_seed:
+            if res.strategy_seed and not res.is_abstained and res.status == "completed":
+                # Evaluate hypothesis
+                if "hypothesis" in exp_seed:
+                    if res.strategy_seed.hypothesis and res.strategy_seed.hypothesis.strip():
+                        field_tp += 1
+                    else:
+                        field_fn += 1
 
-            if "market_scope" in exp_seed:
-                exp_mkts = set(exp_seed["market_scope"])
-                act_mkts = set(res.strategy_seed.market_scope)
-                field_tp += len(exp_mkts.intersection(act_mkts))
-                field_fp += len(act_mkts - exp_mkts)
-                field_fn += len(exp_mkts - act_mkts)
+                # Evaluate asset_class
+                if "asset_class" in exp_seed:
+                    exp_assets = set(exp_seed["asset_class"])
+                    act_assets = set(res.strategy_seed.asset_class)
+                    field_tp += len(exp_assets.intersection(act_assets))
+                    field_fp += len(act_assets - exp_assets)
+                    field_fn += len(exp_assets - act_assets)
 
-            if "required_data" in exp_seed:
-                exp_data = set(exp_seed["required_data"])
-                act_data = set(res.strategy_seed.required_data)
-                field_tp += len(exp_data.intersection(act_data))
-                field_fp += len(act_data - exp_data)
-                field_fn += len(exp_data - act_data)
+                # Evaluate market_scope
+                if "market_scope" in exp_seed:
+                    exp_mkts = set(exp_seed["market_scope"])
+                    act_mkts = set(res.strategy_seed.market_scope)
+                    field_tp += len(exp_mkts.intersection(act_mkts))
+                    field_fp += len(act_mkts - exp_mkts)
+                    field_fn += len(exp_mkts - act_mkts)
 
-        # 5. Span validity and critical support
+                # Evaluate required_data
+                if "required_data" in exp_seed:
+                    exp_data = set(exp_seed["required_data"])
+                    act_data = set(res.strategy_seed.required_data)
+                    field_tp += len(exp_data.intersection(act_data))
+                    field_fp += len(act_data - exp_data)
+                    field_fn += len(exp_data - act_data)
+            else:
+                # Seed expected but extractor produced none (FN for all expected fields)
+                if "hypothesis" in exp_seed:
+                    field_fn += 1
+                field_fn += len(exp_seed.get("asset_class", []))
+                field_fn += len(exp_seed.get("market_scope", []))
+                field_fn += len(exp_seed.get("required_data", []))
+        elif res.strategy_seed and not res.is_abstained:
+            # Seed not expected but extracted (FP)
+            if res.strategy_seed.hypothesis:
+                field_fp += 1
+            field_fp += len(res.strategy_seed.asset_class)
+            field_fp += len(res.strategy_seed.market_scope)
+            field_fp += len(res.strategy_seed.required_data)
+
+        exp_lesson = expected.get("expected_lesson")
+        if exp_lesson:
+            if res.trade_lesson and not res.is_abstained and res.status == "completed":
+                if "scope" in exp_lesson:
+                    if res.trade_lesson.scope == exp_lesson["scope"]:
+                        field_tp += 1
+                    else:
+                        field_fp += 1
+                        field_fn += 1
+                if "proposed_change" in exp_lesson:
+                    if res.trade_lesson.proposed_change and res.trade_lesson.proposed_change.strip():
+                        field_tp += 1
+                    else:
+                        field_fn += 1
+            else:
+                field_fn += sum(1 for k in ("scope", "proposed_change") if k in exp_lesson)
+        elif res.trade_lesson and not res.is_abstained:
+            if res.trade_lesson.scope:
+                field_fp += 1
+            if res.trade_lesson.proposed_change:
+                field_fp += 1
+
+        # 5. Span validity and field-specific critical support
         case_spans_valid = True
         for span in res.source_spans:
             total_spans += 1
@@ -215,17 +291,54 @@ def run_evaluation(
             else:
                 case_spans_valid = False
 
-        if not res.is_abstained and res.status == "completed":
-            critical_support_total += 1
-            if len(res.source_spans) > 0 and case_spans_valid:
-                critical_support_passed += 1
+        has_critical_fields = False
+        all_critical_supported = True
 
-        # Per-case record
-        case_passed = (
-            (should_admit == (not res.is_abstained if not expected_abstain else True))
-            and (exp_intent is None or actual_intent == exp_intent or (expected_abstain and res.is_abstained))
-            and case_spans_valid
-        )
+        if not res.is_abstained and res.status == "completed":
+            if res.intent:
+                has_critical_fields = True
+                has_intent_span = any(s.field_name.startswith("intent") and s.is_valid(inp["text"]) for s in res.source_spans)
+                if not has_intent_span:
+                    all_critical_supported = False
+
+            if res.strategy_seed:
+                has_critical_fields = True
+                has_seed_span = any("hypothesis" in s.field_name and s.is_valid(inp["text"]) for s in res.source_spans)
+                if not has_seed_span:
+                    all_critical_supported = False
+
+            if res.trade_lesson:
+                has_critical_fields = True
+                has_lesson_span = any("proposed_change" in s.field_name and s.is_valid(inp["text"]) for s in res.source_spans)
+                if not has_lesson_span:
+                    all_critical_supported = False
+
+            if has_critical_fields:
+                critical_support_total += 1
+                if all_critical_supported and case_spans_valid:
+                    critical_support_passed += 1
+
+        # 6. Honest case_passed evaluation
+        if not should_admit:
+            # Correct admission denial
+            case_passed = (res.is_abstained is True and res.abstention_reason == "admission_denied")
+        elif expected_abstain:
+            case_passed = (res.is_abstained is True)
+        else:
+            intent_ok = (exp_intent is None or actual_intent == exp_intent)
+            case_passed = (
+                res.status == "completed"
+                and not res.is_abstained
+                and intent_ok
+                and case_spans_valid
+                and all_critical_supported
+            )
+
+        extracted_fields_obj = {
+            "intent": res.intent.to_dict() if res.intent else None,
+            "strategy_seed": res.strategy_seed.to_dict() if res.strategy_seed else None,
+            "trade_lesson": res.trade_lesson.to_dict() if res.trade_lesson else None,
+        }
 
         case_results.append({
             "case_id": case_id,
@@ -238,8 +351,11 @@ def run_evaluation(
             "passed": case_passed,
             "extracted_intent": actual_intent,
             "expected_intent": exp_intent,
+            "extracted_fields": extracted_fields_obj,
+            "source_spans": [s.to_dict() for s in res.source_spans],
+            "missing_fields": list(res.missing_fields),
             "source_spans_count": len(res.source_spans),
-            "critical_support_valid": case_spans_valid,
+            "critical_support_valid": all_critical_supported and case_spans_valid,
             "latency_ms": round(dur_ms, 2),
             "cost_usd": res.cost_usd,
             "error": res.failure_message,
@@ -270,12 +386,12 @@ def run_evaluation(
     critical_support_pct = (
         (critical_support_passed / critical_support_total * 100.0)
         if critical_support_total > 0
-        else 100.0
+        else 0.0
     )
     source_validity_pct = (
         (valid_spans / total_spans * 100.0)
         if total_spans > 0
-        else 100.0
+        else 0.0
     )
 
     latencies_sorted = sorted(latencies_ms)
@@ -291,10 +407,18 @@ def run_evaluation(
         "task_id": task_id,
         "corpus_id": "semantic_extraction_cases.v1",
         "corpus_sha256": corpus_sha256,
+        "corpus_total_cases": corpus_total_cases,
+        "corpus_split_counts": corpus_split_counts,
+        "corpus_language_counts": corpus_language_counts,
+        "evaluated_split": evaluated_split,
         "total_cases": len(cases),
         "split_counts": dict(split_counts),
         "language_counts": dict(lang_counts),
         "task_type_counts": dict(task_type_counts),
+        "model_identity": last_res_sample.model_identity if last_res_sample else None,
+        "prompt_identity": last_res_sample.prompt_identity if last_res_sample else None,
+        "schema_id": last_res_sample.schema_id if last_res_sample else None,
+        "config_digest": last_res_sample.config_digest if last_res_sample else None,
         "baseline_metrics": {
             "intent_macro_f1": round(intent_macro_f1, 4),
             "field_f1": round(field_f1, 4),
@@ -316,6 +440,7 @@ def run_evaluation(
             "target_p95_seconds": 10.0,
             "max_deadline_seconds": 15.0,
         },
+        "failure_counts": dict(failure_counts),
         "provenance_counts": dict(provenance_counts),
         "case_results": case_results,
     }
@@ -346,7 +471,7 @@ def main():
     parser.add_argument("--split", type=str, default="all", choices=["all", "train", "validation", "holdout"], help="Split filter")
     args = parser.parse_args()
 
-    print(f"Running semantic extraction evaluation on {args.cases_path}...")
+    print(f"Running semantic extraction evaluation on {args.cases_path} (split={args.split})...")
     manifest = run_evaluation(
         cases_path=args.cases_path,
         schema_path=args.schema_path,
@@ -359,9 +484,10 @@ def main():
     print("SEMANTIC EXTRACTION BASELINE EVALUATION REPORT")
     print("=" * 60)
     print(f"Run ID:                {manifest['run_id']}")
-    print(f"Total Cases:           {manifest['total_cases']}")
-    print(f"Language Counts:       {manifest['language_counts']}")
-    print(f"Split Counts:          {manifest['split_counts']}")
+    print(f"Corpus Total Cases:    {manifest['corpus_total_cases']}")
+    print(f"Evaluated Cases:       {manifest['total_cases']} (Split: {manifest['evaluated_split']})")
+    print(f"Evaluated Languages:   {manifest['language_counts']}")
+    print(f"Failure Counts:        {manifest['failure_counts']}")
     print("-" * 60)
     print(f"Intent Macro-F1:       {metrics['intent_macro_f1']:.4f} (Threshold >= 0.95)")
     print(f"Field F1:              {metrics['field_f1']:.4f} (Threshold >= 0.95)")

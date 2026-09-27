@@ -31,14 +31,14 @@ Splits are balanced across languages, task types, and expected labels to ensure 
 
 ### 3. Task Types Covered
 - **`intent`**: Intent classification across the 9 canonical `InteractionPrimaryIntent` categories:
-  - `strategy_proposal`
-  - `market_analysis`
-  - `code_explanation`
-  - `hypothesis_test`
-  - `trade_reflection`
-  - `system_query`
-  - `data_request`
-  - `script_debug`
+  - `strategy_hypothesis`
+  - `risk_overlay`
+  - `execution_policy`
+  - `portfolio_allocation`
+  - `persona_policy`
+  - `preference_example`
+  - `negative_memory`
+  - `operational_note`
   - `non_strategy`
 - **`strategy_seed`**: Extraction of strategy specification seeds (hypothesis, asset classes, market scopes, required data, confidence, seed kind, status).
 - **`trade_lesson`**: Extraction of trade lessons and reflections (scope, proposed changes, confidence).
@@ -47,8 +47,8 @@ Splits are balanced across languages, task types, and expected labels to ensure 
 ### 4. Admission, Boundary, and Negative Cases
 The dataset includes comprehensive coverage of negative, refusal, and admission boundary conditions:
 - **Tenant Isolation**: Missing tenant ID, whitespace-only tenant, invalid character tenant.
-- **Source Status**: Rejected/blacklisted source records (`REJECTED`, `EXPIRED`, `UNVERIFIED`).
-- **License Scope**: Prohibited license scopes (`INTERNAL_ONLY`, `PROPRIETARY_UNLICENSED`).
+- **Source Status**: Rejected/blacklisted source records (`rejected`, `expired`, `prohibited`).
+- **License Scope**: Prohibited license scopes (`prohibited`, `restricted_commercial`, `expired`, `proprietary_unlicensed`).
 - **Point-in-Time Lookahead**: Records with event timestamps occurring after the `as_of` timestamp.
 - **Sensitive Data & PII**:
   - Email addresses (`user@fund.com`)
@@ -63,8 +63,8 @@ The dataset includes comprehensive coverage of negative, refusal, and admission 
 
 ### 5. Label Provenance & Integrity
 - All labels are derived deterministically using canonical schema definitions (`InteractionPrimaryIntent`, `TrainerSeedKind`, `StrategySpecSeedStatus`).
-- No synthetic human labels were invented without verifiable provenance.
-- Ambiguous cases have been audited and explicitly tagged with `abstention_expected: true` where appropriate.
+- AI-assisted curation and synthetic template derivation are explicitly labeled in case provenance without fabricated reviewer approvals.
+- Ambiguous cases have been audited and explicitly tagged with `adjudication_status`.
 
 ---
 
@@ -89,15 +89,14 @@ For parent task `SIMPLIFY-EXTRACTION-001` model candidates and tuning evaluation
 ## Evaluation Manifest Schema
 
 The manifest schema is defined in `semantic_extraction_manifest.schema.json`. Every evaluation run produces a JSON manifest containing:
-1. **Metadata**: `run_id`, `created_at`, `git_commit`, `dataset_path`, `dataset_sha256`, `model_identity`, `prompt_identity`, `schema_id`.
-2. **Case Counts**: `total_cases`, `language_counts` (`zh-TW`, `en`), `split_counts` (`train`, `validation`, `holdout`).
+1. **Corpus Constraints & Metadata**: `corpus_total_cases` (>=200), `corpus_split_counts` (train, validation, holdout), `corpus_language_counts` (zh-TW, en), `corpus_sha256`, `run_id`, `evaluated_at`, `model_identity`, `prompt_identity`, `schema_id`, `config_digest`.
+2. **Evaluated Subset Counts**: `evaluated_split` (`all`, `train`, `validation`, `holdout`), `total_cases`, `language_counts`, `split_counts`, `task_type_counts`, `failure_counts`.
 3. **Aggregate Metrics**: `intent_macro_f1`, `field_f1`, `abstention_recall`, `critical_support_pct`, `source_validity_pct`, `tenant_source_breaches`, `p50_latency_ms`, `p95_latency_ms`, `mean_cost_usd`.
 4. **Per-Case Audit Results**: Array of individual evaluation outcomes containing:
-   - `case_id`, `split`, `language`, `task_type`
-   - `admitted`, `denial_reason`
-   - `expected_intent`, `predicted_intent`, `intent_matched`
-   - `expected_abstained`, `predicted_abstained`, `abstention_matched`
-   - `critical_support_valid`, `source_validity_valid`
+   - `case_id`, `split`, `language`, `task_type`, `status`, `is_abstained`, `abstention_reason`, `passed`
+   - `extracted_intent`, `expected_intent`
+   - `extracted_fields`, `source_spans`, `missing_fields`
+   - `critical_support_valid`, `source_spans_count`
    - `latency_ms`, `cost_usd`, `error`
 
 ---

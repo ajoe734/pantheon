@@ -11,12 +11,17 @@
     "task_id",
     "corpus_id",
     "corpus_sha256",
+    "corpus_total_cases",
+    "corpus_split_counts",
+    "corpus_language_counts",
+    "evaluated_split",
     "total_cases",
     "split_counts",
     "language_counts",
     "task_type_counts",
     "baseline_metrics",
     "downstream_thresholds",
+    "failure_counts",
     "provenance_counts",
     "case_results"
   ],
@@ -45,11 +50,11 @@
       "type": "string",
       "pattern": "^[0-9a-fA-F]{64}$"
     },
-    "total_cases": {
+    "corpus_total_cases": {
       "type": "integer",
       "minimum": 200
     },
-    "split_counts": {
+    "corpus_split_counts": {
       "type": "object",
       "required": ["train", "validation", "holdout"],
       "properties": {
@@ -59,7 +64,7 @@
       },
       "additionalProperties": false
     },
-    "language_counts": {
+    "corpus_language_counts": {
       "type": "object",
       "required": ["zh-TW", "en"],
       "properties": {
@@ -67,6 +72,22 @@
         "en": { "type": "integer", "minimum": 80 }
       },
       "additionalProperties": true
+    },
+    "evaluated_split": {
+      "type": "string",
+      "enum": ["all", "train", "validation", "holdout"]
+    },
+    "total_cases": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "split_counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
+    "language_counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
     },
     "task_type_counts": {
       "type": "object",
@@ -77,6 +98,18 @@
         "comprehensive": { "type": "integer" }
       },
       "additionalProperties": false
+    },
+    "model_identity": {
+      "type": ["string", "null"]
+    },
+    "prompt_identity": {
+      "type": ["string", "null"]
+    },
+    "schema_id": {
+      "type": ["string", "null"]
+    },
+    "config_digest": {
+      "type": ["string", "null"]
     },
     "baseline_metrics": {
       "type": "object",
@@ -128,6 +161,10 @@
       },
       "additionalProperties": false
     },
+    "failure_counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
     "provenance_counts": {
       "type": "object",
       "additionalProperties": { "type": "integer" }
@@ -156,10 +193,13 @@
           "passed": { "type": "boolean" },
           "extracted_intent": { "type": ["string", "null"] },
           "expected_intent": { "type": ["string", "null"] },
+          "extracted_fields": { "type": ["object", "null"] },
+          "source_spans": { "type": ["array", "null"] },
+          "missing_fields": { "type": ["array", "null"], "items": { "type": "string" } },
           "source_spans_count": { "type": "integer" },
           "critical_support_valid": { "type": "boolean" },
           "latency_ms": { "type": "number" },
-          "cost_usd": { "type": "number" },
+          "cost_usd": { "type": ["number", "null"] },
           "error": { "type": ["string", "null"] }
         },
         "additionalProperties": true

@@ -14,12 +14,15 @@ import hashlib
 import json
 import logging
 import os
+import select
 import sys
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import urllib.error
 import urllib.request
 import uuid
+
+import jsonschema
 
 from services.source_ingestion.semantic_extraction import (
     _DEFAULT_PROMPT_VERSION,
@@ -99,17 +102,61 @@ class SemanticExtractionClient:
         self._provider = provider
         self._transport_fn = transport_fn
         self._default_model = default_model
-        self._target_timeout_seconds = min(target_timeout_seconds, max_deadline_seconds)
-        self._max_deadline_seconds = max_deadline_seconds
+        self._max_deadline_seconds = min(max(0.001, float(max_deadline_seconds)), _MAX_TURN_DEADLINE_SECONDS)
+        self._target_timeout_seconds = min(float(target_timeout_seconds), self._max_deadline_seconds)
         self._token_limits = dict(token_bucket_limits or _DEFAULT_TOKEN_LIMITS)
         self._official_rates = dict(official_rates or _DEFAULT_RATES)
+        self._rate_provenance = "official_catalog_2026" if official_rates is None else "custom_override"
         self._fallback_to_baseline = fallback_to_baseline
 
-    def calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
-        """Calculate honest cost in USD based on execution token counts."""
+    def calculate_cost(self, input_tokens: Optional[int], output_tokens: Optional[int]) -> Optional[float]:
+        """Calculate honest cost in USD based on execution token counts.
+
+        Returns None if input_tokens or output_tokens is None to preserve unknown.
+        """
+        if input_tokens is None or output_tokens is None:
+            return None
         input_rate = self._official_rates.get("input_per_million", 2.50) / 1_000_000.0
         output_rate = self._official_rates.get("output_per_million", 10.00) / 1_000_000.0
         return round(input_tokens * input_rate + output_tokens * output_rate, 6)
+
+    def _resolve_model_identity(self, raw_response: Optional[dict[str, Any]], request: SemanticExtractionRequest) -> str:
+        if isinstance(raw_response, dict):
+            if raw_response.get("model"):
+                return str(raw_response["model"])
+            out = raw_response.get("output") or raw_response.get("data")
+            if isinstance(out, dict) and out.get("model"):
+                return str(out["model"])
+        if self._transport_fn is not None and request.model_id:
+            return request.model_id
+        return "openclaw/default"
+
+    def _assert_provider_policy(self, provider: Any, *, deadline: float) -> None:
+        if not hasattr(provider, "_gateway_call"):
+            raise SemanticExtractionClientError(
+                "Direct provider lacks _gateway_call policy verification interface.",
+                ExtractionFailureCode.ADMISSION_DENIED,
+                403,
+            )
+        try:
+            snapshot = provider._gateway_call("config.get", timeout_seconds=max(0.01, deadline - time.monotonic()))
+        except Exception as exc:
+            raise SemanticExtractionClientError(
+                f"Cannot verify native-tool denial on extraction Gateway: {exc}",
+                ExtractionFailureCode.ADMISSION_DENIED,
+                503,
+            ) from exc
+        config = snapshot.get("config") if isinstance(snapshot, dict) else None
+        agents = config.get("agents") if isinstance(config, dict) else None
+        entries = agents.get("list") if isinstance(agents, dict) else None
+        matches = [item for item in entries if isinstance(item, dict) and item.get("id") == "main"] if isinstance(entries, list) else []
+        tools = matches[0].get("tools") if len(matches) == 1 else None
+        if not isinstance(snapshot, dict) or snapshot.get("valid") is not True or not isinstance(tools, dict) or tools.get("deny") != ["*"]:
+            raise SemanticExtractionClientError(
+                "Structured extraction policy boundary violated: Gateway tools.deny != ['*'].",
+                ExtractionFailureCode.ADMISSION_DENIED,
+                403,
+            )
 
     def _build_prompt(self, request: SemanticExtractionRequest) -> str:
         task_type = request.normalized_task_type()
@@ -149,13 +196,13 @@ class SemanticExtractionClient:
                 failure_code=ExtractionFailureCode.ADMISSION_DENIED.value,
                 failure_message=admission.denial_reason,
                 schema_id=schema_id,
-                model_identity=request.model_id or self._default_model,
+                model_identity=self._resolve_model_identity(None, request),
                 prompt_identity=_DEFAULT_PROMPT_VERSION,
                 config_digest=hashlib.sha256(b"admission_denied").hexdigest()[:16],
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
             )
 
-        # 2. Configure overall turn budget and retry limit
+        # 2. Configure overall turn budget and retry limit (hard-capped at 15s)
         total_deadline = min(
             request.timeout_seconds if request.timeout_seconds is not None else self._target_timeout_seconds,
             self._max_deadline_seconds,
@@ -168,13 +215,14 @@ class SemanticExtractionClient:
         last_error_code: Optional[ExtractionFailureCode] = None
         last_error_msg: Optional[str] = None
         raw_response: Optional[dict[str, Any]] = None
+        accumulated_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
 
         while attempt < max_attempts:
             elapsed = time.monotonic() - start_time
             remaining = total_deadline - elapsed
             if remaining <= 0:
                 last_error_code = ExtractionFailureCode.TIMEOUT
-                last_error_msg = f"Turn deadline of {total_deadline:.1f}s exhausted before attempt {attempt + 1}"
+                last_error_msg = f"Turn deadline of {total_deadline:.3f}s exhausted before attempt {attempt + 1}"
                 break
 
             try:
@@ -184,11 +232,18 @@ class SemanticExtractionClient:
                     request=request,
                     timeout_seconds=remaining,
                 )
-                break  # Successful dispatch
+                # Check wall-clock deadline immediately after dispatch
+                elapsed_after = time.monotonic() - start_time
+                if elapsed_after >= total_deadline:
+                    raw_response = None
+                    last_error_code = ExtractionFailureCode.TIMEOUT
+                    last_error_msg = f"Turn deadline of {total_deadline:.3f}s exhausted during dispatch (took {elapsed_after*1000.0:.1f}ms)"
+                    break
+                break  # Successful dispatch within deadline
             except SemanticExtractionClientError as exc:
                 last_error_code = exc.failure_code
                 last_error_msg = exc.message
-                # Non-retryable failures: invalid schema, wrong tool, refusal, budget breach
+                # Non-retryable failures: invalid schema, wrong tool, refusal, budget breach, admission denied
                 if exc.failure_code in (
                     ExtractionFailureCode.INVALID_SCHEMA,
                     ExtractionFailureCode.WRONG_TOOL,
@@ -198,8 +253,13 @@ class SemanticExtractionClient:
                 ):
                     break
             except Exception as exc:
-                last_error_code = ExtractionFailureCode.TRANSPORT_ERROR
-                last_error_msg = str(exc)
+                err_str = str(exc)
+                if "timed out" in err_str.lower() or "deadline" in err_str.lower():
+                    last_error_code = ExtractionFailureCode.TIMEOUT
+                    last_error_msg = err_str
+                else:
+                    last_error_code = ExtractionFailureCode.TRANSPORT_ERROR
+                    last_error_msg = err_str
 
             attempt += 1
             if attempt < max_attempts:
@@ -210,6 +270,7 @@ class SemanticExtractionClient:
         if raw_response is None:
             failure_code = last_error_code or ExtractionFailureCode.TRANSPORT_ERROR
             is_timeout = failure_code == ExtractionFailureCode.TIMEOUT
+            model_id = self._resolve_model_identity(None, request)
             return SemanticExtractionResult(
                 extraction_id=str(uuid.uuid4()),
                 source_id=request.source_id,
@@ -221,7 +282,7 @@ class SemanticExtractionClient:
                 failure_code=failure_code.value,
                 failure_message=last_error_msg or "Extraction failed without response.",
                 schema_id=schema_id,
-                model_identity=request.model_id or self._default_model,
+                model_identity=model_id,
                 prompt_identity=_DEFAULT_PROMPT_VERSION,
                 config_digest=hashlib.sha256(b"dispatch_failed").hexdigest()[:16],
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
@@ -233,9 +294,12 @@ class SemanticExtractionClient:
             raw_response=raw_response,
             request=request,
             task_type=task_type,
+            schema=schema,
             schema_id=schema_id,
             start_time=start_time,
+            total_deadline=total_deadline,
             retry_count=attempt,
+            accumulated_usage=accumulated_usage,
         )
 
     def _dispatch_turn(
@@ -263,6 +327,8 @@ class SemanticExtractionClient:
 
         # 2. Direct provider object (AssistantOpenClawProvider)
         if self._provider is not None:
+            # Enforce native-tool denial policy before calling provider
+            self._assert_provider_policy(self._provider, deadline=time.monotonic() + timeout_seconds)
             try:
                 res = self._provider.invoke_structured(
                     prompt,
@@ -277,6 +343,8 @@ class SemanticExtractionClient:
                 if hasattr(res, "to_dict"):
                     return res.to_dict()
                 return {"output": getattr(res, "output", {})}
+            except SemanticExtractionClientError:
+                raise
             except Exception as exc:
                 err_str = str(exc)
                 if "INVALID_JSON" in err_str or "SCHEMA" in err_str:
@@ -287,7 +355,7 @@ class SemanticExtractionClient:
                     raise SemanticExtractionClientError(err_str, ExtractionFailureCode.TIMEOUT, 504) from exc
                 raise SemanticExtractionClientError(err_str, ExtractionFailureCode.TRANSPORT_ERROR, 500) from exc
 
-        # 3. HTTP Adapter call
+        # 3. HTTP Adapter call (Admitted restricted OpenClaw HTTP path)
         if self._adapter_url:
             endpoint = f"{self._adapter_url}/api/openclaw-adapter/assistant/providers/openclaw/structured"
             body = {
@@ -310,9 +378,27 @@ class SemanticExtractionClient:
                 headers=headers,
                 method="POST",
             )
+            deadline_at = time.monotonic() + timeout_seconds
             try:
-                with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
-                    raw_data = json.loads(resp.read().decode("utf-8"))
+                # urlopen timeout parameter is socket inactivity timeout; read with strict wall-clock bound
+                with urllib.request.urlopen(req, timeout=min(timeout_seconds, 15.0)) as resp:
+                    chunks = []
+                    sock = getattr(resp.fp.raw, "_sock", None) if hasattr(resp, "fp") and hasattr(resp.fp, "raw") else None
+                    while True:
+                        remaining_read = deadline_at - time.monotonic()
+                        if remaining_read <= 0:
+                            raise TimeoutError(f"HTTP response read exceeded wall-clock deadline of {timeout_seconds:.3f}s")
+                        if sock:
+                            rlist, _, _ = select.select([sock], [], [], max(0.0, min(remaining_read, 0.5)))
+                            if not rlist:
+                                raise TimeoutError(f"HTTP response read stalled past wall-clock deadline of {timeout_seconds:.3f}s")
+                        chunk = resp.fp.read1(4096) if (hasattr(resp, "fp") and hasattr(resp.fp, "read1")) else resp.read(min(4096, 65536))
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    if time.monotonic() >= deadline_at:
+                        raise TimeoutError(f"HTTP response read exceeded wall-clock deadline of {timeout_seconds:.3f}s")
+                    raw_data = json.loads(b"".join(chunks).decode("utf-8"))
                     data_obj = raw_data.get("data") or {}
                     return data_obj
             except urllib.error.HTTPError as exc:
@@ -360,11 +446,60 @@ class SemanticExtractionClient:
         raw_response: dict[str, Any],
         request: SemanticExtractionRequest,
         task_type: ExtractionTaskType,
+        schema: dict[str, Any],
         schema_id: str,
         start_time: float,
+        total_deadline: float,
         retry_count: int,
+        accumulated_usage: dict[str, int],
     ) -> SemanticExtractionResult:
+        elapsed = time.monotonic() - start_time
+        model_identity = self._resolve_model_identity(raw_response, request)
+
+        if elapsed >= total_deadline:
+            return SemanticExtractionResult(
+                extraction_id=str(uuid.uuid4()),
+                source_id=request.source_id,
+                tenant_id=request.tenant_id,
+                task_type=task_type.value,
+                status="abstained",
+                is_abstained=True,
+                abstention_reason=AbstentionReason.TIMEOUT.value,
+                failure_code=ExtractionFailureCode.TIMEOUT.value,
+                failure_message=f"Turn deadline of {total_deadline:.3f}s exhausted during execution (took {elapsed*1000.0:.1f}ms)",
+                schema_id=schema_id,
+                model_identity=model_identity,
+                prompt_identity=_DEFAULT_PROMPT_VERSION,
+                config_digest=hashlib.sha256(b"timeout").hexdigest()[:16],
+                latency_ms=elapsed * 1000.0,
+                retry_count=retry_count,
+            )
+
         output_obj = raw_response.get("output") or raw_response.get("data") or raw_response
+
+        # Check refusal
+        if (
+            raw_response.get("status") in ("refusal", "rejected")
+            or (isinstance(output_obj, dict) and output_obj.get("status") in ("refusal", "rejected"))
+        ):
+            return SemanticExtractionResult(
+                extraction_id=str(uuid.uuid4()),
+                source_id=request.source_id,
+                tenant_id=request.tenant_id,
+                task_type=task_type.value,
+                status="abstained",
+                is_abstained=True,
+                abstention_reason=AbstentionReason.MODEL_REFUSAL.value,
+                failure_code=ExtractionFailureCode.REFUSAL.value,
+                failure_message="Model explicitly refused extraction turn.",
+                schema_id=schema_id,
+                model_identity=model_identity,
+                prompt_identity=_DEFAULT_PROMPT_VERSION,
+                config_digest=hashlib.sha256(b"refusal").hexdigest()[:16],
+                latency_ms=(time.monotonic() - start_time) * 1000.0,
+                retry_count=retry_count,
+            )
+
         structured = output_obj.get("structured_data") if isinstance(output_obj, dict) else None
         if not isinstance(structured, dict):
             # Model response did not produce structured data
@@ -375,41 +510,67 @@ class SemanticExtractionClient:
                 task_type=task_type.value,
                 status="failed",
                 failure_code=ExtractionFailureCode.INCOMPLETE_RESPONSE.value,
-                failure_message="Model returned empty or non-dict structured data.",
+                failure_message="Model returned non-dict structured data.",
                 schema_id=schema_id,
-                model_identity=request.model_id or self._default_model,
+                model_identity=model_identity,
                 prompt_identity=_DEFAULT_PROMPT_VERSION,
                 config_digest=hashlib.sha256(b"incomplete").hexdigest()[:16],
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
                 retry_count=retry_count,
             )
 
-        # Token usage and budget checks
-        usage = output_obj.get("usage") or {}
-        input_tokens = int(usage.get("input_tokens", 0))
-        output_tokens = int(usage.get("output_tokens", 0))
-        total_tokens = int(usage.get("total_tokens", input_tokens + output_tokens))
+        # Token usage and budget checks (preserve unknown!)
+        usage_data = output_obj.get("usage") if isinstance(output_obj, dict) else None
+        usage_obj: Optional[dict[str, int]] = None
+        cost_usd: Optional[float] = None
+        if isinstance(usage_data, dict) and "input_tokens" in usage_data:
+            in_tok = int(usage_data.get("input_tokens", 0)) + accumulated_usage.get("input_tokens", 0)
+            out_tok = int(usage_data.get("output_tokens", 0)) + accumulated_usage.get("output_tokens", 0)
+            tot_tok = in_tok + out_tok
+            usage_obj = {"input_tokens": in_tok, "output_tokens": out_tok, "total_tokens": tot_tok}
+            cost_usd = self.calculate_cost(in_tok, out_tok)
 
-        if (
-            input_tokens > self._token_limits["max_input_tokens"]
-            or output_tokens > self._token_limits["max_output_tokens"]
-        ):
+            if (
+                in_tok > self._token_limits["max_input_tokens"]
+                or out_tok > self._token_limits["max_output_tokens"]
+            ):
+                return SemanticExtractionResult(
+                    extraction_id=str(uuid.uuid4()),
+                    source_id=request.source_id,
+                    tenant_id=request.tenant_id,
+                    task_type=task_type.value,
+                    status="abstained",
+                    is_abstained=True,
+                    abstention_reason=AbstentionReason.BUDGET_BREACH.value,
+                    failure_code=ExtractionFailureCode.BUDGET_BREACH.value,
+                    failure_message=f"Usage exceeded limits: input {in_tok} > {self._token_limits['max_input_tokens']} or output {out_tok} > {self._token_limits['max_output_tokens']}",
+                    schema_id=schema_id,
+                    model_identity=model_identity,
+                    prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    config_digest=hashlib.sha256(b"budget_breach").hexdigest()[:16],
+                    usage=usage_obj,
+                    cost_usd=cost_usd,
+                    latency_ms=(time.monotonic() - start_time) * 1000.0,
+                    retry_count=retry_count,
+                )
+
+        # Strict JSON Schema validation
+        validator = jsonschema.Draft7Validator(schema)
+        errors = list(validator.iter_errors(structured))
+        if errors:
+            first_err = errors[0].message
             return SemanticExtractionResult(
                 extraction_id=str(uuid.uuid4()),
                 source_id=request.source_id,
                 tenant_id=request.tenant_id,
                 task_type=task_type.value,
-                status="abstained",
-                is_abstained=True,
-                abstention_reason=AbstentionReason.BUDGET_BREACH.value,
-                failure_code=ExtractionFailureCode.BUDGET_BREACH.value,
-                failure_message=f"Usage exceeded limits: input {input_tokens} > {self._token_limits['max_input_tokens']} or output {output_tokens} > {self._token_limits['max_output_tokens']}",
+                status="failed",
+                failure_code=ExtractionFailureCode.INVALID_SCHEMA.value,
+                failure_message=f"Model structured data violated schema: {first_err}",
                 schema_id=schema_id,
-                model_identity=request.model_id or self._default_model,
+                model_identity=model_identity,
                 prompt_identity=_DEFAULT_PROMPT_VERSION,
-                config_digest=hashlib.sha256(b"budget_breach").hexdigest()[:16],
-                usage={"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens},
-                cost_usd=self.calculate_cost(input_tokens, output_tokens),
+                config_digest=hashlib.sha256(b"invalid_schema").hexdigest()[:16],
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
                 retry_count=retry_count,
             )
@@ -436,38 +597,145 @@ class SemanticExtractionClient:
         seed_payload: Optional[StrategySeedExtractionPayload] = None
         lesson_payload: Optional[TradeLessonExtractionPayload] = None
 
-        if structured.get("intent") and task_type in (ExtractionTaskType.INTENT, ExtractionTaskType.COMPREHENSIVE):
+        if structured.get("intent") is not None and task_type in (ExtractionTaskType.INTENT, ExtractionTaskType.COMPREHENSIVE):
             try:
                 intent_payload = IntentExtractionPayload.from_dict(structured["intent"])
             except Exception as exc:
-                logger.warning("Failed to parse intent payload: %s", exc)
+                return SemanticExtractionResult(
+                    extraction_id=str(uuid.uuid4()),
+                    source_id=request.source_id,
+                    tenant_id=request.tenant_id,
+                    task_type=task_type.value,
+                    status="failed",
+                    failure_code=ExtractionFailureCode.INVALID_SCHEMA.value,
+                    failure_message=f"Failed to parse intent payload: {exc}",
+                    schema_id=schema_id,
+                    model_identity=model_identity,
+                    prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    config_digest=hashlib.sha256(b"invalid_payload").hexdigest()[:16],
+                    latency_ms=(time.monotonic() - start_time) * 1000.0,
+                    retry_count=retry_count,
+                )
 
-        if structured.get("strategy_seed") and task_type in (ExtractionTaskType.STRATEGY_SEED, ExtractionTaskType.COMPREHENSIVE):
+        if structured.get("strategy_seed") is not None and task_type in (ExtractionTaskType.STRATEGY_SEED, ExtractionTaskType.COMPREHENSIVE):
             try:
                 seed_payload = StrategySeedExtractionPayload.from_dict(structured["strategy_seed"])
             except Exception as exc:
-                logger.warning("Failed to parse strategy_seed payload: %s", exc)
+                return SemanticExtractionResult(
+                    extraction_id=str(uuid.uuid4()),
+                    source_id=request.source_id,
+                    tenant_id=request.tenant_id,
+                    task_type=task_type.value,
+                    status="failed",
+                    failure_code=ExtractionFailureCode.INVALID_SCHEMA.value,
+                    failure_message=f"Failed to parse strategy_seed payload: {exc}",
+                    schema_id=schema_id,
+                    model_identity=model_identity,
+                    prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    config_digest=hashlib.sha256(b"invalid_payload").hexdigest()[:16],
+                    latency_ms=(time.monotonic() - start_time) * 1000.0,
+                    retry_count=retry_count,
+                )
 
-        if structured.get("trade_lesson") and task_type in (ExtractionTaskType.TRADE_LESSON, ExtractionTaskType.COMPREHENSIVE):
+        if structured.get("trade_lesson") is not None and task_type in (ExtractionTaskType.TRADE_LESSON, ExtractionTaskType.COMPREHENSIVE):
             try:
                 lesson_payload = TradeLessonExtractionPayload.from_dict(structured["trade_lesson"])
             except Exception as exc:
-                logger.warning("Failed to parse trade_lesson payload: %s", exc)
+                return SemanticExtractionResult(
+                    extraction_id=str(uuid.uuid4()),
+                    source_id=request.source_id,
+                    tenant_id=request.tenant_id,
+                    task_type=task_type.value,
+                    status="failed",
+                    failure_code=ExtractionFailureCode.INVALID_SCHEMA.value,
+                    failure_message=f"Failed to parse trade_lesson payload: {exc}",
+                    schema_id=schema_id,
+                    model_identity=model_identity,
+                    prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    config_digest=hashlib.sha256(b"invalid_payload").hexdigest()[:16],
+                    latency_ms=(time.monotonic() - start_time) * 1000.0,
+                    retry_count=retry_count,
+                )
+
+        # When not abstaining, require task-specific payload and valid source spans!
+        if not is_abstained:
+            if task_type == ExtractionTaskType.INTENT and intent_payload is None:
+                return SemanticExtractionResult(
+                    extraction_id=str(uuid.uuid4()),
+                    source_id=request.source_id,
+                    tenant_id=request.tenant_id,
+                    task_type=task_type.value,
+                    status="failed",
+                    failure_code=ExtractionFailureCode.INCOMPLETE_RESPONSE.value,
+                    failure_message="Non-abstained response missing required intent payload.",
+                    schema_id=schema_id,
+                    model_identity=model_identity,
+                    prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    config_digest=hashlib.sha256(b"incomplete").hexdigest()[:16],
+                    latency_ms=(time.monotonic() - start_time) * 1000.0,
+                    retry_count=retry_count,
+                )
+            elif task_type == ExtractionTaskType.STRATEGY_SEED and seed_payload is None:
+                return SemanticExtractionResult(
+                    extraction_id=str(uuid.uuid4()),
+                    source_id=request.source_id,
+                    tenant_id=request.tenant_id,
+                    task_type=task_type.value,
+                    status="failed",
+                    failure_code=ExtractionFailureCode.INCOMPLETE_RESPONSE.value,
+                    failure_message="Non-abstained response missing required strategy_seed payload.",
+                    schema_id=schema_id,
+                    model_identity=model_identity,
+                    prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    config_digest=hashlib.sha256(b"incomplete").hexdigest()[:16],
+                    latency_ms=(time.monotonic() - start_time) * 1000.0,
+                    retry_count=retry_count,
+                )
+            elif task_type == ExtractionTaskType.TRADE_LESSON and lesson_payload is None:
+                return SemanticExtractionResult(
+                    extraction_id=str(uuid.uuid4()),
+                    source_id=request.source_id,
+                    tenant_id=request.tenant_id,
+                    task_type=task_type.value,
+                    status="failed",
+                    failure_code=ExtractionFailureCode.INCOMPLETE_RESPONSE.value,
+                    failure_message="Non-abstained response missing required trade_lesson payload.",
+                    schema_id=schema_id,
+                    model_identity=model_identity,
+                    prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    config_digest=hashlib.sha256(b"incomplete").hexdigest()[:16],
+                    latency_ms=(time.monotonic() - start_time) * 1000.0,
+                    retry_count=retry_count,
+                )
+            elif task_type == ExtractionTaskType.COMPREHENSIVE and intent_payload is None and seed_payload is None and lesson_payload is None:
+                return SemanticExtractionResult(
+                    extraction_id=str(uuid.uuid4()),
+                    source_id=request.source_id,
+                    tenant_id=request.tenant_id,
+                    task_type=task_type.value,
+                    status="failed",
+                    failure_code=ExtractionFailureCode.INCOMPLETE_RESPONSE.value,
+                    failure_message="Non-abstained comprehensive response missing all payload options.",
+                    schema_id=schema_id,
+                    model_identity=model_identity,
+                    prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    config_digest=hashlib.sha256(b"incomplete").hexdigest()[:16],
+                    latency_ms=(time.monotonic() - start_time) * 1000.0,
+                    retry_count=retry_count,
+                )
 
         # Critical Field Support Verification (100% requirement)
         missing_support = False
         missing_support_reason = ""
 
         if task_type in (ExtractionTaskType.INTENT, ExtractionTaskType.COMPREHENSIVE) and intent_payload and not is_abstained:
-            # Intent critical field
-            has_intent_span = any("intent" in s.field_name for s in valid_spans)
+            has_intent_span = any(s.field_name.startswith("intent") for s in valid_spans)
             if not has_intent_span:
                 missing_support = True
                 missing_support_reason = "Missing valid source span for intent extraction."
                 missing_fields.append("intent.primary_intent")
 
         if task_type in (ExtractionTaskType.STRATEGY_SEED, ExtractionTaskType.COMPREHENSIVE) and seed_payload and not is_abstained:
-            # Seed critical field: hypothesis
             has_hypothesis_span = any("hypothesis" in s.field_name for s in valid_spans)
             if not has_hypothesis_span:
                 missing_support = True
@@ -475,7 +743,6 @@ class SemanticExtractionClient:
                 missing_fields.append("strategy_seed.hypothesis")
 
         if task_type in (ExtractionTaskType.TRADE_LESSON, ExtractionTaskType.COMPREHENSIVE) and lesson_payload and not is_abstained:
-            # Lesson critical field: proposed_change
             has_lesson_span = any("proposed_change" in s.field_name for s in valid_spans)
             if not has_lesson_span:
                 missing_support = True
@@ -491,7 +758,6 @@ class SemanticExtractionClient:
             is_abstained = True
             abstention_reason = AbstentionReason.CONFIDENCE_BELOW_THRESHOLD.value
 
-        cost_usd = self.calculate_cost(input_tokens, output_tokens)
         latency_ms = (time.monotonic() - start_time) * 1000.0
 
         return SemanticExtractionResult(
@@ -510,12 +776,12 @@ class SemanticExtractionClient:
             missing_fields=tuple(missing_fields),
             schema_version=_SCHEMA_VERSION,
             schema_id=schema_id,
-            model_identity=request.model_id or self._default_model,
+            model_identity=model_identity,
             prompt_identity=_DEFAULT_PROMPT_VERSION,
             config_digest=hashlib.sha256(json.dumps(self._token_limits, sort_keys=True).encode("utf-8")).hexdigest()[:16],
             failure_code=ExtractionFailureCode.MISSING_SUPPORT.value if missing_support else None,
             failure_message=missing_support_reason or None,
-            usage={"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens},
+            usage=usage_obj,
             cost_usd=cost_usd,
             latency_ms=latency_ms,
             retry_count=retry_count,

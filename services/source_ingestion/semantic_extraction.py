@@ -57,9 +57,16 @@ def _utc_now() -> str:
 
 
 def _parse_iso(ts_str: str) -> Optional[datetime]:
+    if not ts_str or not isinstance(ts_str, str):
+        return None
     try:
         clean = ts_str.strip().replace("Z", "+00:00")
-        return datetime.fromisoformat(clean)
+        dt = datetime.fromisoformat(clean)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt
     except Exception:
         return None
 
@@ -161,10 +168,27 @@ class IntentExtractionPayload:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> IntentExtractionPayload:
+        raw_intent = data.get("primary_intent")
+        if not raw_intent or not isinstance(raw_intent, str):
+            raise ValueError("IntentExtractionPayload requires a valid string primary_intent")
+        valid_intents = {i.value for i in InteractionPrimaryIntent}
+        if raw_intent not in valid_intents:
+            raise ValueError(f"Invalid primary_intent {raw_intent!r}; must be one of {sorted(valid_intents)}")
+        try:
+            confidence = float(data.get("confidence", 0.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid confidence: {exc}") from exc
+        if not (0.0 <= confidence <= 1.0):
+            raise ValueError(f"Confidence {confidence} out of valid bounds [0.0, 1.0]")
+        secondary = tuple(str(x) for x in data.get("secondary_intents") or ())
+        for sec in secondary:
+            if sec not in valid_intents:
+                raise ValueError(f"Invalid secondary_intent {sec!r}")
+
         return cls(
-            primary_intent=str(data.get("primary_intent") or InteractionPrimaryIntent.NON_STRATEGY.value),
-            confidence=float(data.get("confidence", 0.0)),
-            secondary_intents=tuple(str(x) for x in data.get("secondary_intents") or ()),
+            primary_intent=raw_intent,
+            confidence=confidence,
+            secondary_intents=secondary,
             requires_human_review=bool(data.get("requires_human_review", False)),
             archive_only=bool(data.get("archive_only", False)),
             matched_signals=tuple(str(x) for x in data.get("matched_signals") or ()),
@@ -207,14 +231,32 @@ class StrategySeedExtractionPayload:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> StrategySeedExtractionPayload:
+        hypothesis = str(data.get("hypothesis") or "").strip()
+        if not hypothesis:
+            raise ValueError("StrategySeedExtractionPayload requires non-empty hypothesis")
+        try:
+            confidence = float(data.get("confidence", 0.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid confidence: {exc}") from exc
+        if not (0.0 <= confidence <= 1.0):
+            raise ValueError(f"Confidence {confidence} out of valid bounds [0.0, 1.0]")
+        seed_kind = str(data.get("seed_kind") or TrainerSeedKind.NEW_STRATEGY.value)
+        valid_kinds = {k.value for k in TrainerSeedKind}
+        if seed_kind not in valid_kinds:
+            raise ValueError(f"Invalid seed_kind {seed_kind!r}")
+        status = str(data.get("status") or StrategySpecSeedStatus.DRAFT.value)
+        valid_statuses = {s.value for s in StrategySpecSeedStatus}
+        if status not in valid_statuses:
+            raise ValueError(f"Invalid status {status!r}")
+
         return cls(
-            hypothesis=str(data.get("hypothesis") or ""),
+            hypothesis=hypothesis,
             asset_class=tuple(str(x) for x in data.get("asset_class") or ()),
             market_scope=tuple(str(x) for x in data.get("market_scope") or ()),
             required_data=tuple(str(x) for x in data.get("required_data") or ()),
-            confidence=float(data.get("confidence", 0.0)),
-            seed_kind=str(data.get("seed_kind") or TrainerSeedKind.NEW_STRATEGY.value),
-            status=str(data.get("status") or StrategySpecSeedStatus.DRAFT.value),
+            confidence=confidence,
+            seed_kind=seed_kind,
+            status=status,
             holding_period=str(data["holding_period"]) if data.get("holding_period") is not None else None,
             backend_hint=str(data["backend_hint"]) if data.get("backend_hint") is not None else None,
             feature_hints=tuple(str(x) for x in data.get("feature_hints") or ()),
@@ -246,11 +288,28 @@ class TradeLessonExtractionPayload:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TradeLessonExtractionPayload:
+        proposed_change = str(data.get("proposed_change") or "").strip()
+        if not proposed_change:
+            raise ValueError("TradeLessonExtractionPayload requires non-empty proposed_change")
+        scope = str(data.get("scope") or "strategy").strip()
+        if not scope:
+            raise ValueError("TradeLessonExtractionPayload requires non-empty scope")
+        try:
+            confidence = float(data.get("confidence", 0.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid confidence: {exc}") from exc
+        if not (0.0 <= confidence <= 1.0):
+            raise ValueError(f"Confidence {confidence} out of valid bounds [0.0, 1.0]")
+        review_state = str(data.get("review_state") or "proposed")
+        valid_review_states = {"proposed", "pending_review", "endorsed", "merged", "quarantined", "rejected", "expired"}
+        if review_state not in valid_review_states:
+            raise ValueError(f"Invalid review_state {review_state!r}")
+
         return cls(
-            scope=str(data.get("scope") or "strategy"),
-            proposed_change=str(data.get("proposed_change") or ""),
-            confidence=float(data.get("confidence", 0.0)),
-            review_state=str(data.get("review_state") or "proposed"),
+            scope=scope,
+            proposed_change=proposed_change,
+            confidence=confidence,
+            review_state=review_state,
             reflection_version=str(data.get("reflection_version") or "v1"),
             rationale=str(data.get("rationale") or ""),
         )
@@ -292,6 +351,7 @@ class SemanticExtractionAdmission:
         "none",
         "unauthorized",
         "unlicensed",
+        "proprietary_unlicensed",
     })
 
     PERMITTED_LICENSES: frozenset[str] = frozenset({
@@ -309,7 +369,16 @@ class SemanticExtractionAdmission:
 
     @classmethod
     def check(cls, request: SemanticExtractionRequest) -> AdmissionDecision:
-        # 1. Tenant admission
+        # 1. Source ID admission
+        source_id = str(request.source_id or "").strip()
+        if not source_id:
+            return AdmissionDecision(
+                admitted=False,
+                denial_code="SOURCE_ID_REQUIRED",
+                denial_reason="source_id is required for semantic extraction",
+            )
+
+        # 2. Tenant admission
         tenant_id = str(request.tenant_id or "").strip()
         if not tenant_id:
             return AdmissionDecision(
@@ -324,38 +393,53 @@ class SemanticExtractionAdmission:
                 denial_reason=f"tenant_id {tenant_id!r} contains invalid characters",
             )
 
-        # 2. Source status admission
+        # 3. Source status admission
         status = str(request.source_status or "").strip().lower()
-        if status in ("rejected", "prohibited", "quarantined"):
+        if not status or status in ("rejected", "prohibited", "quarantined", "expired", "archived", "unverified", "unadmitted", "deleted"):
             return AdmissionDecision(
                 admitted=False,
                 denial_code="SOURCE_STATUS_REJECTED",
-                denial_reason=f"source {request.source_id!r} has rejected status {status!r}",
+                denial_reason=f"source {request.source_id!r} has rejected or expired status {status!r}",
             )
 
-        # 3. License scope admission
+        # 4. License scope admission
         license_scope = str(request.license_scope or "").strip().lower()
-        if not license_scope or license_scope in cls.PROHIBITED_LICENSES:
+        if not license_scope or license_scope in cls.PROHIBITED_LICENSES or license_scope not in cls.PERMITTED_LICENSES:
             return AdmissionDecision(
                 admitted=False,
                 denial_code="LICENSE_SCOPE_PROHIBITED",
-                denial_reason=f"license_scope {license_scope!r} is prohibited or missing",
+                denial_reason=f"license_scope {license_scope!r} is prohibited, unlicensed, or not permitted",
             )
 
-        # 4. Point-in-time (as-of) admission
-        if request.as_of and request.event_time:
+        # 5. Point-in-time (as-of) admission
+        as_of_dt: Optional[datetime] = None
+        event_dt: Optional[datetime] = None
+        if request.as_of:
             as_of_dt = _parse_iso(request.as_of)
+            if as_of_dt is None:
+                return AdmissionDecision(
+                    admitted=False,
+                    denial_code="MALFORMED_TIMESTAMP",
+                    denial_reason=f"as_of timestamp {request.as_of!r} is not a valid ISO-8601 timestamp",
+                )
+        if request.event_time:
             event_dt = _parse_iso(request.event_time)
-            if as_of_dt is not None and event_dt is not None:
-                if event_dt > as_of_dt:
-                    return AdmissionDecision(
-                        admitted=False,
-                        denial_code="POINT_IN_TIME_VIOLATION",
-                        denial_reason=(
-                            f"event_time {request.event_time} is after as_of boundary {request.as_of} "
-                            "(lookahead breach)"
-                        ),
-                    )
+            if event_dt is None:
+                return AdmissionDecision(
+                    admitted=False,
+                    denial_code="MALFORMED_TIMESTAMP",
+                    denial_reason=f"event_time timestamp {request.event_time!r} is not a valid ISO-8601 timestamp",
+                )
+        if as_of_dt is not None and event_dt is not None:
+            if event_dt > as_of_dt:
+                return AdmissionDecision(
+                    admitted=False,
+                    denial_code="POINT_IN_TIME_VIOLATION",
+                    denial_reason=(
+                        f"event_time {request.event_time} is after as_of boundary {request.as_of} "
+                        "(lookahead breach)"
+                    ),
+                )
 
         # 5. Redaction / sensitive data admission
         findings: list[str] = []
@@ -627,18 +711,50 @@ def get_semantic_extraction_json_schema(task_type: ExtractionTaskType) -> dict[s
     }
     required: list[str] = ["is_abstained", "source_spans"]
 
-    if task_type in (ExtractionTaskType.INTENT, ExtractionTaskType.COMPREHENSIVE):
-        properties["intent"] = {"type": ["object", "null"], **intent_schema}
-    if task_type in (ExtractionTaskType.STRATEGY_SEED, ExtractionTaskType.COMPREHENSIVE):
-        properties["strategy_seed"] = {"type": ["object", "null"], **seed_schema}
-    if task_type in (ExtractionTaskType.TRADE_LESSON, ExtractionTaskType.COMPREHENSIVE):
-        properties["trade_lesson"] = {"type": ["object", "null"], **lesson_schema}
+    then_clause: dict[str, Any] = {
+        "properties": {
+            "source_spans": {"minItems": 1},
+        }
+    }
+
+    if task_type == ExtractionTaskType.INTENT:
+        properties["intent"] = {"anyOf": [{"type": "null"}, intent_schema]}
+        then_clause["required"] = ["intent"]
+        then_clause["properties"]["intent"] = intent_schema
+    elif task_type == ExtractionTaskType.STRATEGY_SEED:
+        properties["strategy_seed"] = {"anyOf": [{"type": "null"}, seed_schema]}
+        then_clause["required"] = ["strategy_seed"]
+        then_clause["properties"]["strategy_seed"] = seed_schema
+    elif task_type == ExtractionTaskType.TRADE_LESSON:
+        properties["trade_lesson"] = {"anyOf": [{"type": "null"}, lesson_schema]}
+        then_clause["required"] = ["trade_lesson"]
+        then_clause["properties"]["trade_lesson"] = lesson_schema
+    elif task_type == ExtractionTaskType.COMPREHENSIVE:
+        properties["intent"] = {"anyOf": [{"type": "null"}, intent_schema]}
+        properties["strategy_seed"] = {"anyOf": [{"type": "null"}, seed_schema]}
+        properties["trade_lesson"] = {"anyOf": [{"type": "null"}, lesson_schema]}
+        then_clause["anyOf"] = [
+            {"required": ["intent"], "properties": {"intent": intent_schema}},
+            {"required": ["strategy_seed"], "properties": {"strategy_seed": seed_schema}},
+            {"required": ["trade_lesson"], "properties": {"trade_lesson": lesson_schema}},
+        ]
 
     return {
         "type": "object",
         "properties": properties,
         "required": required,
         "additionalProperties": False,
+        "allOf": [
+            {
+                "if": {
+                    "properties": {"is_abstained": {"const": False}}
+                },
+                "then": then_clause,
+                "else": {
+                    "required": ["abstention_reason"],
+                },
+            }
+        ],
     }
 
 
@@ -655,77 +771,10 @@ class DeterministicBaselineExtractor:
     """Deterministic, rule-based baseline extractor.
 
     Serves as the reference baseline for evaluation and fallback.
-    Produces auditable exact character spans for extracted fields.
+    Executes the existing production classifier unchanged.
     """
 
     BASELINE_MODEL_ID = "deterministic-baseline.v1"
-
-    # Known asset class mappings
-    _ASSET_CLASS_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-        ("equities", ("equity", "equities", "stock", "stocks", "share", "shares", "個股", "股票", "現貨", "台股", "美股")),
-        ("futures", ("future", "futures", "期貨", "指期", "台指期", "tx", "es", "nq")),
-        ("options", ("option", "options", "選擇權", "期權", "call", "put", "volatility", "iv")),
-        ("crypto", ("crypto", "cryptocurrency", "bitcoin", "btc", "ethereum", "eth", "加密貨幣", "虛擬貨幣")),
-        ("fx", ("fx", "forex", "currency", "外匯", "匯率", "usdtwd", "eurusd", "usdjpy")),
-    )
-
-    _MARKET_SCOPE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-        ("tw", ("taiwan", "twse", "tpex", "taiex", "台股", "台灣", "臺灣", "tw")),
-        ("us", ("us", "nyse", "nasdaq", "s&p", "sp500", "美股", "美國", "usa")),
-        ("global", ("global", "cross-asset", "macro", "全球", "跨市場", "宏觀")),
-        ("crypto", ("binance", "coinbase", "defi", "crypto", "鏈上", "交易所")),
-    )
-
-    _REQUIRED_DATA_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-        ("ohlcv", ("ohlcv", "price", "volume", "k線", "價量", "收盤價", "成交量", "candlestick")),
-        ("orderbook", ("orderbook", "depth", "l2", "tick", "bid", "ask", "盤口", "委託簿")),
-        ("fundamental", ("financial", "statement", "revenue", "pe", "pb", "財報", "營收", "基本面")),
-        ("macro", ("cpi", "fed", "interest rate", "gdp", "通膨", "利率", "總體經濟")),
-        ("alternative", ("sentiment", "news", "social", "舆情", "新聞", "社群")),
-    )
-
-    _BILINGUAL_INTENT_RULES: tuple[tuple[InteractionPrimaryIntent, tuple[str, ...], tuple[str, ...]], ...] = (
-        (
-            InteractionPrimaryIntent.STRATEGY_HYPOTHESIS,
-            ("策略假說", "動能策略", "突破策略", "均線策略", "多頭策略", "空頭策略", "alpha假說", "量化策略", "配對交易", "統計套利", "跨市場", "因子", "選股", "買進", "做多", "做空", "動能突破", "均值回歸", "交易策略"),
-            ("策略", "假說", "指標", "alpha", "進場", "部位"),
-        ),
-        (
-            InteractionPrimaryIntent.RISK_OVERLAY,
-            ("風險覆蓋", "風控規則", "停損", "止損", "停利", "最大回撤", "曝險上限", "槓桿限制", "減倉", "平倉", "風險限制", "敞口上限"),
-            ("風控", "風險", "回撤", "drawdown"),
-        ),
-        (
-            InteractionPrimaryIntent.EXECUTION_POLICY,
-            ("執行政策", "委託路由", "限價單", "市價單", "twap", "vwap", "滑價", "流動性", "拆單", "掛單", "市價委託"),
-            ("執行", "委託", "下單", "成交"),
-        ),
-        (
-            InteractionPrimaryIntent.PORTFOLIO_ALLOCATION,
-            ("資產配置", "投資組合", "配置權重", "再平衡", "風險平價", "資金分配"),
-            ("配置", "權重", "組合"),
-        ),
-        (
-            InteractionPrimaryIntent.PERSONA_POLICY,
-            ("角色設定", "人格設定", "交易風格", "交易員人格", "代理人風格"),
-            ("風格", "偏好風格"),
-        ),
-        (
-            InteractionPrimaryIntent.PREFERENCE_EXAMPLE,
-            ("偏好範例", "少樣本範例", "範例示範", "示範案例"),
-            ("範例", "範式"),
-        ),
-        (
-            InteractionPrimaryIntent.NEGATIVE_MEMORY,
-            ("負面記憶", "教訓", "失效教訓", "踩雷紀錄", "避免重複", "虧損反思", "交易失誤", "失敗案例"),
-            ("反思", "失誤", "踩雷"),
-        ),
-        (
-            InteractionPrimaryIntent.OPERATIONAL_NOTE,
-            ("維運筆記", "系統日誌", "例行維護", "伺服器重啟", "系統維護", "維護公告", "排程作業"),
-            ("維護", "重啟", "日誌", "公告"),
-        ),
-    )
 
     @classmethod
     def _find_spans(cls, text: str, field_name: str, query: str) -> list[SourceSpan]:
@@ -755,7 +804,6 @@ class DeterministicBaselineExtractor:
     def extract(cls, request: SemanticExtractionRequest) -> SemanticExtractionResult:
         start_time = datetime.now(timezone.utc)
         text = request.text.strip()
-        text_lower = text.lower()
         task_type = request.normalized_task_type()
 
         # Check admission first
@@ -800,8 +848,7 @@ class DeterministicBaselineExtractor:
         seed_payload: Optional[StrategySeedExtractionPayload] = None
         lesson_payload: Optional[TradeLessonExtractionPayload] = None
 
-        # 1. Intent extraction
-        # Always run intent classification internally to gate non-strategy / low-confidence sources
+        # 1. Intent extraction via existing production classifier unchanged
         mock_record = InteractionSourceRecord(
             interaction_id=request.source_id,
             source_surface=InteractionSourceSurface.TRAINER.value if hasattr(InteractionSourceSurface, "TRAINER") else "trainer",
@@ -822,29 +869,13 @@ class DeterministicBaselineExtractor:
         )
         raw_intent = classify_interaction_intent(mock_record)
 
-        # Augment with bilingual / Traditional Chinese intent rules if raw intent is non-strategy or low confidence
         primary_intent_val = raw_intent.primary_intent.value
         confidence_val = raw_intent.confidence
         matched_signals_list = list(raw_intent.matched_signals)
         secondary_intents_list = [x.value for x in raw_intent.secondary_intents]
         requires_human_review = raw_intent.requires_human_review
-
-        if primary_intent_val == InteractionPrimaryIntent.NON_STRATEGY.value or confidence_val < _LOW_CONFIDENCE_THRESHOLD:
-            for intent_candidate, strong_kws, weak_kws in cls._BILINGUAL_INTENT_RULES:
-                matched_strong = [kw for kw in strong_kws if kw.lower() in text_lower]
-                if matched_strong:
-                    primary_intent_val = intent_candidate.value
-                    confidence_val = 0.90
-                    requires_human_review = False
-                    matched_signals_list.extend([f"bilingual_strong:{kw}" for kw in matched_strong])
-                    break
-                matched_weak = [kw for kw in weak_kws if kw.lower() in text_lower]
-                if matched_weak:
-                    primary_intent_val = intent_candidate.value
-                    confidence_val = 0.75
-                    requires_human_review = False
-                    matched_signals_list.extend([f"bilingual_weak:{kw}" for kw in matched_weak])
-                    break
+        archive_only = raw_intent.archive_only
+        reason = raw_intent.reason
 
         if task_type in (ExtractionTaskType.INTENT, ExtractionTaskType.COMPREHENSIVE):
             intent_payload = IntentExtractionPayload(
@@ -852,11 +883,10 @@ class DeterministicBaselineExtractor:
                 confidence=confidence_val,
                 secondary_intents=tuple(secondary_intents_list),
                 requires_human_review=requires_human_review,
-                archive_only=raw_intent.archive_only if primary_intent_val == raw_intent.primary_intent.value else False,
+                archive_only=archive_only,
                 matched_signals=tuple(matched_signals_list),
-                reason=f"Matched signals: {', '.join(matched_signals_list)}" if matched_signals_list else raw_intent.reason,
+                reason=reason,
             )
-            supported_fields.append("intent.primary_intent")
 
             # Find spans for matched signals
             for sig in matched_signals_list:
@@ -864,126 +894,28 @@ class DeterministicBaselineExtractor:
                 found = cls._find_spans(text, "intent.matched_signals", sig_clean)
                 spans.extend(found)
 
-        # 2. Strategy Spec Seed extraction
+            if spans:
+                supported_fields.append("intent.primary_intent")
+
+        # 2. Strategy Spec Seed and Trade Lesson:
+        # The existing production baseline has no NLP seed/lesson extractor.
+        # Run unchanged: leave seed_payload and lesson_payload as None.
         if task_type in (ExtractionTaskType.STRATEGY_SEED, ExtractionTaskType.COMPREHENSIVE):
-            # Deterministic asset class detection
-            detected_asset_classes: list[str] = []
-            for asset, kws in cls._ASSET_CLASS_KEYWORDS:
-                for kw in kws:
-                    if kw in text_lower:
-                        if asset not in detected_asset_classes:
-                            detected_asset_classes.append(asset)
-                            spans.extend(cls._find_spans(text, "strategy_seed.asset_class", kw))
-                        break
-
-            # Deterministic market scope detection
-            detected_market_scopes: list[str] = []
-            for scope, kws in cls._MARKET_SCOPE_KEYWORDS:
-                for kw in kws:
-                    if kw in text_lower:
-                        if scope not in detected_market_scopes:
-                            detected_market_scopes.append(scope)
-                            spans.extend(cls._find_spans(text, "strategy_seed.market_scope", kw))
-                        break
-
-            # Deterministic required data detection
-            detected_required_data: list[str] = []
-            for dtag, kws in cls._REQUIRED_DATA_KEYWORDS:
-                for kw in kws:
-                    if kw in text_lower:
-                        if dtag not in detected_required_data:
-                            detected_required_data.append(dtag)
-                            spans.extend(cls._find_spans(text, "strategy_seed.required_data", kw))
-                        break
-
-            # Hypothesis detection: first sentence or salient line
-            sentences = re.split(r"[。\n.!?]", text)
-            hypothesis = sentences[0].strip() if sentences else text[:100]
-            if len(hypothesis) < 5 and len(sentences) > 1:
-                hypothesis = sentences[1].strip()
-
-            if hypothesis:
-                h_spans = cls._find_spans(text, "strategy_seed.hypothesis", hypothesis)
-                if h_spans:
-                    spans.extend(h_spans)
-                    supported_fields.append("strategy_seed.hypothesis")
-                else:
-                    spans.append(SourceSpan("strategy_seed.hypothesis", 0, min(len(hypothesis), len(text)), text[:min(len(hypothesis), len(text))]))
-                    supported_fields.append("strategy_seed.hypothesis")
-
-            if detected_asset_classes:
-                supported_fields.append("strategy_seed.asset_class")
-            else:
-                missing_fields.append("strategy_seed.asset_class")
-                detected_asset_classes = ["equities"]
-
-            if detected_market_scopes:
-                supported_fields.append("strategy_seed.market_scope")
-            else:
-                missing_fields.append("strategy_seed.market_scope")
-                detected_market_scopes = ["tw"]
-
-            if detected_required_data:
-                supported_fields.append("strategy_seed.required_data")
-            else:
-                missing_fields.append("strategy_seed.required_data")
-                detected_required_data = ["ohlcv"]
-
-            confidence = 0.85 if ("strategy_seed.hypothesis" in supported_fields and not missing_fields) else 0.55
-
-            seed_payload = StrategySeedExtractionPayload(
-                hypothesis=hypothesis,
-                asset_class=tuple(detected_asset_classes),
-                market_scope=tuple(detected_market_scopes),
-                required_data=tuple(detected_required_data),
-                confidence=confidence,
-                seed_kind=TrainerSeedKind.NEW_STRATEGY.value,
-                status=StrategySpecSeedStatus.DRAFT.value,
-            )
-
-        # 3. Trade lesson extraction
+            missing_fields.append("strategy_seed.hypothesis")
         if task_type in (ExtractionTaskType.TRADE_LESSON, ExtractionTaskType.COMPREHENSIVE):
-            # Detect lesson scope
-            scope = "strategy"
-            if any(w in text_lower for w in ("risk", "風控", "止損", "drawdown", "回撤")):
-                scope = "risk"
-            elif any(w in text_lower for w in ("regime", "牛市", "熊市", "盤整", "震盪")):
-                scope = "regime"
-            elif any(w in text_lower for w in ("execution", "滑價", "slippage", "latency", "委託")):
-                scope = "execution"
-
-            proposed_change = text[:150]
-            lesson_spans = cls._find_spans(text, "trade_lesson.proposed_change", proposed_change[:50])
-            if lesson_spans:
-                spans.extend(lesson_spans)
-                supported_fields.append("trade_lesson.proposed_change")
-            else:
-                spans.append(SourceSpan("trade_lesson.proposed_change", 0, min(50, len(text)), text[:min(50, len(text))]))
-                supported_fields.append("trade_lesson.proposed_change")
-
-            lesson_payload = TradeLessonExtractionPayload(
-                scope=scope,
-                proposed_change=proposed_change,
-                confidence=0.80 if intent_payload and intent_payload.primary_intent == InteractionPrimaryIntent.NEGATIVE_MEMORY.value else 0.60,
-                review_state="proposed",
-                reflection_version="v1",
-                rationale="Extracted by deterministic baseline from lesson keywords.",
-            )
-            supported_fields.append("trade_lesson.scope")
+            missing_fields.append("trade_lesson.proposed_change")
 
         # Determine abstention
         is_abstained = False
         abstention_reason: Optional[str] = None
-        if raw_intent.primary_intent == InteractionPrimaryIntent.NON_STRATEGY and task_type in (
-            ExtractionTaskType.STRATEGY_SEED,
-            ExtractionTaskType.TRADE_LESSON,
-        ):
+        if task_type in (ExtractionTaskType.STRATEGY_SEED, ExtractionTaskType.TRADE_LESSON):
+            # Production baseline does not support unstructured seed/lesson extraction
             is_abstained = True
             abstention_reason = AbstentionReason.UNSUPPORTED_SOURCE.value
-        elif intent_payload and intent_payload.confidence < _LOW_CONFIDENCE_THRESHOLD:
+        elif primary_intent_val == InteractionPrimaryIntent.NON_STRATEGY.value:
             is_abstained = True
-            abstention_reason = AbstentionReason.CONFIDENCE_BELOW_THRESHOLD.value
-        elif seed_payload and seed_payload.confidence < _LOW_CONFIDENCE_THRESHOLD:
+            abstention_reason = AbstentionReason.INSUFFICIENT_EVIDENCE.value
+        elif confidence_val < _LOW_CONFIDENCE_THRESHOLD:
             is_abstained = True
             abstention_reason = AbstentionReason.CONFIDENCE_BELOW_THRESHOLD.value
         elif requires_human_review:
