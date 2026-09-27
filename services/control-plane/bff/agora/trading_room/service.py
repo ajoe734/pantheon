@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import uuid
 
 from fastapi import HTTPException
@@ -81,6 +81,10 @@ from .routes.common import (
     _tr_sse_format,
 )
 from .store import TradingRoomStore, make_trading_room_store
+from services.control_plane.bff.agora.strategy_workshop.store import (
+    MemoryWorkshopStore,
+    PostgresWorkshopStore,
+)
 
 _default_store: Optional[TradingRoomStore] = None
 
@@ -103,7 +107,7 @@ class TradingRoomService:
     def __init__(
         self,
         store: Optional[TradingRoomStore] = None,
-        workshop_store: Optional[Any] = None,
+        workshop_store: Optional[Union[MemoryWorkshopStore, PostgresWorkshopStore]] = None,
         utc_now: Optional[Callable[[], str]] = None,
         bff_error: Optional[Callable[..., HTTPException]] = None,
     ):

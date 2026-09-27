@@ -189,11 +189,16 @@ from services.control_plane.bff.ports.persona_capital_runtime import (
 
 from services.control_plane.bff.persona_provisioning import (
     MemoryPersonaProvisioningStore,
+    PersonaProvisioningStore,
     ProvisioningConflict,
     ProvisioningRecord,
     TERMINAL_STATES,
     make_persona_provisioning_store,
 )
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports.rankings import RankingSnapshotWriteOwnerPort
+from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
+from services.control_plane.bff.ports.persona_capital_runtime import PersonaMutationPort
 
 from services.control_plane.bff.persona_provisioning_coordinator import (
     PersonaProvisioningCoordinator,
@@ -14187,15 +14192,15 @@ class PersonaService:
     def __init__(
         self,
         *,
-        read_store: Optional[Any] = None,
-        command_store: Optional[Any] = None,
-        provisioning_store: Optional[Any] = None,
-        write_owner: Optional[Any] = None,
-        ranking_write_owner: Optional[Any] = None,
-        get_read_store: Optional[Callable[[], Any]] = None,
-        get_command_store: Optional[Callable[[], Any]] = None,
+        read_store: Optional[Union[ReadSurfacePorts, Callable[[], ReadSurfacePorts]]] = None,
+        command_store: Optional[Union[CommandStore, Callable[[], CommandStore]]] = None,
+        provisioning_store: Optional[Union[PersonaProvisioningStore, MemoryPersonaProvisioningStore, Callable[[], Any]]] = None,
+        write_owner: Optional[Union[PersonaRegistryHttpWritePort, PersonaMutationPort, Callable[[], Any]]] = None,
+        ranking_write_owner: Optional[Union[RankingSnapshotWriteOwnerPort, Callable[[], RankingSnapshotWriteOwnerPort]]] = None,
+        get_read_store: Optional[Callable[[], ReadSurfacePorts]] = None,
+        get_command_store: Optional[Callable[[], CommandStore]] = None,
         get_provisioning_store: Optional[Callable[[], Any]] = None,
-        get_ranking_write_owner: Optional[Callable[[], Any]] = None,
+        get_ranking_write_owner: Optional[Callable[[], RankingSnapshotWriteOwnerPort]] = None,
         utc_now_fn: Optional[Callable[[], str]] = None,
         bff_error_fn: Optional[Callable[..., HTTPException]] = None,
         snapshot_meta_fn: Optional[Callable[..., Dict[str, Any]]] = None,
@@ -14989,6 +14994,177 @@ class PersonaService:
             )
             return True
         return False
+
+    def decide_promotion_review(
+        self,
+        *,
+        review_id: str,
+        payload: Dict[str, Any],
+        identity: Any,
+        idempotency_key: Optional[str] = None,
+        x_idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        raw_decision = str(payload.get("decision") or "").strip().lower()
+        if raw_decision not in _PROMOTION_REVIEW_DECISIONS:
+            raise self._bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "decision is invalid",
+                f"decision must be one of {sorted(_PROMOTION_REVIEW_DECISIONS)}",
+                precondition_failed="decision",
+            )
+        rationale = _promotion_review_rationale(payload)
+        if raw_decision == "reject" and not rationale:
+            raise self._bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "reject decision requires a non-empty rationale",
+                "rationale must be a non-empty string when decision=reject",
+                precondition_failed="rationale",
+            )
+
+        snapshot_at = self._utc_now()
+        clean_review_id = _promotion_review_clean_id(review_id)
+        exact_revision_requested = (
+            clean_review_id
+            != _promotion_review_revision_recommendation_id(clean_review_id)
+        )
+        review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
+            identity,
+            review_id,
+            snapshot_at=snapshot_at,
+            quarter=str(payload.get("quarter") or "").strip() or None,
+            include_historical=exact_revision_requested,
+        )
+        if review is None:
+            raise self._bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Promotion review not found",
+                f"Promotion review {review_id} does not exist",
+                precondition_failed="review_id",
+            )
+        if exact_revision_requested and str(
+            review.get("decision_status") or "pending"
+        ).strip().lower() != "pending":
+            current_review, _, _, _ = _promotion_review_find(
+                identity,
+                _promotion_review_revision_recommendation_id(clean_review_id),
+                snapshot_at=snapshot_at,
+                quarter=str(payload.get("quarter") or "").strip() or None,
+                include_historical=False,
+            )
+            current_revision_id = str(
+                (current_review or {}).get("promotion_review_id")
+                or (current_review or {}).get("review_id")
+                or ""
+            ).strip()
+            if clean_review_id != current_revision_id:
+                raise self._bff_error(
+                    404,
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    "Promotion review not found",
+                    f"Promotion review {review_id} does not exist",
+                    precondition_failed="review_id",
+                )
+        if not bool(review.get("submitted")):
+            raise self._bff_error(
+                409,
+                ErrorCode.HUMAN_GATE_PENDING,
+                "Promotion review has not been submitted",
+                "Submit the quarterly ranking recommendation before recording a Human Gate decision.",
+                precondition_failed="recommendation_submission",
+                suggestion="POST the recommendation submit route and then retry the decision.",
+                details_extra={
+                    "recommendationId": review.get("recommendation_id"),
+                    "submitHref": (review.get("links") or {}).get("submit"),
+                },
+            )
+
+        command_type = (
+            CommandType.HUMAN_GATE_REJECT
+            if raw_decision == "reject"
+            else CommandType.HUMAN_GATE_APPROVE
+        )
+        command_payload = _promotion_review_decision_payload(
+            payload=payload,
+            review=review,
+            decision=raw_decision,
+            rationale=rationale,
+            identity=identity,
+        )
+        client_idempotency_key = _resolve_final_idempotency_key(
+            idempotency_key,
+            x_idempotency_key,
+        )
+        scoped_idempotency_key = _promotion_review_scoped_idempotency_key(
+            client_idempotency_key,
+            None,
+            review["review_id"],
+        )
+        command_response = _sem_command_response(
+            command_type=command_type,
+            target_type=ObjectType.HUMAN_GATE_ITEM,
+            target_id=_promotion_review_target_id(review["review_id"]),
+            payload=command_payload,
+            identity=identity,
+            idempotency_key=scoped_idempotency_key,
+        )
+        return _promotion_review_decision_response(
+            command_response,
+            review=review,
+            decision=raw_decision,
+            command_payload=command_payload,
+            client_idempotency_key=client_idempotency_key,
+        )
+
+    def get_quarterly_ranking_recommendations(
+        self,
+        *,
+        quarter: Optional[str],
+        identity: Any,
+        caller_tenant_id: str,
+        snapshot_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        snap = snapshot_at or self._utc_now()
+        quarter_window = _pm12_quarter_window(quarter, snap)
+        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
+        ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+        (
+            public_evidence_refs,
+            canonical_evidence_refs,
+            redacted_count,
+            evidence_dataset_available,
+        ) = _pm12_public_quarter_evidence_refs(
+            identity,
+            quarter_window,
+        )
+        ranked_items = _pm12_attach_ranking_evidence(
+            ranked_items,
+            public_evidence_refs,
+            canonical_evidence_refs=canonical_evidence_refs,
+        )
+        ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+            ranked_items,
+            surface="quarterly",
+            period=quarter_window["quarter"],
+        )
+        recommendations = _pm12_quarterly_recommendations(
+            ranked_items,
+            quarter_window=quarter_window,
+            evidence_refs=public_evidence_refs,
+        )
+        return {
+            "recommendations": recommendations,
+            "ranked_items": ranked_items,
+            "rows": rows,
+            "public_evidence_refs": public_evidence_refs,
+            "quarter_window": quarter_window,
+            "redacted_count": redacted_count,
+            "evidence_dataset_available": evidence_dataset_available,
+            "ranking_snapshot_id": ranking_snapshot_id,
+        }
+
 
 
 

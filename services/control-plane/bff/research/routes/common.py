@@ -277,7 +277,7 @@ class ResearchRouteContext:
                 str(exc),
             ) from exc
         if isinstance(exc, ResearchValidationError):
-            error_code = getattr(ErrorCode, exc.error_code, ErrorCode.VALIDATION_FAILED)
+            error_code = ErrorCode.__members__.get(exc.error_code, ErrorCode.VALIDATION_FAILED)
             details = getattr(exc, "details", None) or {}
             try:
                 sig = inspect.signature(self.bff_error)

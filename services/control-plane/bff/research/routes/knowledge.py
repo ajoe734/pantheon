@@ -114,7 +114,6 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except (TypeError, ValueError):
             page_size = 20
         confidence_raw = ctx.query(request, "confidence_min")
-        confidence_min = float(confidence_raw) if confidence_raw is not None else None
         try:
             return ctx.service.list_insight_cards(
                 status=ctx.query(request, "status", "active"),
@@ -122,7 +121,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
                 linked_entity_type=ctx.query(request, "linked_entity_type"),
                 linked_entity_ref=ctx.query(request, "linked_entity_ref"),
                 recency=ctx.query(request, "recency", "all"),
-                confidence_min=confidence_min,
+                confidence_min=confidence_raw,
                 include_inactive=str(ctx.query(request, "include_inactive", "false") or "false").lower() == "true",
                 page_token=ctx.query(request, "page_token"),
                 page_size=page_size,

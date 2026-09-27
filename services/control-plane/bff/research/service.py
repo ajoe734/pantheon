@@ -200,17 +200,377 @@ def _filter_legacy_artifacts(
 
 
 
-class _ResearchPortAdapter:
-    """Combines top-level port overrides with domain-specific knowledge port."""
+class ResearchPortWiring(ResearchKnowledgeSourcePort):
+    """Explicit domain-specific typed dependency wiring for Research domain.
 
-    def __init__(self, raw_port: Any, knowledge_source: Any) -> None:
+    Exposes declared research operations without arbitrary attribute forwarding.
+    """
+
+    def __init__(self, raw_port: Any, knowledge_source: Optional[ResearchKnowledgeSourcePort] = None) -> None:
         self._raw_port = raw_port
-        self._knowledge_source = knowledge_source
+        self._ks = knowledge_source
+        if hasattr(raw_port, "list_experiments_bff"):
+            self.list_experiments_bff = raw_port.list_experiments_bff
+        if hasattr(raw_port, "get_experiment_bff"):
+            self.get_experiment_bff = raw_port.get_experiment_bff
+        if hasattr(raw_port, "create_experiment_bff"):
+            self.create_experiment_bff = raw_port.create_experiment_bff
+        if hasattr(raw_port, "get_experiment_logs"):
+            self.get_experiment_logs = raw_port.get_experiment_logs
+        if hasattr(raw_port, "get_experiment_metrics"):
+            self.get_experiment_metrics = raw_port.get_experiment_metrics
+        if hasattr(raw_port, "get_experiment_artifacts"):
+            self.get_experiment_artifacts = raw_port.get_experiment_artifacts
+        if hasattr(raw_port, "get_research_oss_preactivation_snapshot"):
+            self.get_research_oss_preactivation_snapshot = raw_port.get_research_oss_preactivation_snapshot
+        if hasattr(raw_port, "list_synthesis_conflict_logs"):
+            self.list_synthesis_conflict_logs = raw_port.list_synthesis_conflict_logs
+        if hasattr(raw_port, "get_synthesis_conflict_log"):
+            self.get_synthesis_conflict_log = raw_port.get_synthesis_conflict_log
+        if hasattr(raw_port, "list_strategies"):
+            self.list_strategies = raw_port.list_strategies
+        if hasattr(raw_port, "list_strategy_summaries"):
+            self.list_strategy_summaries = raw_port.list_strategy_summaries
+        if hasattr(raw_port, "list_personas"):
+            self.list_personas = raw_port.list_personas
+        if hasattr(raw_port, "list_capital_pools"):
+            self.list_capital_pools = raw_port.list_capital_pools
 
-    def __getattr__(self, name: str) -> Any:
-        if hasattr(self._raw_port, name):
-            return getattr(self._raw_port, name)
-        return getattr(self._knowledge_source, name)
+    def _dispatch(self, raw_fn: Any, ks_fn: Any, *args: Any, **kwargs: Any) -> Any:
+        if callable(raw_fn):
+            return raw_fn(*args, **kwargs)
+        if callable(ks_fn):
+            return ks_fn(*args, **kwargs)
+        raise AttributeError("Research port operation not implemented")
+
+    def dataset_source(self, *args: Any, **kwargs: Any) -> str:
+        return self._dispatch(
+            getattr(self._raw_port, "dataset_source", None),
+            getattr(self._ks, "dataset_source", None),
+            *args,
+            **kwargs,
+        )
+
+    def dataset_surface_status(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self._dispatch(
+            getattr(self._raw_port, "dataset_surface_status", None),
+            getattr(self._ks, "dataset_surface_status", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_research_notes(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_research_notes", None),
+            getattr(self._ks, "list_research_notes", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_research_note(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_research_note", None),
+            getattr(self._ks, "get_research_note", None),
+            *args,
+            **kwargs,
+        )
+
+    def create_research_note(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "create_research_note", None),
+            getattr(self._ks, "create_research_note", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_evidence_refs(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_evidence_refs", None),
+            getattr(self._ks, "list_evidence_refs", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_evidence_ref(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_evidence_ref", None),
+            getattr(self._ks, "get_evidence_ref", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_evidence_ref_detail(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_evidence_ref_detail", None),
+            getattr(self._ks, "get_evidence_ref_detail", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_insight_cards(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_insight_cards", None),
+            getattr(self._ks, "list_insight_cards", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_insight_card(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_insight_card", None),
+            getattr(self._ks, "get_insight_card", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_insight_card_detail(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_insight_card_detail", None),
+            getattr(self._ks, "get_insight_card_detail", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_strategy_specs(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_strategy_specs", None),
+            getattr(self._ks, "list_strategy_specs", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_strategy_spec(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_strategy_spec", None),
+            getattr(self._ks, "get_strategy_spec", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_strategy_spec_detail(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_strategy_spec_detail", None),
+            getattr(self._ks, "get_strategy_spec_detail", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_strategy_spec_versions(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_strategy_spec_versions", None),
+            getattr(self._ks, "list_strategy_spec_versions", None),
+            *args,
+            **kwargs,
+        )
+
+    def compare_strategy_spec_versions(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self._dispatch(
+            getattr(self._raw_port, "compare_strategy_spec_versions", None),
+            getattr(self._ks, "compare_strategy_spec_versions", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_institutional_memory_entries(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_institutional_memory_entries", None),
+            getattr(self._ks, "list_institutional_memory_entries", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_institutional_memory_entry(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_institutional_memory_entry", None),
+            getattr(self._ks, "get_institutional_memory_entry", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_research_tickets(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_research_tickets", None),
+            getattr(self._ks, "list_research_tickets", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_research_ticket(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_research_ticket", None),
+            getattr(self._ks, "get_research_ticket", None),
+            *args,
+            **kwargs,
+        )
+
+    def create_research_ticket(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "create_research_ticket", None),
+            getattr(self._ks, "create_research_ticket", None),
+            *args,
+            **kwargs,
+        )
+
+    def patch_research_ticket(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "patch_research_ticket", None),
+            getattr(self._ks, "patch_research_ticket", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_research_analyses(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_research_analyses", None),
+            getattr(self._ks, "list_research_analyses", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_research_analysis(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_research_analysis", None),
+            getattr(self._ks, "get_research_analysis", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_research_experiments(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_research_experiments", None),
+            getattr(self._ks, "list_research_experiments", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_research_experiment(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_research_experiment", None),
+            getattr(self._ks, "get_research_experiment", None),
+            *args,
+            **kwargs,
+        )
+
+    def create_research_experiment(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self._dispatch(
+            getattr(self._raw_port, "create_research_experiment", None),
+            getattr(self._ks, "create_research_experiment", None),
+            *args,
+            **kwargs,
+        )
+
+    def cancel_research_experiment(self, *args: Any, **kwargs: Any) -> bool:
+        return self._dispatch(
+            getattr(self._raw_port, "cancel_research_experiment", None),
+            getattr(self._ks, "cancel_research_experiment", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_research_artifacts(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_research_artifacts", None),
+            getattr(self._ks, "list_research_artifacts", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_research_artifact(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_research_artifact", None),
+            getattr(self._ks, "get_research_artifact", None),
+            *args,
+            **kwargs,
+        )
+
+    def compare_research_artifacts(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self._dispatch(
+            getattr(self._raw_port, "compare_research_artifacts", None),
+            getattr(self._ks, "compare_research_artifacts", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_research_search_index(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_research_search_index", None),
+            getattr(self._ks, "get_research_search_index", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_last_governed_search_refs(self, *args: Any, **kwargs: Any) -> List[str]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_last_governed_search_refs", None),
+            getattr(self._ks, "get_last_governed_search_refs", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_research_search_results(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_research_search_results", None),
+            getattr(self._ks, "list_research_search_results", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_search_ops_snapshot(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_search_ops_snapshot", None),
+            getattr(self._ks, "get_search_ops_snapshot", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_source_connector_registry(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_source_connector_registry", None),
+            getattr(self._ks, "get_source_connector_registry", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_source_change_proposals(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_source_change_proposals", None),
+            getattr(self._ks, "get_source_change_proposals", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_source_ops_snapshot(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_source_ops_snapshot", None),
+            getattr(self._ks, "get_source_ops_snapshot", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_source_health_usage_snapshot(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_source_health_usage_snapshot", None),
+            getattr(self._ks, "get_source_health_usage_snapshot", None),
+            *args,
+            **kwargs,
+        )
+
+    def list_synthesis_conflict_logs(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "list_synthesis_conflict_logs", None),
+            getattr(self._ks, "list_synthesis_conflict_logs", None),
+            *args,
+            **kwargs,
+        )
+
+    def get_synthesis_conflict_log(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._dispatch(
+            getattr(self._raw_port, "get_synthesis_conflict_log", None),
+            getattr(self._ks, "get_synthesis_conflict_log", None),
+            *args,
+            **kwargs,
+        )
+
 
 @dataclass
 class ResearchRouterService:
@@ -234,15 +594,9 @@ class ResearchRouterService:
         port = self.port_getter() if callable(getattr(self, "port_getter", None)) else getattr(self, "port_getter", None)
         if port is None:
             return None  # type: ignore[return-value]
-        if getattr(getattr(port, "__class__", None), "__module__", "").startswith("unittest.mock"):
-            return port
         ks = getattr(port, "research_knowledge_source", None)
-        if ks is None:
-            target = getattr(port, "_active_delegate", None)
-            if target is not None:
-                ks = getattr(target, "research_knowledge_source", target)
         if ks is not None and ks is not port:
-            return _ResearchPortAdapter(port, ks)  # type: ignore[return-value]
+            return ResearchPortWiring(port, ks)
         return port
 
     @contextmanager
@@ -278,15 +632,21 @@ class ResearchRouterService:
         if raw_port is not None:
             fn = getattr(raw_port, "dataset_source", None)
             if callable(fn):
-                src = fn(dataset)
-                if src and src != "missing":
-                    return src
+                try:
+                    src = fn(dataset)
+                    if src and src != "missing":
+                        return src
+                except (AttributeError, NotImplementedError):
+                    pass
         port = self._port()
         fn = getattr(port, "dataset_source", None)
         if callable(fn):
-            src = fn(dataset)
-            if src:
-                return src
+            try:
+                src = fn(dataset)
+                if src:
+                    return src
+            except (AttributeError, NotImplementedError):
+                pass
         return "missing"
 
     def _get_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -1536,13 +1896,37 @@ class ResearchRouterService:
         val_status = self._validate_choice(status, field="status", allowed=_KW04_STATUSES) if status is not None else None
         effective_recency = self._validate_choice(recency or "all", field="recency", allowed=_KW04_RECENCY_VALUES)
         val_entity_type = self._validate_choice(linked_entity_type, field="linked_entity_type", allowed=_KW04_LINKED_ENTITY_TYPES) if linked_entity_type is not None else None
-        effective_min_conf = confidence_min if confidence_min is not None else min_confidence
+        if linked_entity_ref is not None and val_entity_type is None:
+            self._bad_request(
+                "Invalid linked_entity_ref filter",
+                "linked_entity_ref requires linked_entity_type to be set",
+                "linked_entity_ref",
+            )
+        effective_min_conf: Optional[float] = None
+        raw_conf = confidence_min if confidence_min is not None else min_confidence
+        if raw_conf is not None:
+            try:
+                conf_val = float(raw_conf)
+            except (TypeError, ValueError):
+                self._bad_request(
+                    "Invalid confidence_min",
+                    "confidence_min must be a number between 0.0 and 1.0",
+                    "confidence_min",
+                )
+            if conf_val < 0.0 or conf_val > 1.0:
+                self._bad_request(
+                    "Invalid confidence_min",
+                    "confidence_min must be a number between 0.0 and 1.0",
+                    "confidence_min",
+                )
+            effective_min_conf = conf_val
+
         port = self._port()
         with self._map_port_errors("list_insight_cards"):
             records = list(port.list_insight_cards() or [])
         available = getattr(port, "dataset_source", lambda _d: "missing")("insight_cards") != "missing"
         filter_metadata = self._insight_filter_metadata(records)
-        if not include_inactive and val_status:
+        if not include_inactive and val_status and val_status != "all":
             records = [item for item in records if str(item.get("status") or "").lower() == val_status]
         if scope:
             records = [item for item in records if str(item.get("scope") or "") == scope]
@@ -1552,15 +1936,22 @@ class ResearchRouterService:
         if effective_tags:
             req_tags = {v.strip() for v in str(effective_tags).split(",") if v.strip()}
             records = [item for item in records if req_tags.intersection(set(item.get("tags") or []))]
-        if val_entity_type:
+        if val_entity_type and linked_entity_ref is not None:
             records = [
                 item for item in records
-                if any(str((s or {}).get("entity_type") or "").strip() == val_entity_type for s in (item.get("linked_sources") or []))
+                if any(
+                    str((s or {}).get("entity_type") or "").strip() == val_entity_type
+                    and str((s or {}).get("entity_ref") or "").strip() == str(linked_entity_ref)
+                    for s in (item.get("linked_sources") or [])
+                )
             ]
-        if linked_entity_ref:
+        elif val_entity_type:
             records = [
                 item for item in records
-                if any(str((s or {}).get("entity_ref") or "").strip() == str(linked_entity_ref) for s in (item.get("linked_sources") or []))
+                if any(
+                    str((s or {}).get("entity_type") or "").strip() == val_entity_type
+                    for s in (item.get("linked_sources") or [])
+                )
             ]
         if effective_recency != "all":
             records = [

@@ -3,8 +3,8 @@
   "owner": "Antigravity",
   "reviewer": "Codex2",
   "title": "Finish five-domain router-to-application boundaries without further mechanical splitting",
-  "timestamp": "2026-09-27T17:28:00Z",
-  "summary": "Remediated all 4 reviewer rejection defects from PR #5992 and secondary review findings: (1) P1(1): Fixed cross-domain research read regression by plumbing persona_reader and persona_capital_runtime into ResearchRouterService and ResearchRouteContext, restoring mounted persona attachment retrieval and resolution (display_label resolution) without 503 errors; (2) P1(2): Fixed source-confidence parity regression in test_kw02_research_notes_contract.py by prioritizing port getter in _get_dataset_source to preserve KnowledgeReadPortsDouble provenance and eliminating erroneous status overriding; (3) P1(3): Completed service layer extraction across all domains: eliminated dynamic forwarders (_resolve_knowledge_fn and _invoke_port) across all 66 callsites in ResearchRouterService replacing them with explicit typed method invocations wrapped in _map_port_errors context manager and _ResearchPortAdapter, removed Any-containing unions and untyped write-owner dependencies in StrategiesService, moved seed replication/review/merge command objectives and idempotency cache writes from seeds.py into StrategiesService, and moved persona PATCH logic and write_owner to PersonaService.patch_persona; (4) P2(4): Strengthened AST boundary gate in scan_route_source_for_store_access to detect direct bridge construction (*Bridge), router-owned persistence subscript writes (ctx.*_idempotency[...] = ...), mutation methods (.pop, .setdefault, etc.), and renamed dynamic forwarders (_invoke_port, _resolve_knowledge_fn), with negative regression tests verifying zero false negatives.",
+  "timestamp": "2026-09-27T18:14:00Z",
+  "summary": "Remediated all 5 reviewer rejection acceptance failures from Codex2 on PR #5992 exact head 871586492e6663ea485a3f198fe24bf050bfda68: (1) Defect 1 (KW04 contracts in research domain): Restored KW04 validations in research/service.py so linked_entity_ref without linked_entity_type returns 400 (precondition_failed='linked_entity_ref'), confidence_min outside [0.0, 1.0] returns 400, status='all' preserves all rows (active/archived) instead of filtering literal 'all', and linked_sources matching requires entity_type and entity_ref on the same source item; passed test_kw04_insight_cards_contract.py (3/3 passed) and added regression tests in test_bff_test_architecture.py. (2) Defect 2 (Dynamic forwarder _ResearchPortAdapter.__getattr__): Replaced _ResearchPortAdapter.__getattr__ with typed ResearchPortWiring(ResearchKnowledgeSourcePort) defining explicit domain-specific typed delegation for all 39 port methods and conditional binding for optional store methods without __getattr__, __getattribute__, _active_delegate, or mock-module special casing; verified runtime probe service._port().unrelated_operation() strictly raises AttributeError. (3) Defect 3 (Promotion decision & ranking orchestration in PersonaService): Moved promotion decision policy, revision resolution, and command dispatch from personas/routes/ranking.py into PersonaService.decide_promotion_review, and ranking/evidence/snapshot persistence/recommendation orchestration into PersonaService.get_quarterly_ranking_recommendations, leaving HTTP router handlers to parse, invoke authorization, and map DTO/status. (4) Defect 4 (Typed store contracts across domains): Replaced Any-containing unions and untyped parameters in agora/research/service.py (store: Union[MemoryResearchPlanStore, PostgresResearchPlanStore], workshop_store: Optional[Union[MemoryWorkshopStore, PostgresWorkshopStore]], dataset_store: Optional[AgoraDatasetStore], trading_room_store: Optional[TradingRoomStore]) and agora/trading_room/service.py (workshop_store: Optional[Union[MemoryWorkshopStore, PostgresWorkshopStore]]), establishing concrete typed store contracts across all five domains. (5) Defect 5 (AST gate & negative cases): Extended scan_route_source_for_store_access to detect __getattr__/__getattribute__ definitions and dynamic variable getattr(target, var), extended test_five_domain_routers_have_no_direct_store_access to scan all 5 application service files while preserving legitimate owner store access, and added negative regression tests and KW04 contract regression tests in test_bff_test_architecture.py.",
   "router_domains": [
     {
       "domain": "personas",
@@ -99,21 +99,26 @@
     "zero_duplicate_ast_bodies": true,
     "two_instance_data_and_metadata_isolation_preserved": true,
     "existing_subrouters_and_contracts_preserved": true,
-    "no_universal_locator_or_dynamic_forwarding": true
+    "no_universal_locator_or_dynamic_forwarding": true,
+    "all_reviewer_acceptance_failures_remediated": true
   },
   "verification": {
     "commands": [
       {
-        "command": "/tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
-        "result": "33 passed, 3 warnings in 41.13s"
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "result": "35 passed, 3 warnings in 43.30s"
       },
       {
-        "command": "/tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/research/test_router.py services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/test_kw02_research_notes_contract.py",
-        "result": "129 passed, 1 skipped, 3 warnings in 78.20s"
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_kw04_insight_cards_contract.py",
+        "result": "3 passed, 1 warning in 3.50s"
       },
       {
-        "command": "/tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/research/test_router.py services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/test_kw02_research_notes_contract.py",
-        "result": "162 passed, 1 skipped, 3 warnings in 119.16s"
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/research/test_router.py services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/test_kw02_research_notes_contract.py",
+        "result": "164 passed, 1 skipped, 3 warnings in 139.30s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_datastrat_seed_review_bff.py services/control-plane/bff/test_datastrat_seed_replication_bff.py services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/test_kw04_insight_cards_contract.py services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_candidate_pool.py",
+        "result": "106 passed, 3 warnings in 63.60s"
       }
     ]
   },

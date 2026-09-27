@@ -1480,16 +1480,24 @@ def test_knowledge_read_port_fixtures_architecture_compliance() -> None:
     assert not bare_imports, f"{rel_path} must use canonical package imports: {bare_imports}"
 
 
-def scan_route_source_for_store_access(source: str, filename: str = "<string>") -> List[str]:
-    """Scan route AST for forbidden direct store access, locator calls, or port forwarders.
+def scan_route_source_for_store_access(
+    source: str,
+    filename: str = "<string>",
+    is_service: Optional[bool] = None,
+) -> List[str]:
+    """Scan route and service AST for forbidden direct store access, locator calls, or port forwarders.
 
-    Requirement BFF-ROUTER-USECASE-CORRECTIVE-001 (P2(3)):
+    Requirement BFF-ROUTER-USECASE-CORRECTIVE-001 (P2(3), P2(5)):
     - In route files: direct store attributes (.store, .read_store, .write_owner, etc.),
       get_read_store() calls/aliases, direct bridge mutation, router-owned persistence
       subscript writes, and port forwarder calls are forbidden.
-    - Across all files (including common.py): defining or referencing locator/forwarder
+    - Across all files (including common.py and service.py): defining or referencing locator/forwarder
       methods (call_mutation_port, call_port, port_method, _invoke_port, _resolve_knowledge_fn)
-      is forbidden.
+      and arbitrary fallback methods (__getattr__, __getattribute__) or dynamic variable getattr
+      are forbidden.
+    - In service files (is_service=True): services own their store instances, so store attribute
+      access is permitted, but dynamic attribute forwarding (__getattr__, dynamic variable getattr,
+      and forwarders) is strictly banned.
     - In common.py: store attributes and get_read_store() are only permitted in
       Context class field annotations, Context.__init__, Context.__post_init__,
       or Context port wiring accessors. Business functions and standalone helpers
@@ -1546,6 +1554,8 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
     violations: List[str] = []
     tree = ast.parse(source, filename=filename)
     is_common = filename.endswith("common.py")
+    if is_service is None:
+        is_service = filename.endswith("service.py") or "/service.py" in filename
 
     class StoreAccessVisitor(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -1561,6 +1571,8 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
             if node.name in forbidden_forwarders:
                 violations.append(f"{filename}:{node.lineno} defines forbidden forwarder '{node.name}'")
+            if node.name in ("__getattr__", "__getattribute__"):
+                violations.append(f"{filename}:{node.lineno} defines forbidden dynamic attribute fallback '{node.name}'")
             prev_fn = self.current_function
             self.current_function = node.name
             self.generic_visit(node)
@@ -1569,6 +1581,8 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
             if node.name in forbidden_forwarders:
                 violations.append(f"{filename}:{node.lineno} defines forbidden forwarder '{node.name}'")
+            if node.name in ("__getattr__", "__getattribute__"):
+                violations.append(f"{filename}:{node.lineno} defines forbidden dynamic attribute fallback '{node.name}'")
             prev_fn = self.current_function
             self.current_function = node.name
             self.generic_visit(node)
@@ -1583,49 +1597,55 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
             return False
 
         def visit_Call(self, node: ast.Call) -> None:
-            is_allowed = self._is_allowed_common_scope()
-            if not is_allowed:
-                if isinstance(node.func, ast.Name) and node.func.id == "get_read_store":
-                    violations.append(f"{filename}:{node.lineno} calls get_read_store()")
-                elif isinstance(node.func, ast.Attribute) and node.func.attr == "get_read_store":
-                    violations.append(f"{filename}:{node.lineno} calls .{node.func.attr}()")
-                if (
-                    isinstance(node.func, ast.Name)
-                    and node.func.id == "getattr"
-                    and len(node.args) >= 2
-                    and isinstance(node.args[1], ast.Constant)
-                    and (node.args[1].value in store_attrs or node.args[1].value in forbidden_forwarders)
+            if isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) >= 2:
+                if not isinstance(node.args[1], ast.Constant):
+                    violations.append(f"{filename}:{node.lineno} calls dynamic getattr with variable attribute")
+                elif not is_service and not self._is_allowed_common_scope() and isinstance(node.args[1], ast.Constant) and (
+                    node.args[1].value in store_attrs or node.args[1].value in forbidden_forwarders
                 ):
                     violations.append(f"{filename}:{node.lineno} calls getattr with '{node.args[1].value}'")
+                elif is_service and isinstance(node.args[1], ast.Constant) and (
+                    node.args[1].value in forbidden_forwarders
+                ):
+                    violations.append(f"{filename}:{node.lineno} calls getattr with forbidden forwarder '{node.args[1].value}'")
 
-                # Direct bridge construction or invocation
-                callee_name = None
-                if isinstance(node.func, ast.Name) and (node.func.id.endswith("Bridge") or "Bridge" in node.func.id):
-                    callee_name = node.func.id
-                elif isinstance(node.func, ast.Attribute) and (node.func.attr.endswith("Bridge") or "Bridge" in node.func.attr):
-                    callee_name = node.func.attr
-                if callee_name:
-                    violations.append(f"{filename}:{node.lineno} directly accesses or constructs bridge '{callee_name}'")
+            if not is_service:
+                is_allowed = self._is_allowed_common_scope()
+                if not is_allowed:
+                    if isinstance(node.func, ast.Name) and node.func.id == "get_read_store":
+                        violations.append(f"{filename}:{node.lineno} calls get_read_store()")
+                    elif isinstance(node.func, ast.Attribute) and node.func.attr == "get_read_store":
+                        violations.append(f"{filename}:{node.lineno} calls .{node.func.attr}()")
 
-                # Router-owned persistence mutation calls (.pop, .setdefault, .update, .clear)
-                if isinstance(node.func, ast.Attribute) and node.func.attr in {"pop", "setdefault", "update", "clear"}:
-                    if isinstance(node.func.value, ast.Attribute):
-                        attr_name = node.func.value.attr
-                        if attr_name in store_attrs or attr_name.startswith("strategy_seed_") or attr_name.startswith("seed_"):
-                            violations.append(f"{filename}:{node.lineno} mutates router-owned persistence .{attr_name}.{node.func.attr}()")
+                    # Direct bridge construction or invocation
+                    callee_name = None
+                    if isinstance(node.func, ast.Name) and (node.func.id.endswith("Bridge") or "Bridge" in node.func.id):
+                        callee_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute) and (node.func.attr.endswith("Bridge") or "Bridge" in node.func.attr):
+                        callee_name = node.func.attr
+                    if callee_name:
+                        violations.append(f"{filename}:{node.lineno} directly accesses or constructs bridge '{callee_name}'")
+
+                    # Router-owned persistence mutation calls (.pop, .setdefault, .update, .clear)
+                    if isinstance(node.func, ast.Attribute) and node.func.attr in {"pop", "setdefault", "update", "clear"}:
+                        if isinstance(node.func.value, ast.Attribute):
+                            attr_name = node.func.value.attr
+                            if attr_name in store_attrs or attr_name.startswith("strategy_seed_") or attr_name.startswith("seed_"):
+                                violations.append(f"{filename}:{node.lineno} mutates router-owned persistence .{attr_name}.{node.func.attr}()")
             self.generic_visit(node)
 
         def visit_Attribute(self, node: ast.Attribute) -> None:
             if node.attr in forbidden_forwarders:
                 violations.append(f"{filename}:{node.lineno} accesses forbidden forwarder .{node.attr}")
-            is_allowed = self._is_allowed_common_scope()
-            if not is_allowed:
-                if node.attr == "get_read_store":
-                    violations.append(f"{filename}:{node.lineno} accesses .get_read_store")
-                elif node.attr in store_attrs:
-                    violations.append(f"{filename}:{node.lineno} accesses .{node.attr}")
-                elif node.attr.endswith("_bridge") or node.attr == "bridge":
-                    violations.append(f"{filename}:{node.lineno} accesses bridge attribute .{node.attr}")
+            if not is_service:
+                is_allowed = self._is_allowed_common_scope()
+                if not is_allowed:
+                    if node.attr == "get_read_store":
+                        violations.append(f"{filename}:{node.lineno} accesses .get_read_store")
+                    elif node.attr in store_attrs:
+                        violations.append(f"{filename}:{node.lineno} accesses .{node.attr}")
+                    elif node.attr.endswith("_bridge") or node.attr == "bridge":
+                        violations.append(f"{filename}:{node.lineno} accesses bridge attribute .{node.attr}")
             self.generic_visit(node)
 
         def visit_Name(self, node: ast.Name) -> None:
@@ -1644,18 +1664,18 @@ def scan_route_source_for_store_access(source: str, filename: str = "<string>") 
                         violations.append(f"{filename}:{lineno} writes to router-owned persistence '{val.id}[...]'")
 
         def visit_Assign(self, node: ast.Assign) -> None:
-            if not self._is_allowed_common_scope():
+            if not is_service and not self._is_allowed_common_scope():
                 for target in node.targets:
                     self._check_persistence_write(target, node.lineno)
             self.generic_visit(node)
 
         def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-            if not self._is_allowed_common_scope():
+            if not is_service and not self._is_allowed_common_scope():
                 self._check_persistence_write(node.target, node.lineno)
             self.generic_visit(node)
 
         def visit_AugAssign(self, node: ast.AugAssign) -> None:
-            if not self._is_allowed_common_scope():
+            if not is_service and not self._is_allowed_common_scope():
                 self._check_persistence_write(node.target, node.lineno)
             self.generic_visit(node)
 
@@ -1668,7 +1688,8 @@ def test_five_domain_routers_have_no_direct_store_access() -> None:
     """Requirement BFF-ROUTER-USECASE-CORRECTIVE-001: Router HTTP route handlers
     must not access persistence stores directly; all business branching, persistence,
     and retries must be mediated through domain-specific application services.
-    Scans all 25 files across the 5 decomposed domains (including common.py).
+    Scans all 25 route/context files and 5 application service files across the
+    5 decomposed domains.
     """
     domains = [
         "personas/routes",
@@ -1687,10 +1708,27 @@ def test_five_domain_routers_have_no_direct_store_access() -> None:
                 continue
             scanned_files += 1
             src = py_path.read_text(encoding="utf-8")
-            v = scan_route_source_for_store_access(src, filename=str(py_path.relative_to(BFF_DIR)))
+            v = scan_route_source_for_store_access(src, filename=str(py_path.relative_to(BFF_DIR)), is_service=False)
             violations.extend(v)
     assert scanned_files == 25, f"Expected 25 route/context files across 5 domains, found {scanned_files}"
-    assert not violations, f"Subrouter handlers must not access store attributes or forwarders directly: {violations}"
+
+    service_files = [
+        "personas/service.py",
+        "strategies/service.py",
+        "research/service.py",
+        "agora/research/service.py",
+        "agora/trading_room/service.py",
+    ]
+    scanned_service_files = 0
+    for s in service_files:
+        svc_path = BFF_DIR / s
+        assert svc_path.is_file(), f"Service file {svc_path} must exist"
+        scanned_service_files += 1
+        src = svc_path.read_text(encoding="utf-8")
+        v = scan_route_source_for_store_access(src, filename=s, is_service=True)
+        violations.extend(v)
+    assert scanned_service_files == 5, f"Expected 5 service files across 5 domains, found {scanned_service_files}"
+    assert not violations, f"Routes and application services must not use dynamic forwarders or unmediated store access: {violations}"
 
 
 def test_five_domain_router_handlers_have_no_duplicate_ast_bodies() -> None:
@@ -2151,6 +2189,123 @@ def test_five_domain_store_access_gate_catches_read_store_alias() -> None:
     """)
     detected_ctx_getter = scan_route_source_for_store_access(ctx_getter_src, filename="ctx_getter.py")
     assert any("get_read_store" in d for d in detected_ctx_getter), f"Gate missed ctx.get_read_store(): {detected_ctx_getter}"
+
+
+def test_five_domain_store_access_gate_catches_dynamic_getattr_and_fallbacks() -> None:
+    """Negative regression: verify scan_route_source_for_store_access catches
+    __getattr__ fallback definitions and dynamic variable getattr forwarding in
+    service/adapter boundaries, while permitting legitimate owner store access.
+
+    Requirement BFF-ROUTER-USECASE-CORRECTIVE-001 (P2(5)):
+    Directly exercises the shared scanner on bad fixtures for __getattr__, dynamic
+    variable getattr, and verifies legitimate service store access is not banned.
+    """
+    import textwrap
+
+    # Rejection P2(5): Gate catches __getattr__ dynamic attribute fallback in service/adapter
+    bad_getattr_def_src = textwrap.dedent("""
+        class _ResearchPortAdapter:
+            def __init__(self, raw_port, knowledge_source):
+                self._raw_port = raw_port
+                self._ks = knowledge_source
+            def __getattr__(self, name: str):
+                return getattr(self._raw_port, name)
+    """)
+    detected_gdef = scan_route_source_for_store_access(bad_getattr_def_src, filename="research/service.py", is_service=True)
+    assert any("__getattr__" in d for d in detected_gdef), f"Gate missed __getattr__ definition: {detected_gdef}"
+    assert any("dynamic getattr" in d for d in detected_gdef), f"Gate missed dynamic getattr: {detected_gdef}"
+
+    # Rejection P2(5): Gate catches dynamic getattr with variable attribute name
+    bad_dyn_getattr_src = textwrap.dedent("""
+        def call_port_dynamically(target, method_name, *args):
+            fn = getattr(target, method_name)
+            return fn(*args)
+    """)
+    detected_dyn = scan_route_source_for_store_access(bad_dyn_getattr_src, filename="service.py", is_service=True)
+    assert any("dynamic getattr" in d for d in detected_dyn), f"Gate missed dynamic getattr: {detected_dyn}"
+
+    # Rejection P2(5): Gate permits legitimate owner store access in application services
+    legit_service_src = textwrap.dedent("""
+        class PersonaService:
+            def __init__(self, store, write_owner):
+                self.store = store
+                self.write_owner = write_owner
+            def get_persona(self, persona_id: str):
+                return self.store.get_persona(persona_id)
+            def update_persona(self, persona_id: str, data: dict):
+                return self.write_owner.update_persona(persona_id, data)
+    """)
+    legit_violations = scan_route_source_for_store_access(legit_service_src, filename="personas/service.py", is_service=True)
+    assert not legit_violations, f"Gate incorrectly flagged legitimate service store access: {legit_violations}"
+
+
+def test_research_kw04_insight_cards_contract_regressions() -> None:
+    """Requirement BFF-ROUTER-USECASE-CORRECTIVE-001 (P1(1)):
+    KW04 insight cards contracts in research application use case:
+    1. linked_entity_ref without linked_entity_type returns 400.
+    2. confidence_min values (-1.0 and 2.0) outside [0.0, 1.0] return 400.
+    3. status='all' returns all rows (2 rows, not 0 rows filtering for literal 'all').
+    4. Matching linked_entity_type and linked_entity_ref requires matching on the same item in linked_sources.
+    """
+    from fastapi import HTTPException
+    from services.control_plane.bff.research.service import ResearchRouterService
+    from services.control_plane.bff.ports.research_knowledge_source import ResearchKnowledgeSourcePort
+
+    class FakeResearchKnowledgePort(ResearchKnowledgeSourcePort):
+        def dataset_source(self, dataset: str) -> str:
+            return "fake"
+
+        def dataset_surface_status(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+            return {"status": "ok"}
+
+        def list_insight_cards(self) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "insight_id": "ins-1",
+                    "status": "active",
+                    "confidence": 0.8,
+                    "linked_sources": [{"entity_type": "strategy_spec", "entity_ref": "strat-1"}],
+                },
+                {
+                    "insight_id": "ins-2",
+                    "status": "archived",
+                    "confidence": 0.5,
+                    "linked_sources": [{"entity_type": "experiment", "entity_ref": "exp-1"}],
+                },
+            ]
+
+    service = ResearchRouterService(
+        port_getter=lambda: FakeResearchKnowledgePort(),
+        utc_now=lambda: "2026-09-27T00:00:00Z",
+        snapshot_meta=lambda s: {},
+        page_slice=lambda it, tok, sz: (it, None),
+    )
+
+    # 1. linked_entity_ref without type must return 400
+    with pytest.raises(HTTPException) as exc_info:
+        service.list_insight_cards(linked_entity_ref="strat-1")
+    assert exc_info.value.status_code == 400
+    assert "linked_entity_type" in str(exc_info.value.detail)
+
+    # 2. confidence_min values outside [0.0, 1.0] must return 400
+    for bad_conf in [-1.0, 2.0]:
+        with pytest.raises(HTTPException) as exc_info:
+            service.list_insight_cards(confidence_min=bad_conf)
+        assert exc_info.value.status_code == 400
+        assert "confidence_min" in str(exc_info.value.detail)
+
+    # 3. status='all' returns all rows (2 rows, not 0 rows filtering for literal 'all')
+    res_all = service.list_insight_cards(status="all")
+    assert len(res_all["insight_cards"]) == 2
+
+    # 4. linked_sources matching on same item
+    res_match = service.list_insight_cards(linked_entity_type="strategy_spec", linked_entity_ref="strat-1")
+    assert len(res_match["insight_cards"]) == 1
+    assert res_match["insight_cards"][0]["insight_id"] == "ins-1"
+
+    # Mismatched type and ref on different items returns 0
+    res_mismatch = service.list_insight_cards(linked_entity_type="strategy_spec", linked_entity_ref="exp-1")
+    assert len(res_mismatch["insight_cards"]) == 0
 
 
 def test_five_domain_trading_room_isolation_provenance_and_negative_tenant(

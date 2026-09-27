@@ -280,126 +280,12 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
             )
         _reject_body_idempotency_key(payload)
         _raise_if_promotion_review_direct_mutation_requested(payload)
-
-        raw_decision = str(payload.get("decision") or "").strip().lower()
-        if raw_decision not in _PROMOTION_REVIEW_DECISIONS:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "decision is invalid",
-                f"decision must be one of {sorted(_PROMOTION_REVIEW_DECISIONS)}",
-                precondition_failed="decision",
-            )
-        rationale = _promotion_review_rationale(payload)
-        if raw_decision == "reject" and not rationale:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "reject decision requires a non-empty rationale",
-                "rationale must be a non-empty string when decision=reject",
-                precondition_failed="rationale",
-            )
-
-        snapshot_at = utc_now()
-        clean_review_id = _promotion_review_clean_id(review_id)
-        exact_revision_requested = (
-            clean_review_id
-            != _promotion_review_revision_recommendation_id(clean_review_id)
-        )
-        review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
-            identity,
-            review_id,
-            snapshot_at=snapshot_at,
-            quarter=str(payload.get("quarter") or "").strip() or None,
-            # Stable aliases remain current-only. An exact immutable revision may
-            # still receive its one pending decision after a newer ranking snapshot
-            # becomes current; the revision id keeps that authority isolated.
-            include_historical=exact_revision_requested,
-        )
-        if review is None:
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Promotion review not found",
-                f"Promotion review {review_id} does not exist",
-                precondition_failed="review_id",
-            )
-        if exact_revision_requested and str(
-            review.get("decision_status") or "pending"
-        ).strip().lower() != "pending":
-            current_review, _, _, _ = _promotion_review_find(
-                identity,
-                _promotion_review_revision_recommendation_id(clean_review_id),
-                snapshot_at=snapshot_at,
-                quarter=str(payload.get("quarter") or "").strip() or None,
-                include_historical=False,
-            )
-            current_revision_id = str(
-                (current_review or {}).get("promotion_review_id")
-                or (current_review or {}).get("review_id")
-                or ""
-            ).strip()
-            if clean_review_id != current_revision_id:
-                # Resolved historical revisions remain read-only; in particular an
-                # old approval must never be reused as authority for a newer
-                # revision. The current exact revision still reaches the durable
-                # idempotency layer so its original decision receipt can replay.
-                raise _bff_error(
-                    404,
-                    ErrorCode.RESOURCE_NOT_FOUND,
-                    "Promotion review not found",
-                    f"Promotion review {review_id} does not exist",
-                    precondition_failed="review_id",
-                )
-        if not bool(review.get("submitted")):
-            raise _bff_error(
-                409,
-                ErrorCode.HUMAN_GATE_PENDING,
-                "Promotion review has not been submitted",
-                "Submit the quarterly ranking recommendation before recording a Human Gate decision.",
-                precondition_failed="recommendation_submission",
-                suggestion="POST the recommendation submit route and then retry the decision.",
-                details_extra={
-                    "recommendationId": review.get("recommendation_id"),
-                    "submitHref": (review.get("links") or {}).get("submit"),
-                },
-            )
-
-        command_type = (
-            CommandType.HUMAN_GATE_REJECT
-            if raw_decision == "reject"
-            else CommandType.HUMAN_GATE_APPROVE
-        )
-        command_payload = _promotion_review_decision_payload(
+        return _service.decide_promotion_review(
+            review_id=review_id,
             payload=payload,
-            review=review,
-            decision=raw_decision,
-            rationale=rationale,
             identity=identity,
-        )
-        client_idempotency_key = _resolve_final_idempotency_key(
-            idempotency_key,
-            x_idempotency_key,
-        )
-        scoped_idempotency_key = _promotion_review_scoped_idempotency_key(
-            client_idempotency_key,
-            None,
-            review["review_id"],
-        )
-        command_response = _sem_command_response(
-            command_type=command_type,
-            target_type=ObjectType.HUMAN_GATE_ITEM,
-            target_id=_promotion_review_target_id(review["review_id"]),
-            payload=command_payload,
-            identity=identity,
-            idempotency_key=scoped_idempotency_key,
-        )
-        return _promotion_review_decision_response(
-            command_response,
-            review=review,
-            decision=raw_decision,
-            command_payload=command_payload,
-            client_idempotency_key=client_idempotency_key,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
         )
 
 
@@ -1256,33 +1142,20 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
         snapshot_at = utc_now()
-        quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
-        ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
-        (
-            public_evidence_refs,
-            canonical_evidence_refs,
-            redacted_count,
-            evidence_dataset_available,
-        ) = _pm12_public_quarter_evidence_refs(
-            identity,
-            quarter_window,
+        rec_data = _service.get_quarterly_ranking_recommendations(
+            quarter=quarter,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            snapshot_at=snapshot_at,
         )
-        ranked_items = _pm12_attach_ranking_evidence(
-            ranked_items,
-            public_evidence_refs,
-            canonical_evidence_refs=canonical_evidence_refs,
-        )
-        ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
-            ranked_items,
-            surface="quarterly",
-            period=quarter_window["quarter"],
-        )
-        recommendations = _pm12_quarterly_recommendations(
-            ranked_items,
-            quarter_window=quarter_window,
-            evidence_refs=public_evidence_refs,
-        )
+        recommendations = rec_data["recommendations"]
+        ranked_items = rec_data["ranked_items"]
+        rows = rec_data["rows"]
+        public_evidence_refs = rec_data["public_evidence_refs"]
+        quarter_window = rec_data["quarter_window"]
+        redacted_count = rec_data["redacted_count"]
+        evidence_dataset_available = rec_data["evidence_dataset_available"]
+        ranking_snapshot_id = rec_data["ranking_snapshot_id"]
 
         enriched_recs = _pm12_filter_persona_items(
             recommendations,

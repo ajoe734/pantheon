@@ -16,6 +16,12 @@ from fastapi import HTTPException
 
 from .dispatcher import ResearchDispatcher
 from .store import MemoryResearchPlanStore, PostgresResearchPlanStore
+from services.control_plane.bff.agora.strategy_workshop.store import (
+    MemoryWorkshopStore,
+    PostgresWorkshopStore,
+)
+from services.control_plane.bff.agora.dataset_extraction.extractor import AgoraDatasetStore
+from services.control_plane.bff.agora.trading_room.store import TradingRoomStore
 
 from .routes.common import (
     CandidateDiscussionRequest,
@@ -71,11 +77,11 @@ class AgoraResearchService:
     def __init__(
         self,
         *,
-        store: Union[MemoryResearchPlanStore, PostgresResearchPlanStore, Any],
+        store: Union[MemoryResearchPlanStore, PostgresResearchPlanStore],
         dispatcher: Optional[ResearchDispatcher] = None,
-        workshop_store: Optional[Any] = None,
-        dataset_store: Optional[Any] = None,
-        trading_room_store: Optional[Any] = None,
+        workshop_store: Optional[Union[MemoryWorkshopStore, PostgresWorkshopStore]] = None,
+        dataset_store: Optional[AgoraDatasetStore] = None,
+        trading_room_store: Optional[TradingRoomStore] = None,
         utc_now: Optional[Callable[[], str]] = None,
         bff_error: Optional[Callable[..., HTTPException]] = None,
     ) -> None:
@@ -100,11 +106,11 @@ class AgoraResearchService:
     def _error_code(self, name: str) -> Any:
         try:
             from services.control_plane.bff.models import ErrorCode
-            return getattr(ErrorCode, name, name)
+            return ErrorCode.__members__.get(name, name)
         except ImportError:
             try:
                 from ...models import ErrorCode
-                return getattr(ErrorCode, name, name)
+                return ErrorCode.__members__.get(name, name)
             except ImportError:
                 return name
 
