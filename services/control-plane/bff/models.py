@@ -645,6 +645,41 @@ SOURCE_TYPE_TO_EVIDENCE_KIND: Dict[str, str] = {
 }
 
 
+# Maps URI scheme aliases to EvidenceKind strings so authoritative references
+# resolve directly without being misclassified by incidental path keywords.
+URI_SCHEME_TO_EVIDENCE_KIND: Dict[str, str] = {
+    # Broker / audit aliases:
+    "broker": "audit",
+    "broker-evidence": "audit",
+    "paper-broker": "audit",
+    "broker-adapter": "audit",
+    "broker-sandbox": "audit",
+    "broker-subaccount": "audit",
+    "audit-log": "audit",
+    # Metric / telemetry aliases:
+    "telemetry-event": "metric",
+    "telemetry": "metric",
+    # Signal aliases:
+    "agora-signal": "signal",
+    "signal-inference": "signal",
+    # Journal aliases:
+    "agora-journal": "journal",
+    # Policy aliases:
+    "policy-decision": "policy",
+    "risk-policy": "policy",
+    "risk-adjudication": "policy",
+    "persona-policy": "policy",
+    # Approval aliases:
+    "approval-decision": "approval",
+    # Incident aliases:
+    "incident-report": "incident",
+    # Artifact aliases:
+    "research-artifact": "artifact",
+    # Strategy aliases:
+    "strategy-spec": "strategy",
+}
+
+
 class RedactedEvidenceRef(BaseModel):
     ref_id: str
     kind: Optional[EvidenceKind] = None
@@ -687,20 +722,36 @@ def _resolve_evidence_kind_and_capability(
     else:
         ref_id = str(ref).strip()
 
+    if kind_key and kind_key in SOURCE_TYPE_TO_EVIDENCE_KIND:
+        kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND[kind_key]
+
     if not kind_key and kind_map and ref_id in kind_map:
         kind_key = str(kind_map[ref_id]).strip()
 
+    # 1. Authoritative URI scheme check: if ref_id has a scheme (e.g. audit://...),
+    # resolve directly to the scheme's evidence kind or alias. Authoritative URI
+    # schemes must not be downgraded by incidental path keywords.
+    if not kind_key and ref_id and "://" in ref_id:
+        scheme = ref_id.split("://", 1)[0].strip().lower()
+        if scheme in EVIDENCE_CAPABILITY_MAP:
+            kind_key = scheme
+        elif scheme in URI_SCHEME_TO_EVIDENCE_KIND:
+            kind_key = URI_SCHEME_TO_EVIDENCE_KIND[scheme]
+
+    # 2. Authoritative field kind: if the container field specifies a domain-specific
+    # default_kind (audit_refs -> audit, incident_refs -> incident, postmortem_refs -> postmortem,
+    # policy_decision_refs -> policy, broker_evidence_refs -> audit, etc.),
+    # that field assignment is authoritative over incidental substring keywords.
+    if not kind_key and default_kind:
+        dk = str(default_kind).strip()
+        if dk != "artifact":
+            kind_key = dk
+
+    # 3. Fallback keyword matching: for generic bundles (default_kind='artifact'
+    # or None) and non-URI references, resolve specific evidence kinds by keyword pattern.
     if not kind_key and ref_id:
         lower = ref_id.lower()
-        if lower.startswith(("paper-broker://", "broker-evidence://", "broker://")):
-            kind_key = "audit"
-        elif lower.startswith("signal://"):
-            kind_key = "signal"
-        elif lower.startswith("persona://"):
-            kind_key = "persona"
-        elif lower.startswith("telemetry-event://"):
-            kind_key = "metric"
-        elif "approval" in lower:
+        if "approval" in lower:
             kind_key = "approval"
         elif "postmortem" in lower:
             kind_key = "postmortem"
@@ -715,6 +766,7 @@ def _resolve_evidence_kind_and_capability(
         elif "alert" in lower:
             kind_key = "alert"
 
+    # 4. Final fallback to default_kind (e.g. 'artifact' for remaining bundle items).
     if not kind_key and default_kind:
         kind_key = str(default_kind).strip()
 

@@ -40,6 +40,11 @@ from services.control_plane.bff.governance.router import create_governance_route
 from services.control_plane.bff.models import redact_evidence_refs, utc_now
 from services.control_plane.bff.settings_store import DEFAULT_SETTINGS_BUNDLE, SettingsStore
 from services.broker.sinopac.evidence_packet import build_ooda_packet
+from services.persona.ooda_cycle_runtime import (
+    ALPHA_SEED_SOURCES,
+    OODA_SCENARIOS,
+    _build_closed_cycle_packet,
+)
 
 
 def _call_with_supported_kwargs(fn: Callable[..., Any], **kwargs: Any) -> Any:
@@ -306,6 +311,36 @@ class _ProductionOodaSweepStore(_ControlLoopsSweepStore):
     def get_ooda_packet(self, packet_id: str) -> Optional[Dict[str, Any]]:
         if packet_id == _PRODUCTION_OODA_PACKET["packet_id"]:
             return copy.deepcopy(_PRODUCTION_OODA_PACKET)
+        return None
+
+
+_PERSONA_OODA_PACKET, _, _ = _build_closed_cycle_packet(
+    persona={"persona_id": "review-persona", "name": "Review Persona"},
+    persona_context={},
+    scenario=next(s for s in OODA_SCENARIOS if s.scenario_id == "incident_recovery_act"),
+    cycle_no=12,
+    persona_index=0,
+    seed=ALPHA_SEED_SOURCES[0],
+    backtest={
+        "request_id": "review-backtest",
+        "component": "vectorbt",
+        "metrics": {"sharpe": 1.0},
+        "strategy_id": "review-strategy",
+    },
+    session={"request_id": "review-session"},
+    generated_at="2026-09-27T06:00:00Z",
+)
+
+
+class _PersonaOodaSweepStore(_ControlLoopsSweepStore):
+    """Store returning canonical persona-produced closed-cycle OODA packet with incident_recovery_act scenario."""
+
+    def list_ooda_packets(self, **_: Any) -> List[Dict[str, Any]]:
+        return [copy.deepcopy(_PERSONA_OODA_PACKET)]
+
+    def get_ooda_packet(self, packet_id: str) -> Optional[Dict[str, Any]]:
+        if packet_id == _PERSONA_OODA_PACKET["packet_id"]:
+            return copy.deepcopy(_PERSONA_OODA_PACKET)
         return None
 
 
@@ -701,6 +736,158 @@ def test_ooda_real_producer_list_and_detail_fail_closed_when_capabilities_return
         assert isinstance(market_ref_d, dict) and market_ref_d.get("redacted") is True
         assert market_ref_d["reason"] == "redaction_policy_unavailable"
         assert detail_resp.json()["meta"]["redacted_evidence_count"] == 14
+
+
+def test_ooda_persona_producer_list_redacts_for_low_capability_identity() -> None:
+    """Persona producer packet: audit:// URIs with scenario path keywords keep audit.read gating on list route."""
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(store=_PersonaOodaSweepStore()))
+        response = client.get(
+            "/bff/ooda/packets",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        packet = payload["data"][0]
+        # audit_refs carry audit://.../incident_recovery_act/... but must not be downgraded to incident
+        for ref in packet["audit_refs"]:
+            assert isinstance(ref, dict) and ref.get("redacted") is True
+            assert ref.get("required_capability") == "audit.read"
+            assert ref.get("reason") == "insufficient_capability"
+        # learn.postmortem_refs must keep postmortem.read
+        postmortem_ref = packet["learn"]["postmortem_refs"][0]
+        assert isinstance(postmortem_ref, dict) and postmortem_ref.get("redacted") is True
+        assert postmortem_ref.get("required_capability") == "postmortem.read"
+        # orient.risk_adjudication_ref keeps policy.read
+        risk_ref = packet["orient"]["risk_adjudication_ref"]
+        assert isinstance(risk_ref, dict) and risk_ref.get("redacted") is True
+        assert risk_ref.get("required_capability") == "policy.read"
+        assert payload["meta"]["redacted_evidence_count"] == 15
+
+
+def test_ooda_persona_producer_detail_redacts_for_low_capability_identity() -> None:
+    """Persona producer packet: audit:// URIs with scenario path keywords keep audit.read gating on detail route."""
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(store=_PersonaOodaSweepStore()))
+        response = client.get(
+            f"/bff/ooda/packets/{_PERSONA_OODA_PACKET['packet_id']}",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        packet = payload["data"]
+        for ref in packet["audit_refs"]:
+            assert isinstance(ref, dict) and ref.get("redacted") is True
+            assert ref.get("required_capability") == "audit.read"
+            assert ref.get("reason") == "insufficient_capability"
+        postmortem_ref = packet["learn"]["postmortem_refs"][0]
+        assert isinstance(postmortem_ref, dict) and postmortem_ref.get("redacted") is True
+        assert postmortem_ref.get("required_capability") == "postmortem.read"
+        risk_ref = packet["orient"]["risk_adjudication_ref"]
+        assert isinstance(risk_ref, dict) and risk_ref.get("redacted") is True
+        assert risk_ref.get("required_capability") == "policy.read"
+        assert payload["meta"]["redacted_evidence_count"] == 15
+
+
+def test_ooda_persona_producer_list_and_detail_pass_through_for_full_capability_identity() -> None:
+    """Persona producer packet: all refs remain visible original strings for full-capability caller."""
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(store=_PersonaOodaSweepStore()))
+        # List
+        list_resp = client.get(
+            "/bff/ooda/packets",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        list_payload = list_resp.json()
+        list_packet = list_payload["data"][0]
+        assert list_packet["audit_refs"] == _PERSONA_OODA_PACKET["audit_refs"]
+        assert list_packet["learn"]["postmortem_refs"] == _PERSONA_OODA_PACKET["learn"]["postmortem_refs"]
+        assert list_packet["orient"]["risk_adjudication_ref"] == _PERSONA_OODA_PACKET["orient"]["risk_adjudication_ref"]
+        assert list_payload["meta"]["redacted_evidence_count"] == 0
+
+        # Detail
+        detail_resp = client.get(
+            f"/bff/ooda/packets/{_PERSONA_OODA_PACKET['packet_id']}",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert detail_resp.status_code == 200, detail_resp.text
+        detail_payload = detail_resp.json()
+        detail_packet = detail_payload["data"]
+        assert detail_packet["audit_refs"] == _PERSONA_OODA_PACKET["audit_refs"]
+        assert detail_packet["learn"]["postmortem_refs"] == _PERSONA_OODA_PACKET["learn"]["postmortem_refs"]
+        assert detail_packet["orient"]["risk_adjudication_ref"] == _PERSONA_OODA_PACKET["orient"]["risk_adjudication_ref"]
+        assert detail_payload["meta"]["redacted_evidence_count"] == 0
+
+
+def test_ooda_persona_producer_list_and_detail_fail_closed_when_capabilities_unresolvable() -> None:
+    """Persona producer packet: fail closed when capabilities lookup raises."""
+    def _boom(identity: Any) -> List[str]:
+        raise RuntimeError("capability lookup unavailable")
+
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(store=_PersonaOodaSweepStore(), capabilities_for_identity=_boom))
+        # List
+        list_resp = client.get(
+            "/bff/ooda/packets",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        list_packet = list_resp.json()["data"][0]
+        for ref in list_packet["audit_refs"]:
+            assert isinstance(ref, dict) and ref.get("redacted") is True
+            assert ref.get("reason") == "redaction_policy_unavailable"
+            assert ref.get("required_capability") == "audit.read"
+        assert list_resp.json()["meta"]["redacted_evidence_count"] == 33
+
+        # Detail
+        detail_resp = client.get(
+            f"/bff/ooda/packets/{_PERSONA_OODA_PACKET['packet_id']}",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert detail_resp.status_code == 200, detail_resp.text
+        detail_packet = detail_resp.json()["data"]
+        for ref in detail_packet["audit_refs"]:
+            assert isinstance(ref, dict) and ref.get("redacted") is True
+            assert ref.get("reason") == "redaction_policy_unavailable"
+            assert ref.get("required_capability") == "audit.read"
+        assert detail_resp.json()["meta"]["redacted_evidence_count"] == 33
+
+
+def test_ooda_persona_producer_list_and_detail_fail_closed_when_capabilities_returns_none() -> None:
+    """Persona producer packet: fail closed when capabilities lookup returns None."""
+    with _stub_auth_env():
+        client = TestClient(
+            _build_control_loops_app(
+                store=_PersonaOodaSweepStore(),
+                capabilities_for_identity=lambda _: None,
+            )
+        )
+        # List
+        list_resp = client.get(
+            "/bff/ooda/packets",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        list_packet = list_resp.json()["data"][0]
+        for ref in list_packet["audit_refs"]:
+            assert isinstance(ref, dict) and ref.get("redacted") is True
+            assert ref.get("reason") == "redaction_policy_unavailable"
+            assert ref.get("required_capability") == "audit.read"
+        assert list_resp.json()["meta"]["redacted_evidence_count"] == 33
+
+        # Detail
+        detail_resp = client.get(
+            f"/bff/ooda/packets/{_PERSONA_OODA_PACKET['packet_id']}",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert detail_resp.status_code == 200, detail_resp.text
+        detail_packet = detail_resp.json()["data"]
+        for ref in detail_packet["audit_refs"]:
+            assert isinstance(ref, dict) and ref.get("redacted") is True
+            assert ref.get("reason") == "redaction_policy_unavailable"
+            assert ref.get("required_capability") == "audit.read"
+        assert detail_resp.json()["meta"]["redacted_evidence_count"] == 33
 
 
 # --- v5 interventions (list + detail) ---------------------------------------
