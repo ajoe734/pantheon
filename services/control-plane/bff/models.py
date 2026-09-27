@@ -655,6 +655,63 @@ class RedactedEvidenceRef(BaseModel):
     redacted_count: Optional[int] = None
 
 
+def _resolve_evidence_kind_and_capability(
+    ref: dict[str, Any],
+) -> tuple[str, Optional[EvidenceKind], Optional[str]]:
+    """Resolve an evidence ref's kind key, ``EvidenceKind``, and required capability.
+
+    Shared by ``redact_evidence_refs`` (normal capability-gated redaction) and
+    the fail-closed fallback below, so both paths report the same
+    ``required_capability`` for a ref whose kind is known, rather than one of
+    them silently dropping it.
+    """
+    kind_key = (
+        str(ref.get("evidence_type") or "").strip()
+        or str(ref.get("type") or "").strip()
+        or str(ref.get("ref_type") or "").strip()
+        or str(ref.get("link_type") or "").strip()
+    )
+    if not kind_key:
+        source_document = ref.get("source_document")
+        if isinstance(source_document, dict):
+            source_type = str(source_document.get("source_type") or "").strip()
+            kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND.get(source_type, "")
+
+    required_capability = EVIDENCE_CAPABILITY_MAP.get(kind_key) if kind_key else None
+    try:
+        evidence_kind = EvidenceKind(kind_key) if kind_key else None
+    except (TypeError, ValueError):
+        evidence_kind = None
+    return kind_key, evidence_kind, required_capability
+
+
+def fail_closed_redacted_refs(refs: list[Any]) -> tuple[list[dict[str, Any]], int]:
+    """Withhold every ref because the redaction policy itself is unavailable.
+
+    Used when a capability lookup or a canonical redact call raises, so no
+    individual ref can be verified safe to disclose. Still resolves
+    ``required_capability`` from the known evidence-kind map when the ref's
+    kind can be determined, instead of dropping that field for every ref.
+    """
+    redacted: list[dict[str, Any]] = []
+    for ref in refs:
+        if isinstance(ref, dict):
+            ref_id = str(ref.get("ref_id") or ref.get("id") or "")
+            _, _, required_capability = _resolve_evidence_kind_and_capability(ref)
+        else:
+            ref_id = str(ref)
+            required_capability = None
+        redacted.append(
+            {
+                "ref_id": ref_id,
+                "redacted": True,
+                "required_capability": required_capability or "unknown",
+                "reason": "redaction_policy_unavailable",
+            }
+        )
+    return redacted, len(redacted)
+
+
 def redact_evidence_refs(
     identity: OperatorIdentity,
     evidence_refs: list[dict[str, Any]],
@@ -679,26 +736,10 @@ def redact_evidence_refs(
             processed.append(ref)
             continue
 
-        kind_key = (
-            str(ref.get("evidence_type") or "").strip()
-            or str(ref.get("type") or "").strip()
-            or str(ref.get("ref_type") or "").strip()
-            or str(ref.get("link_type") or "").strip()
-        )
-        if not kind_key:
-            source_document = ref.get("source_document")
-            if isinstance(source_document, dict):
-                source_type = str(source_document.get("source_type") or "").strip()
-                kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND.get(source_type, "")
-
-        required_capability = EVIDENCE_CAPABILITY_MAP.get(kind_key) if kind_key else None
+        _, evidence_kind, required_capability = _resolve_evidence_kind_and_capability(ref)
         if required_capability and required_capability not in capability_set:
             redacted_count += 1
             ref_id = str(ref.get("ref_id") or ref.get("id") or "")
-            try:
-                evidence_kind = EvidenceKind(kind_key)
-            except (TypeError, ValueError):
-                evidence_kind = None
             redacted = RedactedEvidenceRef(
                 ref_id=ref_id,
                 kind=evidence_kind,
@@ -742,17 +783,7 @@ def safe_redact_evidence_refs(
     try:
         return redact_fn(identity, refs, capabilities=capabilities)
     except Exception:
-        redacted: list[dict[str, Any]] = []
-        for ref in refs:
-            ref_id = str(ref.get("ref_id") or ref.get("id") or "") if isinstance(ref, dict) else str(ref)
-            redacted.append(
-                {
-                    "ref_id": ref_id,
-                    "redacted": True,
-                    "reason": "redaction_policy_unavailable",
-                }
-            )
-        return redacted, len(redacted)
+        return fail_closed_redacted_refs(refs)
 
 
 def redact_evidence_field_items(

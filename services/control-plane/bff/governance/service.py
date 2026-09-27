@@ -28,7 +28,7 @@ from typing import (
     Union,
 )
 
-from ..models import safe_redact_evidence_refs
+from ..models import fail_closed_redacted_refs, safe_redact_evidence_refs
 
 
 class ApprovalQueueReaderPort(Protocol):
@@ -300,20 +300,12 @@ class GovernanceService:
         Without the canonical evidence-kind/capability mapping owner, this
         default cannot verify that any individual evidence ref is safe to
         disclose, so it withholds all evidence rather than defaulting to
-        open disclosure.
+        open disclosure. Delegates to the shared ``models.fail_closed_redacted_refs``
+        so this fallback and ``safe_redact_evidence_refs``'s own fallback
+        report the same ``required_capability`` for a ref whose kind is known.
         """
         del identity, capabilities
-        redacted: List[Dict[str, Any]] = []
-        for ref in refs:
-            ref_id = str(ref.get("ref_id") or ref.get("id") or "") if isinstance(ref, dict) else str(ref)
-            redacted.append(
-                {
-                    "ref_id": ref_id,
-                    "redacted": True,
-                    "reason": "redaction_policy_unavailable",
-                }
-            )
-        return redacted, len(redacted)
+        return fail_closed_redacted_refs(refs)
 
     def _safe_dataset_surface_status(
         self, dataset: str, *, snapshot_at: str, source: Optional[str] = None, **kwargs: Any

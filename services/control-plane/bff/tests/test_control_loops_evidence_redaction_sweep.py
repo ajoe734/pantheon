@@ -21,8 +21,11 @@ probe/incident/replay rows have no evidence column
 from __future__ import annotations
 
 import copy
+import inspect
+import json
+import tempfile
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import os
 
@@ -31,9 +34,25 @@ from fastapi.testclient import TestClient
 
 from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.core.app_factory import create_settings_router
 from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.models import redact_evidence_refs, utc_now
+from services.control_plane.bff.settings_store import DEFAULT_SETTINGS_BUNDLE, SettingsStore
+
+
+def _call_with_supported_kwargs(fn: Callable[..., Any], **kwargs: Any) -> Any:
+    """Call ``fn`` with only the kwargs its current signature accepts.
+
+    Lets this file run against an unmodified base checkout whose router
+    constructors predate the ``redact_evidence_refs`` /
+    ``capabilities_for_identity`` (and similar) kwargs added by this sweep:
+    on base those kwargs are silently dropped so the router builds without
+    redaction wiring and the leak assertions fail for real, instead of the
+    whole test erroring out on a constructor ``TypeError``.
+    """
+    supported = set(inspect.signature(fn).parameters)
+    return fn(**{key: value for key, value in kwargs.items() if key in supported})
 
 
 LOW_CAPABILITY_TOKEN = "Bearer op-clc-1:operator"
@@ -181,12 +200,15 @@ def _build_control_loops_app(
     store: Optional[_ControlLoopsSweepStore] = None,
     *,
     capabilities_for_identity: Any = None,
+    downstream_health_monitor: Any = None,
 ) -> FastAPI:
     app = FastAPI()
     register_error_handlers(app)
     app.include_router(
-        create_control_loops_router(
+        _call_with_supported_kwargs(
+            create_control_loops_router,
             read_surface=store or _ControlLoopsSweepStore(),
+            downstream_health_monitor=downstream_health_monitor,
             extract_identity=auth_policy.extract_identity,
             require_read_role=auth_policy.require_read_role,
             require_operator_role=auth_policy.require_operator_role,
@@ -443,9 +465,65 @@ def test_loop_inventory_list_baseline_has_no_evidence_ref_field() -> None:
         assert "linked_evidence" not in payload["data"][0]
 
 
-def test_downstream_health_baseline_has_no_evidence_ref_field() -> None:
+def test_loop_inventory_detail_baseline_has_no_evidence_ref_field() -> None:
+    """Populated detail baseline for a real catalog loop id -- not a 404.
+
+    The prior sweep misclassified a detail route as safe from a 404
+    baseline; fetch a real ``loop_id`` from the populated list surface first
+    so this exercises the actual production-shaped detail record.
+    """
     with _stub_auth_env():
         client = TestClient(_build_control_loops_app())
+        list_response = client.get(
+            "/bff/v5/loop-inventory",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert list_response.status_code == 200, list_response.text
+        loop_id = list_response.json()["data"][0]["loop_id"]
+
+        response = client.get(
+            f"/bff/v5/loop-inventory/{loop_id}",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["data"]["loop_id"] == loop_id
+        assert "evidence_refs" not in payload["data"]
+        assert "linked_evidence" not in payload["data"]
+
+
+_DOWNSTREAM_HEALTH_TARGET_PROBE: Dict[str, Any] = {
+    "target_name": "risk-engine",
+    "ok": True,
+    "status_code": 200,
+    "latency_ms": 42.5,
+    "checked_at": "2026-08-30T12:00:00Z",
+    "failure_reason": None,
+    "consecutive_failures": 0,
+    "probe_kind": "http",
+    "window_started_at": "2026-08-30T11:00:00Z",
+    "sample_count": 60,
+    "failure_count": 0,
+    "error_rate": 0.0,
+    "registry": {"name": "risk-engine", "base_url": "https://risk-engine.internal", "component_kind": "service"},
+}
+
+
+class _PopulatedDownstreamHealthMonitor:
+    """Minimal double returning a populated, production-shaped ``get_state``."""
+
+    def get_state(self) -> Dict[str, Any]:
+        return {
+            "overall_ok": True,
+            "targets": {"risk-engine": copy.deepcopy(_DOWNSTREAM_HEALTH_TARGET_PROBE)},
+        }
+
+
+def test_downstream_health_baseline_has_no_evidence_ref_field() -> None:
+    with _stub_auth_env():
+        client = TestClient(
+            _build_control_loops_app(downstream_health_monitor=_PopulatedDownstreamHealthMonitor())
+        )
         response = client.get(
             "/bff/v5/downstream-health",
             headers={"Authorization": LOW_CAPABILITY_TOKEN},
@@ -453,8 +531,143 @@ def test_downstream_health_baseline_has_no_evidence_ref_field() -> None:
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["read_model"] == "downstream_health"
+        assert payload["meta"]["source"] == "bff_downstream_health_monitor"
+        # populated production-shaped baseline: real probe data, not the
+        # empty {overall_ok: null, targets: {}} shape from an uninjected monitor
+        assert payload["data"]["overall_ok"] is True
+        assert payload["data"]["targets"]["risk-engine"]["ok"] is True
         assert "evidence_refs" not in payload["data"]
         assert "linked_evidence" not in payload["data"]
+
+
+# --- Settings read/export: top-level evidence_refs field --------------------
+#
+# ``SettingsStore._validate_settings_bundle`` only requires the eight
+# section dicts to be present; it accepts any additional top-level field, so
+# an ``evidence_refs`` list mixed into the bundle (whether written through
+# the settings API or seeded directly) previously round-tripped unredacted
+# through both GET /api/v1/settings and GET /api/v1/settings/export.
+
+
+def _build_settings_app(*, capabilities_for_identity: Any = None) -> tuple[FastAPI, SettingsStore]:
+    tmpdir = tempfile.mkdtemp()
+    store = SettingsStore(os.path.join(tmpdir, "settings.json"))
+    bundle = copy.deepcopy(DEFAULT_SETTINGS_BUNDLE)
+    bundle["evidence_refs"] = copy.deepcopy(_MIXED_REFS)
+    store.replace(bundle)
+
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(
+        _call_with_supported_kwargs(
+            create_settings_router,
+            settings_store=store,
+            extract_identity=auth_policy.extract_identity,
+            require_admin_mfa=auth_policy.require_admin_mfa,
+            redact_evidence_refs=redact_evidence_refs,
+            capabilities_for_identity=capabilities_for_identity or auth_policy.capabilities_for_identity,
+        )
+    )
+    return app, store
+
+
+def test_settings_get_redacts_for_low_capability_identity() -> None:
+    with _stub_auth_env():
+        app, _ = _build_settings_app()
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/settings",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        _assert_mixed_refs_redacted_for_low_capability(payload["evidence_refs"])
+        assert payload["meta"]["redacted_evidence_count"] == 2
+        # populated production-shaped baseline: unrelated sections stay intact
+        assert payload["general"]["language"] == "zh-TW"
+
+
+def test_settings_get_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        app, _ = _build_settings_app()
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/settings",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["evidence_refs"] == _MIXED_REFS
+        assert payload["meta"]["redacted_evidence_count"] == 0
+
+
+def test_settings_get_fails_closed_when_capabilities_unresolvable() -> None:
+    def _boom(identity: Any) -> List[str]:
+        raise RuntimeError("capability lookup unavailable")
+
+    with _stub_auth_env():
+        app, _ = _build_settings_app(capabilities_for_identity=_boom)
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/settings",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        refs = payload["evidence_refs"]
+        assert len(refs) == 3
+        assert all(ref["redacted"] is True for ref in refs)
+        assert payload["meta"]["redacted_evidence_count"] == 3
+
+
+def test_settings_export_redacts_for_low_capability_identity() -> None:
+    with _stub_auth_env():
+        app, _ = _build_settings_app()
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/settings/export",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        exported = json.loads(payload["jsonData"])
+        _assert_mixed_refs_redacted_for_low_capability(exported["evidence_refs"])
+        assert payload["meta"]["redacted_evidence_count"] == 2
+
+
+def test_settings_export_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        app, _ = _build_settings_app()
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/settings/export",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        exported = json.loads(payload["jsonData"])
+        assert exported["evidence_refs"] == _MIXED_REFS
+        assert payload["meta"]["redacted_evidence_count"] == 0
+
+
+def test_settings_export_fails_closed_when_capabilities_unresolvable() -> None:
+    def _boom(identity: Any) -> List[str]:
+        raise RuntimeError("capability lookup unavailable")
+
+    with _stub_auth_env():
+        app, _ = _build_settings_app(capabilities_for_identity=_boom)
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/settings/export",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        exported = json.loads(payload["jsonData"])
+        refs = exported["evidence_refs"]
+        assert len(refs) == 3
+        assert all(ref["redacted"] is True for ref in refs)
+        assert payload["meta"]["redacted_evidence_count"] == 3
 
 
 # --- Governance committee detail: linked_evidence -----------------------
@@ -487,7 +700,8 @@ def _build_governance_app(*, capabilities_for_identity: Any = None) -> FastAPI:
     app = FastAPI()
     register_error_handlers(app)
     app.include_router(
-        create_governance_router(
+        _call_with_supported_kwargs(
+            create_governance_router,
             read_surface=_CommitteeSweepStore(),
             extract_identity=auth_policy.extract_identity,
             require_read_role=auth_policy.require_read_role,

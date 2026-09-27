@@ -7,6 +7,7 @@ legacy decorators with these named routers.
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import re
 from datetime import datetime, timezone
@@ -299,14 +300,30 @@ def create_settings_router(
     settings_store: Any,
     extract_identity: IdentityExtractor,
     require_admin_mfa: RoleGuard,
+    redact_evidence_refs: Optional[Callable[..., Any]] = None,
+    capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
 ) -> APIRouter:
     """Create settings routes with no provider-readiness dependency."""
     router = APIRouter(tags=["settings"])
 
+    from ..models import redact_evidence_field_items
+    from ..models import redact_evidence_refs as _default_redact_evidence_refs
+
+    _redact = redact_evidence_refs or _default_redact_evidence_refs
+    _capabilities = capabilities_for_identity or (lambda identity: [])
+
+    def _redact_settings_bundle(identity: Any, bundle: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        redacted_items, redacted_count = redact_evidence_field_items(
+            identity, [bundle], field="evidence_refs", redact_fn=_redact, capabilities_fn=_capabilities
+        )
+        return redacted_items[0], redacted_count
+
     @router.get("/api/v1/settings")
     async def get_settings(authorization: Optional[str] = Header(default=None)):
-        extract_identity(authorization)
-        return settings_store.get()
+        identity = extract_identity(authorization)
+        bundle, redacted_count = _redact_settings_bundle(identity, settings_store.get())
+        bundle["meta"] = {"redacted_evidence_count": redacted_count}
+        return bundle
 
     @router.post("/api/v1/settings")
     async def update_settings(
@@ -324,8 +341,13 @@ def create_settings_router(
 
     @router.get("/api/v1/settings/export")
     async def export_settings(authorization: Optional[str] = Header(default=None)):
-        extract_identity(authorization)
-        return {"jsonData": settings_store.export_json()}
+        identity = extract_identity(authorization)
+        exported = json.loads(settings_store.export_json())
+        redacted_bundle, redacted_count = _redact_settings_bundle(identity, exported)
+        return {
+            "jsonData": json.dumps(redacted_bundle, indent=2, ensure_ascii=False),
+            "meta": {"redacted_evidence_count": redacted_count},
+        }
 
     @router.post("/api/v1/settings/import")
     async def import_settings(
@@ -1426,6 +1448,8 @@ def mount_bff_routers(
             settings_store=_dep("settings_store"),
             extract_identity=_dep("_extract_identity"),
             require_admin_mfa=_dep("_require_admin_mfa"),
+            redact_evidence_refs=_dep("redact_evidence_refs"),
+            capabilities_for_identity=_dep("_capabilities_for_identity"),
         )
     )
     core_handlers = _dep(
