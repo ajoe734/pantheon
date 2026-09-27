@@ -102,23 +102,110 @@ def _stub_auth_env():
 
 _OODA_PACKET_1: Dict[str, Any] = {
     "packet_id": "ooda-1",
+    "loop_type": "incident_response",
     "status": "acted",
     "stage": "act",
+    "environment": "dev",
     "strategy_id": "strategy-1",
     "runtime_id": "runtime-1",
     "created_at": "2026-08-30T12:00:00Z",
     "updated_at": "2026-08-30T12:05:00Z",
-    "observe": {"trigger": "loop_anomaly"},
-    "orient": {"assessment": "risk_within_bounds"},
-    "decide": {"approval_decision_id": "appr-clc-1"},
-    "act": {"runtime_binding_id": "runtime-1", "live_capital_side_effects": False},
+    "observe": {
+        "trigger": "loop_anomaly",
+        "source_refs": ["src-clc-1"],
+        "telemetry_refs": ["telem-clc-1"],
+        "signal_refs": [],
+        "market_refs": [],
+        "incident_refs": ["ref-incident-clc"],
+        "human_feedback_refs": [],
+    },
+    "orient": {
+        "assessment": "risk_within_bounds",
+        "regime_state_ref": None,
+        "universe_selection_ref": None,
+        "signal_inference_refs": [],
+        "allocation_proposal_refs": [],
+        "risk_adjudication_ref": None,
+        "persona_proposal_refs": [],
+        "evidence_bundle_refs": [],
+    },
+    "decide": {
+        "approval_decision_id": "appr-clc-1",
+        "deployment_plan_id": None,
+        "evolution_decision_id": None,
+        "sponsor_persona_id": None,
+        "decision_rationale_ref": None,
+        "policy_decision_refs": [],
+    },
+    "act": {
+        "runtime_binding_id": "runtime-1",
+        "command_receipt_refs": [],
+        "broker_evidence_refs": [],
+        "rollback_refs": [],
+        "safe_mode_refs": [],
+        "live_capital_side_effects": False,
+    },
+    "learn": {
+        "telemetry_refs": [],
+        "postmortem_refs": ["ref-postmortem-clc"],
+        "evolution_followthrough_refs": [],
+        "trainer_refs": [],
+        "retrain_refs": [],
+        "observation_window": None,
+    },
+    "audit_refs": ["ref-audit-clc"],
     "evidence_refs": copy.deepcopy(_MIXED_REFS),
 }
 _OODA_PACKET_2: Dict[str, Any] = {
     "packet_id": "ooda-2",
+    "loop_type": "paper_strategy",
     "status": "closed",
     "stage": "learn",
+    "environment": "dev",
     "created_at": "2026-08-30T13:00:00Z",
+    "updated_at": "2026-08-30T13:05:00Z",
+    "observe": {
+        "source_refs": [],
+        "telemetry_refs": [],
+        "signal_refs": [],
+        "market_refs": [],
+        "incident_refs": [],
+        "human_feedback_refs": [],
+    },
+    "orient": {
+        "regime_state_ref": None,
+        "universe_selection_ref": None,
+        "signal_inference_refs": [],
+        "allocation_proposal_refs": [],
+        "risk_adjudication_ref": None,
+        "persona_proposal_refs": [],
+        "evidence_bundle_refs": [],
+    },
+    "decide": {
+        "approval_decision_id": None,
+        "deployment_plan_id": None,
+        "evolution_decision_id": None,
+        "sponsor_persona_id": None,
+        "decision_rationale_ref": None,
+        "policy_decision_refs": [],
+    },
+    "act": {
+        "runtime_binding_id": None,
+        "command_receipt_refs": [],
+        "broker_evidence_refs": [],
+        "rollback_refs": [],
+        "safe_mode_refs": [],
+        "live_capital_side_effects": False,
+    },
+    "learn": {
+        "telemetry_refs": [],
+        "postmortem_refs": [],
+        "evolution_followthrough_refs": [],
+        "trainer_refs": [],
+        "retrain_refs": [],
+        "observation_window": None,
+    },
+    "audit_refs": [],
     "evidence_refs": [],
 }
 
@@ -236,7 +323,14 @@ def test_ooda_packets_list_redacts_for_low_capability_identity() -> None:
         by_id = {item["packet_id"]: item for item in payload["data"]}
         _assert_mixed_refs_redacted_for_low_capability(by_id["ooda-1"]["evidence_refs"])
         assert by_id["ooda-2"]["evidence_refs"] == []
-        assert payload["meta"]["redacted_evidence_count"] == 2
+        _assert_redacted(by_id["ooda-1"]["audit_refs"][0], ref_id="ref-audit-clc", required_capability="audit.read")
+        _assert_redacted(
+            by_id["ooda-1"]["learn"]["postmortem_refs"][0],
+            ref_id="ref-postmortem-clc",
+            required_capability="postmortem.read",
+        )
+        assert by_id["ooda-1"]["observe"]["incident_refs"] == ["ref-incident-clc"]
+        assert payload["meta"]["redacted_evidence_count"] == 4
         # populated production-shaped baseline: non-evidence stage data stays intact
         assert by_id["ooda-1"]["act"]["runtime_binding_id"] == "runtime-1"
 
@@ -252,6 +346,9 @@ def test_ooda_packets_list_passes_through_for_full_capability_identity() -> None
         payload = response.json()
         by_id = {item["packet_id"]: item for item in payload["data"]}
         assert by_id["ooda-1"]["evidence_refs"] == _MIXED_REFS
+        assert by_id["ooda-1"]["audit_refs"] == ["ref-audit-clc"]
+        assert by_id["ooda-1"]["learn"]["postmortem_refs"] == ["ref-postmortem-clc"]
+        assert by_id["ooda-1"]["observe"]["incident_refs"] == ["ref-incident-clc"]
         assert payload["meta"]["redacted_evidence_count"] == 0
 
 
@@ -267,7 +364,7 @@ def test_ooda_packets_list_redacted_count_scoped_to_returned_page() -> None:
         page1_payload = page1.json()
         assert len(page1_payload["items"]) == 1
         assert page1_payload["items"][0]["packet_id"] == "ooda-1"
-        assert page1_payload["meta"]["redacted_evidence_count"] == 2
+        assert page1_payload["meta"]["redacted_evidence_count"] == 4
 
         next_token = page1_payload["page_info"]["next_page_token"]
         assert next_token
@@ -292,7 +389,14 @@ def test_ooda_packet_detail_redacts_for_low_capability_identity() -> None:
         assert response.status_code == 200, response.text
         payload = response.json()
         _assert_mixed_refs_redacted_for_low_capability(payload["data"]["evidence_refs"])
-        assert payload["meta"]["redacted_evidence_count"] == 2
+        _assert_redacted(payload["data"]["audit_refs"][0], ref_id="ref-audit-clc", required_capability="audit.read")
+        _assert_redacted(
+            payload["data"]["learn"]["postmortem_refs"][0],
+            ref_id="ref-postmortem-clc",
+            required_capability="postmortem.read",
+        )
+        assert payload["data"]["observe"]["incident_refs"] == ["ref-incident-clc"]
+        assert payload["meta"]["redacted_evidence_count"] == 4
 
 
 def test_ooda_packet_detail_passes_through_for_full_capability_identity() -> None:
@@ -305,7 +409,33 @@ def test_ooda_packet_detail_passes_through_for_full_capability_identity() -> Non
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["data"]["evidence_refs"] == _MIXED_REFS
+        assert payload["data"]["audit_refs"] == ["ref-audit-clc"]
+        assert payload["data"]["learn"]["postmortem_refs"] == ["ref-postmortem-clc"]
+        assert payload["data"]["observe"]["incident_refs"] == ["ref-incident-clc"]
         assert payload["meta"]["redacted_evidence_count"] == 0
+
+
+def test_ooda_packet_detail_fails_closed_when_capabilities_unresolvable() -> None:
+    def _boom(identity: Any) -> List[str]:
+        raise RuntimeError("capability lookup unavailable")
+
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(capabilities_for_identity=_boom))
+        response = client.get(
+            "/bff/ooda/packets/ooda-1",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert len(payload["data"]["evidence_refs"]) == 3
+        assert all(ref["redacted"] is True for ref in payload["data"]["evidence_refs"])
+        assert len(payload["data"]["audit_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["audit_refs"])
+        assert len(payload["data"]["learn"]["postmortem_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["learn"]["postmortem_refs"])
+        assert len(payload["data"]["observe"]["incident_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["data"]["observe"]["incident_refs"])
+        assert payload["meta"]["redacted_evidence_count"] == 6
 
 
 # --- v5 interventions (list + detail) ---------------------------------------
@@ -683,8 +813,16 @@ _COMMITTEE_1: Dict[str, Any] = {
     "consensus_state": "consensus_reached",
     "participant_roster": [{"participant_id": "p-1", "role": "reviewer"}],
     "sponsor_assignment": {"participant_id": "p-1"},
-    "synthesis_summary": {"summary": "Consensus reached on rollback plan"},
+    "synthesis_summary": {
+        "summary": "Consensus reached on rollback plan",
+        "evidence_refs": ["ref-alert-clc", "ref-metric-clc"],
+    },
     "linked_evidence": copy.deepcopy(_MIXED_REFS),
+    "service_handoff": {
+        "handoff_id": "handoff-1",
+        "evidence_refs": copy.deepcopy(_MIXED_REFS),
+        "audit_refs": ["ref-audit-clc"],
+    },
 }
 
 
@@ -725,7 +863,19 @@ def test_committee_detail_redacts_linked_evidence_for_low_capability_identity() 
         assert response.status_code == 200, response.text
         payload = response.json()
         _assert_mixed_refs_redacted_for_low_capability(payload["linked_evidence"])
-        assert payload["meta"]["redacted_evidence_count"] == 2
+        _assert_mixed_refs_redacted_for_low_capability(payload["service_handoff"]["evidence_refs"])
+        assert payload["synthesis_summary"]["evidence_refs"][0] == "ref-alert-clc"
+        _assert_redacted(
+            payload["synthesis_summary"]["evidence_refs"][1],
+            ref_id="ref-metric-clc",
+            required_capability="metric.read",
+        )
+        _assert_redacted(
+            payload["service_handoff"]["audit_refs"][0],
+            ref_id="ref-audit-clc",
+            required_capability="audit.read",
+        )
+        assert payload["meta"]["redacted_evidence_count"] == 6
 
 
 def test_committee_detail_passes_through_for_full_capability_identity() -> None:
@@ -738,6 +888,9 @@ def test_committee_detail_passes_through_for_full_capability_identity() -> None:
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["linked_evidence"] == _MIXED_REFS
+        assert payload["synthesis_summary"]["evidence_refs"] == ["ref-alert-clc", "ref-metric-clc"]
+        assert payload["service_handoff"]["evidence_refs"] == _MIXED_REFS
+        assert payload["service_handoff"]["audit_refs"] == ["ref-audit-clc"]
         assert payload["meta"]["redacted_evidence_count"] == 0
 
 
@@ -753,7 +906,26 @@ def test_committee_detail_fails_closed_when_capabilities_unresolvable() -> None:
         )
         assert response.status_code == 200, response.text
         payload = response.json()
-        refs = payload["linked_evidence"]
-        assert len(refs) == 3
-        assert all(ref["redacted"] is True for ref in refs)
-        assert payload["meta"]["redacted_evidence_count"] == 3
+        assert len(payload["linked_evidence"]) == 3
+        assert all(ref["redacted"] is True for ref in payload["linked_evidence"])
+        assert len(payload["synthesis_summary"]["evidence_refs"]) == 2
+        assert all(ref["redacted"] is True for ref in payload["synthesis_summary"]["evidence_refs"])
+        assert len(payload["service_handoff"]["evidence_refs"]) == 3
+        assert all(ref["redacted"] is True for ref in payload["service_handoff"]["evidence_refs"])
+        assert len(payload["service_handoff"]["audit_refs"]) == 1
+        assert all(ref["redacted"] is True for ref in payload["service_handoff"]["audit_refs"])
+        assert payload["meta"]["redacted_evidence_count"] == 9
+
+
+def test_committee_detail_projection_direct() -> None:
+    from services.control_plane.bff.governance.service import GovernanceService
+    with _stub_auth_env():
+        svc = GovernanceService(
+            read_store=_CommitteeSweepStore(),
+            capabilities_for_identity=auth_policy.capabilities_for_identity,
+            redact_evidence_refs=redact_evidence_refs,
+        )
+        identity = auth_policy.extract_identity(LOW_CAPABILITY_TOKEN)
+        projected = svc.committee_projection("committee-clc-1", identity=identity)
+        assert projected is not None
+        assert projected["meta"]["redacted_evidence_count"] == 6

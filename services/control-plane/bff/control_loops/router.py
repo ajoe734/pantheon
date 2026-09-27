@@ -28,6 +28,8 @@ from services.control_plane.bff.models import (
     OperatorIdentity,
     redact_evidence_field_items,
     redact_evidence_refs as _default_redact_evidence_refs,
+    redact_ooda_packet,
+    redact_ooda_packet_items,
 )
 
 from .service import ControlLoopsService, default_bff_error
@@ -262,7 +264,9 @@ def create_control_loops_router(
             page_token=page_token,
             page_size=page_size,
         )
-        redacted_items, redacted_count = _redact_items(identity, response["items"])
+        redacted_items, redacted_count = redact_ooda_packet_items(
+            identity, response["items"], redact_fn=_redact, capabilities_fn=_capabilities
+        )
         response["items"] = redacted_items
         response["data"] = redacted_items
         response.setdefault("meta", {})["redacted_evidence_count"] = redacted_count
@@ -275,7 +279,9 @@ def create_control_loops_router(
     ) -> Dict[str, Any]:
         identity = _read_identity(authorization)
         response = resolved_service.get_ooda_packet(str(packet_id or "").strip())
-        response["data"], redacted_count = _redact_single(identity, response["data"])
+        response["data"], redacted_count = redact_ooda_packet(
+            identity, response["data"], redact_fn=_redact, capabilities_fn=_capabilities
+        )
         response.setdefault("meta", {})["redacted_evidence_count"] = redacted_count
         return response
 

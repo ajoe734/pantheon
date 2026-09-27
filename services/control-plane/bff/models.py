@@ -656,26 +656,42 @@ class RedactedEvidenceRef(BaseModel):
 
 
 def _resolve_evidence_kind_and_capability(
-    ref: dict[str, Any],
+    ref: Any,
+    *,
+    default_kind: Optional[str] = None,
+    kind_map: Optional[Mapping[str, str]] = None,
 ) -> tuple[str, Optional[EvidenceKind], Optional[str]]:
     """Resolve an evidence ref's kind key, ``EvidenceKind``, and required capability.
 
     Shared by ``redact_evidence_refs`` (normal capability-gated redaction) and
     the fail-closed fallback below, so both paths report the same
     ``required_capability`` for a ref whose kind is known, rather than one of
-    them silently dropping it.
+    them silently dropping it. Supports fallback to ``default_kind`` and ref_id
+    lookup in ``kind_map`` when an item is a string reference.
     """
-    kind_key = (
-        str(ref.get("evidence_type") or "").strip()
-        or str(ref.get("type") or "").strip()
-        or str(ref.get("ref_type") or "").strip()
-        or str(ref.get("link_type") or "").strip()
-    )
-    if not kind_key:
-        source_document = ref.get("source_document")
-        if isinstance(source_document, dict):
-            source_type = str(source_document.get("source_type") or "").strip()
-            kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND.get(source_type, "")
+    kind_key = ""
+    ref_id = ""
+    if isinstance(ref, dict):
+        ref_id = str(ref.get("ref_id") or ref.get("id") or "").strip()
+        kind_key = (
+            str(ref.get("evidence_type") or "").strip()
+            or str(ref.get("type") or "").strip()
+            or str(ref.get("ref_type") or "").strip()
+            or str(ref.get("link_type") or "").strip()
+        )
+        if not kind_key:
+            source_document = ref.get("source_document")
+            if isinstance(source_document, dict):
+                source_type = str(source_document.get("source_type") or "").strip()
+                kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND.get(source_type, "")
+    else:
+        ref_id = str(ref).strip()
+
+    if not kind_key and kind_map and ref_id in kind_map:
+        kind_key = str(kind_map[ref_id]).strip()
+
+    if not kind_key and default_kind:
+        kind_key = str(default_kind).strip()
 
     required_capability = EVIDENCE_CAPABILITY_MAP.get(kind_key) if kind_key else None
     try:
@@ -685,7 +701,12 @@ def _resolve_evidence_kind_and_capability(
     return kind_key, evidence_kind, required_capability
 
 
-def fail_closed_redacted_refs(refs: list[Any]) -> tuple[list[dict[str, Any]], int]:
+def fail_closed_redacted_refs(
+    refs: list[Any],
+    *,
+    default_kind: Optional[str] = None,
+    kind_map: Optional[Mapping[str, str]] = None,
+) -> tuple[list[dict[str, Any]], int]:
     """Withhold every ref because the redaction policy itself is unavailable.
 
     Used when a capability lookup or a canonical redact call raises, so no
@@ -697,30 +718,37 @@ def fail_closed_redacted_refs(refs: list[Any]) -> tuple[list[dict[str, Any]], in
     for ref in refs:
         if isinstance(ref, dict):
             ref_id = str(ref.get("ref_id") or ref.get("id") or "")
-            _, _, required_capability = _resolve_evidence_kind_and_capability(ref)
         else:
             ref_id = str(ref)
-            required_capability = None
-        redacted.append(
-            {
-                "ref_id": ref_id,
-                "redacted": True,
-                "required_capability": required_capability or "unknown",
-                "reason": "redaction_policy_unavailable",
-            }
+        _, evidence_kind, required_capability = _resolve_evidence_kind_and_capability(
+            ref, default_kind=default_kind, kind_map=kind_map
         )
+        entry: dict[str, Any] = {
+            "ref_id": ref_id,
+            "redacted": True,
+            "required_capability": required_capability or "unknown",
+            "reason": "redaction_policy_unavailable",
+        }
+        if evidence_kind is not None:
+            entry["kind"] = evidence_kind
+        redacted.append(entry)
     return redacted, len(redacted)
 
 
 def redact_evidence_refs(
     identity: OperatorIdentity,
-    evidence_refs: list[dict[str, Any]],
+    evidence_refs: list[Any],
     capabilities: Optional[list[str]] = None,
-) -> tuple[list[dict[str, Any]], int]:
+    *,
+    default_kind: Optional[str] = None,
+    kind_map: Optional[Mapping[str, str]] = None,
+) -> tuple[list[Any], int]:
     """Redact evidence references that require an unavailable capability.
 
     ``identity`` remains part of the route-facing contract even though the
     current policy is expressed entirely by the supplied capability set.
+    Supports string references and dicts with optional ``default_kind`` and
+    ``kind_map`` overrides.
     """
 
     del identity
@@ -728,18 +756,16 @@ def redact_evidence_refs(
         return list(evidence_refs), 0
 
     capability_set = set(capabilities)
-    processed: list[dict[str, Any]] = []
+    processed: list[Any] = []
     redacted_count = 0
 
     for ref in evidence_refs:
-        if not isinstance(ref, dict):
-            processed.append(ref)
-            continue
-
-        _, evidence_kind, required_capability = _resolve_evidence_kind_and_capability(ref)
+        ref_id = str(ref.get("ref_id") or ref.get("id") or "") if isinstance(ref, dict) else str(ref)
+        _, evidence_kind, required_capability = _resolve_evidence_kind_and_capability(
+            ref, default_kind=default_kind, kind_map=kind_map
+        )
         if required_capability and required_capability not in capability_set:
             redacted_count += 1
-            ref_id = str(ref.get("ref_id") or ref.get("id") or "")
             redacted = RedactedEvidenceRef(
                 ref_id=ref_id,
                 kind=evidence_kind,
@@ -755,11 +781,13 @@ def redact_evidence_refs(
 
 def safe_redact_evidence_refs(
     identity: Any,
-    refs: list[dict[str, Any]],
+    refs: list[Any],
     *,
-    redact_fn: Callable[..., tuple[list[dict[str, Any]], int]],
+    redact_fn: Callable[..., tuple[list[Any], int]],
     capabilities_fn: Callable[[Any], Any],
-) -> tuple[list[dict[str, Any]], int]:
+    default_kind: Optional[str] = None,
+    kind_map: Optional[Mapping[str, str]] = None,
+) -> tuple[list[Any], int]:
     """Resolve capabilities and redact, failing closed on any error.
 
     Shared fail-closed wrapper for any BFF read surface that emits
@@ -768,11 +796,7 @@ def safe_redact_evidence_refs(
     reference lists). A capability lookup that raises or returns ``None``
     fails closed -- it is treated as an empty capability set so
     ``redact_evidence_refs`` above gates every capability-required ref --
-    rather than defaulting to open disclosure. Originally introduced for
-    the governance domain router; shared here so the control-loops domain
-    router and GovernanceService.committee_projection can reuse the
-    identical wrapper instead of duplicating it
-    (BFF-CONTROL-LOOPS-EVIDENCE-REDACTION-SWEEP-001).
+    rather than defaulting to open disclosure.
     """
     try:
         capabilities = capabilities_fn(identity)
@@ -781,9 +805,25 @@ def safe_redact_evidence_refs(
     if capabilities is None:
         capabilities = []
     try:
-        return redact_fn(identity, refs, capabilities=capabilities)
+        kwargs: dict[str, Any] = {"capabilities": capabilities}
+        if default_kind is not None:
+            kwargs["default_kind"] = default_kind
+        if kind_map is not None:
+            kwargs["kind_map"] = kind_map
+        try:
+            return redact_fn(identity, refs, **kwargs)
+        except TypeError:
+            if "kind_map" in kwargs:
+                kwargs.pop("kind_map")
+                try:
+                    return redact_fn(identity, refs, **kwargs)
+                except TypeError:
+                    pass
+            if "default_kind" in kwargs:
+                kwargs.pop("default_kind")
+            return redact_fn(identity, refs, capabilities=capabilities)
     except Exception:
-        return fail_closed_redacted_refs(refs)
+        return fail_closed_redacted_refs(refs, default_kind=default_kind, kind_map=kind_map)
 
 
 def redact_evidence_field_items(
@@ -817,6 +857,109 @@ def redact_evidence_field_items(
             total_redacted += count
         redacted_items.append(item_copy)
     return redacted_items, total_redacted
+
+
+def redact_ooda_packet(
+    identity: Any,
+    packet: Any,
+    *,
+    redact_fn: Callable[..., tuple[list[Any], int]],
+    capabilities_fn: Callable[[Any], Any],
+) -> tuple[Any, int]:
+    """Redact capability-gated evidence references across a canonical OODA packet.
+
+    Handles top-level ``audit_refs`` and ``evidence_refs`` as well as nested
+    bundles: ObserveBundle (``incident_refs``, ``signal_refs``, and any dict
+    items in remaining lists), OrientBundle (``persona_proposal_refs``,
+    ``signal_inference_refs``, ``evidence_bundle_refs``), DecideBundle
+    (``policy_decision_refs``), ActBundle (``broker_evidence_refs``), and
+    LearnBundle (``postmortem_refs``). Preserves full-capability visibility
+    when the caller holds required capabilities, withholds unauthorized refs
+    with standard RedactedEvidenceRef metadata, and fails closed when
+    capabilities cannot be resolved.
+    """
+    if not isinstance(packet, dict):
+        return packet, 0
+
+    packet_copy = _copy.deepcopy(packet)
+    total_redacted = 0
+
+    def _redact_field(
+        container: dict[str, Any], field_name: str, *, default_kind: Optional[str] = None
+    ) -> None:
+        nonlocal total_redacted
+        raw = container.get(field_name)
+        if isinstance(raw, list) and raw:
+            redacted_refs, count = safe_redact_evidence_refs(
+                identity,
+                raw,
+                redact_fn=redact_fn,
+                capabilities_fn=capabilities_fn,
+                default_kind=default_kind,
+            )
+            container[field_name] = redacted_refs
+            total_redacted += count
+
+    # Top-level refs:
+    _redact_field(packet_copy, "audit_refs", default_kind="audit")
+    _redact_field(packet_copy, "evidence_refs", default_kind=None)
+
+    # ObserveBundle:
+    observe = packet_copy.get("observe")
+    if isinstance(observe, dict):
+        _redact_field(observe, "incident_refs", default_kind="incident")
+        _redact_field(observe, "signal_refs", default_kind="signal")
+        for other_field in ("source_refs", "telemetry_refs", "market_refs", "human_feedback_refs"):
+            _redact_field(observe, other_field, default_kind=None)
+
+    # OrientBundle:
+    orient = packet_copy.get("orient")
+    if isinstance(orient, dict):
+        _redact_field(orient, "persona_proposal_refs", default_kind="persona")
+        _redact_field(orient, "signal_inference_refs", default_kind="signal")
+        _redact_field(orient, "evidence_bundle_refs", default_kind=None)
+        for other_field in ("allocation_proposal_refs",):
+            _redact_field(orient, other_field, default_kind=None)
+
+    # DecideBundle:
+    decide = packet_copy.get("decide")
+    if isinstance(decide, dict):
+        _redact_field(decide, "policy_decision_refs", default_kind="policy")
+
+    # ActBundle:
+    act = packet_copy.get("act")
+    if isinstance(act, dict):
+        _redact_field(act, "broker_evidence_refs", default_kind=None)
+        for other_field in ("command_receipt_refs", "rollback_refs", "safe_mode_refs"):
+            _redact_field(act, other_field, default_kind=None)
+
+    # LearnBundle:
+    learn = packet_copy.get("learn")
+    if isinstance(learn, dict):
+        _redact_field(learn, "postmortem_refs", default_kind="postmortem")
+        for other_field in ("telemetry_refs", "evolution_followthrough_refs", "trainer_refs", "retrain_refs"):
+            _redact_field(learn, other_field, default_kind=None)
+
+    return packet_copy, total_redacted
+
+
+def redact_ooda_packet_items(
+    identity: Any,
+    packets: list[Any],
+    *,
+    redact_fn: Callable[..., tuple[list[Any], int]],
+    capabilities_fn: Callable[[Any], Any],
+) -> tuple[list[Any], int]:
+    """Redact evidence references across a list of OODA packets for the returned page."""
+    total_redacted = 0
+    redacted_packets: list[Any] = []
+    for packet in packets:
+        redacted_packet, count = redact_ooda_packet(
+            identity, packet, redact_fn=redact_fn, capabilities_fn=capabilities_fn
+        )
+        redacted_packets.append(redacted_packet)
+        total_redacted += count
+    return redacted_packets, total_redacted
 
 
 # --------------------------------------------------------------------------- #

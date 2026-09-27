@@ -1,29 +1,29 @@
 {
   "task_id": "BFF-CONTROL-LOOPS-EVIDENCE-REDACTION-SWEEP-001",
-  "owner": "Claude",
+  "owner": "Antigravity2",
   "reviewer": "Codex",
   "base_branch": "dev",
   "base_commit": "9bffba8cbf5d73b71ea8079f520fcbae31c550de",
   "head_commit_before_task_commit": "9bffba8cbf5d73b71ea8079f520fcbae31c550de",
-  "head_commit_note": "This value intentionally equals base_commit: it names the branch tip immediately before this task's own implementation commit(s) existed, not a claim that the base commit is the reviewed implementation. The actual reviewed implementation head is the exact task-branch commit that adds the control_loops/router.py + governance/service.py redaction fixes, the shared safe_redact_evidence_refs/redact_evidence_field_items helpers added to models.py, the new regression test file, and this evidence file; per .orchestrator/skills/task-closeout-finalization.md that exact head SHA is frozen at owner handoff via REVIEW_HEAD_SHA/REVIEW_PR and will differ from base_commit. Do not read this field as the implementation-head binding -- read the canonical task row's frozen PR/head at handoff time instead.",
+  "head_commit_note": "This value intentionally equals base_commit: it names the branch tip immediately before this task's own implementation commit(s) existed, not a claim that the base commit is the reviewed implementation. The actual reviewed implementation head is the exact task-branch commit that adds the control_loops/router.py + governance/service.py redaction fixes, the shared safe_redact_evidence_refs/redact_evidence_field_items/redact_ooda_packet/redact_ooda_packet_items helpers added to models.py, the new regression test file, and this evidence file; per .orchestrator/skills/task-closeout-finalization.md that exact head SHA is frozen at owner handoff via REVIEW_HEAD_SHA/REVIEW_PR and will differ from base_commit. Do not read this field as the implementation-head binding -- read the canonical task row's frozen PR/head at handoff time instead.",
   "task_branch": "task/BFF-CONTROL-LOOPS-EVIDENCE-REDACTION-SWEEP-001",
-  "defect_summary": "Follow-up to BFF-GOVERNANCE-EVIDENCE-REDACTION-SWEEP-001, whose independent reviewer recorded two out-of-contract findings: (1) the same discarded-identity pattern exists in control_loops/router.py (9 handlers call _read_identity(authorization) and discard the return value) and in core/app_factory.py's inline settings handlers (2 handlers call extract_identity(authorization) and discard it); (2) GovernanceService.committee_projection returns linked_evidence unredacted on the committee detail route despite already receiving identity as a parameter. This task audits all 9 control-loops handlers plus the 2 settings handlers plus the committee detail route, redacts every surface whose response structurally carries evidence-ref-shaped content, and documents why the remaining surfaces carry none.",
+  "defect_summary": "Follow-up to BFF-GOVERNANCE-EVIDENCE-REDACTION-SWEEP-001, whose independent reviewer recorded two out-of-contract findings: (1) the same discarded-identity pattern exists in control_loops/router.py (9 handlers call _read_identity(authorization) and discard the return value) and in core/app_factory.py's inline settings handlers (2 handlers call extract_identity(authorization) and discard it); (2) GovernanceService.committee_projection returns linked_evidence unredacted on the committee detail route despite already receiving identity as a parameter. This task audits all 9 control-loops handlers plus the 2 settings handlers plus the committee detail route, redacts every surface whose response structurally carries evidence-ref-shaped content (including canonical OODA packet audit_refs and nested stage bundles, as well as committee synthesis_summary and service_handoff evidence/audit references), and documents why the remaining surfaces carry none.",
   "surface_audit": [
     {
       "surface": "GET /bff/ooda/packets",
       "handler": "bff_list_ooda_packets",
-      "evidence_location": "top-level evidence_refs per OODA packet (generic pass-through store -- ports/ooda_management.py::OodaPacketsPort and the control_loops/service.py::_call_records seam impose no field schema, and the route decorator carries no response_model, so any field the store returns reaches the wire unfiltered)",
+      "evidence_location": "top-level evidence_refs and audit_refs per canonical OODA packet, plus nested stage bundles: ObserveBundle (incident_refs, signal_refs), OrientBundle (persona_proposal_refs, signal_inference_refs, evidence_bundle_refs), DecideBundle (policy_decision_refs), ActBundle (broker_evidence_refs), and LearnBundle (postmortem_refs) -- generic pass-through store with no response_model constraint",
       "verdict": "REDACT",
-      "status_before_fix": "identity extracted then discarded; evidence_refs (when present) returned unredacted; no redacted_evidence_count in meta",
-      "status_after_fix": "redacted via shared redact_evidence_field_items() after in-router pagination slicing; meta.redacted_evidence_count added (scoped to the returned page only)"
+      "status_before_fix": "identity extracted then discarded; audit_refs, learn.postmortem_refs, and evidence_refs (when present) returned unredacted; no redacted_evidence_count in meta",
+      "status_after_fix": "redacted via shared redact_ooda_packet_items() across top-level audit_refs, evidence_refs, and all nested stage bundles after in-router pagination slicing; meta.redacted_evidence_count added (scoped to the returned page only); preserves visibility for authorized holders and fails closed when capabilities unresolvable"
     },
     {
       "surface": "GET /bff/ooda/packets/{packet_id}",
       "handler": "bff_get_ooda_packet",
-      "evidence_location": "same as list: top-level evidence_refs, no response_model constraint",
+      "evidence_location": "same as list: top-level evidence_refs and audit_refs, plus nested stage bundles (observe, orient, decide, act, learn) per canonical OODA packet shape, no response_model constraint",
       "verdict": "REDACT",
-      "status_before_fix": "identity extracted then discarded; evidence_refs returned unredacted; no redacted_evidence_count in meta",
-      "status_after_fix": "redacted via shared helper; meta.redacted_evidence_count added"
+      "status_before_fix": "identity extracted then discarded; audit_refs, learn.postmortem_refs, and evidence_refs returned unredacted; no redacted_evidence_count in meta",
+      "status_after_fix": "redacted via shared redact_ooda_packet() across top-level audit_refs, evidence_refs, and all nested stage bundles; meta.redacted_evidence_count added; full visibility preserved for authorized capabilities; fail-closed verified"
     },
     {
       "surface": "GET /bff/v5/interventions",
@@ -96,10 +96,10 @@
     {
       "surface": "GET /api/v1/committees/{committee_id}",
       "handler": "GovernanceService.committee_projection (governance/service.py)",
-      "evidence_location": "top-level linked_evidence list on the committee detail projection (governance/router.py's get_committee handler already threads identity into committee_projection(committee_id, identity=identity, ...), so this was a redaction-logic gap inside the service method itself, not a discarded-identity router gap)",
+      "evidence_location": "top-level linked_evidence list, nested synthesis_summary.evidence_refs, nested service_handoff.evidence_refs, and nested service_handoff.audit_refs on the committee detail projection",
       "verdict": "REDACT",
-      "status_before_fix": "linked_evidence copied verbatim from the raw committee record via copy.deepcopy(); no redaction, no redacted_evidence_count in meta",
-      "status_after_fix": "routed through the same shared safe_redact_evidence_refs() helper (via self.redact_evidence_refs / self.capabilities_for_identity, the same DI-injected canonical redactor and capability resolver already wired into GovernanceService by core/app_factory.py for every other governance surface); meta.redacted_evidence_count added; fail-closed verified"
+      "status_before_fix": "linked_evidence, synthesis_summary, and service_handoff copied verbatim from raw committee record via copy.deepcopy(); nested evidence/audit refs remained unredacted; meta.redacted_evidence_count omitted nested redactions",
+      "status_after_fix": "linked_evidence, synthesis_summary.evidence_refs, service_handoff.evidence_refs, and service_handoff.audit_refs (default_kind=audit) all capability-gated and redacted using shared safe_redact_evidence_refs() and kind resolution maps; meta.redacted_evidence_count reports the aggregated total across all four locations; fail-closed verified"
     }
   ],
   "summary_counts": {
@@ -122,30 +122,30 @@
     "docs/deployment/evidence/BFF-CONTROL-LOOPS-EVIDENCE-REDACTION-SWEEP-001/evidence.json"
   ],
   "shared_helper_extraction": {
-    "location": "services/control-plane/bff/models.py (already inside the task's declared artifact contract; a standalone evidence_redaction.py module was drafted first but rejected by the artifact-contract gate as an undeclared path, so the helpers were folded into models.py instead, alongside the existing redact_evidence_refs/EVIDENCE_CAPABILITY_MAP/RedactedEvidenceRef it already owns)",
-    "reason": "The task brief explicitly requires reusing governance/router.py's existing fail-closed capability-resolution wrapper (previously a private closure named _safe_redact) rather than duplicating it into control_loops/router.py. Added the wrapper (safe_redact_evidence_refs) and a generic top-level list-field redaction helper (redact_evidence_field_items, mirroring governance/router.py's pre-existing _redact_evidence_field_items) to models.py.",
-    "governance_router_change": "governance/router.py's _safe_redact is now a two-line delegation to the shared safe_redact_evidence_refs(); behavior is unchanged (verified by the full, unmodified 33-test test_governance_evidence_redaction_sweep.py suite still passing byte-for-byte).",
-    "governance_service_change": "governance/service.py's committee_projection now calls the same shared safe_redact_evidence_refs() (via self.redact_evidence_refs/self.capabilities_for_identity, its own existing DI-injected collaborators) instead of copying linked_evidence unredacted. GovernanceService._fail_closed_redact_evidence_refs (the default injected when no canonical redact_evidence_refs is wired) now delegates to models.fail_closed_redacted_refs instead of maintaining its own separate copy of the same withhold-everything loop.",
-    "control_loops_router_change": "control_loops/router.py gained two new optional constructor parameters (redact_evidence_refs, capabilities_for_identity) with the same DI defaults as governance/router.py (models.redact_evidence_refs / lambda identity: []), wired through core/app_factory.py exactly like the governance router already is.",
-    "settings_router_change": "core/app_factory.py's create_settings_router gained the same two optional parameters (redact_evidence_refs, capabilities_for_identity), wired at the single settings mount site; get_settings/export_settings now redact a top-level evidence_refs field via redact_evidence_field_items() (fixes the corrected P1 finding above).",
-    "models_fail_closed_capability_fix": "models.safe_redact_evidence_refs's own except-branch (triggered when the injected redact_fn itself raises) previously withheld every ref with only {ref_id, redacted, reason} -- dropping required_capability even for a ref whose evidence kind (e.g. metric) is known. Extracted the kind/capability resolution shared by redact_evidence_refs into models._resolve_evidence_kind_and_capability() and added models.fail_closed_redacted_refs(), which both this except-branch and GovernanceService._fail_closed_redact_evidence_refs now call, so a fail-closed withhold reports the correct required_capability whenever the ref's kind is resolvable, and 'unknown' only when it genuinely is not -- matching acceptance rule 4 (redacted + required_capability + reason on every withheld ref) instead of silently dropping the field on this one exception path."
+    "location": "services/control-plane/bff/models.py (already inside the task's declared artifact contract; folded into models.py alongside the existing redact_evidence_refs/EVIDENCE_CAPABILITY_MAP/RedactedEvidenceRef it already owns)",
+    "reason": "The task brief explicitly requires reusing governance/router.py's existing fail-closed capability-resolution wrapper rather than duplicating it into control_loops/router.py. Added the wrapper (safe_redact_evidence_refs), generic top-level list-field redaction helper (redact_evidence_field_items), canonical OODA packet redactor (redact_ooda_packet), and paginated OODA packet list redactor (redact_ooda_packet_items) to models.py.",
+    "governance_router_change": "governance/router.py's _safe_redact is a delegation to the shared safe_redact_evidence_refs(); behavior is unchanged (verified by the full, unmodified 33-test test_governance_evidence_redaction_sweep.py suite still passing byte-for-byte).",
+    "governance_service_change": "governance/service.py's committee_projection redacts linked_evidence, nested synthesis_summary.evidence_refs, service_handoff.evidence_refs, and service_handoff.audit_refs via the shared safe_redact_evidence_refs() and reports the aggregated meta.redacted_evidence_count. GovernanceService._fail_closed_redact_evidence_refs delegates to models.fail_closed_redacted_refs.",
+    "control_loops_router_change": "control_loops/router.py uses redact_ooda_packet_items() and redact_ooda_packet() for canonical OODA packet surfaces, redacting top-level audit_refs, evidence_refs, and nested ObserveBundle, OrientBundle, DecideBundle, ActBundle, and LearnBundle references; intervention detail, sentinel finding detail, and control-room use redact_evidence_field_items().",
+    "settings_router_change": "core/app_factory.py's create_settings_router redacts top-level evidence_refs via redact_evidence_field_items() on get_settings and export_settings, reporting meta.redacted_evidence_count.",
+    "models_fail_closed_capability_fix": "models.safe_redact_evidence_refs's except-branch calls models.fail_closed_redacted_refs(), which resolves required_capability from the evidence-kind map whenever the ref's kind is known, and 'unknown' only when unresolvable, matching acceptance rule 4."
   },
   "regression_coverage_added": {
     "file": "services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py",
-    "test_count": 25,
-    "harness": "Builds the real create_control_loops_router(), create_governance_router(), and create_settings_router() directly (never imports main), wired exactly like core/app_factory.py: redact_evidence_refs=models.redact_evidence_refs, capabilities_for_identity=auth.policy.capabilities_for_identity, extract_identity=auth.policy.extract_identity. No class-level monkeypatching of domain services -- minimal read-store doubles (_ControlLoopsSweepStore, _CommitteeSweepStore) plus a real, tempdir-backed SettingsStore supply populated, production-shaped fixture rows with mixed alert/metric/job evidence_refs (operator role holds risk.alert.read but lacks metric.read and job.read, so a mixed-refs fixture exercises partial redaction on every fixed surface, not just all-or-nothing). A _call_with_supported_kwargs() helper filters constructor kwargs by the target's live signature so the same builder functions run unmodified against an unmodified base checkout (see terminal_commands_and_results below) instead of erroring on an unexpected-kwarg TypeError.",
+    "test_count": 27,
+    "harness": "Builds create_control_loops_router(), create_governance_router(), and create_settings_router() directly (never imports main), wired exactly like core/app_factory.py: redact_evidence_refs=models.redact_evidence_refs, capabilities_for_identity=auth.policy.capabilities_for_identity, extract_identity=auth.policy.extract_identity. Read-store doubles supply canonical production-shaped fixture rows (OodaLoopPacket shape with Observe/Orient/Decide/Act/Learn bundles and audit_refs; CommitteeRecord with linked_evidence, synthesis_summary.evidence_refs, and service_handoff evidence/audit refs). A _call_with_supported_kwargs() helper filters constructor kwargs by the live signature so the test file runs unmodified against an unmodified base checkout.",
     "coverage": [
-      "OODA packets list + detail: low-capability identity redacts the metric/job refs while the alert ref stays visible and unredacted evidence_refs==[] items pass through untouched; full-capability identity (admin role) sees the exact original unredacted evidence_refs payload, not merely a zero count.",
-      "OODA packets list pagination: page_size=1 across two pages asserts redacted_evidence_count reflects only the item on the returned page (2 on the page carrying evidence, 0 on the page that doesn't), not the full unpaginated set.",
-      "v5 intervention detail: low/full-capability pairs plus a fail-closed test (capabilities_for_identity raising -> every ref withheld with required_capability set, not merely a blunt reason-only stub).",
-      "v5 interventions list: a baseline test proving InterventionRecord's fixed Pydantic schema strips evidence_refs at the wire regardless of identity or capability -- documents the NO_OP_DOCUMENTED verdict rather than asserting a redaction that cannot structurally occur.",
+      "OODA packets list + detail: low-capability identity redacts metric/job evidence_refs, audit_refs, and learn.postmortem_refs, while observe.incident_refs remains visible to the operator identity holding risk.incident.read; full-capability identity sees exact original unredacted references across all bundles; fail-closed test asserts all refs withheld when capabilities cannot be resolved.",
+      "OODA packets list pagination: page_size=1 across two pages asserts redacted_evidence_count reflects only the item on the returned page (4 on the page carrying evidence/audit/postmortem refs, 0 on the page that doesn't), not the full unpaginated set.",
+      "v5 intervention detail: low/full-capability pairs plus a fail-closed test.",
+      "v5 interventions list: baseline test proving InterventionRecord's fixed Pydantic schema strips evidence_refs at the wire regardless of identity or capability.",
       "Sentinel finding detail: low/full-capability pairs.",
       "Control-room aggregate: low-capability identity redacts embedded intervention and sentinel evidence_refs (4 total across both embedded lists) while full-capability identity sees both sets fully visible and redacted_evidence_count==0.",
-      "Loop inventory list baseline: populated (non-empty) production-shaped response asserting no evidence_refs/linked_evidence field exists, documenting the NO_OP_DOCUMENTED verdict live rather than only in prose.",
-      "Loop inventory detail baseline: fetches a real loop_id from the populated list response and requests its detail directly (never a 404 or a fabricated id), asserting the same no-evidence-field verdict on the actual production-shaped detail record.",
-      "Downstream-health baseline: injects a monitor double whose get_state() returns real populated data (overall_ok=true, a populated target probe row, meta.source=bff_downstream_health_monitor) -- not the previous version's uninjected {overall_ok: null, targets: {}, meta.source: missing} shape, which proved nothing about the populated production response.",
-      "Settings get/export: low-capability identity redacts a mixed evidence_refs field mixed into a real SettingsStore bundle while unrelated sections stay intact; full-capability identity sees the original unredacted evidence_refs; a fail-closed test for capabilities_for_identity raising, covering both GET /api/v1/settings and GET /api/v1/settings/export independently (six tests total).",
-      "Governance committee detail: low/full-capability pairs plus a fail-closed test for the previously-unredacted linked_evidence field."
+      "Loop inventory list baseline: populated production-shaped response asserting no evidence_refs/linked_evidence field exists.",
+      "Loop inventory detail baseline: fetches a real loop_id from the populated list response and requests its detail directly.",
+      "Downstream-health baseline: injects a monitor double returning populated data.",
+      "Settings get/export: low-capability identity redacts mixed evidence_refs in SettingsStore bundle while unrelated sections stay intact; full-capability identity sees original unredacted evidence_refs; fail-closed tests for both GET /api/v1/settings and GET /api/v1/settings/export (six tests total).",
+      "Governance committee detail: low/full-capability pairs plus fail-closed test covering linked_evidence, synthesis_summary.evidence_refs, service_handoff.evidence_refs, and service_handoff.audit_refs with aggregate count; plus direct GovernanceService.committee_projection regression test."
     ]
   },
   "inventory_registration": {
@@ -154,12 +154,12 @@
     "composition_allowlist_changed": false
   },
   "acceptance_notes": {
-    "fail_closed": "Confirmed by test_v5_intervention_detail_fails_closed_when_capabilities_unresolvable, test_committee_detail_fails_closed_when_capabilities_unresolvable, test_settings_get_fails_closed_when_capabilities_unresolvable, and test_settings_export_fails_closed_when_capabilities_unresolvable -- when capabilities_for_identity raises, safe_redact_evidence_refs() substitutes an empty capability set, so every capability-gated ref is withheld (each carrying redacted:true and its own required_capability from models.RedactedEvidenceRef) rather than disclosed. A separate fail-closed path -- safe_redact_evidence_refs()'s own except-branch, triggered when redact_fn itself raises rather than the capability lookup -- previously dropped required_capability entirely; models.fail_closed_redacted_refs() now resolves it from the same evidence-kind map whenever the ref's kind is known (fixes the P2 finding against models.py lines 744-755).",
+    "fail_closed": "Confirmed by test_ooda_packet_detail_fails_closed_when_capabilities_unresolvable, test_v5_intervention_detail_fails_closed_when_capabilities_unresolvable, test_committee_detail_fails_closed_when_capabilities_unresolvable, test_settings_get_fails_closed_when_capabilities_unresolvable, and test_settings_export_fails_closed_when_capabilities_unresolvable -- when capabilities_for_identity raises, safe_redact_evidence_refs() substitutes an empty capability set and fail_closed_redacted_refs() withholds every capability-gated ref.",
     "never_widens_disclosure": "No change to models.redact_evidence_refs, EVIDENCE_CAPABILITY_MAP, or any role/capability mapping in auth/policy.py; only route handlers/service methods that previously discarded identity or skipped redaction now route their payload through the pre-existing canonical redactor.",
-    "no_duplicate_symbols_or_routers": "The fail-closed capability-resolution wrapper exists in exactly one place (models.py::safe_redact_evidence_refs); governance/router.py's former private copy was replaced with a delegating call, not left as a second implementation. No new router, store, or fallback path was created; no symbol is defined twice.",
-    "redaction_after_pagination": "Verified for GET /bff/ooda/packets (dedicated multipage test) -- redaction is applied to response['items']/response['data'] after in-router page slicing (_page()), not to the full unpaginated dataset.",
-    "bff_final_007_shape_match": "Every withheld ref in this task's tests asserts redacted:true, required_capability, reason==\"insufficient_capability\", and each fixed surface's meta reports redacted_evidence_count -- produced entirely by the unmodified models.redact_evidence_refs/RedactedEvidenceRef (BFF-FINAL-007, commit 4a14129b9).",
-    "list_vs_detail_verified_separately": "list_v5_interventions and its sibling detail route were audited and tested independently, surfacing a genuine structural difference between them (response_model-enforced schema on the list route vs. raw pass-through on the detail route) rather than assuming identical treatment -- the exact failure mode the task brief warned against (a prior sweep misclassified a detail route as safe using a list/empty baseline)."
+    "no_duplicate_symbols_or_routers": "The fail-closed capability-resolution wrapper and OODA redactors exist in exactly one place (models.py); governance/router.py delegates to safe_redact_evidence_refs. No new router, store, or fallback path was created; no symbol is defined twice.",
+    "redaction_after_pagination": "Verified for GET /bff/ooda/packets (dedicated multipage test) -- redaction is applied to response['items']/response['data'] after in-router page slicing, not to the full unpaginated dataset.",
+    "bff_final_007_shape_match": "Every withheld ref in this task's tests asserts redacted:true, required_capability, reason==\"insufficient_capability\", and each fixed surface's meta reports redacted_evidence_count -- produced entirely by models.redact_evidence_refs/RedactedEvidenceRef.",
+    "list_vs_detail_verified_separately": "list_v5_interventions and its sibling detail route were audited and tested independently, surfacing the genuine structural difference between them (response_model-enforced schema on list route vs. raw pass-through on detail route)."
   },
   "cross_router_and_residual_gaps": {
     "in_scope_and_fixed": "All 9 acceptance-listed control-loops surfaces, both app_factory settings surfaces, and the governance committee detail route were audited; every surface carrying evidence-ref-shaped content was redacted, every surface without one was verified against a populated baseline and documented as NO_OP_DOCUMENTED.",
@@ -167,28 +167,24 @@
   },
   "terminal_commands_and_results": [
     {
-      "command": "git rev-parse HEAD (at the time of the fix-up commits below)",
-      "result": "task branch on top of 9bffba8cbf5d73b71ea8079f520fcbae31c550de (base_commit / merge-base with origin/dev)"
+      "command": "git rev-parse HEAD (prior to review fix-up)",
+      "result": "4560f1619e313b94ae15f84ab8075d07ca16df06"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_bff_test_architecture.py -- run against the HEAD implementation (post fix-up)",
-      "result": "72 passed, 3 warnings in ~47-49s (25 tests in the sweep file, up from 18: +6 settings get/export low/full/fail-closed, +1 loop-inventory detail baseline)"
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py -- run against exact HEAD implementation",
+      "result": "27 passed, 3 warnings in 11.11s (exit 0)"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py -- run with control_loops/router.py, governance/router.py, governance/service.py, core/app_factory.py, and models.py all temporarily restored to `git show 9bffba8cb:<path>` content (the exact unmodified base_commit), new/updated test file kept in place",
-      "result": "21 failed, 4 passed in 10.39s -- every failure is a real behavioral assertion (KeyError/AssertionError on missing redaction, e.g. `refs[1] == _ALERT_REF` when the ref was actually withheld, or `payload['evidence_refs'] == _MIXED_REFS` when settings returned the redacted form) via the test file's own _call_with_supported_kwargs() helper, which drops the redact_evidence_refs/capabilities_for_identity kwargs the base constructors do not accept instead of erroring on a setup TypeError -- fixes the P2 finding that base failures were previously constructor TypErrors, not detected leaks. Files then restored from backup; `git status --short` confirmed only the intended 4 files (app_factory.py, governance/service.py, models.py, the test file) remained modified."
+      "command": ".venv-pantheon/bin/python3 -m pytest -q $TMP_BASE_DIR/services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py -- run with exact regression test file mounted into a complete git-archive of unmodified base 9bffba8cbf5d73b71ea8079f520fcbae31c550de",
+      "result": "23 failed, 4 passed, 3 warnings in 10.72s (exit 1). Every failure is a real behavioral assertion failure demonstrating the leak on base; the 4 passing tests are the schema-bounded/no-evidence baselines. Proves the test suite detects the leak on base."
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_bff_test_architecture.py -- re-run against HEAD after restoring the implementation from backup",
-      "result": "72 passed, 3 warnings in 48.65s"
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_auth_facade.py -- full regression suite on exact HEAD",
+      "result": "81 passed, 3 warnings in 53.09s (exit 0)"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_auth_facade.py (exercises create_settings_router through a third call site with a bare `extract_identity=lambda _a, **_k: object()` and no evidence_refs field present, to confirm the new redaction wiring is a no-op when the field is absent)",
-      "result": "7 passed, 2 warnings in 3.05s"
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_router.py services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/tests/test_bff_governance_subrules_contract.py",
-      "result": "4 failed, 32 passed in 16.47s. All 4 failures independently reproduced with the same 4 files restored to the unmodified base_commit content (test_ast_route_inventory_proves_single_owner_across_assembly_handoff compares main.py's legacy route decorators, which this task never touches; the other 3 -- test_consultation_session_and_policy_read_routes, test_bff_approval_review_and_governance_ledger_compatibility, test_single_and_batch_approval_decisions_validate_and_report_partial_results -- fail identically at base_commit, confirming they are pre-existing gaps (a 503 from missing SEM-command-admission wiring in that test's build_client(), and a redacted_evidence_count assertion against governance/router.py's always-fail-closed _default_redact_evidence_refs default, both unrelated to and unchanged by this task's diff)."
+      "command": "git diff --check",
+      "result": "Clean (exit 0, no whitespace errors or merge conflict markers)"
     }
   ]
 }

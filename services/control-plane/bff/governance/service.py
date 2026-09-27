@@ -28,7 +28,11 @@ from typing import (
     Union,
 )
 
-from ..models import fail_closed_redacted_refs, safe_redact_evidence_refs
+from ..models import (
+    _resolve_evidence_kind_and_capability,
+    fail_closed_redacted_refs,
+    safe_redact_evidence_refs,
+)
 
 
 class ApprovalQueueReaderPort(Protocol):
@@ -293,7 +297,7 @@ class GovernanceService:
 
     @staticmethod
     def _fail_closed_redact_evidence_refs(
-        identity: Any, refs: List[Dict[str, Any]], *, capabilities: Any = None
+        identity: Any, refs: List[Dict[str, Any]], *, capabilities: Any = None, **kwargs: Any
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Default used only when no canonical redaction policy is wired.
 
@@ -305,7 +309,9 @@ class GovernanceService:
         report the same ``required_capability`` for a ref whose kind is known.
         """
         del identity, capabilities
-        return fail_closed_redacted_refs(refs)
+        default_kind = kwargs.get("default_kind")
+        kind_map = kwargs.get("kind_map")
+        return fail_closed_redacted_refs(refs, default_kind=default_kind, kind_map=kind_map)
 
     def _safe_dataset_surface_status(
         self, dataset: str, *, snapshot_at: str, source: Optional[str] = None, **kwargs: Any
@@ -664,12 +670,67 @@ class GovernanceService:
         snap = snapshot_at or self.utc_now()
         surface_state = self._committee_surface_state(committee, snapshot_at=snap)
         allowed_actions = self._committee_allowed_actions(committee, identity=identity, surface_state=surface_state)
-        linked_evidence, redacted_count = safe_redact_evidence_refs(
+
+        raw_linked = copy.deepcopy(committee.get("linked_evidence") or [])
+        linked_evidence, linked_count = safe_redact_evidence_refs(
             identity,
-            copy.deepcopy(committee.get("linked_evidence") or []),
+            raw_linked,
             redact_fn=self.redact_evidence_refs,
             capabilities_fn=self.capabilities_for_identity,
         )
+
+        ref_kind_map: Dict[str, str] = {}
+        for raw_ref in raw_linked:
+            if isinstance(raw_ref, dict):
+                ref_id = str(raw_ref.get("id") or raw_ref.get("ref_id") or "").strip()
+                kind_key, _, _ = _resolve_evidence_kind_and_capability(raw_ref)
+                if ref_id and kind_key:
+                    ref_kind_map[ref_id] = kind_key
+
+        raw_handoff = committee.get("service_handoff") or {}
+        for raw_ref in (raw_handoff.get("evidence_refs") or []):
+            if isinstance(raw_ref, dict):
+                ref_id = str(raw_ref.get("id") or raw_ref.get("ref_id") or "").strip()
+                kind_key, _, _ = _resolve_evidence_kind_and_capability(raw_ref)
+                if ref_id and kind_key:
+                    ref_kind_map[ref_id] = kind_key
+
+        synthesis_summary = copy.deepcopy(committee.get("synthesis_summary") or {})
+        synth_count = 0
+        if isinstance(synthesis_summary.get("evidence_refs"), list) and synthesis_summary["evidence_refs"]:
+            redacted_synth_refs, synth_count = safe_redact_evidence_refs(
+                identity,
+                synthesis_summary["evidence_refs"],
+                redact_fn=self.redact_evidence_refs,
+                capabilities_fn=self.capabilities_for_identity,
+                kind_map=ref_kind_map,
+            )
+            synthesis_summary["evidence_refs"] = redacted_synth_refs
+
+        service_handoff = copy.deepcopy(committee.get("service_handoff") or {})
+        handoff_ev_count = 0
+        handoff_audit_count = 0
+        if isinstance(service_handoff.get("evidence_refs"), list) and service_handoff["evidence_refs"]:
+            redacted_handoff_ev, handoff_ev_count = safe_redact_evidence_refs(
+                identity,
+                service_handoff["evidence_refs"],
+                redact_fn=self.redact_evidence_refs,
+                capabilities_fn=self.capabilities_for_identity,
+                kind_map=ref_kind_map,
+            )
+            service_handoff["evidence_refs"] = redacted_handoff_ev
+        if isinstance(service_handoff.get("audit_refs"), list) and service_handoff["audit_refs"]:
+            redacted_handoff_audit, handoff_audit_count = safe_redact_evidence_refs(
+                identity,
+                service_handoff["audit_refs"],
+                redact_fn=self.redact_evidence_refs,
+                capabilities_fn=self.capabilities_for_identity,
+                default_kind="audit",
+            )
+            service_handoff["audit_refs"] = redacted_handoff_audit
+
+        total_redacted = linked_count + synth_count + handoff_ev_count + handoff_audit_count
+
         return {
             "committee_id": committee.get("committee_id"),
             "committee_ref": committee.get("committee_ref"),
@@ -684,14 +745,14 @@ class GovernanceService:
             "sponsor_decision": committee.get("sponsor_decision"),
             "sponsor_decided_at": committee.get("sponsor_decided_at"),
             "sponsor_decided_by": committee.get("sponsor_decided_by"),
-            "synthesis_summary": copy.deepcopy(committee.get("synthesis_summary") or {}),
+            "synthesis_summary": synthesis_summary,
             "linked_evidence": linked_evidence,
-            "service_handoff": copy.deepcopy(committee.get("service_handoff") or {}),
+            "service_handoff": service_handoff,
             "allowedActions": allowed_actions,
             "meta": {
                 "snapshot_at": snap,
                 "surfaces": {"committee_board": surface_state},
-                "redacted_evidence_count": redacted_count,
+                "redacted_evidence_count": total_redacted,
             },
         }
 
