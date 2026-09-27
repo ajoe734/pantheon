@@ -48,6 +48,22 @@
     "defect_11_runtime_router_port_binding": {
       "problem": "Runtime router failed to resolve runtime_owner_port from direct constructor arguments or PANTHEON_RUNTIME_MANAGER_URL default configuration.",
       "remediation": "Supported caller-supplied runtime_owner_port directly in create_runtime_router and auto-resolved via RuntimeManagerClient when PANTHEON_RUNTIME_MANAGER_URL is set, while failing closed 503 DEPENDENCY_UNAVAILABLE when unconfigured."
+    },
+    "defect_12_capital_idempotency_key_bound_to_target_and_operation": {
+      "problem": "capital/service.py checked only actor/tenant/key plus payload digest, ignoring operation and target: after approve r1, same key/body for approve r2 or two-man-sign r1 returned the first approval receipt (201/202) without executing requested operation.",
+      "remediation": "Bound durable replay to command + target + request in both CapitalService.idempotent and DefaultCapitalAuthority._execute_with_durability, raising 409 Conflict if key was already used with a different target, operation, or request hash."
+    },
+    "defect_13_capital_atomic_nonterminal_admission_and_identity_preservation": {
+      "problem": "capital/service.py:344-375 used submit_terminal_command BEFORE dispatch, recording status executed with result null. Injected update_status OSError after successful downstream POST followed by fresh CommandStore retry created a second command ID and sent a second POST.",
+      "remediation": "Replaced submit_terminal_command before dispatch with atomic nonterminal admission (submit_command with status submitted). Retained original command_id identity across retries and uncertain outcomes, and only marked EXECUTED after successful downstream execution."
+    },
+    "defect_14_runtime_router_durable_scoped_idempotency_and_owner_identity": {
+      "problem": "runtime/router.py used unscoped process-local _GOV_BFF_IDEMPOTENCY and sent no tenant/idempotency identity to owner: tenant B received tenant A cached runtime; rebuilding router re-dispatched with new runtime ID.",
+      "remediation": "Retired unscoped process-local cache as authority, scoped in-memory cache by tenant_id + operator_id, derived deterministic runtime_id from tenant_id + operator_id + binding_id + plan_id + idempotency_key across process restarts, and forwarded tenant_id, idempotency_key, and runtime_id to runtime owner port in deploy_req."
+    },
+    "defect_15_canonical_receipt_sd44_fields": {
+      "problem": "capital/service.py and command_adapters/capital_adapter.py did not persist canonical receipt aggregate/version, owner, event_id, correlation_id, or committed_at; domain receipt helper emitted entity fields/executed_at only, violating SD 4.4.",
+      "remediation": "Updated build_domain_receipt to emit canonical SD 4.4 fields: aggregate_type, aggregate_id, aggregate_version, event_id, correlation_id, owner, committed_at. Passed explicit canonical values in CapitalCommandAdapter and defaulted them reliably in DefaultCapitalAuthority._execute_with_durability."
     }
   },
   "mutation_caller_inventory": {
@@ -227,6 +243,12 @@
         "result": "55 passed, 6 warnings in 34.27s",
         "executed": 55,
         "collected": 55
+      },
+      {
+        "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/pytest /tmp/test_domain_review_a5d7.py -vv",
+        "result": "6 passed, 1 warning in 3.42s",
+        "executed": 6,
+        "collected": 6
       }
     ]
   },
@@ -246,7 +268,11 @@
     "defect_8_capital_durability_before_dispatch_resolved": true,
     "defect_9_governance_scoped_replay_resolved": true,
     "defect_10_sponsor_adapter_rationale_resolved": true,
-    "defect_11_runtime_router_port_binding_resolved": true
+    "defect_11_runtime_router_port_binding_resolved": true,
+    "defect_12_capital_idempotency_key_bound_to_target_and_operation_resolved": true,
+    "defect_13_capital_atomic_nonterminal_admission_and_identity_preservation_resolved": true,
+    "defect_14_runtime_router_durable_scoped_idempotency_and_owner_identity_resolved": true,
+    "defect_15_canonical_receipt_sd44_fields_resolved": true
   },
   "review": {
     "reviewer": "Codex",

@@ -394,6 +394,9 @@ class CommandStore:
                     commands[i]["status"] = status.value if hasattr(status, "value") else str(status)
                     if result is not None:
                         commands[i]["result"] = result
+                        foundation = commands[i].get("foundation")
+                        if isinstance(foundation, dict):
+                            foundation["receipt"] = result
                     if error is not None:
                         commands[i]["error"] = error
                     elif status in {

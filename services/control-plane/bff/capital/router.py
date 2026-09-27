@@ -237,6 +237,7 @@ def create_capital_router(
                 key=key,
                 operation=operation,
                 payload=payload,
+                target_id=target_id,
             )
             if replay is not None:
                 return replay, True
@@ -255,6 +256,7 @@ def create_capital_router(
                 operation=operation,
                 payload=payload,
                 response=result,
+                target_id=target_id,
             )
             return result, False
         except Exception as exc:

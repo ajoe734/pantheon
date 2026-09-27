@@ -5,19 +5,21 @@ existing RuntimeBinding, deployment, and SSE behavior without importing it.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import uuid
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from fastapi import APIRouter, Body, Header, Query, Request
 
 try:
-    from ..models import CommandType, ErrorCode, ObjectType
+    from ..models import CommandStatus, CommandType, ErrorCode, ObjectType
 except (ImportError, ValueError):
     try:
-        from services.control_plane.bff.models import CommandType, ErrorCode, ObjectType
+        from services.control_plane.bff.models import CommandStatus, CommandType, ErrorCode, ObjectType
     except (ImportError, ValueError):
-        from models import CommandType, ErrorCode, ObjectType
+        from models import CommandStatus, CommandType, ErrorCode, ObjectType
 
 from .service import RuntimeRouterService, _MissingRuntimeDependency
 
@@ -1010,19 +1012,60 @@ def create_runtime_router(
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = _stable_json_hash({"route": "POST /bff/runtimes", "payload": payload})
         dry_run = _request_dry_run_requested()
-        if not dry_run:
-            existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-            if existing is not None:
-                if existing.get("request_hash") != request_hash:
-                    raise _bff_error(
-                        409,
-                        ErrorCode.IDEMPOTENCY_CONFLICT,
-                        "Idempotency key already used with a different payload",
-                        f"Key {resolved_key!r} is bound to a different request hash",
-                        precondition_failed="idempotency_conflict",
-                        suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        operator_id = str(getattr(identity, "operator_id", "") or "operator").strip()
+        tenant_id = str(getattr(identity, "tenant_id", "") or "").strip()
+
+        cmd_store = (
+            service.dependency("command_store", None)
+            or service.dependency("_command_store", None)
+        )
+        if (cmd_store is None or isinstance(cmd_store, _MissingRuntimeDependency)) and os.getenv("BFF_DATA_DIR"):
+            data_dir = os.getenv("BFF_DATA_DIR")
+            cmd_file = os.path.join(data_dir, "commands.jsonl")
+            try:
+                from services.control_plane.bff.command_queue import CommandStore
+                cmd_store = CommandStore(cmd_file)
+            except Exception:
+                cmd_store = None
+        if isinstance(cmd_store, _MissingRuntimeDependency):
+            cmd_store = None
+
+        scoped_cache_key = f"{tenant_id}:{operator_id}:POST /bff/runtimes:{resolved_key}" if resolved_key else None
+        if not dry_run and resolved_key:
+            if cmd_store is not None:
+                existing_cmd = cmd_store.get_command_by_idempotency_key(
+                    resolved_key, operator_id=operator_id, tenant_id=tenant_id or None
+                )
+                if existing_cmd is not None:
+                    saved_hash = (
+                        existing_cmd.get("audit", {}).get("request_hash")
+                        or existing_cmd.get("foundation", {}).get("idempotency_record", {}).get("request_hash")
                     )
-                return existing["result"]
+                    if saved_hash and saved_hash != request_hash:
+                        raise _bff_error(
+                            409,
+                            ErrorCode.IDEMPOTENCY_CONFLICT,
+                            "Idempotency key already used with a different payload",
+                            f"Key {resolved_key!r} is bound to a different request hash",
+                            precondition_failed="idempotency_conflict",
+                            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                        )
+                    if existing_cmd.get("status") in ("executed", CommandStatus.EXECUTED.value) and existing_cmd.get("result"):
+                        return existing_cmd["result"]
+
+            if _GOV_BFF_IDEMPOTENCY is not None and not isinstance(_GOV_BFF_IDEMPOTENCY, _MissingRuntimeDependency) and scoped_cache_key:
+                existing = _GOV_BFF_IDEMPOTENCY.get(scoped_cache_key)
+                if existing is not None:
+                    if existing.get("request_hash") != request_hash:
+                        raise _bff_error(
+                            409,
+                            ErrorCode.IDEMPOTENCY_CONFLICT,
+                            "Idempotency key already used with a different payload",
+                            f"Key {resolved_key!r} is bound to a different request hash",
+                            precondition_failed="idempotency_conflict",
+                            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                        )
+                    return existing["result"]
 
         fields = {
             field: _runtime_create_required_string(payload, field)
@@ -1042,7 +1085,16 @@ def create_runtime_router(
 
         snapshot_at = utc_now()
         client_runtime_id = str(payload.get("runtime_id") or payload.get("id") or "").strip()
-        runtime_id = client_runtime_id or f"runtime-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+        if client_runtime_id:
+            runtime_id = client_runtime_id
+        elif resolved_key:
+            id_hash = hashlib.sha256(
+                f"{tenant_id}:{operator_id}:{fields['binding_id']}:{fields['deployment_plan_id']}:{resolved_key}".encode("utf-8")
+            ).hexdigest()[:8]
+            runtime_id = f"runtime-{snapshot_at[:10].replace('-', '')}-{id_hash}"
+        else:
+            runtime_id = f"runtime-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+
         record = {
             "id": runtime_id,
             "runtime_id": runtime_id,
@@ -1075,7 +1127,9 @@ def create_runtime_router(
                 "name": fields["name"],
                 "persona_id": fields["persona_id"],
                 "deployment_mode": runtime_kind,
-                "actor_id": identity.operator_id,
+                "actor_id": operator_id,
+                "tenant_id": tenant_id if tenant_id else None,
+                "idempotency_key": resolved_key if resolved_key else None,
                 **(payload.get("params") if isinstance(payload.get("params"), dict) else {}),
             }
             if hasattr(owner_port, "deploy") and callable(owner_port.deploy):
@@ -1125,7 +1179,9 @@ def create_runtime_router(
         )
 
         result = {"data": data, "meta": meta}
-        _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+        if not dry_run and resolved_key:
+            if _GOV_BFF_IDEMPOTENCY is not None and not isinstance(_GOV_BFF_IDEMPOTENCY, _MissingRuntimeDependency) and scoped_cache_key:
+                _GOV_BFF_IDEMPOTENCY[scoped_cache_key] = {"request_hash": request_hash, "result": result}
         return result
 
     @router.get("/bff/runtimes")

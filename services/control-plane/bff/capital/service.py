@@ -244,6 +244,42 @@ class CapitalAuthority(Protocol):
     def rebalance_action(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = ..., **kwargs: Any) -> Dict[str, Any]: ...
 
 
+_OPERATION_ALIASES: Dict[str, set[str]] = {
+    "approve_rebalance": {"approve", "approverebalance", "approve_rebalance"},
+    "sign_rebalance": {"sign", "two-man-sign", "twomansign", "signrebalance", "sign_rebalance"},
+    "apply_rebalance": {"apply", "applyrebalance", "apply_rebalance", "approvedapply"},
+    "create_rebalance": {"create", "createrebalance", "create_rebalance"},
+    "patch_rebalance": {"patch", "patchrebalance", "patch_rebalance"},
+    "rebalance_action": {"rebalanceaction", "rebalance_action"},
+    "create_pool": {"create", "createpool", "create_pool", "createcapitalpool"},
+    "patch_pool": {"patch", "patchpool", "patch_pool", "patchcapitalpool"},
+    "pool_action": {"poolaction", "pool_action", "capitalpoolaction"},
+}
+
+
+def _matches_operation(
+    operation: str,
+    saved_op: Optional[str],
+    saved_action: Optional[str],
+    saved_type: Optional[str],
+) -> bool:
+    if not operation:
+        return True
+    aliases = _OPERATION_ALIASES.get(operation)
+    candidates = [
+        str(c).replace("_", "").replace("-", "").lower()
+        for c in (saved_op, saved_action, saved_type)
+        if c
+    ]
+    if aliases:
+        for cand in candidates:
+            if cand in aliases or any(cand == a.replace("_", "").replace("-", "") for a in aliases):
+                return True
+        return False
+    clean_op = operation.replace("_", "").replace("-", "").lower()
+    return any(clean_op == cand for cand in candidates)
+
+
 class DefaultCapitalAuthority:
     """Default production Capital write authority delegating to command executor and adapters."""
 
@@ -294,6 +330,7 @@ class DefaultCapitalAuthority:
         actor_id: str,
         kwargs: Dict[str, Any],
         execute_fn: Callable[[str, Dict[str, Any]], Dict[str, Any]],
+        operation: Optional[str] = None,
     ) -> Dict[str, Any]:
         if self._command_store is None:
             raise CapitalAuthorityUnavailable(
@@ -301,7 +338,6 @@ class DefaultCapitalAuthority:
             )
         from datetime import datetime, timezone
         now_iso = datetime.now(timezone.utc).isoformat()
-        cmd_id = str(uuid.uuid4())
         tenant_id = kwargs.get("tenant_id") or payload.get("tenant_id")
         idempotency_key = kwargs.get("idempotency_key") or payload.get("idempotency_key")
         request_hash = stable_digest(payload)
@@ -311,6 +347,8 @@ class DefaultCapitalAuthority:
             "action_id": action_id,
             "actor_id": actor_id,
         }
+        if operation:
+            params["operation"] = operation
         if target_id:
             if target_type == "Rebalance":
                 params["rebalance_id"] = target_id
@@ -324,8 +362,11 @@ class DefaultCapitalAuthority:
         audit_context: Dict[str, Any] = {
             "operator_id": actor_id,
             "action_id": action_id,
+            "operation": operation or action_id,
             "idempotency_key": idempotency_key,
             "request_hash": request_hash,
+            "target_id": target_id,
+            "target_type": target_type,
             "timestamp": now_iso,
         }
         if tenant_id:
@@ -338,26 +379,72 @@ class DefaultCapitalAuthority:
                 "operator_id": actor_id,
                 "tenant_id": tenant_id,
                 "command_type": command_type,
+                "action_id": action_id,
+                "operation": operation or action_id,
+                "target_id": target_id,
             }
         }
 
-        # 1. Durable admission BEFORE dispatch:
-        # submit_terminal_command appends to CommandStore.
-        # If disk/storage fails (e.g. OSError), this raises BEFORE any downstream execution!
-        self._command_store.submit_terminal_command(
-            command_id=cmd_id,
-            command_type=command_type,
-            target={"type": target_type, "id": target_id or "pending"},
-            submitted_at=now_iso,
-            params=params,
-            audit_context=audit_context,
-            foundation_context=foundation_context,
-            result=None,
-        )
+        # Check existing command for atomic nonterminal recovery
+        existing_cmd = None
+        if idempotency_key and hasattr(self._command_store, "get_command_by_idempotency_key"):
+            existing_cmd = self._command_store.get_command_by_idempotency_key(
+                idempotency_key, operator_id=actor_id, tenant_id=tenant_id
+            )
 
-        # 2. Dispatch to downstream adapter / executor
+        if existing_cmd is not None:
+            # Re-validate target and action
+            saved_target_id = (existing_cmd.get("target") or {}).get("id") or existing_cmd.get("params", {}).get("rebalance_id") or existing_cmd.get("params", {}).get("pool_id")
+            if target_id and saved_target_id and saved_target_id != "pending" and saved_target_id != target_id:
+                raise CapitalValidationError("Idempotency key was already used with a different target")
+            saved_act = existing_cmd.get("audit", {}).get("action_id") or existing_cmd.get("params", {}).get("action_id")
+            saved_op = existing_cmd.get("params", {}).get("operation") or existing_cmd.get("audit", {}).get("operation")
+            saved_type = existing_cmd.get("type")
+            if operation and not _matches_operation(operation, saved_op, saved_act, saved_type):
+                raise CapitalValidationError("Idempotency key was already used with a different operation")
+            saved_hash = existing_cmd.get("audit", {}).get("request_hash") or (existing_cmd.get("foundation", {}).get("idempotency_record", {}).get("request_hash"))
+            if saved_hash and saved_hash != request_hash:
+                raise CapitalValidationError("Idempotency key was already used with a different request")
+
+            # Retain original command identity across uncertain outcomes
+            cmd_id = existing_cmd["command_id"]
+            if existing_cmd.get("status") in (CommandStatus.EXECUTED.value, "executed") and existing_cmd.get("result"):
+                return existing_cmd["result"]
+        else:
+            cmd_id = str(uuid.uuid4())
+            # Atomic nonterminal admission BEFORE dispatch:
+            # submit_command appends to CommandStore with status=SUBMITTED.
+            # If disk/storage fails (e.g. OSError), this raises BEFORE any downstream execution!
+            if hasattr(self._command_store, "submit_command"):
+                self._command_store.submit_command(
+                    command_id=cmd_id,
+                    command_type=command_type,
+                    target={"type": target_type, "id": target_id or "pending"},
+                    submitted_at=now_iso,
+                    params=params,
+                    audit_context=audit_context,
+                    foundation_context=foundation_context,
+                )
+
+        # Dispatch to downstream adapter / executor
         try:
             result = execute_fn(cmd_id, params)
+            if isinstance(result, dict):
+                if "aggregate_type" not in result:
+                    result["aggregate_type"] = target_type
+                if "aggregate_id" not in result:
+                    result["aggregate_id"] = target_id
+                if "aggregate_version" not in result:
+                    result["aggregate_version"] = 1
+                if "event_id" not in result:
+                    result["event_id"] = f"evt-{cmd_id}"
+                if "correlation_id" not in result:
+                    result["correlation_id"] = cmd_id
+                if "owner" not in result:
+                    result["owner"] = "capital"
+                if "committed_at" not in result:
+                    result["committed_at"] = now_iso
+
             if hasattr(self._command_store, "update_status"):
                 self._command_store.update_status(
                     cmd_id,
@@ -366,12 +453,15 @@ class DefaultCapitalAuthority:
                 )
             return result
         except Exception as exc:
-            if hasattr(self._command_store, "update_status"):
-                self._command_store.update_status(
-                    cmd_id,
-                    CommandStatus.FAILED,
-                    error={"error": str(exc)},
-                )
+            if hasattr(self._command_store, "update_status") and not isinstance(exc, OSError):
+                try:
+                    self._command_store.update_status(
+                        cmd_id,
+                        CommandStatus.FAILED,
+                        error={"error": str(exc)},
+                    )
+                except Exception:
+                    pass
             raise
 
     def create_capital_pool(self, payload: Dict[str, Any], *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
@@ -404,6 +494,7 @@ class DefaultCapitalAuthority:
             actor_id=actor_id,
             kwargs=kwargs,
             execute_fn=_exec,
+            operation="create_pool",
         )
 
     def patch_capital_pool(self, payload: Dict[str, Any], pool_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
@@ -426,6 +517,7 @@ class DefaultCapitalAuthority:
             actor_id=actor_id,
             kwargs=kwargs,
             execute_fn=_exec,
+            operation="patch_pool",
         )
 
     def capital_pool_action(self, payload: Dict[str, Any], pool_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
@@ -450,6 +542,7 @@ class DefaultCapitalAuthority:
             actor_id=actor_id,
             kwargs=kwargs,
             execute_fn=_exec,
+            operation="pool_action",
         )
 
     def create_rebalance(self, payload: Dict[str, Any], *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
@@ -477,6 +570,7 @@ class DefaultCapitalAuthority:
             actor_id=actor_id,
             kwargs=kwargs,
             execute_fn=_exec,
+            operation="create_rebalance",
         )
 
     def patch_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
@@ -499,6 +593,7 @@ class DefaultCapitalAuthority:
             actor_id=actor_id,
             kwargs=kwargs,
             execute_fn=_exec,
+            operation="patch_rebalance",
         )
 
     def apply_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
@@ -521,6 +616,7 @@ class DefaultCapitalAuthority:
             actor_id=actor_id,
             kwargs=kwargs,
             execute_fn=_exec,
+            operation="apply_rebalance",
         )
 
     def approve_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
@@ -543,6 +639,7 @@ class DefaultCapitalAuthority:
             actor_id=actor_id,
             kwargs=kwargs,
             execute_fn=_exec,
+            operation="approve_rebalance",
         )
 
     def sign_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
@@ -565,6 +662,7 @@ class DefaultCapitalAuthority:
             actor_id=actor_id,
             kwargs=kwargs,
             execute_fn=_exec,
+            operation="sign_rebalance",
         )
 
     def rebalance_action(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
@@ -589,6 +687,7 @@ class DefaultCapitalAuthority:
             actor_id=actor_id,
             kwargs=kwargs,
             execute_fn=_exec,
+            operation="rebalance_action",
         )
 
 
@@ -676,6 +775,7 @@ class CapitalService:
         operation: str,
         payload: Mapping[str, Any],
         tenant_id: Optional[str] = None,
+        target_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         if not key:
             raise CapitalValidationError("Idempotency-Key is required")
@@ -685,19 +785,47 @@ class CapitalService:
                 key, operator_id=actor_id, tenant_id=tenant_id
             )
             if cmd is not None:
+                # 1. Target check: bind durable replay to target
+                saved_target_id = (cmd.get("target") or {}).get("id") or cmd.get("params", {}).get("rebalance_id") or cmd.get("params", {}).get("pool_id")
+                if target_id and saved_target_id and saved_target_id != "pending" and saved_target_id != target_id:
+                    raise CapitalValidationError("Idempotency key was already used with a different target")
+
+                # 2. Operation check: bind durable replay to operation / command
+                saved_act = cmd.get("audit", {}).get("action_id") or cmd.get("params", {}).get("action_id")
+                saved_op = cmd.get("params", {}).get("operation") or cmd.get("audit", {}).get("operation")
+                saved_type = cmd.get("type")
+                if operation and not _matches_operation(operation, saved_op, saved_act, saved_type):
+                    raise CapitalValidationError("Idempotency key was already used with a different operation")
+
+                # 3. Request hash check: bind durable replay to request payload
                 foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
                 receipt = foundation.get("receipt") if isinstance(foundation.get("receipt"), dict) else None
                 saved_hash = cmd.get("audit", {}).get("request_hash") or (receipt.get("request_hash") if isinstance(receipt, dict) else None)
                 if saved_hash and saved_hash != request_hash:
                     raise CapitalValidationError("Idempotency key was already used with a different request")
-                if cmd.get("result"):
-                    return deepcopy(cmd["result"])
-                if receipt:
-                    return deepcopy(receipt)
-        cache_key = f"{tenant_id or ''}:{actor_id}:{operation}:{key}"
+
+                # 4. Only replay executed results/receipts
+                if cmd.get("status") in (CommandStatus.EXECUTED.value, "executed"):
+                    if cmd.get("result"):
+                        return deepcopy(cmd["result"])
+                    if receipt:
+                        return deepcopy(receipt)
+                return None
+
+        cache_key = f"{tenant_id or ''}:{actor_id}:{operation}:{target_id or ''}:{key}"
         with self._lock:
             saved = self._idempotency.get(cache_key)
             if saved is None:
+                # Also check if key exists under a different operation or target in memory
+                for k, v in self._idempotency.items():
+                    parts = k.split(":")
+                    if len(parts) >= 5:
+                        s_tenant, s_actor, s_op, s_target, s_key = parts[0], parts[1], parts[2], parts[3], parts[4]
+                        if s_key == key and s_actor == actor_id and (not tenant_id or s_tenant == tenant_id):
+                            if target_id and s_target and s_target != target_id:
+                                raise CapitalValidationError("Idempotency key was already used with a different target")
+                            if s_op != operation:
+                                raise CapitalValidationError("Idempotency key was already used with a different operation")
                 return None
             if saved["request_hash"] != request_hash:
                 raise CapitalValidationError("Idempotency key was already used with a different request")
@@ -712,8 +840,9 @@ class CapitalService:
         payload: Mapping[str, Any],
         response: Mapping[str, Any],
         tenant_id: Optional[str] = None,
+        target_id: Optional[str] = None,
     ) -> None:
-        cache_key = f"{tenant_id or ''}:{actor_id}:{operation}:{key}"
+        cache_key = f"{tenant_id or ''}:{actor_id}:{operation}:{target_id or ''}:{key}"
         with self._lock:
             self._idempotency[cache_key] = {
                 "request_hash": stable_digest(payload),

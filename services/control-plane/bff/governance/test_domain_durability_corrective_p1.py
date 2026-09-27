@@ -164,7 +164,7 @@ def test_capital_restart_replay(tmp_path):
 
 def test_capital_storage_failure_prevents_dispatch(tmp_path):
     store = CommandStore(str(tmp_path / "commands.jsonl"))
-    with patch("services.control_plane.bff.command_adapters.capital_adapter.capital_url", lambda p: "http://isolated.invalid" + p), patch.object(store, "submit_terminal_command", side_effect=OSError("disk unavailable")), patch("services.control_plane.bff.command_adapters.capital_adapter.http_request_json", return_value={"rebalance_id": "r1", "status": "approved"}) as http:
+    with patch("services.control_plane.bff.command_adapters.capital_adapter.capital_url", lambda p: "http://isolated.invalid" + p), patch.object(store, "submit_command", side_effect=OSError("disk unavailable")), patch("services.control_plane.bff.command_adapters.capital_adapter.http_request_json", return_value={"rebalance_id": "r1", "status": "approved"}) as http:
         response = capital_client(store).post("/bff/rebalances/r1/approve", json={"memo": "review memo"}, headers={"Idempotency-Key": "retry-key"})
     assert response.status_code >= 500
     posts = [c for c in http.call_args_list if c.kwargs.get("method") == "POST"]

@@ -250,19 +250,80 @@ def build_domain_receipt(
     authoritative_readback: Optional[Dict[str, Any]] = None,
     idempotent_replay: bool = False,
     extra: Optional[Dict[str, Any]] = None,
+    aggregate_type: Optional[str] = None,
+    aggregate_id: Optional[str] = None,
+    aggregate_version: Optional[int] = None,
+    event_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    owner: Optional[str] = None,
+    committed_at: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Construct standard domain receipt dictionary."""
+    """Construct standard domain receipt dictionary conforming to SD 4.4."""
+    now = utc_now()
+    resolved_domain_receipt = domain_receipt or {}
+    resolved_extra = extra or {}
+
+    res_aggregate_type = aggregate_type or resolved_extra.get("aggregate_type") or entity_type
+    res_aggregate_id = aggregate_id or resolved_extra.get("aggregate_id") or entity_id
+    res_aggregate_version = (
+        aggregate_version
+        or resolved_domain_receipt.get("aggregate_version")
+        or resolved_domain_receipt.get("version")
+        or resolved_extra.get("aggregate_version")
+        or 1
+    )
+    res_event_id = (
+        event_id
+        or resolved_domain_receipt.get("event_id")
+        or resolved_extra.get("event_id")
+        or f"evt-{command_id}"
+    )
+    res_correlation_id = (
+        correlation_id
+        or resolved_extra.get("correlation_id")
+        or resolved_domain_receipt.get("correlation_id")
+        or command_id
+    )
+    res_owner = (
+        owner
+        or resolved_extra.get("owner")
+        or resolved_domain_receipt.get("owner")
+        or (
+            "capital"
+            if entity_type in ("Rebalance", "CapitalPool")
+            else entity_type.lower()
+        )
+    )
+    res_committed_at = (
+        committed_at
+        or resolved_domain_receipt.get("committed_at")
+        or resolved_extra.get("committed_at")
+        or now
+    )
+
+    try:
+        final_aggregate_version: Any = int(res_aggregate_version)
+    except (ValueError, TypeError):
+        final_aggregate_version = res_aggregate_version
+
     receipt: Dict[str, Any] = {
         "command_id": command_id,
+        "aggregate_type": res_aggregate_type,
+        "aggregate_id": res_aggregate_id,
+        "aggregate_version": final_aggregate_version,
+        "event_id": str(res_event_id),
+        "correlation_id": str(res_correlation_id),
+        "owner": str(res_owner),
+        "committed_at": str(res_committed_at),
         "entity_type": entity_type,
         "entity_id": entity_id,
         "action_id": action_id,
         "status": status,
         "dispatch_path": dispatch_path,
-        "domain_receipt": domain_receipt or {},
+        "domain_receipt": resolved_domain_receipt,
         "authoritative_readback": authoritative_readback,
         "idempotent_replay": idempotent_replay,
-        "executed_at": utc_now(),
+        "executed_at": now,
         "live_capital_side_effects": False,
     }
     if extra:
