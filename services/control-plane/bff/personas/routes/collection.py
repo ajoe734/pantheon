@@ -47,8 +47,6 @@ log = logging.getLogger(__name__)
 def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
     router = APIRouter(tags=["personas"], dependencies=[make_context_dependency(ctx)])
 
-    read_store = ctx.read_store
-    command_store = ctx.command_store
     _service = ctx.service
     _extract_identity = ctx.extract_identity
     _require_read_role = ctx.require_read_role
@@ -74,7 +72,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
 
-        personas = read_store.list_personas(
+        personas = _service.list_personas(
             lifecycle_state=lifecycle_state,
             mandate=mandate,
             strategy_family=strategy_family,

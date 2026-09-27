@@ -77,14 +77,21 @@ def create_trading_room_router(
     No live order routing is ever permitted (D1 boundary).
     All routes are operator-scoped (user-private read predicate enforced).
     """
-    store = trading_room_store if trading_room_store is not None else _get_store()
+    store_instance = trading_room_store if trading_room_store is not None else _get_store()
+    from .service import TradingRoomService
+    service = TradingRoomService(
+        store=store_instance,
+        workshop_store=workshop_store,
+        utc_now=utc_now,
+        bff_error=bff_error,
+    )
     ctx = TradingRoomRouteContext(
         extract_identity=extract_identity,
         require_read_role=require_read_role,
         require_write_role=require_write_role,
         bff_error=bff_error,
         utc_now=utc_now,
-        store=store,
+        service=service,
         workshop_store=workshop_store,
     )
     router = APIRouter(tags=["agora-trading"])

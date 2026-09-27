@@ -377,6 +377,10 @@ class TestResearchKnowledgeSourcePortCutover(unittest.TestCase):
             research_experiments_store={
                 "exp-1": {"experiment_id": "exp-1", "name": "Exp 1"},
             },
+            research_write_owner=MagicMock(
+                list_research_experiments=MagicMock(return_value=[{"experiment_id": "exp-1", "name": "Exp 1"}]),
+                get_research_experiment=MagicMock(return_value={"experiment_id": "exp-1", "name": "Exp 1"}),
+            ),
         )
 
     def test_dataset_source_and_surface_status(self) -> None:

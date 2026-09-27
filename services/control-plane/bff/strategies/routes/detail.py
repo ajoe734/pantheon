@@ -25,35 +25,15 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         """BFF: strategy detail."""
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
-        read_store = ctx.get_read_store_port()
         snapshot_at = ctx.utc_now()
-        summary = None
-        getter = getattr(read_store, "get_strategy_spec", None)
-        if callable(getter):
-            try:
-                summary = getter(strategy_id)
-            except Exception:
-                pass
-        if not summary:
-            getter = getattr(read_store, "get_strategy", None)
-            if callable(getter):
-                try:
-                    summary = getter(strategy_id)
-                except Exception:
-                    pass
+        summary = ctx.service.get_strategy(strategy_id) if ctx.service else None
         if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Strategy not found",
                 f"Strategy {strategy_id} does not exist",
             )
-        detail = None
-        detail_getter = getattr(read_store, "get_strategy_spec_detail", None)
-        if callable(detail_getter):
-            try:
-                detail = detail_getter(strategy_id, version_selector="current")
-            except Exception:
-                pass
+        detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
         dto = ctx.project_strategy_dto(summary, detail=detail)
         return {
             "data": dto,
@@ -83,21 +63,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         cached = ctx.strategy_persona_idempotency_check(resolved_key, request_hash)
         if cached is not None:
             return cached
-        read_store = ctx.get_read_store_port()
-        summary = None
-        getter = getattr(read_store, "get_strategy_spec", None)
-        if callable(getter):
-            try:
-                summary = getter(strategy_id)
-            except Exception:
-                pass
-        if not summary:
-            getter = getattr(read_store, "get_strategy", None)
-            if callable(getter):
-                try:
-                    summary = getter(strategy_id)
-                except Exception:
-                    pass
+        summary = ctx.service.get_strategy(strategy_id) if ctx.service else None
         if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -105,13 +71,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
                 f"Strategy {strategy_id} does not exist",
             )
         snapshot_at = ctx.utc_now()
-        detail = None
-        detail_getter = getattr(read_store, "get_strategy_spec_detail", None)
-        if callable(detail_getter):
-            try:
-                detail = detail_getter(strategy_id, version_selector="current")
-            except Exception:
-                pass
+        detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
         base = ctx.project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
         for field_name in (
             "name", "owner", "state", "risk", "alpha",
@@ -127,40 +87,11 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         base["updatedAt"] = snapshot_at
         base["id"] = strategy_id
 
-        writer = ctx.get_strategy_write_owner_port()
-        if writer is None:
-            raise ctx.bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Canonical strategy writer unavailable",
-                "Cannot persist strategy without an authoritative domain store",
-            )
-        written = False
-        try:
-            res = None
-            if hasattr(writer, "upsert_strategy"):
-                res = writer.upsert_strategy({**base, "actor": principal, "command_key": resolved_key})
-            elif hasattr(writer, "create_strategy_spec"):
-                res = writer.create_strategy_spec({**base, "actor": principal, "command_key": resolved_key})
-            if res:
-                written = True
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise ctx.bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Canonical strategy persistence failed",
-                str(exc),
-            ) from exc
-
-        if not written:
-            raise ctx.bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Canonical strategy writer unavailable",
-                "Cannot persist strategy without an authoritative domain store",
-            )
+        ctx.service.persist_strategy(
+            base,
+            actor=principal,
+            command_key=resolved_key,
+        )
         result = {"data": base, "meta": {"snapshot_at": snapshot_at}}
         ctx.strategy_persona_idempotency[resolved_key] = {"request_hash": request_hash, "result": result}
         return result
@@ -174,9 +105,8 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
         ctx.ensure_strategy_exists(strategy_id)
-        read_store = ctx.get_read_store_port()
         snapshot_at = ctx.utc_now()
-        versions = read_store.list_strategy_spec_versions(strategy_id) or []
+        versions = ctx.service.list_strategy_spec_versions(strategy_id) if ctx.service else []
         return {
             "data": versions,
             "items": versions,
@@ -242,10 +172,8 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
         ctx.ensure_strategy_exists(strategy_id)
-        read_store = ctx.get_read_store_port()
         snapshot_at = ctx.utc_now()
-        raw = read_store.list_research_experiments() or []
-        items = [e for e in raw if (e.get("linked_strategy_id") or e.get("strategy_id")) == strategy_id]
+        items = ctx.service.list_research_experiments(strategy_id=strategy_id) if ctx.service else []
         return {
             "data": items,
             "items": items,
@@ -265,10 +193,8 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
         ctx.ensure_strategy_exists(strategy_id)
-        read_store = ctx.get_read_store_port()
         snapshot_at = ctx.utc_now()
-        raw = read_store.list_research_artifacts() or []
-        items = [a for a in raw if (a.get("linked_strategy_id") or a.get("strategy_id")) == strategy_id]
+        items = ctx.service.list_research_artifacts(strategy_id=strategy_id) if ctx.service else []
         return {
             "data": items,
             "items": items,
@@ -288,28 +214,13 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
         ctx.ensure_strategy_exists(strategy_id)
-        read_store = ctx.get_read_store_port()
         snapshot_at = ctx.utc_now()
-        edges = read_store.list_lineage_edges() or []
-        nodes_seen: set = set()
-        related = []
-        for edge in edges:
-            node_keys = (
-                str(edge.get("from_artifact_id") or edge.get("source_id") or ""),
-                str(edge.get("to_artifact_id") or edge.get("target_id") or ""),
-                str(edge.get("strategy_id") or ""),
-            )
-            if strategy_id in node_keys:
-                related.append(edge)
-                for key in node_keys:
-                    if key:
-                        nodes_seen.add(key)
-        nodes_seen.add(strategy_id)
+        related, node_ids = ctx.service.get_strategy_lineage(strategy_id) if ctx.service else ([], [strategy_id])
         return {
             "data": {
                 "strategy_id": strategy_id,
                 "edges": related,
-                "node_ids": sorted(nodes_seen),
+                "node_ids": node_ids,
             },
             "meta": ctx.read_surface_meta(
                 "lineage_edges", "strategy_lineage",
@@ -358,8 +269,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         if ctx.require_ooda_packet_routes_enabled:
             ctx.require_ooda_packet_routes_enabled()
         clean_id = strategy_id.strip()
-        read_store = ctx.get_read_store_port()
-        packets = read_store.list_ooda_packets_for_strategy(clean_id)
+        packets = ctx.service.list_ooda_packets_for_strategy(clean_id) if ctx.service else []
         if ctx.ooda_packet_list_payload:
             return ctx.ooda_packet_list_payload(
                 packets,

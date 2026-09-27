@@ -248,6 +248,7 @@ class ResearchRouteContext:
     cross_entity_search: Optional[CrossEntitySearch] = None
     list_synthesis_conflict_logs: Optional[ConflictLogList] = None
     get_synthesis_conflict_log: Optional[ConflictLogGet] = None
+    persona_reader: Optional[Callable[[Optional[str]], Optional[Dict[str, Any]]]] = None
     service: Optional[ResearchRouterService] = None
 
     def __post_init__(self):
@@ -257,6 +258,14 @@ class ResearchRouteContext:
                 utc_now=self.utc_now,
                 snapshot_meta=self.snapshot_meta,
                 page_slice=self.page_slice,
+                bff_error=self.bff_error,
+                dataset_surface_status=self.dataset_surface_status,
+                get_capabilities=self.get_capabilities,
+                list_synthesis_conflict_logs_reader=self.list_synthesis_conflict_logs,
+                get_synthesis_conflict_log_reader=self.get_synthesis_conflict_log,
+                cross_entity_search_fn=self.cross_entity_search,
+                build_knowledge_workbench=self.build_knowledge_workbench,
+                persona_reader=self.persona_reader,
             )
 
     def raise_service_error(self, exc: Exception) -> None:
@@ -268,7 +277,7 @@ class ResearchRouteContext:
                 str(exc),
             ) from exc
         if isinstance(exc, ResearchValidationError):
-            error_code = getattr(ErrorCode, exc.error_code, ErrorCode.VALIDATION_FAILED)
+            error_code = ErrorCode.__members__.get(exc.error_code, ErrorCode.VALIDATION_FAILED)
             details = getattr(exc, "details", None) or {}
             try:
                 sig = inspect.signature(self.bff_error)
@@ -343,92 +352,10 @@ class ResearchRouteContext:
         return self.page_slice(records, self.query(request, "page_token"), page_size)
 
     def meta(self, snapshot_at: str, surface_name: str, dataset: str, has_data: bool) -> Dict[str, Any]:
-        port = self.get_read_store()
-        source_fn = getattr(port, "dataset_source", None)
-        source = str(source_fn(dataset) or "missing") if callable(source_fn) else "missing"
-        try:
-            surface = self.dataset_surface_status(
-                dataset,
-                snapshot_at=snapshot_at,
-                source=source,
-                has_data=has_data,
-                utc_now=self.utc_now,
-            )
-        except TypeError:
-            surface = self.dataset_surface_status(
-                dataset,
-                snapshot_at=snapshot_at,
-                source=source,
-                has_data=has_data,
-            )
+        surface = self.service.dataset_surface(dataset, snapshot_at=snapshot_at, has_data=has_data)
         result = dict(self.snapshot_meta(snapshot_at))
         result["surfaces"] = {surface_name: surface}
         return result
-
-    def port_method(self, port: Any, name: str) -> Callable[..., Any]:
-        if not hasattr(port, name):
-            raise self.bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                f"Research store port missing {name}",
-                f"Port {type(port).__name__} does not implement {name}",
-            )
-        return getattr(port, name)
-
-    def call_mutation_port(self, port: Any, name: str, *args: Any, **kwargs: Any) -> Any:
-        """Call a research-experiment mutation (create/cancel) that is
-        deliberately NOT exposed on ``ReadSurfacePorts`` itself (see
-        ``tests/test_read_surface_caller_migration.py``
-        ``RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE``).
-
-        ``ReadSurfacePorts.research_knowledge_source`` is excluded from the
-        test-time ``_active_delegate`` forwarding mechanism main.py installs
-        when a test reassigns ``bff_main.read_store`` (that mechanism only
-        forwards attributes that are *not* one of the fixed sub-port names —
-        see ``ports/read_surface_ports.py``'s ``__getattribute__``). Reaching
-        straight through ``port.research_knowledge_source`` would therefore
-        silently use the *original* app-startup sub-port instead of a test's
-        swapped-in double. Follow ``_active_delegate`` explicitly first, so
-        both production (`_active_delegate` is ``None``) and test doubles
-        (which may themselves already *be* the research-knowledge-source
-        port, or may hold one under ``.research_knowledge_source``) resolve
-        to the same object a caller actually configured.
-        """
-        target = getattr(port, "_active_delegate", None) or port
-        rks = getattr(target, "research_knowledge_source", target)
-        return self.call_port(rks, name, *args, **kwargs)
-
-    def call_port(self, port: Any, name: str, *args: Any, **kwargs: Any) -> Any:
-        method = self.port_method(port, name)
-        if kwargs:
-            try:
-                sig = inspect.signature(method)
-                has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
-                if has_var_keyword:
-                    for delegate_attr in ("_active_delegate", "research_knowledge_source"):
-                        delegate = getattr(port, delegate_attr, None)
-                        if delegate is not None and hasattr(delegate, name):
-                            delegate_method = getattr(delegate, name)
-                            delegate_sig = inspect.signature(delegate_method)
-                            if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in delegate_sig.parameters.values()):
-                                sig = delegate_sig
-                                has_var_keyword = False
-                                break
-                if not has_var_keyword:
-                    kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
-            except (ValueError, TypeError):
-                pass
-        try:
-            return method(*args, **kwargs)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise self.bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                f"Research port {name} failed",
-                str(exc),
-            ) from exc
 
     def not_found(self, label: str, identifier: str) -> None:
         raise self.bff_error(

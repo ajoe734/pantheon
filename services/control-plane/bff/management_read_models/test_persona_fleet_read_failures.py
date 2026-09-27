@@ -24,7 +24,6 @@ _FLEET_FUNCS = None
 def _get_fleet_collector(store, personas, service=None, utc_now=None):
     global _FLEET_FUNCS
     if _FLEET_FUNCS is None:
-        tree = ast.parse(Path("services/control-plane/bff/main.py").read_text(encoding="utf-8"))
         target_names = {
             "_mgmt_nl_collect_context",
             "_mgmt_nl_filter_tenant_records",
@@ -35,15 +34,26 @@ def _get_fleet_collector(store, personas, service=None, utc_now=None):
             "_mgmt_nl_add_record_entities",
             "_mgmt_nl_add_entity",
             "_project_persona_fleet_item",
+            "_project_persona_fleet_item_impl",
+            "get_project_persona_fleet_item",
+            "get_management_ai_context_service",
             "_project_persona_dto",
             "_project_persona_fleet_health",
             "_is_persona_lifecycle_operational",
             "_persona_fleet_runtime_matches",
         }
-        _FLEET_FUNCS = [
-            n for n in tree.body
-            if isinstance(n, ast.FunctionDef) and n.name in target_names
+        bff_dir = Path(__file__).resolve().parents[1]
+        trees = [
+            ast.parse((bff_dir / "assistant" / "management_service.py").read_text(encoding="utf-8")),
+            ast.parse((bff_dir / "personas" / "service.py").read_text(encoding="utf-8")),
+            ast.parse((bff_dir / "main.py").read_text(encoding="utf-8")),
         ]
+        funcs = {}
+        for tree in trees:
+            for n in tree.body:
+                if isinstance(n, ast.FunctionDef) and n.name in target_names and n.name not in funcs:
+                    funcs[n.name] = n
+        _FLEET_FUNCS = list(funcs.values())
 
     clock = utc_now or (lambda: NOW)
     context_service = service or ManagementService(read_store=store, utc_now=clock)
@@ -51,10 +61,13 @@ def _get_fleet_collector(store, personas, service=None, utc_now=None):
 
     ns = dict(__import__("typing").__dict__)
     ns.update({
+        "__package__": "services.control_plane.bff.assistant",
         "re": re,
         "json": json,
         "read_store": store,
         "_management_ai_context_service": context_service,
+        "_MANAGEMENT_AI_CONTEXT_SERVICE": context_service,
+        "get_management_ai_context_service": lambda: context_service,
         "_list_persona_records": persona_supplier,
         "utc_now": clock,
         "_normalize_lifecycle_state": _normalize_lifecycle_state,
@@ -64,6 +77,8 @@ def _get_fleet_collector(store, personas, service=None, utc_now=None):
     })
     mod = ast.Module(body=_FLEET_FUNCS, type_ignores=[])
     exec(compile(mod, "main_fleet.py", "exec"), ns)
+    if "_project_persona_fleet_item_impl" in ns:
+        ns["_project_persona_fleet_item"] = ns["_project_persona_fleet_item_impl"]
     return ns
 
 

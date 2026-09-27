@@ -530,9 +530,30 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
 
     # 5. Execute actual worker to drain outbox
     from agora.interaction.worker import AgoraInteractionWorker
+    from agora.research.dispatcher import AuthenticStageAdapter, ResearchStageResult
     research_store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
+    stage_result = ResearchStageResult(
+        outcome="succeeded",
+        provenance="real",
+        artifact_refs=["art-1"],
+        checksums={"art-1": "chk-1"},
+        metrics=[{"name": "sharpe", "value": 1.5}],
+        backend_job_id="vbt-job-e2e",
+    )
+    reg = AdapterRegistry()
+    reg.register(
+        "prototype_backtest",
+        AuthenticStageAdapter(
+            "prototype_backtest",
+            "vectorbt",
+            mode="real",
+            backend_reference="vbt://job-e2e",
+            execute_fn=lambda **kw: stage_result,
+        ),
+    )
     worker = AgoraInteractionWorker(
         research_store=research_store,
+        adapter_registry=reg,
         worker_id="test-worker-e2e",
     )
     drained = worker.drain_research_outbox(tenant_id=_TENANT_A, user_id="agora-user-a")

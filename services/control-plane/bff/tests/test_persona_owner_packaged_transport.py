@@ -57,6 +57,7 @@ from services.control_plane.bff.personas.service import (
 policy = build_pm12_allocation_policy_input({'overall_score': 80, 'tier': 'tier-2'})
 assert policy['rank_score'] == 80
 assert policy['allocation_tier'] == 'a'
+os.environ['PANTHEON_BFF_JWT_SECRET'] = 'review-test-only-not-a-live-credential'
 os.environ['PANTHEON_CAPITAL_API_URL'] = sys.argv[1]
 transport = _PersonaOwnerHttpTransport()
 assert transport.get('capital', '/missing') is None
@@ -109,6 +110,7 @@ from fastapi.testclient import TestClient
 os.environ['PANTHEON_ENV'] = 'dev'
 os.environ['PANTHEON_BFF_AUTH_MODE'] = 'permissive'
 os.environ['PANTHEON_BFF_AUTH_STUB'] = 'true'
+os.environ['PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID'] = 'pantheon-persona-provisioner'
 
 from services.control_plane.bff.personas import PersonaService, create_personas_router
 from services.control_plane.bff.personas import service as personas_service
@@ -118,7 +120,7 @@ from services.control_plane.bff.personas.service import (
     _normalize_persona_create_name,
     _persona_create_identity,
 )
-from services.control_plane.bff.ports import create_persona_registry_write_owner, create_read_surface_ports
+from services.control_plane.bff.ports import create_read_surface_ports
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.persona_provisioning import (
     MemoryPersonaProvisioningStore,
@@ -137,6 +139,25 @@ class FakeRankingWriteOwner:
         return None
     def list_ranking_snapshots(self):
         return []
+
+class FakePersonaWriteOwner:
+    def __init__(self):
+        self.personas = {}
+    def create_persona(self, **kwargs):
+        pid = kwargs.get('persona_id') or 'p-1'
+        rec = {'id': pid, 'persona_id': pid, **kwargs}
+        self.personas[pid] = rec
+        return rec
+    def get_persona(self, pid):
+        return self.personas.get(pid)
+    def update_persona(self, **kwargs):
+        pid = kwargs.get('persona_id')
+        if pid in self.personas:
+            self.personas[pid].update(kwargs)
+            return self.personas[pid]
+        return kwargs
+    def list_personas(self, **kwargs):
+        return list(self.personas.values())
 
 backend = MemoryProvisioningBackend()
 store = MemoryPersonaProvisioningStore(backend=backend)
@@ -197,7 +218,7 @@ personas_service._PersonaOwnerHttpTransport = lambda **kwargs: transport
 personas_service._register_persona_cron_required = _schedule_receipt
 
 with tempfile.TemporaryDirectory() as td:
-    write_owner = create_persona_registry_write_owner()
+    write_owner = FakePersonaWriteOwner()
     read_store = create_read_surface_ports(persona_registry_store=write_owner)
     command_store = CommandStore(os.path.join(td, 'commands.jsonl'))
     service = PersonaService(

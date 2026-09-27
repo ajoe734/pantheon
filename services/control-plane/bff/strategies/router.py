@@ -11,9 +11,14 @@ and mounts their routes without proxying symbols or duplicating handlers.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, HTTPException
+
+try:
+    from services.control_plane.bff.ports.strategy_write_owner import StrategyWriteOwnerPort
+except (ImportError, ValueError):
+    from ..ports.strategy_write_owner import StrategyWriteOwnerPort  # type: ignore
 
 from .routes.common import (
     StrategyRouteContext,
@@ -28,6 +33,7 @@ from .routes.common import (
 from .routes.collection import build_collection_router
 from .routes.detail import build_detail_router
 from .routes.seeds import build_seeds_router
+from .service import StrategiesService
 
 log = logging.getLogger(__name__)
 
@@ -63,8 +69,9 @@ def create_strategies_router(
     bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None,
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None,
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None,
-    strategy_write_owner: Optional[Any] = None,
-    get_strategy_write_owner: Optional[Callable[[], Any]] = None,
+    strategy_write_owner: Optional[Union[StrategyWriteOwnerPort, Callable[[], StrategyWriteOwnerPort]]] = None,
+    get_strategy_write_owner: Optional[Callable[[], StrategyWriteOwnerPort]] = None,
+    service: Optional[Any] = None,
 ) -> APIRouter:
     if strategy_overlay is not None:
         raise AttributeError("strategy_overlay is retired; process-local state overlays are deleted")
@@ -92,7 +99,27 @@ def create_strategies_router(
         else {}
     )
 
+    _service = service or StrategiesService(
+        read_surface=read_surface,
+        get_read_store=get_read_store,
+        strategy_write_owner=strategy_write_owner,
+        get_strategy_write_owner=get_strategy_write_owner,
+        list_strategy_summaries=list_strategy_summaries,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        normalize_lifecycle_state=normalize_lifecycle_state or (lambda s: str(s or "draft")),
+        normalize_risk_level=normalize_risk_level or (lambda r: str(r or "medium")),
+        stable_json_hash=stable_json_hash or (lambda d: ""),
+        idempotency_store=_strategy_persona_idempotency,
+        idempotency_check=strategy_persona_idempotency_check or (lambda k, h: None),
+        dry_run_success_response=dry_run_success_response or (lambda *a, **kw: {}),
+        seed_replication_idempotency=_strategy_seed_replication_idempotency,
+        seed_review_idempotency=_strategy_seed_review_idempotency,
+    )
+
+
     ctx = StrategyRouteContext(
+        service=_service,
         read_surface=read_surface,
         get_read_store=get_read_store,
         extract_identity=_extract_identity,

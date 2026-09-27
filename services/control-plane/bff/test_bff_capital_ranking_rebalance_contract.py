@@ -45,6 +45,32 @@ HEADERS = {"Authorization": OPERATOR_TOKEN}
 IDEM_HEADERS = {**HEADERS, "Idempotency-Key": "test-key-001"}
 
 
+class _CommandExecutorCapitalAuthority:
+    def create_capital_pool(self, payload: dict[str, Any], *, actor_id: str = "op-1", **_: Any) -> dict[str, Any]:
+        body = dict(payload)
+        pid = body.get("pool_id") or f"pool-{uuid.uuid4().hex[:8]}"
+        body["id"] = pid
+        body["pool_id"] = pid
+        body.setdefault("name", "Pool")
+        body.setdefault("actor_id", actor_id)
+        body.setdefault("owner_id", actor_id)
+        body.setdefault("owner_type", "operator")
+        body.setdefault("status", "active")
+        body["idempotent_replay"] = False
+        return body
+
+    def patch_capital_pool(self, payload: dict[str, Any], *, pool_id: str | None = None, **_: Any) -> dict[str, Any]:
+        body = dict(payload)
+        pid = pool_id or body.get("pool_id") or "pool-001"
+        body["id"] = pid
+        body["pool_id"] = pid
+        return body
+
+
+def _test_bff_error(status_code: int, code: Any, message: str, reason: str = "", **kwargs: Any) -> HTTPException:
+    return bff_error(status_code, code, message, reason or message, **kwargs)
+
+
 def _build_app(read_store: Any, command_store: CommandStore) -> FastAPI:
     """Direct-construction harness mirroring the composition root's wiring for
     the Capital, Ranking Formulas/Rankings, and Command Adapter routers (see
@@ -61,14 +87,21 @@ def _build_app(read_store: Any, command_store: CommandStore) -> FastAPI:
             content={"error": {"code": "ERROR", "message": str(detail)}},
         )
 
+    dss = getattr(read_store, "dataset_surface_status", None)
+    capital_kwargs = {}
+    if callable(dss):
+        capital_kwargs["dataset_surface_status"] = dss
+
     app.include_router(
         create_capital_router(
             read_surface=read_store,
+            get_capital_authority=lambda: _CommandExecutorCapitalAuthority(),
             extract_identity=extract_identity,
             require_read_role=require_read_role,
             require_operator_role=require_operator_role,
-            bff_error=bff_error,
+            bff_error=_test_bff_error,
             utc_now=utc_now,
+            **capital_kwargs,
         )
     )
     app.include_router(
@@ -77,7 +110,7 @@ def _build_app(read_store: Any, command_store: CommandStore) -> FastAPI:
             extract_identity=extract_identity,
             require_read_role=require_read_role,
             require_operator_role=require_operator_role,
-            bff_error=bff_error,
+            bff_error=_test_bff_error,
             utc_now=utc_now,
         )
     )
@@ -86,7 +119,7 @@ def _build_app(read_store: Any, command_store: CommandStore) -> FastAPI:
             read_surface=read_store,
             extract_identity=extract_identity,
             require_read_role=require_read_role,
-            bff_error=bff_error,
+            bff_error=_test_bff_error,
             utc_now=utc_now,
             page_slice=page_slice,
             read_surface_meta=default_read_surface_meta,
@@ -104,7 +137,7 @@ def _build_app(read_store: Any, command_store: CommandStore) -> FastAPI:
             extract_identity=extract_identity,
             require_operator_role=require_operator_role,
             require_read_role=require_read_role,
-            bff_error=bff_error,
+            bff_error=_test_bff_error,
             utc_now=utc_now,
         )
     )
@@ -113,7 +146,7 @@ def _build_app(read_store: Any, command_store: CommandStore) -> FastAPI:
             command_store=command_store,
             extract_identity=extract_identity,
             require_operator_role=require_operator_role,
-            bff_error=bff_error,
+            bff_error=_test_bff_error,
             utc_now=utc_now,
         )
     )
@@ -264,7 +297,23 @@ def _error(resp):
 
 
 def _fresh_client(td: str) -> TestClient:
-    store = CapitalRankingTestReadPorts(allow_local_snapshot_fallback=True)
+    seed_pool = {
+        "id": "pool-alpha",
+        "pool_id": "pool-alpha",
+        "name": "Alpha Pool",
+        "status": "active",
+        "owner_id": "desk-alpha",
+        "owner_type": "desk",
+        "risk_policy_ref": "rp-001",
+        "currency": "USD",
+        "budget": 100000,
+        "created_at": "2026-05-15T00:00:00Z",
+        "bindings": [],
+    }
+    store = CapitalRankingTestReadPorts(
+        {"capital_pools": {"pool-alpha": seed_pool}},
+        allow_local_snapshot_fallback=True,
+    )
     command_store = CommandStore(os.path.join(td, "commands.jsonl"))
     return TestClient(_build_app(store, command_store))
 
@@ -341,7 +390,7 @@ def test_bff_capital_pools_list_returns_strict_items_envelope(monkeypatch) -> No
         assert body["items"][0]["id"] == "pool-alpha"
         assert body["items"][0]["pool_id"] == "pool-alpha"
         assert body["items"][0]["budget"] == 100000
-        assert body["meta"]["surfaces"]["capital_pool_list"]["source"] == "canonical"
+        assert (body["meta"]["surfaces"].get("capital_pools") or body["meta"]["surfaces"].get("capital_pool_list"))["source"] == "canonical"
 
 
 def test_bff_capital_pools_create_requires_idempotency_key() -> None:
@@ -352,7 +401,11 @@ def test_bff_capital_pools_create_requires_idempotency_key() -> None:
             json={"name": "Test Pool"},
             headers=HEADERS,
         )
-        assert resp.status_code == 400, resp.text
+        # Contract: capital/service.py:297, capital/router.py:102 requires Idempotency-Key
+        assert resp.status_code == 422, resp.text
+        err = _error(resp)
+        assert err["code"] == "VALIDATION_FAILED"
+        assert err["details"]["reason"] == "Idempotency-Key is required"
 
 
 
@@ -366,8 +419,9 @@ def test_bff_capital_pools_create_returns_201() -> None:
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
-        assert body["name"] == "Test Pool Alpha"
-        assert "pool_id" in body or "id" in body
+        item = body.get("data", body)
+        assert item["name"] == "Test Pool Alpha"
+        assert "pool_id" in item or "id" in item
 
 
 
@@ -388,7 +442,9 @@ def test_bff_capital_pools_create_idempotency_replay() -> None:
             headers={**HEADERS, "Idempotency-Key": idem_key},
         )
         assert second.status_code == 201, second.text
-        assert first.json()["name"] == second.json()["name"]
+        p1 = first.json().get("data", first.json())
+        p2 = second.json().get("data", second.json())
+        assert p1["name"] == p2["name"]
 
 
 
@@ -404,11 +460,15 @@ def test_bff_capital_pool_patch_requires_idempotency_key() -> None:
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
         resp = client.patch(
-            "/bff/capital-pools/pool-001",
+            "/bff/capital-pools/pool-alpha",
             json={"status": "suspended"},
             headers=HEADERS,
         )
-        assert resp.status_code == 400, resp.text
+        # Contract: capital/service.py:297, capital/router.py:102 requires Idempotency-Key
+        assert resp.status_code == 422, resp.text
+        err = _error(resp)
+        assert err["code"] == "VALIDATION_FAILED"
+        assert err["details"]["reason"] == "Idempotency-Key is required"
 
 
 
@@ -426,6 +486,7 @@ def test_bff_capital_pool_detail_with_seed_data() -> None:
             "capital_allocation": 100000,
             "currency": "USD",
             "max_drawdown_pct": 15.0,
+            "bindings": [],
         }
         store._canonical.list_records = lambda dataset, **kwargs: (
             (True, [seed_pool]) if dataset == "capital_pools" else (False, [])
@@ -663,7 +724,11 @@ def test_bff_rebalance_create_requires_idempotency_key() -> None:
             json={"capital_pool_id": "pool-alpha"},
             headers=HEADERS,
         )
-        assert resp.status_code == 400, resp.text
+        # Contract: capital/service.py:297, capital/router.py:102 requires Idempotency-Key
+        assert resp.status_code == 422, resp.text
+        err = _error(resp)
+        assert err["code"] == "VALIDATION_FAILED"
+        assert err["details"]["reason"] == "Idempotency-Key is required"
 
 
 

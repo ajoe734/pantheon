@@ -28,45 +28,10 @@ def _build_research_oss_activation_ready_response(
     activity_limit: int,
     surface_key: str,
 ) -> Dict[str, Any]:
-    snapshot_at = ctx.utc_now()
-    data = ctx.call_port(
-        ctx.get_read_store(), "get_research_oss_preactivation_snapshot",
+    return ctx.service.get_research_oss_preactivation_snapshot(
         activity_limit=activity_limit,
+        surface_key=surface_key,
     )
-    service_surfaces = {
-        service: {
-            key: value
-            for key, value in status.items()
-            if key in {"status", "source", "reason", "activity_status", "upstream_status", "upstream_reachable"}
-        }
-        for service, status in data.get("service_status", {}).items()
-        if isinstance(status, dict)
-    }
-    composite_status = "ok"
-    if any(surface.get("status") == "unavailable" for surface in service_surfaces.values()):
-        composite_status = "degraded"
-    if service_surfaces and all(surface.get("status") == "unavailable" for surface in service_surfaces.values()):
-        composite_status = "unavailable"
-
-    composite_surface = {
-        "status": composite_status,
-        "source": "service_client",
-    }
-    alias_key = (
-        "research_oss_preactivation"
-        if surface_key == "research_oss_activation_ready"
-        else "research_oss_activation_ready"
-    )
-    meta = dict(ctx.snapshot_meta(snapshot_at))
-    meta["surfaces"] = {
-        surface_key: composite_surface,
-        alias_key: composite_surface,
-        **service_surfaces,
-    }
-    return {
-        "data": data,
-        "meta": meta,
-    }
 
 
 def build_ops_router(ctx: ResearchRouteContext) -> APIRouter:
@@ -80,8 +45,7 @@ def build_ops_router(ctx: ResearchRouteContext) -> APIRouter:
                 activity_limit=int(ctx.query(request, "activity_limit", "20") or 20),
             )
             return await result if inspect.isawaitable(result) else result
-        return _build_research_oss_activation_ready_response(
-            ctx,
+        return ctx.service.get_research_oss_preactivation_snapshot(
             activity_limit=int(ctx.query(request, "activity_limit", "20") or 20),
             surface_key="research_oss_activation_ready",
         )
@@ -94,32 +58,31 @@ def build_ops_router(ctx: ResearchRouteContext) -> APIRouter:
                 activity_limit=int(ctx.query(request, "activity_limit", "20") or 20),
             )
             return await result if inspect.isawaitable(result) else result
-        return _build_research_oss_activation_ready_response(
-            ctx,
+        return ctx.service.get_research_oss_preactivation_snapshot(
             activity_limit=int(ctx.query(request, "activity_limit", "20") or 20),
             surface_key="research_oss_preactivation",
         )
 
     async def endpoint_source_ops(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request, operator=False)
-        port = ctx.get_read_store()
-        snapshot_at = ctx.utc_now()
-        data = ctx.call_port(
-            port,
-            "get_source_ops_snapshot",
-            crawl_run_limit=int(ctx.query(request, "crawl_run_limit", "50") or 50),
-            dlq_status=ctx.query(request, "dlq_status"),
-            frontier_status=ctx.query(request, "frontier_status"),
-            audit_limit=int(ctx.query(request, "audit_limit", "20") or 20),
-        )
-        return {"data": data, "meta": ctx.meta(snapshot_at, "source_ops", "source_ops", bool(data))}
+        try:
+            return ctx.service.get_source_ops_snapshot(
+                crawl_run_limit=int(ctx.query(request, "crawl_run_limit", "50") or 50),
+                dlq_status=ctx.query(request, "dlq_status"),
+                frontier_status=ctx.query(request, "frontier_status"),
+                audit_limit=int(ctx.query(request, "audit_limit", "20") or 20),
+            )
+        except Exception as exc:
+            ctx.raise_service_error(exc)
 
     async def endpoint_search_ops(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request, operator=False)
-        port = ctx.get_read_store()
-        snapshot_at = ctx.utc_now()
-        data = ctx.call_port(port, "get_search_ops_snapshot", pipeline_run_limit=int(ctx.query(request, "pipeline_run_limit", "50") or 50))
-        return {"data": data, "meta": ctx.meta(snapshot_at, "search_ops", "search_ops", bool(data))}
+        try:
+            return ctx.service.get_search_ops_snapshot(
+                pipeline_run_limit=int(ctx.query(request, "pipeline_run_limit", "50") or 50)
+            )
+        except Exception as exc:
+            ctx.raise_service_error(exc)
 
     async def _handle_command(name: str, request: Request) -> Dict[str, Any]:
         identity = ctx.identity(request, operator=True)
