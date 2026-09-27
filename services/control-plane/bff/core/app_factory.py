@@ -803,8 +803,6 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
         "_aggregate_group_surface", "aggregate_group_surface",
     }:
         return lambda *a, **kw: {}
-    if name in {"runtime_owner_port", "_runtime_owner_port", "runtime_manager_client"}:
-        return getattr(app_deps, "runtime_owner_port", getattr(app_deps, "runtime_manager_client", None))
     if name in {"_alert_target_ref", "_incident_detail_href", "_deployment_review_href"}:
         return lambda *a, **kw: ""
     if name in {"_deprecated_bff_path_response", "deprecated_bff_path_response"}:
@@ -1228,8 +1226,6 @@ def mount_bff_routers(
                 "_sse_subscribers",
                 "_stable_json_hash",
                 "create_capital_binding",
-                "runtime_owner_port",
-                "runtime_manager_client",
                 "utc_now",
             )
         },
@@ -1503,16 +1499,9 @@ def mount_bff_routers(
 
     # 32: Capital
     from ..capital.router import create_capital_router
-    from ..capital.service import DefaultCapitalAuthority
-    capital_authority = DefaultCapitalAuthority(
-        command_store=app_deps.command_store,
-        command_executor=getattr(app_deps, "command_executor", None),
-    )
     app.include_router(
         create_capital_router(
             read_surface=app_deps.read_surface,
-            get_capital_authority=lambda: capital_authority,
-            command_store=app_deps.command_store,
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             require_operator_role=_dep("_require_operator_role"),
@@ -1529,7 +1518,6 @@ def mount_bff_routers(
     app.include_router(
         create_governance_router(
             read_surface=app_deps.read_surface,
-            command_store=app_deps.command_store,
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             require_operator_role=_dep("_require_operator_role"),

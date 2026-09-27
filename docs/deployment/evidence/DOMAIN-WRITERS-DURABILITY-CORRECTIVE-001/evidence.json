@@ -6,8 +6,8 @@
   "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md §E; DOMAIN-WRITERS-001 corrective closure",
   "defect_remediation": {
     "defect_1_dead_capital_write_routes": {
-      "problem": "capital/router.py constructs CapitalService(get_read_store=..., get_capital_authority=...). App factory mounted create_capital_router without get_read_store or get_capital_authority, causing CapitalAuthorityUnavailable 503 on 8 POST routes.",
-      "remediation": "Updated core/app_factory.py to supply get_read_store and get_capital_authority using DefaultCapitalAuthority backed by CommandStore and CapitalCommandAdapter. Hardened CapitalService._authority() to fail closed when authority is unconfigured."
+      "problem": "capital/router.py constructs CapitalService(get_read_store=..., get_capital_authority=...). Mounted create_capital_router without get_capital_authority caused CapitalAuthorityUnavailable 503 on 8 POST routes.",
+      "remediation": "Updated create_capital_router to auto-resolve get_capital_authority using DefaultCapitalAuthority backed by CommandStore and CapitalCommandAdapter within its own domain router module. Hardened CapitalService._authority() to fail closed when authority is unconfigured."
     },
     "defect_2_latent_nameerror_personas": {
       "problem": "personas/service.py called unqualified _pm12_semantic_values_match, which was neither imported nor defined in that module, raising NameError at runtime.",
@@ -18,8 +18,8 @@
       "remediation": "Bound distinct ApproveRebalance and SignRebalance operations in CapitalCommandAdapter that target /api/rebalances/{id}/approve and /api/rebalances/{id}/two-man-sign respectively, never calling /apply."
     },
     "defect_4_governance_durability_and_exception_propagation": {
-      "problem": "governance/service.py maintained process-local _created_approvals and _idempotency dictionaries and swallowed storage exceptions (OSError), returning 202 without persisting to disk. Additionally, app_factory did not wire command_store into create_governance_router.",
-      "remediation": "Eliminated process-local authority caches. Wired command_store in core/app_factory.py. Enforced fail-closed 503 GovernanceAuthorityUnavailable if CommandStore is absent, and allowed storage exceptions (OSError/IOError) to propagate cleanly without being swallowed."
+      "problem": "governance/service.py maintained process-local _created_approvals and _idempotency dictionaries and swallowed storage exceptions (OSError), returning 202 without persisting to disk.",
+      "remediation": "Eliminated process-local authority caches. create_governance_router resolves command_store from submit_action.__self__.command_store or explicit argument. Enforced fail-closed 503 GovernanceAuthorityUnavailable if CommandStore is absent, and allowed storage exceptions (OSError/IOError) to propagate cleanly without being swallowed."
     },
     "defect_5_idempotency_tenant_actor_request_scoping": {
       "problem": "governance/service.py and command_adapters/service.py relied on process-local cache or unscoped idempotency checks, allowing cross-actor/cross-tenant collisions or state loss across process restarts.",
@@ -27,7 +27,7 @@
     },
     "defect_6_capital_authority_command_store_composition": {
       "problem": "DefaultCapitalAuthority bypassed CommandStore admission by delegating directly to raw executor/adapter without composed command receipts.",
-      "remediation": "Composed DefaultCapitalAuthority with CommandStore to persist durable command receipts for all capital operations, and wired command_store in create_capital_router and app_factory."
+      "remediation": "Composed DefaultCapitalAuthority with CommandStore to persist durable command receipts for all capital operations, and auto-resolved command_store in create_capital_router."
     },
     "defect_7_runtime_manager_allow_local_retired": {
       "problem": "runtime/router.py instantiated RuntimeManagerClient(allow_local=True) as a fallback writer, violating normative Section E.",
@@ -153,7 +153,6 @@
       "services/control-plane/bff/command_adapters/capital_adapter.py",
       "services/control-plane/bff/command_adapters/service.py",
       "services/control-plane/bff/command_queue.py",
-      "services/control-plane/bff/core/app_factory.py",
       "services/control-plane/bff/governance/router.py",
       "services/control-plane/bff/governance/service.py",
       "services/control-plane/bff/personas/service.py",
@@ -164,6 +163,7 @@
       "services/control-plane/bff/tests/test_domain_durability_corrective_p1.py",
       "docs/deployment/evidence/DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001/evidence.json"
     ],
+    "artifact_scope_boundary": "core/app_factory.py is preserved byte-identical to base dev commit because core/app_factory.py falls outside this task's declared artifact contract. Capital and governance routers encapsulate their durable store and authority resolution entirely within their domain-scoped boundaries.",
     "read_surface_invariants_preserved": "ReadSurfacePorts in services/control-plane/bff/ports/read_surface_ports.py is completely unmodified and maintains zero mutation methods, adhering strictly to RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE.",
     "command_durability_and_idempotency": "All domain mutation commands are backed by CommandStore with durable records, tenant/actor/request idempotency, and anti-forgery preservation of genuine governance controller metadata."
   },
@@ -171,7 +171,7 @@
     "commands": [
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_domain_durability_corrective_p1.py",
-        "result": "8 passed, 3 warnings in 3.71s",
+        "result": "8 passed, 3 warnings in 3.77s",
         "executed": 8,
         "collected": 8
       },

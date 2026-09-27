@@ -272,6 +272,9 @@ def create_governance_router(
     def _service() -> GovernanceService:
         nonlocal resolved_service
         current_store = _get_store()
+        _effective_store = command_store
+        if _effective_store is None and _submit_action is not None:
+            _effective_store = getattr(getattr(_submit_action, "__self__", None), "command_store", None)
         if resolved_service is None or getattr(resolved_service, "read_store", None) is not current_store:
             resolved_service = GovernanceService(
                 current_store,
@@ -284,7 +287,7 @@ def create_governance_router(
                 redact_evidence_refs=_redact,
                 capabilities_for_identity=_capabilities,
                 read_surface_state=_read_surface_state,
-                command_store=command_store,
+                command_store=_effective_store,
             )
         return resolved_service
 

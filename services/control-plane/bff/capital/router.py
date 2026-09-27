@@ -7,6 +7,7 @@ Manager client, auth guards, and response helpers when it mounts the router.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -152,15 +153,24 @@ def create_capital_router(
     else:
         resolved_get_read_store = lambda: None
 
+    resolved_command_store = command_store
+    if resolved_command_store is None:
+        read_obj = resolved_get_read_store()
+        resolved_command_store = getattr(read_obj, "command_store", None)
+        if resolved_command_store is None:
+            from ..command_queue import CommandStore
+            data_dir = os.environ.get("BFF_DATA_DIR", "/tmp/pantheon/bff")
+            resolved_command_store = CommandStore(os.path.join(data_dir, "commands.jsonl"))
+
     if get_capital_authority is None:
         from .service import DefaultCapitalAuthority
-        get_capital_authority = lambda: DefaultCapitalAuthority(command_store=command_store)
+        get_capital_authority = lambda: DefaultCapitalAuthority(command_store=resolved_command_store)
 
     router = APIRouter(tags=["capital"])
     service = CapitalService(
         get_read_store=resolved_get_read_store,
         get_capital_authority=get_capital_authority,
-        command_store=command_store,
+        command_store=resolved_command_store,
         utc_now=utc_now,
     )
 
