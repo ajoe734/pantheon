@@ -48,10 +48,11 @@ def test_runtime_router_owns_all_runtime_routes() -> None:
 
 
 def test_main_composes_runtime_router_without_runtime_decorators() -> None:
-    main_source = (BFF_ROOT / "main.py").read_text(encoding="utf-8")
-    assert "from runtime.router import create_runtime_router" in main_source
-    assert "app.routes.extend(_runtime_router.routes)" in main_source
+    factory_source = (BFF_ROOT / "core" / "app_factory.py").read_text(encoding="utf-8")
+    assert "create_runtime_router" in factory_source
+    assert "app.routes.extend(runtime_router.routes)" in factory_source
 
+    main_source = (BFF_ROOT / "main.py").read_text(encoding="utf-8")
     for _method, path in {
         ("GET", "/api/v1/bindings"),
         ("GET", "/api/v1/runtime-bindings"),

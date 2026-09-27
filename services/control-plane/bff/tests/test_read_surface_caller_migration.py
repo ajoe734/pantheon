@@ -225,7 +225,11 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 if isinstance(node.value, ast.Name) and node.value.id == "read_store":
                     read_store_attrs.add(node.attr)
 
-        self.assertEqual(len(read_store_attrs), 44, "Expected exactly 44 read_store attributes in main.py")
+        self.assertEqual(
+            len(read_store_attrs),
+            28,
+            "Expected exactly 28 read_store attributes in main.py following domain router modularization",
+        )
 
         ports_instance = create_read_surface_ports()
 
@@ -246,9 +250,9 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
             [],
             f"Found uninventoried read_store attributes in main.py: {uninventoried}",
         )
-        self.assertEqual(len(mapped_reads), 43)
-        self.assertEqual(len(deferred_writes), 1)
-        self.assertEqual(len(mapped_reads) + len(deferred_writes), 44)
+        self.assertEqual(len(mapped_reads), 28)
+        self.assertEqual(len(deferred_writes), 0)
+        self.assertEqual(len(mapped_reads) + len(deferred_writes), 28)
 
 
 class TestAgoraPersonaClientMigration(unittest.TestCase):

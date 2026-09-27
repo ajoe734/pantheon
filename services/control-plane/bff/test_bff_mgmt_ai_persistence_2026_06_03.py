@@ -305,7 +305,7 @@ def test_postgres_store_uses_management_ai_database_url_alias(monkeypatch) -> No
             captured.update(kwargs)
 
     monkeypatch.setattr(
-        "assistant_conversation_store.PostgresAssistantConversationStore",
+        "services.control_plane.bff.assistant_conversation_store.PostgresAssistantConversationStore",
         FakePostgresStore,
     )
 

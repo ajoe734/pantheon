@@ -320,12 +320,31 @@ def _mock_context_dependencies(
         lambda _persona_id: persona,
     )
     monkeypatch.setattr(
+        personas_service,
+        "_get_persona_directory_snapshot",
+        lambda *args, **kwargs: type(
+            "Snapshot",
+            (),
+            {"records_by_id": {persona["persona_id"]: persona}, "catalog_defaults_by_id": {}},
+        )(),
+    )
+    monkeypatch.setattr(
         personas_lifecycle,
         "_pm12_persona_league_rows",
         lambda **_kwargs: [{"persona_id": PERSONA_ID}],
     )
     monkeypatch.setattr(
+        personas_service,
+        "_pm12_persona_league_rows",
+        lambda **_kwargs: [{"persona_id": PERSONA_ID}],
+    )
+    monkeypatch.setattr(
         personas_lifecycle,
+        "_pm12_persona_league_ranking_item",
+        lambda _row: ranking_item,
+    )
+    monkeypatch.setattr(
+        personas_service,
         "_pm12_persona_league_ranking_item",
         lambda _row: ranking_item,
     )
