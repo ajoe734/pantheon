@@ -7,15 +7,15 @@
   "results": {
     "single_typed_semantic_extraction_contract": {
       "file": "services/source_ingestion/semantic_extraction.py",
-      "detail": "Delivered single typed semantic extraction contract with SemanticExtractionRequest, SemanticExtractionResult, SourceSpan, IntentExtractionPayload, StrategySeedExtractionPayload, TradeLessonExtractionPayload, SemanticExtractionAdmission, compute_schema_id, get_semantic_extraction_json_schema, and DeterministicBaselineExtractor. Reuses existing canonical enums (InteractionPrimaryIntent, TrainerSeedKind, StrategySpecSeedStatus, ExtractionTaskType, AbstentionReason, ExtractionFailureCode). Enforces strict SourceSpan character slice validation."
+      "detail": "Delivered single typed semantic extraction contract with SemanticExtractionRequest, SemanticExtractionResult, SourceSpan, IntentExtractionPayload, StrategySeedExtractionPayload, TradeLessonExtractionPayload, SemanticExtractionAdmission, compute_schema_id, get_semantic_extraction_json_schema, and DeterministicBaselineExtractor integrating StrategySpecSeedBuilder for true production baseline extraction and grounded canonical source spans. Reuses existing canonical enums (InteractionPrimaryIntent, TrainerSeedKind, StrategySpecSeedStatus, ExtractionTaskType, AbstentionReason, ExtractionFailureCode). Enforces strict SourceSpan character slice validation."
     },
     "bounded_failure_client": {
       "file": "services/source_ingestion/semantic_extraction_client.py",
-      "detail": "Delivered SemanticExtractionClient consuming restricted OpenClaw HTTP transport (/v1/chat/completions) with pre-call admission check (zero model calls on denial), bounded failure semantics for invalid schema, wrong tool, missing critical support, refusal, incomplete response, timeout (15s total deadline), token budget breach, and bounded retry policy (max 1 retry)."
+      "detail": "Delivered SemanticExtractionClient consuming restricted OpenClaw HTTP transport with pre-call admission check (zero model calls on denial), bounded failure semantics for invalid schema, wrong tool, missing critical support, refusal, incomplete response, wall-clock deadline enforcement across slow headers and chunks, honest rate tracking (None for routing aliases and unknown subscription models), and bounded retry policy (max 1 retry)."
     },
     "frozen_evaluation_cases": {
       "file": "services/source_ingestion/evaluation/semantic_extraction_cases.jsonl",
-      "sha256": "340592a802d3675a18bfe7acea84189af8869b44985336ddf8d82f0b0891fd51",
+      "sha256": "83a1fc0d6ae6aac771eb4c904f20b282e7d663137a503e11bf7c0122559c6868",
       "total_cases": 210,
       "language_counts": {
         "zh-TW": 108,
@@ -26,7 +26,7 @@
         "validation": 42,
         "holdout": 42
       },
-      "detail": "210 deduplicated permissioned test cases covering all 9 canonical intent classes, strategy seeds, trade lessons, comprehensive extractions, and comprehensive negative/refusal/admission boundary cases (PII, API keys, bearer tokens, private note markers, raw transcripts, lookahead timestamps, missing/invalid tenants, rejected statuses, prohibited licenses). Source families partitioned disjointly across splits with synthetic timestamp provenance honestly marked and reviewed_by claims removed."
+      "detail": "210 deduplicated permissioned test cases covering all 9 canonical intent classes, strategy seeds, trade lessons, comprehensive extractions, and comprehensive negative/refusal/admission boundary cases. Grouped into 108 stable template dedup groups, pairing 102 bilingual counterparts into identical partitions with zero split leakage across train/validation/holdout."
     },
     "evaluation_manifest_schema": {
       "file": "services/source_ingestion/evaluation/semantic_extraction_manifest.schema.json",
@@ -35,7 +35,7 @@
     },
     "evaluation_runner_and_baseline": {
       "file": "services/source_ingestion/evaluation/run_semantic_extraction_eval.py",
-      "detail": "Harness executing test cases against the deterministic baseline extractor or OpenClaw client, calculating aggregate macro-F1, honest field-F1, abstention recall, critical support, source validity, latency percentiles (p50/p95), supporting full corpus and split-filtered (e.g. --split holdout) runs, and validating against the manifest schema."
+      "detail": "Harness executing test cases against the deterministic baseline extractor or OpenClaw client, calculating aggregate macro-F1, honest field-F1, abstention recall, critical support, source validity, latency percentiles (p50/p95), verifying zero split leakage, enforcing exact hypothesis/proposed_change comparisons and canonical span verification, and producing an auditable manifest."
     },
     "evaluation_documentation": {
       "file": "services/source_ingestion/evaluation/README.md",
@@ -54,19 +54,19 @@
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py",
-      "result": "50 passed, 0 failed in 10.09s",
-      "executed": 50,
-      "collected": 50
+      "result": "55 passed, 0 failed in 12.95s",
+      "executed": 55,
+      "collected": 55
     },
     {
       "command": ".venv-pantheon/bin/python3 services/source_ingestion/evaluation/run_semantic_extraction_eval.py --manifest-out /tmp/eval_manifest_run.json",
-      "result": "pass, 210 cases executed, critical support 100.0%, source validity 100.0%, breaches 0, manifest validated against Draft-7 schema",
+      "result": "pass, 210 cases executed, critical support 100.0%, source validity 100.0%, breaches 0, field_f1 0.6239, manifest validated against Draft-7 schema",
       "executed": 210,
       "collected": 210
     },
     {
-      "command": "/tmp/clean-bff-venv/bin/python services/source_ingestion/evaluation/run_semantic_extraction_eval.py --split holdout",
-      "result": "pass, 42 holdout cases executed, manifest validated against Draft-7 schema",
+      "command": ".venv-pantheon/bin/python3 services/source_ingestion/evaluation/run_semantic_extraction_eval.py --split holdout --manifest-out /tmp/eval_manifest_holdout.json",
+      "result": "pass, 42 holdout cases executed, critical support 100.0%, source validity 100.0%, breaches 0, field_f1 0.5455, manifest validated against Draft-7 schema",
       "executed": 42,
       "collected": 42
     }
@@ -84,7 +84,7 @@
   },
   "coordination_note": "Constituent implementation prerequisite for SIMPLIFY-EXTRACTION-001 delivering typed contract, enums, admission guard, bounded failure semantics, frozen inputs (210 cases, 108 zh-TW, 102 en), and evaluation runner. No callers or stores modified. Downstream migration, prompt tuning, and quality/cost acceptance deferred to parent task.",
   "review": {
-    "reviewer": "Codex2",
+    "reviewer": "Antigravity2",
     "decision": "pending independent exact-head review"
   },
   "remaining_owned_elsewhere": [

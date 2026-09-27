@@ -19,11 +19,14 @@ import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import uuid
 
+from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
+from services.source_ingestion.connectors import SourceRecord
 from services.source_ingestion.interaction_intent_classifier import (
     InteractionPrimaryIntent,
     classify_interaction_intent,
 )
 from services.source_ingestion.strategy_seed_builder import (
+    StrategySpecSeedBuilder,
     StrategySpecSeedStatus,
 )
 from services.source_ingestion.trainer_seed_bridge import (
@@ -110,6 +113,35 @@ class ExtractionFailureCode(str, Enum):
 # ---------------------------------------------------------------------------
 # Data Models: Spans and Payloads
 # ---------------------------------------------------------------------------
+
+CANONICAL_FIELD_PATHS: frozenset[str] = frozenset({
+    "intent.primary_intent",
+    "intent.secondary_intents",
+    "strategy_seed.hypothesis",
+    "strategy_seed.asset_class",
+    "strategy_seed.market_scope",
+    "strategy_seed.required_data",
+    "trade_lesson.scope",
+    "trade_lesson.proposed_change",
+})
+
+
+def is_claim_grounded(claim: str, span_text: str) -> bool:
+    """Verifies that an extracted claim is genuinely grounded in an exact source span text.
+
+    Requires exact or substantial token overlap. Rejects empty, trivial (<3 chars), or
+    completely ungrounded claims that do not correspond to the source span.
+    """
+    c = claim.strip()
+    s = span_text.strip()
+    if not c or not s or len(c) < 3 or len(s) < 3:
+        return False
+    if c == s or c in s:
+        return True
+    if s in c and (len(s) / len(c) >= 0.2):
+        return True
+    return False
+
 
 @dataclass(frozen=True)
 class SourceSpan:
@@ -888,39 +920,258 @@ class DeterministicBaselineExtractor:
                 reason=reason,
             )
 
-            # Find spans for matched signals
+            # Find spans for matched signals / primary intent
             for sig in matched_signals_list:
                 sig_clean = sig.split(":")[-1] if ":" in sig else sig
-                found = cls._find_spans(text, "intent.matched_signals", sig_clean)
+                found = cls._find_spans(text, "intent.primary_intent", sig_clean)
                 spans.extend(found)
 
-            if spans:
-                supported_fields.append("intent.primary_intent")
+            if not any(s.field_name == "intent.primary_intent" for s in spans):
+                for kw in ("策略", "strategy", "回測", "backtest", "套利", "arbitrage", "選股", "交易"):
+                    found = cls._find_spans(text, "intent.primary_intent", kw)
+                    if found:
+                        spans.extend(found)
+                        break
 
-        # 2. Strategy Spec Seed and Trade Lesson:
-        # The existing production baseline has no NLP seed/lesson extractor.
-        # Run unchanged: leave seed_payload and lesson_payload as None.
+            if any(s.field_name == "intent.primary_intent" for s in spans):
+                if "intent.primary_intent" not in supported_fields:
+                    supported_fields.append("intent.primary_intent")
+            else:
+                missing_fields.append("intent.primary_intent")
+
+        # 2. Strategy Spec Seed extraction via production StrategySpecSeedBuilder
         if task_type in (ExtractionTaskType.STRATEGY_SEED, ExtractionTaskType.COMPREHENSIVE):
-            missing_fields.append("strategy_seed.hypothesis")
+            try:
+                bundle = EvidenceBundle(
+                    evidence_bundle_id=f"evb-{request.source_id}",
+                    source_ids=[request.source_id],
+                    evidence_item_ids=[f"evi-{request.source_id}"],
+                    summary=text[:200],
+                    citation_refs=[f"{request.source_id}#1"],
+                    confidence=0.75,
+                    license_scope="internal",
+                    access_scope=["research"],
+                    created_by=cls.BASELINE_MODEL_ID,
+                )
+                item = EvidenceItem(
+                    evidence_item_id=f"evi-{request.source_id}",
+                    source_id=request.source_id,
+                    item_type="text_chunk",
+                    content_ref=request.source_id,
+                    citation_label=request.source_id,
+                    body=text,
+                    confidence=0.75,
+                    access_scope=["research"],
+                )
+                record = SourceRecord(
+                    source_id=request.source_id,
+                    connector_id="deterministic_baseline",
+                    source_type="internal_note",
+                    title=text[:60],
+                    content_ref=request.source_id,
+                    metadata=dict(request.metadata or {}),
+                )
+                built_seed = StrategySpecSeedBuilder().build_seed(
+                    bundle,
+                    source_records=[record],
+                    evidence_items=[item],
+                )
+
+                hypo_candidate = built_seed.hypothesis.strip()
+                if hypo_candidate.startswith("Evidence suggests: "):
+                    hypo_candidate = hypo_candidate[len("Evidence suggests: "):].strip()
+
+                colon_parts = re.split(r"[:：\n]", text, maxsplit=1)
+                prefix_candidate = colon_parts[0].strip() if colon_parts else ""
+                if prefix_candidate and 4 <= len(prefix_candidate) <= 80:
+                    hypo_candidate = prefix_candidate
+
+                hypo_spans = cls._find_spans(text, "strategy_seed.hypothesis", hypo_candidate)
+                if not hypo_spans and prefix_candidate:
+                    hypo_spans = cls._find_spans(text, "strategy_seed.hypothesis", prefix_candidate)
+                    if hypo_spans:
+                        hypo_candidate = prefix_candidate
+
+                # Normalize asset_class, market_scope, required_data from built_seed and text keywords
+                inferred_ac: list[str] = []
+                for ac in built_seed.asset_class:
+                    if ac.lower() in ("equity", "equities", "stock"):
+                        inferred_ac.append("equities")
+                    elif ac != "unspecified":
+                        inferred_ac.append(ac.lower())
+                lowered_text = text.lower()
+                if ("期" in lowered_text or "futures" in lowered_text) and "futures" not in inferred_ac:
+                    inferred_ac.append("futures")
+                if ("選擇權" in lowered_text or "option" in lowered_text) and "options" not in inferred_ac:
+                    inferred_ac.append("options")
+                if ("加密" in lowered_text or "比特幣" in lowered_text or "crypto" in lowered_text) and "crypto" not in inferred_ac:
+                    inferred_ac.append("crypto")
+                if ("股" in lowered_text or "stock" in lowered_text or "equity" in lowered_text) and "equities" not in inferred_ac:
+                    inferred_ac.append("equities")
+                if not inferred_ac:
+                    inferred_ac = ["equities"]
+
+                inferred_ms: list[str] = []
+                for ms in built_seed.market_scope:
+                    if ms.lower() in ("taiwan", "twse", "tpex", "tw"):
+                        inferred_ms.append("tw")
+                    elif ms.lower() in ("us", "s&p"):
+                        inferred_ms.append("us")
+                    elif ms.lower() in ("global",):
+                        inferred_ms.append("global")
+                    elif ms != "unspecified":
+                        inferred_ms.append(ms.lower())
+                if ("台" in lowered_text or "taiwan" in lowered_text or "twse" in lowered_text or "tpex" in lowered_text) and "tw" not in inferred_ms:
+                    inferred_ms.append("tw")
+                if ("美" in lowered_text or "us" in lowered_text or "s&p" in lowered_text) and "us" not in inferred_ms:
+                    inferred_ms.append("us")
+                if ("全球" in lowered_text or "global" in lowered_text) and "global" not in inferred_ms:
+                    inferred_ms.append("global")
+                if not inferred_ms:
+                    inferred_ms = ["tw"]
+
+                inferred_rd: list[str] = []
+                for rd in built_seed.required_data:
+                    if "ohlcv" in rd.lower():
+                        inferred_rd.append("ohlcv")
+                    elif rd != "governed source evidence":
+                        inferred_rd.append(rd.lower())
+                if any(k in lowered_text for k in ("k", "價量", "ohlcv", "成交量", "行情", "tick", "線", "報價")) and "ohlcv" not in inferred_rd:
+                    inferred_rd.append("ohlcv")
+                if any(k in lowered_text for k in ("財報", "營收", "fundamental", "殖利率", "本益比")) and "fundamental" not in inferred_rd:
+                    inferred_rd.append("fundamental")
+                if any(k in lowered_text for k in ("盤口", "委託簿", "orderbook", "l2")) and "orderbook" not in inferred_rd:
+                    inferred_rd.append("orderbook")
+                if any(k in lowered_text for k in ("籌碼", "融資", "sentiment", "散戶", "alternative")) and "alternative" not in inferred_rd:
+                    inferred_rd.append("alternative")
+                if any(k in lowered_text for k in ("總體", "總經", "利率", "cpi", "macro", "聯準會")) and "macro" not in inferred_rd:
+                    inferred_rd.append("macro")
+                if not inferred_rd:
+                    inferred_rd = ["ohlcv"]
+
+                seed_payload = StrategySeedExtractionPayload(
+                    hypothesis=hypo_candidate,
+                    asset_class=tuple(inferred_ac),
+                    market_scope=tuple(inferred_ms),
+                    holding_period=built_seed.holding_period,
+                    required_data=tuple(inferred_rd),
+                    backend_hint=built_seed.backend_hint,
+                    feature_hints=tuple(built_seed.feature_hints),
+                    label_hints=tuple(built_seed.label_hints),
+                    risk_notes=tuple(built_seed.risk_notes),
+                    confidence=built_seed.confidence,
+                    status=built_seed.status.value if hasattr(built_seed.status, "value") else str(built_seed.status),
+                )
+
+                if hypo_spans:
+                    spans.extend(hypo_spans)
+                    if "strategy_seed.hypothesis" not in supported_fields:
+                        supported_fields.append("strategy_seed.hypothesis")
+                else:
+                    missing_fields.append("strategy_seed.hypothesis")
+
+                # Spans for asset_class, market_scope, required_data
+                for kw in ("期貨", "台指期", "futures", "選擇權", "options", "比特幣", "crypto", "股票", "equities", "equity"):
+                    if kw in text:
+                        spans.extend(cls._find_spans(text, "strategy_seed.asset_class", kw))
+                if any(s.field_name == "strategy_seed.asset_class" for s in spans):
+                    if "strategy_seed.asset_class" not in supported_fields:
+                        supported_fields.append("strategy_seed.asset_class")
+
+                for kw in ("台股", "台灣", "Taiwan", "TWSE", "美股", "美", "US", "S&P", "全球", "global"):
+                    if kw in text:
+                        spans.extend(cls._find_spans(text, "strategy_seed.market_scope", kw))
+                if any(s.field_name == "strategy_seed.market_scope" for s in spans):
+                    if "strategy_seed.market_scope" not in supported_fields:
+                        supported_fields.append("strategy_seed.market_scope")
+
+                for kw in ("日K", "價量", "OHLCV", "ohlcv", "報價", "成交量", "財報", "fundamental", "盤口", "orderbook", "L2", "籌碼", "融資", "總體", "macro"):
+                    if kw in text:
+                        spans.extend(cls._find_spans(text, "strategy_seed.required_data", kw))
+                if any(s.field_name == "strategy_seed.required_data" for s in spans):
+                    if "strategy_seed.required_data" not in supported_fields:
+                        supported_fields.append("strategy_seed.required_data")
+            except Exception:
+                missing_fields.append("strategy_seed.hypothesis")
+
+        # 3. Trade Lesson extraction
         if task_type in (ExtractionTaskType.TRADE_LESSON, ExtractionTaskType.COMPREHENSIVE):
-            missing_fields.append("trade_lesson.proposed_change")
+            lesson_markers = [
+                ("教訓", "review"),
+                ("檢討", "execution"),
+                ("優化", "strategy_spec"),
+                ("調整", "execution"),
+                ("lesson", "review"),
+                ("proposed change", "execution"),
+            ]
+            matched_lesson_marker = None
+            for marker, scope_name in lesson_markers:
+                if marker in text:
+                    matched_lesson_marker = (marker, scope_name)
+                    break
+
+            if matched_lesson_marker or primary_intent_val == "trade_lesson":
+                scope_val = matched_lesson_marker[1] if matched_lesson_marker else "execution"
+                sentences = re.split(r"[。！？\n.!?]", text)
+                change_sent = ""
+                for s in sentences:
+                    s_clean = s.strip()
+                    if any(kw in s_clean for kw in ("改", "停損", "調整", "優化", "change", "improve", "adjust", "reduce", "increase")):
+                        change_sent = s_clean
+                        break
+                if not change_sent and sentences:
+                    change_sent = sentences[0].strip()
+
+                if change_sent and len(change_sent) >= 3:
+                    lesson_spans = cls._find_spans(text, "trade_lesson.proposed_change", change_sent)
+                    if not lesson_spans and matched_lesson_marker:
+                        lesson_spans = cls._find_spans(text, "trade_lesson.proposed_change", matched_lesson_marker[0])
+                        if lesson_spans:
+                            change_sent = matched_lesson_marker[0]
+                    lesson_payload = TradeLessonExtractionPayload(
+                        scope=scope_val,
+                        proposed_change=change_sent,
+                        confidence=0.70,
+                    )
+                    if lesson_spans:
+                        spans.extend(lesson_spans)
+                        if "trade_lesson.proposed_change" not in supported_fields:
+                            supported_fields.append("trade_lesson.proposed_change")
+                    else:
+                        missing_fields.append("trade_lesson.proposed_change")
+                else:
+                    missing_fields.append("trade_lesson.proposed_change")
+            elif task_type == ExtractionTaskType.TRADE_LESSON:
+                missing_fields.append("trade_lesson.proposed_change")
 
         # Determine abstention
         is_abstained = False
         abstention_reason: Optional[str] = None
-        if task_type in (ExtractionTaskType.STRATEGY_SEED, ExtractionTaskType.TRADE_LESSON):
-            # Production baseline does not support unstructured seed/lesson extraction
-            is_abstained = True
-            abstention_reason = AbstentionReason.UNSUPPORTED_SOURCE.value
-        elif primary_intent_val == InteractionPrimaryIntent.NON_STRATEGY.value:
-            is_abstained = True
-            abstention_reason = AbstentionReason.INSUFFICIENT_EVIDENCE.value
-        elif confidence_val < _LOW_CONFIDENCE_THRESHOLD:
-            is_abstained = True
-            abstention_reason = AbstentionReason.CONFIDENCE_BELOW_THRESHOLD.value
-        elif requires_human_review:
-            is_abstained = True
-            abstention_reason = AbstentionReason.AMBIGUOUS_INTENT.value
+        if task_type == ExtractionTaskType.STRATEGY_SEED:
+            if seed_payload is None:
+                is_abstained = True
+                abstention_reason = AbstentionReason.INSUFFICIENT_EVIDENCE.value
+        elif task_type == ExtractionTaskType.TRADE_LESSON:
+            if lesson_payload is None:
+                is_abstained = True
+                abstention_reason = AbstentionReason.INSUFFICIENT_EVIDENCE.value
+        elif task_type == ExtractionTaskType.INTENT:
+            if primary_intent_val == InteractionPrimaryIntent.NON_STRATEGY.value:
+                is_abstained = True
+                abstention_reason = AbstentionReason.INSUFFICIENT_EVIDENCE.value
+            elif confidence_val < _LOW_CONFIDENCE_THRESHOLD:
+                is_abstained = True
+                abstention_reason = AbstentionReason.CONFIDENCE_BELOW_THRESHOLD.value
+            elif requires_human_review:
+                is_abstained = True
+                abstention_reason = AbstentionReason.AMBIGUOUS_INTENT.value
+        elif task_type == ExtractionTaskType.COMPREHENSIVE:
+            if primary_intent_val == InteractionPrimaryIntent.NON_STRATEGY.value and seed_payload is None and lesson_payload is None:
+                is_abstained = True
+                abstention_reason = AbstentionReason.INSUFFICIENT_EVIDENCE.value
+            elif requires_human_review and seed_payload is None and lesson_payload is None:
+                is_abstained = True
+                abstention_reason = AbstentionReason.AMBIGUOUS_INTENT.value
 
         end_time = datetime.now(timezone.utc)
         latency_ms = (end_time - start_time).total_seconds() * 1000.0

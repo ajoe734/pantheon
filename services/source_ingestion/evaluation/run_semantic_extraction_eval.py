@@ -28,11 +28,13 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from services.source_ingestion.semantic_extraction import (
+    CANONICAL_FIELD_PATHS,
     DeterministicBaselineExtractor,
     ExtractionTaskType,
     SemanticExtractionRequest,
     SemanticExtractionResult,
     _utc_now,
+    is_claim_grounded,
 )
 from services.source_ingestion.semantic_extraction_client import (
     SemanticExtractionClient,
@@ -77,6 +79,17 @@ def run_evaluation(
             line = line.strip()
             if line:
                 all_cases.append(json.loads(line))
+
+    # Check corpus split leakage: no dedup_group may appear in multiple splits
+    group_to_splits: dict[str, set[str]] = defaultdict(set)
+    for c in all_cases:
+        dg = c.get("dedup_group")
+        sp = c.get("split")
+        if dg and sp:
+            group_to_splits[dg].add(sp)
+    leaked_groups = {dg: splits for dg, splits in group_to_splits.items() if len(splits) > 1}
+    if leaked_groups:
+        raise ValueError(f"Corpus split leakage detected in groups: {leaked_groups}")
 
     # Frozen corpus statistics (full frozen input constraints)
     corpus_total_cases = len(all_cases)
@@ -224,7 +237,7 @@ def run_evaluation(
                 if "hypothesis" in exp_seed:
                     exp_h = exp_seed["hypothesis"].strip()
                     act_h = (res.strategy_seed.hypothesis or "").strip()
-                    if act_h and (act_h == exp_h or exp_h in act_h or act_h in exp_h):
+                    if act_h and act_h.strip() == exp_h.strip():
                         field_tp += 1
                     else:
                         field_fn += 1
@@ -292,7 +305,7 @@ def run_evaluation(
                 if "proposed_change" in exp_lesson:
                     exp_pc = exp_lesson["proposed_change"].strip()
                     act_pc = (res.trade_lesson.proposed_change or "").strip()
-                    if act_pc and (act_pc == exp_pc or exp_pc in act_pc or act_pc in exp_pc):
+                    if act_pc and act_pc.strip() == exp_pc.strip():
                         field_tp += 1
                     else:
                         field_fn += 1
@@ -313,7 +326,7 @@ def run_evaluation(
         case_spans_valid = True
         for span in res.source_spans:
             total_spans += 1
-            if span.is_valid(inp["text"]):
+            if span.is_valid(inp["text"]) and span.field_name in CANONICAL_FIELD_PATHS:
                 valid_spans += 1
             else:
                 case_spans_valid = False
@@ -324,20 +337,33 @@ def run_evaluation(
         if not res.is_abstained and res.status == "completed":
             if res.intent:
                 has_critical_fields = True
-                has_intent_span = any(s.field_name.startswith("intent") and s.is_valid(inp["text"]) for s in res.source_spans)
+                has_intent_span = any(
+                    s.field_name == "intent.primary_intent" and s.is_valid(inp["text"])
+                    for s in res.source_spans
+                )
                 if not has_intent_span:
                     all_critical_supported = False
 
             if res.strategy_seed:
                 has_critical_fields = True
-                has_seed_span = any("hypothesis" in s.field_name and s.is_valid(inp["text"]) for s in res.source_spans)
-                if not has_seed_span:
+                hypo_spans = [
+                    s for s in res.source_spans
+                    if s.field_name == "strategy_seed.hypothesis" and s.is_valid(inp["text"])
+                ]
+                if not hypo_spans:
+                    all_critical_supported = False
+                elif not any(is_claim_grounded(res.strategy_seed.hypothesis, s.exact_text) for s in hypo_spans):
                     all_critical_supported = False
 
             if res.trade_lesson:
                 has_critical_fields = True
-                has_lesson_span = any("proposed_change" in s.field_name and s.is_valid(inp["text"]) for s in res.source_spans)
-                if not has_lesson_span:
+                lesson_spans = [
+                    s for s in res.source_spans
+                    if s.field_name == "trade_lesson.proposed_change" and s.is_valid(inp["text"])
+                ]
+                if not lesson_spans:
+                    all_critical_supported = False
+                elif not any(is_claim_grounded(res.trade_lesson.proposed_change, s.exact_text) for s in lesson_spans):
                     all_critical_supported = False
 
             if has_critical_fields:

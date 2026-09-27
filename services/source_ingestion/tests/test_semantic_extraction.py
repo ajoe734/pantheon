@@ -151,10 +151,10 @@ class TestDeterministicBaselineExtractor:
 
     def test_traditional_chinese_unmatched_abstains(self):
         req = _base_req(
-            text="台股期貨動能突破策略：當台指期突破20日高點且成交量放大時買進，停損2%，使用日K與價量資料。"
+            text="今天天氣真好，大家一起去散步踏青，不要討論任何交易話題。",
+            task_type=ExtractionTaskType.INTENT,
         )
         res = DeterministicBaselineExtractor.extract(req)
-        # Production baseline has no Traditional Chinese keywords, faithfully returns low confidence / abstention
         assert res.is_abstained is True
         assert res.abstention_reason in (
             AbstentionReason.INSUFFICIENT_EVIDENCE.value,
@@ -164,11 +164,27 @@ class TestDeterministicBaselineExtractor:
     def test_non_strategy_abstention(self):
         req = _base_req(
             text="今日伺服器例行性維護公告：系統將於午夜12點進行重啟，預計耗時30分鐘。",
-            task_type=ExtractionTaskType.STRATEGY_SEED,
+            task_type=ExtractionTaskType.INTENT,
         )
         res = DeterministicBaselineExtractor.extract(req)
         assert res.is_abstained is True
-        assert res.abstention_reason == AbstentionReason.UNSUPPORTED_SOURCE.value
+        assert res.abstention_reason in (
+            AbstentionReason.INSUFFICIENT_EVIDENCE.value,
+            AbstentionReason.AMBIGUOUS_INTENT.value,
+        )
+
+    def test_production_baseline_extracts_strategy_seed(self):
+        req = _base_req(
+            text="台股期貨動能突破策略：當台指期突破20日高點且成交量放大時買進，停損2%，使用日K與價量資料。",
+            task_type=ExtractionTaskType.COMPREHENSIVE,
+        )
+        res = DeterministicBaselineExtractor.extract(req)
+        assert res.strategy_seed is not None
+        assert res.strategy_seed.hypothesis == "台股期貨動能突破策略"
+        assert "futures" in res.strategy_seed.asset_class
+        assert "tw" in res.strategy_seed.market_scope
+        assert "ohlcv" in res.strategy_seed.required_data
+        assert "strategy_seed.hypothesis" in res.supported_fields
 
 
 class TestSemanticExtractionClientBoundedFailures:
@@ -243,7 +259,7 @@ class TestSemanticExtractionClientBoundedFailures:
                 }
             }
 
-        client = SemanticExtractionClient(transport_fn=excessive_tokens_transport)
+        client = SemanticExtractionClient(transport_fn=excessive_tokens_transport, default_model="gpt-4o")
         req = _base_req()
         res = client.extract(req)
         assert res.is_abstained is True
@@ -329,7 +345,7 @@ class TestSemanticExtractionClientBoundedFailures:
                 }
             }
 
-        client = SemanticExtractionClient(transport_fn=successful_transport)
+        client = SemanticExtractionClient(transport_fn=successful_transport, default_model="gpt-4o")
         req = _base_req()
         res = client.extract(req)
         assert res.status == "completed"
@@ -719,9 +735,13 @@ class TestSemanticExtractionClientBoundedFailures:
 
     def test_pricing_unknown_model_preserves_none_and_roundtrip(self):
         client = SemanticExtractionClient()
-        # Cataloged model returns honest cost
-        known_cost = client.calculate_cost(1000, 1000, model_id="openclaw/main")
+        # Verified cataloged model returns honest cost
+        known_cost = client.calculate_cost(1000, 1000, model_id="gpt-4o")
         assert known_cost == 0.0125
+
+        # Routing alias openclaw/main returns None (not synthetic rate)
+        alias_cost = client.calculate_cost(1000, 1000, model_id="openclaw/main")
+        assert alias_cost is None
 
         # Unknown model preserves None (honest tracking)
         unknown_cost = client.calculate_cost(1000, 1000, model_id="unknown-subscription-model")
@@ -786,4 +806,157 @@ class TestSemanticExtractionClientBoundedFailures:
         assert manifest["baseline_metrics"]["tenant_source_breaches"] == 210
         assert sum(c["passed"] for c in manifest["case_results"]) == 0
         assert manifest["baseline_metrics"]["mean_cost_usd"] is None
+
+    def test_grounding_rejects_ungrounded_claims_despite_valid_full_source_span(self):
+        req = _base_req(text="台股期貨動能突破策略：當台指期突破20日高點且成交量放大時買進，停損2%，使用日K與價量資料。")
+
+        def fake_transport(payload: dict) -> dict:
+            return {
+                "output": {
+                    "structured_data": {
+                        "is_abstained": False,
+                        "strategy_seed": {
+                            "hypothesis": "Buy unrelated lunar rocks with 100x leverage on decentralized protocol",
+                            "asset_class": ["crypto"],
+                            "market_scope": ["global"],
+                            "required_data": ["ohlcv"],
+                            "confidence": 0.95,
+                        },
+                        "source_spans": [
+                            {
+                                "field_name": "strategy_seed.hypothesis",
+                                "start_char": 0,
+                                "end_char": len(req.text),
+                                "exact_text": req.text,
+                            }
+                        ],
+                    }
+                }
+            }
+
+        client = SemanticExtractionClient(transport_fn=fake_transport)
+        res = client.extract(req)
+        assert res.is_abstained is True
+        assert res.abstention_reason == AbstentionReason.MISSING_CRITICAL_SUPPORT.value
+        assert res.failure_code == ExtractionFailureCode.MISSING_SUPPORT.value
+        assert "strategy_seed.hypothesis" in res.missing_fields
+
+    def test_evaluator_rejects_single_character_hypothesis_and_non_canonical_spans(self, tmp_path):
+        from services.source_ingestion.evaluation.run_semantic_extraction_eval import run_evaluation
+
+        class PartialMatchExtractor:
+            def extract(self, req):
+                # Returns 1-character hypothesis '台' for expected '台股動能突破策略'
+                return SemanticExtractionResult(
+                    extraction_id="probe-single-char",
+                    source_id=req.source_id,
+                    tenant_id=req.tenant_id,
+                    task_type=req.normalized_task_type().value,
+                    status="completed",
+                    is_abstained=False,
+                    intent=IntentExtractionPayload(
+                        primary_intent=InteractionPrimaryIntent.STRATEGY_HYPOTHESIS.value,
+                        confidence=0.9,
+                    ),
+                    strategy_seed=StrategySeedExtractionPayload(
+                        hypothesis="台",  # 1-character matching prefix
+                        asset_class=("futures",),
+                        market_scope=("tw",),
+                        required_data=("ohlcv",),
+                        confidence=0.9,
+                    ),
+                    source_spans=(
+                        # Non-canonical span name
+                        SourceSpan("strategy_seed.hypothesis_prefix", 0, 1, "台"),
+                    ),
+                )
+
+        manifest = run_evaluation(
+            split_filter="holdout",
+            client=PartialMatchExtractor(),
+            manifest_out=tmp_path / "single_char_manifest.json",
+        )
+        # Evaluator must not award field_tp to single-character hypothesis or non-canonical spans
+        assert manifest["baseline_metrics"]["critical_support_pct"] == 0.0
+        assert manifest["baseline_metrics"]["source_validity_pct"] == 0.0
+
+    def test_usage_metadata_parsing_and_failure_preservation(self):
+        # 1. Missing output_tokens preserves None (does not fabricate 0)
+        def partial_usage_transport(payload: dict) -> dict:
+            return {
+                "output": {
+                    "structured_data": {
+                        "is_abstained": True,
+                        "abstention_reason": "insufficient_evidence",
+                        "source_spans": [],
+                    },
+                    "usage": {"input_tokens": 500},
+                }
+            }
+
+        client = SemanticExtractionClient(transport_fn=partial_usage_transport)
+        res = client.extract(_base_req())
+        assert res.usage is not None
+        assert res.usage["input_tokens"] == 500
+        assert res.usage["output_tokens"] is None
+        assert res.usage["total_tokens"] is None
+
+        # 2. String 'unknown' usage emits INVALID_SCHEMA without ValueError
+        def malformed_usage_transport(payload: dict) -> dict:
+            return {
+                "output": {
+                    "structured_data": {"is_abstained": True, "source_spans": []},
+                    "usage": {"input_tokens": "unknown", "output_tokens": 100},
+                }
+            }
+
+        client2 = SemanticExtractionClient(transport_fn=malformed_usage_transport)
+        res2 = client2.extract(_base_req())
+        assert res2.status == "failed"
+        assert res2.failure_code == ExtractionFailureCode.INVALID_SCHEMA.value
+
+        # 3. Usage preserved on explicit model refusal
+        def refusal_transport(payload: dict) -> dict:
+            return {
+                "status": "refusal",
+                "output": {
+                    "usage": {"input_tokens": 200, "output_tokens": 10},
+                },
+            }
+
+        client3 = SemanticExtractionClient(transport_fn=refusal_transport, default_model="gpt-4o")
+        res3 = client3.extract(_base_req())
+        assert res3.is_abstained is True
+        assert res3.abstention_reason == AbstentionReason.MODEL_REFUSAL.value
+        assert res3.usage is not None
+        assert res3.usage["input_tokens"] == 200
+        assert res3.usage["output_tokens"] == 10
+        assert res3.cost_usd is not None
+        assert res3.cost_usd > 0.0
+
+    def test_corpus_zero_split_leakage_and_pairwise_grouping(self):
+        from collections import defaultdict
+        from services.source_ingestion.evaluation.run_semantic_extraction_eval import DEFAULT_CASES_PATH, _compute_sha256
+
+        cases = [json.loads(line) for line in DEFAULT_CASES_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert len(cases) == 210
+
+        # Check SHA256 of frozen corpus
+        sha = _compute_sha256(DEFAULT_CASES_PATH)
+        assert sha == "83a1fc0d6ae6aac771eb4c904f20b282e7d663137a503e11bf7c0122559c6868"
+
+        # Check zero split leakage across template groups
+        group_to_splits = defaultdict(set)
+        for c in cases:
+            group_to_splits[c["dedup_group"]].add(c["split"])
+        for group_id, splits in group_to_splits.items():
+            assert len(splits) == 1, f"Group {group_id} leaks across splits: {splits}"
+
+        # Check exact split distribution
+        split_counts = defaultdict(int)
+        for c in cases:
+            split_counts[c["split"]] += 1
+        assert split_counts["train"] == 126
+        assert split_counts["validation"] == 42
+        assert split_counts["holdout"] == 42
 

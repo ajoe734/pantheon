@@ -19,7 +19,10 @@ import socket
 import sys
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+import http.client
+import io
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -43,6 +46,8 @@ from services.source_ingestion.semantic_extraction import (
     SourceSpan,
     StrategySeedExtractionPayload,
     TradeLessonExtractionPayload,
+    CANONICAL_FIELD_PATHS,
+    is_claim_grounded,
     compute_schema_id,
     get_semantic_extraction_json_schema,
 )
@@ -51,16 +56,8 @@ logger = logging.getLogger(__name__)
 
 
 # Standard verified model rates per 1,000,000 tokens (USD)
-# Used for honest cost tracking; subscription/unknown costs are preserved as None, never treated as $0.00
+# Used for honest cost tracking; subscription/unknown costs and routing aliases are preserved as None, never treated as $0.00
 _VERIFIED_MODEL_RATES: dict[str, dict[str, float]] = {
-    "openclaw/main": {
-        "input_per_million": 2.50,
-        "output_per_million": 10.00,
-    },
-    "openclaw/default": {
-        "input_per_million": 2.50,
-        "output_per_million": 10.00,
-    },
     "claude-3-5-sonnet": {
         "input_per_million": 3.00,
         "output_per_million": 15.00,
@@ -75,16 +72,7 @@ _VERIFIED_MODEL_RATES: dict[str, dict[str, float]] = {
     },
 }
 
-_CANONICAL_FIELD_PATHS: frozenset[str] = frozenset({
-    "intent.primary_intent",
-    "intent.secondary_intents",
-    "strategy_seed.hypothesis",
-    "strategy_seed.asset_class",
-    "strategy_seed.market_scope",
-    "strategy_seed.required_data",
-    "trade_lesson.scope",
-    "trade_lesson.proposed_change",
-})
+_CANONICAL_FIELD_PATHS: frozenset[str] = CANONICAL_FIELD_PATHS
 
 _DEFAULT_TOKEN_LIMITS: dict[str, int] = {
     "max_input_tokens": 8000,
@@ -92,42 +80,81 @@ _DEFAULT_TOKEN_LIMITS: dict[str, int] = {
 }
 
 
-def _extract_socket(stream: Any) -> Optional[Any]:
-    for path in (
-        ("fp", "fp", "raw", "_sock"),
-        ("fp", "raw", "_sock"),
-        ("raw", "_sock"),
-    ):
-        curr = stream
-        for attr in path:
-            curr = getattr(curr, attr, None)
-            if curr is None:
-                break
-        if curr is not None:
-            return curr
-    return None
+class _DeadlineSocket:
+    """Socket wrapper that strictly enforces a wall-clock deadline on all socket I/O."""
+
+    def __init__(self, sock: Any, deadline_at: float) -> None:
+        self._sock = sock
+        self._deadline_at = deadline_at
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._sock, name)
+
+    def _check_and_update(self) -> None:
+        rem = self._deadline_at - time.monotonic()
+        if rem <= 0:
+            raise socket.timeout("Operation timed out: wall-clock deadline exceeded")
+        try:
+            self._sock.settimeout(rem)
+        except Exception:
+            pass
+
+    def recv(self, *args: Any, **kwargs: Any) -> bytes:
+        self._check_and_update()
+        return self._sock.recv(*args, **kwargs)
+
+    def recv_into(self, *args: Any, **kwargs: Any) -> int:
+        self._check_and_update()
+        return self._sock.recv_into(*args, **kwargs)
+
+    def read(self, *args: Any, **kwargs: Any) -> bytes:
+        self._check_and_update()
+        read_fn = getattr(self._sock, "read", self._sock.recv)
+        return read_fn(*args, **kwargs)
+
+    def send(self, *args: Any, **kwargs: Any) -> int:
+        self._check_and_update()
+        return self._sock.send(*args, **kwargs)
+
+    def sendall(self, *args: Any, **kwargs: Any) -> None:
+        self._check_and_update()
+        return self._sock.sendall(*args, **kwargs)
+
+    def write(self, *args: Any, **kwargs: Any) -> int:
+        self._check_and_update()
+        write_fn = getattr(self._sock, "write", self._sock.sendall)
+        return write_fn(*args, **kwargs)
+
+    def makefile(self, *args: Any, **kwargs: Any) -> Any:
+        self._check_and_update()
+        return self._sock.makefile(*args, **kwargs)
 
 
 def _read_http_body_bounded(stream: Any, deadline_at: float, max_bytes: int = 10_000_000) -> bytes:
-    sock = _extract_socket(stream)
     chunks: list[bytes] = []
     total_bytes = 0
     read_fn = getattr(stream, "read1", None) or getattr(stream, "read", None)
     if read_fn is None:
         return b""
 
+    # Attempt to locate underlying socket to refresh timeout before each read
+    sock = getattr(stream, "_sock", None) or getattr(getattr(stream, "fp", None), "_sock", None)
+
     while True:
         if getattr(stream, "isclosed", lambda: False)():
             break
         rem = deadline_at - time.monotonic()
         if rem <= 0:
-            raise TimeoutError("HTTP response read exceeded wall-clock deadline")
+            raise socket.timeout("HTTP response read exceeded wall-clock deadline")
         if sock is not None:
             try:
-                sock.settimeout(max(0.001, rem))
+                sock.settimeout(rem)
             except Exception:
                 pass
-        chunk = read_fn(4096)
+        try:
+            chunk = read_fn(4096)
+        except (TimeoutError, socket.timeout):
+            raise socket.timeout("HTTP response read exceeded wall-clock deadline")
         if not chunk:
             break
         chunks.append(chunk)
@@ -135,9 +162,72 @@ def _read_http_body_bounded(stream: Any, deadline_at: float, max_bytes: int = 10
         if total_bytes > max_bytes:
             raise ValueError(f"HTTP response body exceeded {max_bytes} bytes")
         if time.monotonic() >= deadline_at:
-            raise TimeoutError("HTTP response read exceeded wall-clock deadline")
+            raise socket.timeout("HTTP response read exceeded wall-clock deadline")
 
     return b"".join(chunks)
+
+
+def _perform_http_request(
+    endpoint: str,
+    *,
+    body_bytes: bytes,
+    headers: dict[str, str],
+    deadline_at: float,
+    max_body_bytes: int = 10_000_000,
+) -> tuple[int, bytes, dict[str, str]]:
+    parsed = urllib.parse.urlsplit(endpoint)
+    is_https = parsed.scheme == "https"
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if is_https else 80)
+    rem = deadline_at - time.monotonic()
+    if rem <= 0:
+        raise socket.timeout("HTTP request exceeded wall-clock deadline")
+
+    conn_cls = http.client.HTTPSConnection if is_https else http.client.HTTPConnection
+    conn = conn_cls(host, port, timeout=rem)
+    try:
+        conn.connect()
+        conn.sock = _DeadlineSocket(conn.sock, deadline_at)
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        conn.request("POST", path, body=body_bytes, headers=headers)
+        resp = conn.getresponse()
+        status = resp.status
+        resp_headers = dict(resp.getheaders())
+        body = _read_http_body_bounded(resp, deadline_at=deadline_at, max_bytes=max_body_bytes)
+        return status, body, resp_headers
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _parse_token_count(val: Any) -> tuple[Optional[int], bool]:
+    """Returns (count, is_malformed).
+
+    - If val is None or omitted: (None, False) -> unknown count preserved
+    - If val is an int or digit string: (int, False)
+    - If val is invalid (negative, boolean, non-digit string like 'unknown', float): (None, True)
+    """
+    if val is None:
+        return None, False
+    if type(val) is bool:
+        return None, True
+    if isinstance(val, int):
+        if val < 0:
+            return None, True
+        return val, False
+    if isinstance(val, str):
+        s = val.strip()
+        if s.isdigit():
+            return int(s), False
+        return None, True
+    return None, True
+
+
+_is_claim_grounded = is_claim_grounded
 
 
 class SemanticExtractionClientError(RuntimeError):
@@ -205,16 +295,19 @@ class SemanticExtractionClient:
             rates = self._official_rates
         else:
             resolved_model = model_id or self._default_model
+            # Routing aliases (openclaw/main, openclaw/default) have no verified rate provenance
+            if not resolved_model or resolved_model.startswith("openclaw/"):
+                return None
             if resolved_model in _VERIFIED_MODEL_RATES:
                 rates = _VERIFIED_MODEL_RATES[resolved_model]
-            elif self._default_model in _VERIFIED_MODEL_RATES and resolved_model in (None, "", "openclaw/default"):
-                rates = _VERIFIED_MODEL_RATES[self._default_model]
             else:
                 return None
 
-        input_rate = rates.get("input_per_million", 2.50) / 1_000_000.0
-        output_rate = rates.get("output_per_million", 10.00) / 1_000_000.0
-        return round(input_tokens * input_rate + output_tokens * output_rate, 6)
+        input_rate = rates.get("input_per_million")
+        output_rate = rates.get("output_per_million")
+        if input_rate is None or output_rate is None:
+            return None
+        return round(input_tokens * (input_rate / 1_000_000.0) + output_tokens * (output_rate / 1_000_000.0), 6)
 
     def _resolve_model_identity(self, raw_response: Optional[dict[str, Any]], request: SemanticExtractionRequest) -> str:
         if isinstance(raw_response, dict):
@@ -223,9 +316,9 @@ class SemanticExtractionClient:
             out = raw_response.get("output") or raw_response.get("data")
             if isinstance(out, dict) and out.get("model"):
                 return str(out["model"])
-        if self._transport_fn is not None and request.model_id:
+        if request.model_id:
             return request.model_id
-        return "openclaw/default"
+        return self._default_model or "openclaw/default"
 
     def _assert_provider_policy(self, provider: Any, *, deadline: float) -> None:
         if not hasattr(provider, "_gateway_call"):
@@ -500,38 +593,29 @@ class SemanticExtractionClient:
             if self._service_token:
                 headers["Authorization"] = f"Bearer {self._service_token}"
 
-            req = urllib.request.Request(
-                endpoint,
-                data=json.dumps(body).encode("utf-8"),
-                headers=headers,
-                method="POST",
-            )
             try:
-                rem_conn = max(0.001, deadline_at - time.monotonic())
-                with urllib.request.urlopen(req, timeout=min(rem_conn, 15.0)) as resp:
-                    raw_bytes = _read_http_body_bounded(resp, deadline_at=deadline_at)
-                    raw_data = json.loads(raw_bytes.decode("utf-8"))
+                status, body_bytes, _ = _perform_http_request(
+                    endpoint,
+                    body_bytes=json.dumps(body).encode("utf-8"),
+                    headers=headers,
+                    deadline_at=deadline_at,
+                )
+                if status == 200:
+                    raw_data = json.loads(body_bytes.decode("utf-8"))
                     data_obj = raw_data.get("data") or {}
                     return data_obj
-            except urllib.error.HTTPError as exc:
-                try:
-                    err_body = _read_http_body_bounded(exc, deadline_at=deadline_at).decode("utf-8", errors="replace")
-                except (TimeoutError, socket.timeout) as te:
-                    raise SemanticExtractionClientError("HTTP error read timed out", ExtractionFailureCode.TIMEOUT, 504) from te
-                if exc.code == 422:
-                    raise SemanticExtractionClientError(err_body, ExtractionFailureCode.INVALID_SCHEMA, 422) from exc
-                if exc.code == 504:
-                    raise SemanticExtractionClientError(err_body, ExtractionFailureCode.TIMEOUT, 504) from exc
-                if exc.code == 502:
-                    raise SemanticExtractionClientError(err_body, ExtractionFailureCode.WRONG_TOOL, 502) from exc
-                raise SemanticExtractionClientError(err_body, ExtractionFailureCode.TRANSPORT_ERROR, exc.code) from exc
+                err_body = body_bytes.decode("utf-8", errors="replace")
+                if status == 422:
+                    raise SemanticExtractionClientError(err_body, ExtractionFailureCode.INVALID_SCHEMA, 422)
+                if status == 504:
+                    raise SemanticExtractionClientError(err_body, ExtractionFailureCode.TIMEOUT, 504)
+                if status == 502:
+                    raise SemanticExtractionClientError(err_body, ExtractionFailureCode.WRONG_TOOL, 502)
+                raise SemanticExtractionClientError(err_body, ExtractionFailureCode.TRANSPORT_ERROR, status)
             except (TimeoutError, socket.timeout) as exc:
                 raise SemanticExtractionClientError("HTTP request timed out", ExtractionFailureCode.TIMEOUT, 504) from exc
-            except urllib.error.URLError as exc:
-                err_str = str(exc)
-                if isinstance(exc.reason, (socket.timeout, TimeoutError)) or "timed out" in err_str.lower():
-                    raise SemanticExtractionClientError("HTTP connection timed out", ExtractionFailureCode.TIMEOUT, 504) from exc
-                raise SemanticExtractionClientError(err_str, ExtractionFailureCode.TRANSPORT_ERROR, 500) from exc
+            except SemanticExtractionClientError:
+                raise
             except Exception as exc:
                 err_str = str(exc)
                 if isinstance(exc, (socket.timeout, TimeoutError)) or "timed out" in err_str.lower():
@@ -600,6 +684,80 @@ class SemanticExtractionClient:
 
         output_obj = raw_response.get("output") or raw_response.get("data") or raw_response
 
+        # Parse token usage and budget checks early so usage/cost are preserved on refusal/invalid schema/failure
+        usage_data = None
+        if isinstance(raw_response, dict) and "usage" in raw_response and isinstance(raw_response["usage"], dict):
+            usage_data = raw_response["usage"]
+        elif isinstance(output_obj, dict) and "usage" in output_obj and isinstance(output_obj["usage"], dict):
+            usage_data = output_obj["usage"]
+
+        usage_obj: Optional[dict[str, Optional[int]]] = None
+        cost_usd: Optional[float] = None
+        malformed_usage_error: Optional[str] = None
+
+        if isinstance(usage_data, dict):
+            in_val, in_malformed = _parse_token_count(usage_data.get("input_tokens"))
+            out_val, out_malformed = _parse_token_count(usage_data.get("output_tokens"))
+            tot_val, tot_malformed = _parse_token_count(usage_data.get("total_tokens"))
+
+            if in_malformed or out_malformed or tot_malformed:
+                malformed_usage_error = f"Malformed token usage metadata in response: {usage_data}"
+            else:
+                in_tok = in_val
+                if in_tok is not None:
+                    in_tok += accumulated_usage.get("input_tokens", 0)
+                out_tok = out_val
+                if out_tok is not None:
+                    out_tok += accumulated_usage.get("output_tokens", 0)
+                tot_tok = tot_val
+                if tot_tok is None and in_tok is not None and out_tok is not None:
+                    tot_tok = in_tok + out_tok
+                usage_obj = {"input_tokens": in_tok, "output_tokens": out_tok, "total_tokens": tot_tok}
+                cost_usd = self.calculate_cost(in_tok, out_tok, model_id=model_identity)
+
+        if malformed_usage_error:
+            return SemanticExtractionResult(
+                extraction_id=str(uuid.uuid4()),
+                source_id=request.source_id,
+                tenant_id=request.tenant_id,
+                task_type=task_type.value,
+                status="failed",
+                failure_code=ExtractionFailureCode.INVALID_SCHEMA.value,
+                failure_message=malformed_usage_error,
+                schema_id=schema_id,
+                model_identity=model_identity,
+                prompt_identity=_DEFAULT_PROMPT_VERSION,
+                config_digest=hashlib.sha256(b"malformed_usage").hexdigest()[:16],
+                latency_ms=(time.monotonic() - start_time) * 1000.0,
+                retry_count=retry_count,
+            )
+
+        # Budget breach check
+        if usage_obj is not None:
+            in_t = usage_obj.get("input_tokens")
+            out_t = usage_obj.get("output_tokens")
+            if (in_t is not None and in_t > self._token_limits["max_input_tokens"]) or \
+               (out_t is not None and out_t > self._token_limits["max_output_tokens"]):
+                return SemanticExtractionResult(
+                    extraction_id=str(uuid.uuid4()),
+                    source_id=request.source_id,
+                    tenant_id=request.tenant_id,
+                    task_type=task_type.value,
+                    status="abstained",
+                    is_abstained=True,
+                    abstention_reason=AbstentionReason.BUDGET_BREACH.value,
+                    failure_code=ExtractionFailureCode.BUDGET_BREACH.value,
+                    failure_message=f"Usage exceeded limits: input {in_t} > {self._token_limits['max_input_tokens']} or output {out_t} > {self._token_limits['max_output_tokens']}",
+                    schema_id=schema_id,
+                    model_identity=model_identity,
+                    prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    config_digest=hashlib.sha256(b"budget_breach").hexdigest()[:16],
+                    usage=usage_obj,
+                    cost_usd=cost_usd,
+                    latency_ms=(time.monotonic() - start_time) * 1000.0,
+                    retry_count=retry_count,
+                )
+
         # Check refusal
         if (
             raw_response.get("status") in ("refusal", "rejected")
@@ -619,6 +777,8 @@ class SemanticExtractionClient:
                 model_identity=model_identity,
                 prompt_identity=_DEFAULT_PROMPT_VERSION,
                 config_digest=hashlib.sha256(b"refusal").hexdigest()[:16],
+                usage=usage_obj,
+                cost_usd=cost_usd,
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
                 retry_count=retry_count,
             )
@@ -638,44 +798,11 @@ class SemanticExtractionClient:
                 model_identity=model_identity,
                 prompt_identity=_DEFAULT_PROMPT_VERSION,
                 config_digest=hashlib.sha256(b"incomplete").hexdigest()[:16],
+                usage=usage_obj,
+                cost_usd=cost_usd,
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
                 retry_count=retry_count,
             )
-
-        # Token usage and budget checks (preserve unknown!)
-        usage_data = output_obj.get("usage") if isinstance(output_obj, dict) else None
-        usage_obj: Optional[dict[str, int]] = None
-        cost_usd: Optional[float] = None
-        if isinstance(usage_data, dict) and "input_tokens" in usage_data and usage_data.get("input_tokens") is not None:
-            in_tok = int(usage_data.get("input_tokens", 0)) + accumulated_usage.get("input_tokens", 0)
-            out_tok = int(usage_data.get("output_tokens", 0)) + accumulated_usage.get("output_tokens", 0)
-            tot_tok = in_tok + out_tok
-            usage_obj = {"input_tokens": in_tok, "output_tokens": out_tok, "total_tokens": tot_tok}
-            cost_usd = self.calculate_cost(in_tok, out_tok, model_id=model_identity)
-
-            if (
-                in_tok > self._token_limits["max_input_tokens"]
-                or out_tok > self._token_limits["max_output_tokens"]
-            ):
-                return SemanticExtractionResult(
-                    extraction_id=str(uuid.uuid4()),
-                    source_id=request.source_id,
-                    tenant_id=request.tenant_id,
-                    task_type=task_type.value,
-                    status="abstained",
-                    is_abstained=True,
-                    abstention_reason=AbstentionReason.BUDGET_BREACH.value,
-                    failure_code=ExtractionFailureCode.BUDGET_BREACH.value,
-                    failure_message=f"Usage exceeded limits: input {in_tok} > {self._token_limits['max_input_tokens']} or output {out_tok} > {self._token_limits['max_output_tokens']}",
-                    schema_id=schema_id,
-                    model_identity=model_identity,
-                    prompt_identity=_DEFAULT_PROMPT_VERSION,
-                    config_digest=hashlib.sha256(b"budget_breach").hexdigest()[:16],
-                    usage=usage_obj,
-                    cost_usd=cost_usd,
-                    latency_ms=(time.monotonic() - start_time) * 1000.0,
-                    retry_count=retry_count,
-                )
 
         # Strict JSON Schema validation
         validator = jsonschema.Draft7Validator(schema)
@@ -694,6 +821,8 @@ class SemanticExtractionClient:
                 model_identity=model_identity,
                 prompt_identity=_DEFAULT_PROMPT_VERSION,
                 config_digest=hashlib.sha256(b"invalid_schema").hexdigest()[:16],
+                usage=usage_obj,
+                cost_usd=cost_usd,
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
                 retry_count=retry_count,
             )
@@ -753,6 +882,8 @@ class SemanticExtractionClient:
                     model_identity=model_identity,
                     prompt_identity=_DEFAULT_PROMPT_VERSION,
                     config_digest=hashlib.sha256(b"invalid_payload").hexdigest()[:16],
+                    usage=usage_obj,
+                    cost_usd=cost_usd,
                     latency_ms=(time.monotonic() - start_time) * 1000.0,
                     retry_count=retry_count,
                 )
@@ -773,6 +904,8 @@ class SemanticExtractionClient:
                     model_identity=model_identity,
                     prompt_identity=_DEFAULT_PROMPT_VERSION,
                     config_digest=hashlib.sha256(b"invalid_payload").hexdigest()[:16],
+                    usage=usage_obj,
+                    cost_usd=cost_usd,
                     latency_ms=(time.monotonic() - start_time) * 1000.0,
                     retry_count=retry_count,
                 )
@@ -793,6 +926,8 @@ class SemanticExtractionClient:
                     model_identity=model_identity,
                     prompt_identity=_DEFAULT_PROMPT_VERSION,
                     config_digest=hashlib.sha256(b"invalid_payload").hexdigest()[:16],
+                    usage=usage_obj,
+                    cost_usd=cost_usd,
                     latency_ms=(time.monotonic() - start_time) * 1000.0,
                     retry_count=retry_count,
                 )
@@ -812,6 +947,8 @@ class SemanticExtractionClient:
                     model_identity=model_identity,
                     prompt_identity=_DEFAULT_PROMPT_VERSION,
                     config_digest=hashlib.sha256(b"incomplete").hexdigest()[:16],
+                    usage=usage_obj,
+                    cost_usd=cost_usd,
                     latency_ms=(time.monotonic() - start_time) * 1000.0,
                     retry_count=retry_count,
                 )
@@ -828,6 +965,8 @@ class SemanticExtractionClient:
                     model_identity=model_identity,
                     prompt_identity=_DEFAULT_PROMPT_VERSION,
                     config_digest=hashlib.sha256(b"incomplete").hexdigest()[:16],
+                    usage=usage_obj,
+                    cost_usd=cost_usd,
                     latency_ms=(time.monotonic() - start_time) * 1000.0,
                     retry_count=retry_count,
                 )
@@ -844,6 +983,8 @@ class SemanticExtractionClient:
                     model_identity=model_identity,
                     prompt_identity=_DEFAULT_PROMPT_VERSION,
                     config_digest=hashlib.sha256(b"incomplete").hexdigest()[:16],
+                    usage=usage_obj,
+                    cost_usd=cost_usd,
                     latency_ms=(time.monotonic() - start_time) * 1000.0,
                     retry_count=retry_count,
                 )
@@ -860,6 +1001,8 @@ class SemanticExtractionClient:
                     model_identity=model_identity,
                     prompt_identity=_DEFAULT_PROMPT_VERSION,
                     config_digest=hashlib.sha256(b"incomplete").hexdigest()[:16],
+                    usage=usage_obj,
+                    cost_usd=cost_usd,
                     latency_ms=(time.monotonic() - start_time) * 1000.0,
                     retry_count=retry_count,
                 )
@@ -873,7 +1016,7 @@ class SemanticExtractionClient:
             missing_support_reason = f"Invalid or non-canonical span detected: {invalid_span_reason}"
 
         if task_type in (ExtractionTaskType.INTENT, ExtractionTaskType.COMPREHENSIVE) and intent_payload and not is_abstained:
-            has_intent_span = any(s.field_name.startswith("intent") for s in valid_spans)
+            has_intent_span = any(s.field_name == "intent.primary_intent" for s in valid_spans)
             if not has_intent_span:
                 missing_support = True
                 missing_support_reason = "Missing valid source span for intent extraction."
@@ -887,7 +1030,7 @@ class SemanticExtractionClient:
                 missing_fields.append("strategy_seed.hypothesis")
             else:
                 hypo_str = seed_payload.hypothesis.strip()
-                if not any(s.exact_text in hypo_str or hypo_str in s.exact_text or s.exact_text in request.text for s in hypo_spans):
+                if not any(_is_claim_grounded(hypo_str, s.exact_text) for s in hypo_spans):
                     missing_support = True
                     missing_support_reason = "Strategy hypothesis is not grounded in source span."
                     missing_fields.append("strategy_seed.hypothesis")
@@ -900,7 +1043,7 @@ class SemanticExtractionClient:
                 missing_fields.append("trade_lesson.proposed_change")
             else:
                 change_str = lesson_payload.proposed_change.strip()
-                if not any(s.exact_text in change_str or change_str in s.exact_text or s.exact_text in request.text for s in lesson_spans):
+                if not any(_is_claim_grounded(change_str, s.exact_text) for s in lesson_spans):
                     missing_support = True
                     missing_support_reason = "Trade lesson proposed_change is not grounded in source span."
                     missing_fields.append("trade_lesson.proposed_change")
