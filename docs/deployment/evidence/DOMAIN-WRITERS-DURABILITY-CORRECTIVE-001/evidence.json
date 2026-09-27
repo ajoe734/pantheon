@@ -32,6 +32,22 @@
     "defect_7_runtime_manager_allow_local_retired": {
       "problem": "runtime/router.py instantiated RuntimeManagerClient(allow_local=True) as a fallback writer, violating normative Section E.",
       "remediation": "Retired allow_local fallback. Resolved runtime_owner_port from composition dependencies and enforced fail-closed 503 DEPENDENCY_UNAVAILABLE when the port is unconfigured."
+    },
+    "defect_8_capital_durability_before_dispatch": {
+      "problem": "Capital router and DefaultCapitalAuthority performed downstream HTTP dispatch before durable CommandStore admission and lacked tenant-scoped idempotency, allowing process restart replay to re-dispatch and storage failures to leak unpersisted external requests.",
+      "remediation": "Hardened DefaultCapitalAuthority to execute durable command admission via submit_terminal_command BEFORE downstream HTTP dispatch, update status to EXECUTED on success, and scoped idempotency lookups strictly by tenant_id, actor_id, operation, and request payload digest."
+    },
+    "defect_9_governance_scoped_replay": {
+      "problem": "submit_governance_action consulted an un-scoped in-memory dictionary _gov_bff_idempotency, allowing cross-tenant replay and bypassing durable CommandStore scoping.",
+      "remediation": "Eliminated un-scoped in-memory _gov_bff_idempotency bypass; rely exclusively on durable store.get_command_by_idempotency_key scoped by operator_id and tenant_id."
+    },
+    "defect_10_sponsor_adapter_rationale": {
+      "problem": "GovernanceCommandAdapter._execute_sponsor_decision dropped rationale_ref and actor_id from the outbound payload and hardcoded 'ratified' readback status.",
+      "remediation": "Forwarded rationale_ref and actor_id in outbound HTTP POST payload and derived readback status dynamically from downstream response."
+    },
+    "defect_11_runtime_router_port_binding": {
+      "problem": "Runtime router failed to resolve runtime_owner_port from direct constructor arguments or PANTHEON_RUNTIME_MANAGER_URL default configuration.",
+      "remediation": "Supported caller-supplied runtime_owner_port directly in create_runtime_router and auto-resolved via RuntimeManagerClient when PANTHEON_RUNTIME_MANAGER_URL is set, while failing closed 503 DEPENDENCY_UNAVAILABLE when unconfigured."
     }
   },
   "mutation_caller_inventory": {
@@ -151,6 +167,7 @@
       "services/control-plane/bff/capital/router.py",
       "services/control-plane/bff/capital/service.py",
       "services/control-plane/bff/command_adapters/capital_adapter.py",
+      "services/control-plane/bff/command_adapters/governance_adapter.py",
       "services/control-plane/bff/command_adapters/service.py",
       "services/control-plane/bff/command_queue.py",
       "services/control-plane/bff/governance/router.py",
@@ -171,43 +188,43 @@
     "commands": [
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
-        "result": "8 passed, 3 warnings in 3.77s",
-        "executed": 8,
-        "collected": 8
+        "result": "14 passed, 1 warning in 7.74s",
+        "executed": 14,
+        "collected": 14
       },
       {
-        "command": ".venv-pantheon/bin/python3 /tmp/test_domain_review_f440.py",
-        "result": "5 passed in 0.95s",
+        "command": ".venv-pantheon/bin/python3 /tmp/test_domain_review_34397.py",
+        "result": "5 passed, 1 warning in 3.71s",
         "executed": 5,
         "collected": 5
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
-        "result": "81 passed, 3 warnings in 46.28s",
-        "executed": 81,
-        "collected": 81
+        "result": "87 passed, 3 warnings in 53.13s",
+        "executed": 87,
+        "collected": 87
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_command_executor.py",
-        "result": "45 passed, 3 warnings in 12.26s",
+        "result": "45 passed, 3 warnings in 11.91s",
         "executed": 45,
         "collected": 45
       },
       {
         "command": ".venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
-        "result": "26 passed in 1.383s",
+        "result": "26 passed in 1.348s",
         "executed": 26,
         "collected": 26
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
-        "result": "119 passed, 3 warnings in 46.61s",
+        "result": "119 passed, 3 warnings in 44.05s",
         "executed": 119,
         "collected": 119
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
-        "result": "55 passed, 6 warnings in 35.40s",
+        "result": "55 passed, 6 warnings in 34.27s",
         "executed": 55,
         "collected": 55
       }
@@ -225,7 +242,11 @@
     "defect_4_governance_durability_and_exception_propagation_resolved": true,
     "defect_5_idempotency_tenant_actor_request_scoping_resolved": true,
     "defect_6_capital_authority_command_store_composition_resolved": true,
-    "defect_7_runtime_manager_allow_local_retired_resolved": true
+    "defect_7_runtime_manager_allow_local_retired_resolved": true,
+    "defect_8_capital_durability_before_dispatch_resolved": true,
+    "defect_9_governance_scoped_replay_resolved": true,
+    "defect_10_sponsor_adapter_rationale_resolved": true,
+    "defect_11_runtime_router_port_binding_resolved": true
   },
   "review": {
     "reviewer": "Codex",

@@ -193,23 +193,35 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         if not target_committee_id:
             raise ValueError("RecordSponsorDecision requires committee_id.")
 
-        payload = {
-            "sponsor_decision": params.get("sponsor_decision") or params.get("decision") or "ratified",
+        sponsor_decision = params.get("sponsor_decision") or params.get("decision") or "ratified"
+        rationale_ref = params.get("rationale_ref") or params.get("rationale")
+        actor_id = params.get("actor_id") or params.get("actor")
+
+        payload: Dict[str, Any] = {
+            "sponsor_decision": sponsor_decision,
             "sponsor_notes": params.get("sponsor_notes") or params.get("notes") or "Sponsor ratified consultation decision",
             "command_id": command_id,
         }
+        if rationale_ref:
+            payload["rationale_ref"] = rationale_ref
+        if actor_id:
+            payload["actor_id"] = actor_id
+
         url = internal_url(f"/api/internal/v1/consultations/committees/{quote(target_committee_id, safe='')}/sponsor-decision")
         body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
+        if not isinstance(body, dict):
+            body = {"status": str(body)}
 
+        derived_status = body.get("sponsor_decision") or body.get("status") or sponsor_decision
         return build_domain_receipt(
             command_id=command_id,
             entity_type="CommitteeBoard",
             entity_id=target_committee_id,
             action_id="RecordSponsorDecision",
-            status=body.get("status") or "recorded",
+            status=derived_status,
             dispatch_path=url,
             domain_receipt=body,
-            authoritative_readback={"committee_id": target_committee_id, "status": "ratified"},
+            authoritative_readback={"committee_id": target_committee_id, "status": derived_status},
             extra={"committee_id": target_committee_id},
         )
 

@@ -27,13 +27,17 @@ def create_runtime_router(
     read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     dependencies: Optional[Mapping[str, Any]] = None,
+    runtime_owner_port: Optional[Any] = None,
 ) -> APIRouter:
     """Build Runtime routes from composition-root supplied BFF ports."""
     router = APIRouter()
+    deps = dict(dependencies) if dependencies else {}
+    if runtime_owner_port is not None:
+        deps.setdefault("runtime_owner_port", runtime_owner_port)
     service = RuntimeRouterService(
         read_surface=read_surface,
         get_read_store=get_read_store,
-        dependencies=dependencies,
+        dependencies=deps,
     )
     read_store = service.read_store
     _GOVERNANCE_APPROVAL_QUEUE_ROUTE = service.dependency('_GOVERNANCE_APPROVAL_QUEUE_ROUTE')

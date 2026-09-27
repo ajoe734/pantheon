@@ -949,7 +949,6 @@ class CommandAdapterService:
                 precondition_failed="command_store_unconfigured",
             )
 
-        cache_key = f"{identity.operator_id}:{resolved_key}"
         existing_cmd = store.get_command_by_idempotency_key(
             resolved_key,
             operator_id=identity.operator_id,
@@ -970,19 +969,6 @@ class CommandAdapterService:
                 )
             if existing_cmd.get("result"):
                 return existing_cmd["result"]
-
-        existing = self._gov_bff_idempotency.get(cache_key) or self._gov_bff_idempotency.get(resolved_key)
-        if existing is not None:
-            if existing.get("request_hash") != request_hash:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key was already used with a different payload",
-                    f"Key {resolved_key!r} is bound to a different request hash",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                )
-            return existing["result"]
 
         staleness_warning = self.check_read_surface_state()
         command_id = str(uuid.uuid4())
@@ -1058,8 +1044,6 @@ class CommandAdapterService:
         if isinstance(res_dict, dict) and isinstance(res_dict.get("data"), dict):
             res_dict["data"].setdefault("action", action_id)
         store.update_status(command_id, CommandStatus.SUBMITTED, result=res_dict)
-        self._gov_bff_idempotency[resolved_key] = {"request_hash": request_hash, "result": res_dict}
-        self._gov_bff_idempotency[cache_key] = {"request_hash": request_hash, "result": res_dict}
         return res_dict
 
     def create_confirm_token(

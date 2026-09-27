@@ -16,6 +16,14 @@ from threading import RLock
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, runtime_checkable
 import uuid
 
+try:
+    from services.control_plane.bff.models import CommandStatus
+except (ImportError, ValueError):
+    try:
+        from ..models import CommandStatus
+    except (ImportError, ValueError):
+        from models import CommandStatus
+
 
 def run_management_read(*args: Any, **kwargs: Any) -> Any:
     try:
@@ -275,284 +283,314 @@ class DefaultCapitalAuthority:
             except (ImportError, ValueError):
                 return None
 
-    def _record_receipt(
+    def _execute_with_durability(
         self,
         *,
-        command_id: str,
         command_type: str,
         target_type: str,
         target_id: str,
-        actor_id: str,
         action_id: str,
-        params: Dict[str, Any],
-        result: Dict[str, Any],
-    ) -> None:
+        payload: Dict[str, Any],
+        actor_id: str,
+        kwargs: Dict[str, Any],
+        execute_fn: Callable[[str, Dict[str, Any]], Dict[str, Any]],
+    ) -> Dict[str, Any]:
         if self._command_store is None:
-            return
+            raise CapitalAuthorityUnavailable(
+                "CommandStore is not configured; refusing to accept unpersisted capital command"
+            )
         from datetime import datetime, timezone
         now_iso = datetime.now(timezone.utc).isoformat()
+        cmd_id = str(uuid.uuid4())
+        tenant_id = kwargs.get("tenant_id") or payload.get("tenant_id")
+        idempotency_key = kwargs.get("idempotency_key") or payload.get("idempotency_key")
+        request_hash = stable_digest(payload)
+
+        params = {
+            **payload,
+            "action_id": action_id,
+            "actor_id": actor_id,
+        }
+        if target_id:
+            if target_type == "Rebalance":
+                params["rebalance_id"] = target_id
+            elif target_type == "CapitalPool":
+                params["pool_id"] = target_id
+        if tenant_id:
+            params["tenant_id"] = tenant_id
+        if idempotency_key:
+            params["idempotency_key"] = idempotency_key
+
+        audit_context: Dict[str, Any] = {
+            "operator_id": actor_id,
+            "action_id": action_id,
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+            "timestamp": now_iso,
+        }
+        if tenant_id:
+            audit_context["tenant_id"] = tenant_id
+
+        foundation_context: Dict[str, Any] = {
+            "idempotency_record": {
+                "idempotency_key": idempotency_key,
+                "request_hash": request_hash,
+                "operator_id": actor_id,
+                "tenant_id": tenant_id,
+                "command_type": command_type,
+            }
+        }
+
+        # 1. Durable admission BEFORE dispatch:
+        # submit_terminal_command appends to CommandStore.
+        # If disk/storage fails (e.g. OSError), this raises BEFORE any downstream execution!
         self._command_store.submit_terminal_command(
-            command_id=command_id,
+            command_id=cmd_id,
             command_type=command_type,
-            target={"type": target_type, "id": target_id},
+            target={"type": target_type, "id": target_id or "pending"},
             submitted_at=now_iso,
             params=params,
-            audit_context={
-                "operator_id": actor_id,
-                "action_id": action_id,
-                "idempotency_key": params.get("idempotency_key"),
-            },
-            foundation_context={"receipt": result},
-            result=result,
+            audit_context=audit_context,
+            foundation_context=foundation_context,
+            result=None,
         )
 
+        # 2. Dispatch to downstream adapter / executor
+        try:
+            result = execute_fn(cmd_id, params)
+            if hasattr(self._command_store, "update_status"):
+                self._command_store.update_status(
+                    cmd_id,
+                    CommandStatus.EXECUTED,
+                    result=result,
+                )
+            return result
+        except Exception as exc:
+            if hasattr(self._command_store, "update_status"):
+                self._command_store.update_status(
+                    cmd_id,
+                    CommandStatus.FAILED,
+                    error={"error": str(exc)},
+                )
+            raise
+
     def create_capital_pool(self, payload: Dict[str, Any], *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
-        executor = self._get_executor()
         body = dict(payload)
-        body.setdefault("actor_id", actor_id)
-        body.setdefault("actor_role", "operator")
         pool_id = str(body.get("pool_id") or body.get("id") or "").strip()
         if not pool_id:
             pool_id = f"pool-{uuid.uuid4().hex[:8]}"
             body["pool_id"] = pool_id
             body["id"] = pool_id
-        cmd_id = str(uuid.uuid4())
-        if executor is not None and hasattr(executor, "create_capital_pool"):
-            result = executor.create_capital_pool(body)
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="CapitalPoolAction",
-                target_type="CapitalPool",
-                target_id=pool_id,
-                actor_id=actor_id,
-                action_id="create",
-                params={**body, "action_id": "create"},
-                result=result,
-            )
-            return result
-        adapter = self._get_adapter()
-        if adapter is not None:
-            result = adapter.execute(
-                command_id=cmd_id,
-                command_type="CapitalPoolAction",
-                params={**body, "action_id": "create"},
-            )
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="CapitalPoolAction",
-                target_type="CapitalPool",
-                target_id=pool_id,
-                actor_id=actor_id,
-                action_id="create",
-                params={**body, "action_id": "create"},
-                result=result,
-            )
-            return result
-        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        def _exec(cmd_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+            executor = self._get_executor()
+            if executor is not None and hasattr(executor, "create_capital_pool"):
+                return executor.create_capital_pool(p)
+            adapter = self._get_adapter()
+            if adapter is not None:
+                return adapter.execute(
+                    command_id=cmd_id,
+                    command_type="CapitalPoolAction",
+                    params=p,
+                )
+            raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        return self._execute_with_durability(
+            command_type="CapitalPoolAction",
+            target_type="CapitalPool",
+            target_id=pool_id,
+            action_id="create",
+            payload=body,
+            actor_id=actor_id,
+            kwargs=kwargs,
+            execute_fn=_exec,
+        )
 
     def patch_capital_pool(self, payload: Dict[str, Any], pool_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
-        adapter = self._get_adapter()
-        if adapter is not None:
-            cmd_id = str(uuid.uuid4())
-            params = {**payload, "pool_id": pool_id, "action_id": "patch", "actor_id": actor_id}
-            result = adapter.execute(
-                command_id=cmd_id,
-                command_type="CapitalPoolAction",
-                params=params,
-            )
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="CapitalPoolAction",
-                target_type="CapitalPool",
-                target_id=pool_id,
-                actor_id=actor_id,
-                action_id="patch",
-                params=params,
-                result=result,
-            )
-            return result
-        raise CapitalAuthorityUnavailable("No capital execution authority available")
+        def _exec(cmd_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+            adapter = self._get_adapter()
+            if adapter is not None:
+                return adapter.execute(
+                    command_id=cmd_id,
+                    command_type="CapitalPoolAction",
+                    params=p,
+                )
+            raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        return self._execute_with_durability(
+            command_type="CapitalPoolAction",
+            target_type="CapitalPool",
+            target_id=pool_id,
+            action_id="patch",
+            payload=payload,
+            actor_id=actor_id,
+            kwargs=kwargs,
+            execute_fn=_exec,
+        )
 
     def capital_pool_action(self, payload: Dict[str, Any], pool_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
-        adapter = self._get_adapter()
-        if adapter is not None:
-            action_id = str(payload.get("action_id") or "action")
-            cmd_id = str(uuid.uuid4())
-            params = {**payload, "pool_id": pool_id, "action_id": action_id, "actor_id": actor_id}
-            result = adapter.execute(
-                command_id=cmd_id,
-                command_type="CapitalPoolAction",
-                params=params,
-            )
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="CapitalPoolAction",
-                target_type="CapitalPool",
-                target_id=pool_id,
-                actor_id=actor_id,
-                action_id=action_id,
-                params=params,
-                result=result,
-            )
-            return result
-        raise CapitalAuthorityUnavailable("No capital execution authority available")
+        action_id = str(payload.get("action_id") or "action")
+
+        def _exec(cmd_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+            adapter = self._get_adapter()
+            if adapter is not None:
+                return adapter.execute(
+                    command_id=cmd_id,
+                    command_type="CapitalPoolAction",
+                    params=p,
+                )
+            raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        return self._execute_with_durability(
+            command_type="CapitalPoolAction",
+            target_type="CapitalPool",
+            target_id=pool_id,
+            action_id=action_id,
+            payload=payload,
+            actor_id=actor_id,
+            kwargs=kwargs,
+            execute_fn=_exec,
+        )
 
     def create_rebalance(self, payload: Dict[str, Any], *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
-        executor = self._get_executor()
         body = dict(payload)
-        body.setdefault("actor_id", actor_id)
-        cmd_id = str(uuid.uuid4())
-        if executor is not None and hasattr(executor, "create_capital_rebalance_proposal"):
-            result = executor.create_capital_rebalance_proposal(body)
-            target_id = str(result.get("rebalance_id") or result.get("id") or "")
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="RebalanceProposal",
-                target_type="Rebalance",
-                target_id=target_id,
-                actor_id=actor_id,
-                action_id="propose",
-                params={**body, "action_id": "propose", "actor_id": actor_id},
-                result=result,
-            )
-            return result
-        adapter = self._get_adapter()
-        if adapter is not None:
-            params = {**body, "action_id": "propose", "actor_id": actor_id}
-            result = adapter.execute(
-                command_id=cmd_id,
-                command_type="RebalanceProposal",
-                params=params,
-            )
-            target_id = str(result.get("rebalance_id") or result.get("id") or "")
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="RebalanceProposal",
-                target_type="Rebalance",
-                target_id=target_id,
-                actor_id=actor_id,
-                action_id="propose",
-                params=params,
-                result=result,
-            )
-            return result
-        raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        def _exec(cmd_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+            executor = self._get_executor()
+            if executor is not None and hasattr(executor, "create_capital_rebalance_proposal"):
+                return executor.create_capital_rebalance_proposal(p)
+            adapter = self._get_adapter()
+            if adapter is not None:
+                return adapter.execute(
+                    command_id=cmd_id,
+                    command_type="RebalanceProposal",
+                    params=p,
+                )
+            raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        return self._execute_with_durability(
+            command_type="RebalanceProposal",
+            target_type="Rebalance",
+            target_id=str(body.get("rebalance_id") or body.get("id") or ""),
+            action_id="propose",
+            payload=body,
+            actor_id=actor_id,
+            kwargs=kwargs,
+            execute_fn=_exec,
+        )
 
     def patch_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
-        adapter = self._get_adapter()
-        if adapter is not None:
-            cmd_id = str(uuid.uuid4())
-            params = {**payload, "rebalance_id": rebalance_id, "action_id": "patch", "actor_id": actor_id}
-            result = adapter.execute(
-                command_id=cmd_id,
-                command_type="PatchRebalance",
-                params=params,
-            )
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="PatchRebalance",
-                target_type="Rebalance",
-                target_id=rebalance_id,
-                actor_id=actor_id,
-                action_id="patch",
-                params=params,
-                result=result,
-            )
-            return result
-        raise CapitalAuthorityUnavailable("No capital execution authority available")
+        def _exec(cmd_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+            adapter = self._get_adapter()
+            if adapter is not None:
+                return adapter.execute(
+                    command_id=cmd_id,
+                    command_type="PatchRebalance",
+                    params=p,
+                )
+            raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        return self._execute_with_durability(
+            command_type="PatchRebalance",
+            target_type="Rebalance",
+            target_id=rebalance_id,
+            action_id="patch",
+            payload=payload,
+            actor_id=actor_id,
+            kwargs=kwargs,
+            execute_fn=_exec,
+        )
 
     def apply_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
-        adapter = self._get_adapter()
-        if adapter is not None:
-            cmd_id = str(uuid.uuid4())
-            params = {**payload, "rebalance_id": rebalance_id, "action_id": "apply", "actor_id": actor_id}
-            result = adapter.execute(
-                command_id=cmd_id,
-                command_type="ApprovedApply",
-                params=params,
-            )
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="ApprovedApply",
-                target_type="Rebalance",
-                target_id=rebalance_id,
-                actor_id=actor_id,
-                action_id="apply",
-                params=params,
-                result=result,
-            )
-            return result
-        raise CapitalAuthorityUnavailable("No capital execution authority available")
+        def _exec(cmd_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+            adapter = self._get_adapter()
+            if adapter is not None:
+                return adapter.execute(
+                    command_id=cmd_id,
+                    command_type="ApprovedApply",
+                    params=p,
+                )
+            raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        return self._execute_with_durability(
+            command_type="ApprovedApply",
+            target_type="Rebalance",
+            target_id=rebalance_id,
+            action_id="apply",
+            payload=payload,
+            actor_id=actor_id,
+            kwargs=kwargs,
+            execute_fn=_exec,
+        )
 
     def approve_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
-        adapter = self._get_adapter()
-        if adapter is not None:
-            cmd_id = str(uuid.uuid4())
-            params = {**payload, "rebalance_id": rebalance_id, "action_id": "approve", "actor_id": actor_id}
-            result = adapter.execute(
-                command_id=cmd_id,
-                command_type="ApproveRebalance",
-                params=params,
-            )
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="ApproveRebalance",
-                target_type="Rebalance",
-                target_id=rebalance_id,
-                actor_id=actor_id,
-                action_id="approve",
-                params=params,
-                result=result,
-            )
-            return result
-        raise CapitalAuthorityUnavailable("No capital execution authority available")
+        def _exec(cmd_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+            adapter = self._get_adapter()
+            if adapter is not None:
+                return adapter.execute(
+                    command_id=cmd_id,
+                    command_type="ApproveRebalance",
+                    params=p,
+                )
+            raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        return self._execute_with_durability(
+            command_type="ApproveRebalance",
+            target_type="Rebalance",
+            target_id=rebalance_id,
+            action_id="approve",
+            payload=payload,
+            actor_id=actor_id,
+            kwargs=kwargs,
+            execute_fn=_exec,
+        )
 
     def sign_rebalance(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
-        adapter = self._get_adapter()
-        if adapter is not None:
-            cmd_id = str(uuid.uuid4())
-            params = {**payload, "rebalance_id": rebalance_id, "action_id": "two-man-sign", "actor_id": actor_id}
-            result = adapter.execute(
-                command_id=cmd_id,
-                command_type="SignRebalance",
-                params=params,
-            )
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="SignRebalance",
-                target_type="Rebalance",
-                target_id=rebalance_id,
-                actor_id=actor_id,
-                action_id="two-man-sign",
-                params=params,
-                result=result,
-            )
-            return result
-        raise CapitalAuthorityUnavailable("No capital execution authority available")
+        def _exec(cmd_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+            adapter = self._get_adapter()
+            if adapter is not None:
+                return adapter.execute(
+                    command_id=cmd_id,
+                    command_type="SignRebalance",
+                    params=p,
+                )
+            raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        return self._execute_with_durability(
+            command_type="SignRebalance",
+            target_type="Rebalance",
+            target_id=rebalance_id,
+            action_id="two-man-sign",
+            payload=payload,
+            actor_id=actor_id,
+            kwargs=kwargs,
+            execute_fn=_exec,
+        )
 
     def rebalance_action(self, payload: Dict[str, Any], rebalance_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
-        adapter = self._get_adapter()
-        if adapter is not None:
-            action_id = str(payload.get("action_id") or "action")
-            cmd_id = str(uuid.uuid4())
-            params = {**payload, "rebalance_id": rebalance_id, "action_id": action_id, "actor_id": actor_id}
-            result = adapter.execute(
-                command_id=cmd_id,
-                command_type="RebalanceAction",
-                params=params,
-            )
-            self._record_receipt(
-                command_id=cmd_id,
-                command_type="RebalanceAction",
-                target_type="Rebalance",
-                target_id=rebalance_id,
-                actor_id=actor_id,
-                action_id=action_id,
-                params=params,
-                result=result,
-            )
-            return result
-        raise CapitalAuthorityUnavailable("No capital execution authority available")
+        action_id = str(payload.get("action_id") or "action")
+
+        def _exec(cmd_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+            adapter = self._get_adapter()
+            if adapter is not None:
+                return adapter.execute(
+                    command_id=cmd_id,
+                    command_type="RebalanceAction",
+                    params=p,
+                )
+            raise CapitalAuthorityUnavailable("No capital execution authority available")
+
+        return self._execute_with_durability(
+            command_type="RebalanceAction",
+            target_type="Rebalance",
+            target_id=rebalance_id,
+            action_id=action_id,
+            payload=payload,
+            actor_id=actor_id,
+            kwargs=kwargs,
+            execute_fn=_exec,
+        )
+
 
 
 @dataclass
@@ -630,12 +668,22 @@ class CapitalService:
         )
         return filter_records(rows, capital_pool_id_value=capital_pool_id_value)
 
-    def idempotent(self, *, actor_id: str, key: str, operation: str, payload: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    def idempotent(
+        self,
+        *,
+        actor_id: str,
+        key: str,
+        operation: str,
+        payload: Mapping[str, Any],
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         if not key:
             raise CapitalValidationError("Idempotency-Key is required")
         request_hash = stable_digest(payload)
         if self.command_store is not None:
-            cmd = self.command_store.get_command_by_idempotency_key(key, operator_id=actor_id)
+            cmd = self.command_store.get_command_by_idempotency_key(
+                key, operator_id=actor_id, tenant_id=tenant_id
+            )
             if cmd is not None:
                 foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
                 receipt = foundation.get("receipt") if isinstance(foundation.get("receipt"), dict) else None
@@ -646,7 +694,7 @@ class CapitalService:
                     return deepcopy(cmd["result"])
                 if receipt:
                     return deepcopy(receipt)
-        cache_key = f"{actor_id}:{operation}:{key}"
+        cache_key = f"{tenant_id or ''}:{actor_id}:{operation}:{key}"
         with self._lock:
             saved = self._idempotency.get(cache_key)
             if saved is None:
@@ -655,15 +703,33 @@ class CapitalService:
                 raise CapitalValidationError("Idempotency key was already used with a different request")
             return deepcopy(saved["response"])
 
-    def remember(self, *, actor_id: str, key: str, operation: str, payload: Mapping[str, Any], response: Mapping[str, Any]) -> None:
-        cache_key = f"{actor_id}:{operation}:{key}"
+    def remember(
+        self,
+        *,
+        actor_id: str,
+        key: str,
+        operation: str,
+        payload: Mapping[str, Any],
+        response: Mapping[str, Any],
+        tenant_id: Optional[str] = None,
+    ) -> None:
+        cache_key = f"{tenant_id or ''}:{actor_id}:{operation}:{key}"
         with self._lock:
             self._idempotency[cache_key] = {
                 "request_hash": stable_digest(payload),
                 "response": deepcopy(dict(response)),
             }
 
-    def write(self, operation: str, payload: Dict[str, Any], *, actor_id: str, target_id: Optional[str] = None) -> Dict[str, Any]:
+    def write(
+        self,
+        operation: str,
+        payload: Dict[str, Any],
+        *,
+        actor_id: str,
+        target_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Delegate mutation to the Capital owner and preserve its readback shape."""
         authority = self._authority()
         method_names = {
@@ -677,7 +743,12 @@ class CapitalService:
             "sign_rebalance": ("sign_rebalance", "sign_rebalance_apply"),
             "rebalance_action": ("rebalance_action", "apply_rebalance_action"),
         }.get(operation, ())
-        context = {"actor_id": actor_id, "requested_at": self.utc_now()}
+        context = {
+            "actor_id": actor_id,
+            "requested_at": self.utc_now(),
+            "tenant_id": tenant_id,
+            "idempotency_key": idempotency_key,
+        }
         if target_id:
             context["target_id"] = target_id
             if operation in {"patch_pool", "pool_action"}:

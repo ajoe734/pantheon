@@ -44,6 +44,37 @@ class _LazyReadStore:
 _NO_DEFAULT = object()
 
 
+def _resolve_default_runtime_owner_port() -> Any:
+    url = os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip()
+    if not url:
+        return None
+    try:
+        import importlib.util
+
+        module_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "..",
+                "runtime-manager",
+                "runtime_manager_client.py",
+            )
+        )
+        if not os.path.exists(module_path):
+            return None
+        spec = importlib.util.spec_from_file_location(
+            "pantheon_runtime_manager_client", module_path
+        )
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.RuntimeManagerClient()
+    except Exception:
+        return None
+
+
 class RuntimeRouterService:
     """Resolve composition ports while preserving a late-bound BFF read store."""
 
@@ -55,7 +86,9 @@ class RuntimeRouterService:
         dependencies: Optional[Mapping[str, Any]] = None,
     ) -> None:
         if read_surface is not None:
-            self._get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+            self._get_read_store = (
+                lambda: read_surface() if callable(read_surface) else read_surface
+            )
         else:
             self._get_read_store = get_read_store
         self._dependencies = dict(dependencies) if dependencies else {}
@@ -67,6 +100,21 @@ class RuntimeRouterService:
     def dependency(self, name: str, default: Any = _NO_DEFAULT) -> Any:
         if name in self._dependencies:
             return self._dependencies[name]
+        if name in (
+            "runtime_owner_port",
+            "_runtime_owner_port",
+            "runtime_manager_client",
+        ):
+            for alias in (
+                "runtime_owner_port",
+                "_runtime_owner_port",
+                "runtime_manager_client",
+            ):
+                if alias in self._dependencies:
+                    return self._dependencies[alias]
+            default_port = _resolve_default_runtime_owner_port()
+            if default_port is not None:
+                return default_port
         if default is not _NO_DEFAULT:
             return default
         return _MissingRuntimeDependency(name)
