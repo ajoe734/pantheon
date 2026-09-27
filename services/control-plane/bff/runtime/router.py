@@ -19,7 +19,7 @@ except (ImportError, ValueError):
     except (ImportError, ValueError):
         from models import CommandType, ErrorCode, ObjectType
 
-from .service import RuntimeRouterService
+from .service import RuntimeRouterService, _MissingRuntimeDependency
 
 
 def create_runtime_router(
@@ -1052,8 +1052,18 @@ def create_runtime_router(
             "created_at": snapshot_at,
         }
         if not dry_run:
-            from services.runtime_manager.runtime_manager_client import RuntimeManagerClient
-            client = RuntimeManagerClient(allow_local=True)
+            owner_port = (
+                service.dependency("runtime_owner_port", None)
+                or service.dependency("_runtime_owner_port", None)
+                or service.dependency("runtime_manager_client", None)
+            )
+            if owner_port is None or isinstance(owner_port, _MissingRuntimeDependency):
+                raise _bff_error(
+                    503,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Runtime owner authority is unavailable",
+                    "No runtime owner port configured",
+                )
             deploy_req = {
                 "deployment_plan_id": fields["deployment_plan_id"],
                 "binding_id": fields["binding_id"],
@@ -1064,7 +1074,16 @@ def create_runtime_router(
                 "actor_id": identity.operator_id,
                 **(payload.get("params") if isinstance(payload.get("params"), dict) else {}),
             }
-            record = client.deploy(deploy_req)
+            if hasattr(owner_port, "deploy") and callable(owner_port.deploy):
+                record = owner_port.deploy(deploy_req)
+            elif callable(owner_port):
+                record = owner_port(deploy_req)
+            else:
+                raise _bff_error(
+                    503,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Runtime owner authority is invalid",
+                )
         data = _project_runtime_create_response(record)
         surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
         meta = _snapshot_meta(snapshot_at)

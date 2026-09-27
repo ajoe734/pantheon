@@ -31,6 +31,8 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         "RebalanceProposal",
         "PatchRebalance",
         "ApprovedApply",
+        "ApproveRebalance",
+        "SignRebalance",
         "EmergencyContainment",
         "ApprovePool",
         "LiquidateAll",
@@ -72,8 +74,12 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or "").strip()
         entity_id = str(params.get("entity_id") or params.get("pool_id") or params.get("rebalance_id") or params.get("binding_id") or params.get("persona_id") or "").strip()
 
-        if command_type == "ApprovedApply" or action_id.lower() == "apply":
+        if command_type == "ApprovedApply" or (entity_type == "rebalance" and action_id.lower() == "apply"):
             return self._execute_rebalance_apply(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
+        elif command_type == "ApproveRebalance" or (entity_type == "rebalance" and action_id.lower() in {"approve", "approverebalance"}):
+            return self._execute_approve_rebalance(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
+        elif command_type == "SignRebalance" or (entity_type == "rebalance" and action_id.lower() in {"sign", "two-man-sign", "twomansign"}):
+            return self._execute_sign_rebalance(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "EmergencyContainment" or action_id.lower() == "emergencycontainment":
             return self._execute_containment(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "ApprovePool" or (entity_type in {"capitalpool", "capital-pool"} and action_id.lower() in {"approve", "approvepool"}):
@@ -229,12 +235,121 @@ class CapitalCommandAdapter(DomainCommandAdapter):
                 authoritative_readback=readback,
                 extra={"rebalance_id": target_rebalance_id},
             )
+        elif action_id.lower() in {"approve", "approverebalance"}:
+            return self._execute_approve_rebalance(
+                command_id, {**params, "rebalance_id": rebalance_id}, auth_token=auth_token, mfa_token=mfa_token
+            )
+        elif action_id.lower() in {"sign", "two-man-sign", "twomansign"}:
+            return self._execute_sign_rebalance(
+                command_id, {**params, "rebalance_id": rebalance_id}, auth_token=auth_token, mfa_token=mfa_token
+            )
         else:
             raise ActionUnavailableError(
                 f"Rebalance action {action_id!r} is not supported. Use 'apply' for approved apply.",
                 action_id=action_id,
                 entity_type="Rebalance",
             )
+
+    def _execute_approve_rebalance(
+        self,
+        command_id: str,
+        params: Dict[str, Any],
+        auth_token: Optional[str] = None,
+        mfa_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        entity_id = str(params.get("entity_id") or "").strip()
+        requested_rebalance_id = str(params.get("rebalance_id") or "").strip()
+        rebalance_id = entity_id or requested_rebalance_id
+        if not rebalance_id:
+            raise ValueError("ApproveRebalance requires a trusted rebalance_id")
+        memo = str(params.get("memo") or "Approve rebalance").strip()
+
+        payload = {
+            "command_id": command_id,
+            "idempotency_key": str(params.get("idempotency_key") or command_id),
+            "request_hash": str(params.get("request_hash") or ""),
+            "memo": memo,
+            "actor_id": str(params.get("actor_id") or "operator-bff"),
+            "actor_role": str(params.get("actor_role") or "approver"),
+            "rebalance_id": rebalance_id,
+        }
+        if params.get("confirm_token"):
+            payload["confirm_token"] = str(params["confirm_token"])
+
+        url = capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}/approve")
+        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
+
+        readback = None
+        try:
+            readback = http_request_json(capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}"), method="GET", auth_token=auth_token, mfa_token=mfa_token)
+        except Exception:
+            pass
+
+        return build_domain_receipt(
+            command_id=command_id,
+            entity_type="Rebalance",
+            entity_id=rebalance_id,
+            action_id="ApproveRebalance",
+            status=body.get("status") or "approved",
+            dispatch_path=url,
+            domain_receipt=body,
+            authoritative_readback=readback,
+            extra={
+                "memo": memo,
+                "rebalance_id": rebalance_id,
+                "decision": body.get("decision") or "approved",
+            },
+        )
+
+    def _execute_sign_rebalance(
+        self,
+        command_id: str,
+        params: Dict[str, Any],
+        auth_token: Optional[str] = None,
+        mfa_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        entity_id = str(params.get("entity_id") or "").strip()
+        requested_rebalance_id = str(params.get("rebalance_id") or "").strip()
+        rebalance_id = entity_id or requested_rebalance_id
+        if not rebalance_id:
+            raise ValueError("SignRebalance requires a trusted rebalance_id")
+        signature = str(params.get("signature") or params.get("memo") or "recorded").strip()
+
+        payload = {
+            "command_id": command_id,
+            "idempotency_key": str(params.get("idempotency_key") or command_id),
+            "request_hash": str(params.get("request_hash") or ""),
+            "signature": signature,
+            "actor_id": str(params.get("actor_id") or "operator-bff"),
+            "actor_role": str(params.get("actor_role") or "operator"),
+            "rebalance_id": rebalance_id,
+        }
+        if params.get("confirm_token"):
+            payload["confirm_token"] = str(params["confirm_token"])
+
+        url = capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}/two-man-sign")
+        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
+
+        readback = None
+        try:
+            readback = http_request_json(capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}"), method="GET", auth_token=auth_token, mfa_token=mfa_token)
+        except Exception:
+            pass
+
+        return build_domain_receipt(
+            command_id=command_id,
+            entity_type="Rebalance",
+            entity_id=rebalance_id,
+            action_id="SignRebalance",
+            status=body.get("status") or "signed",
+            dispatch_path=url,
+            domain_receipt=body,
+            authoritative_readback=readback,
+            extra={
+                "signature": signature,
+                "rebalance_id": rebalance_id,
+            },
+        )
 
     def _execute_rebalance_apply(
         self,

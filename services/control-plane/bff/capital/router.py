@@ -134,6 +134,7 @@ def create_capital_router(
     read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     get_capital_authority: Optional[Callable[[], Any]] = None,
+    command_store: Optional[Any] = None,
     extract_identity: Callable[[Optional[str]], Any] = _default_extract_identity,
     require_read_role: Callable[[Any], None] = _default_require_read_role,
     require_operator_role: Callable[[Any], None] = _default_require_operator_role,
@@ -153,12 +154,13 @@ def create_capital_router(
 
     if get_capital_authority is None:
         from .service import DefaultCapitalAuthority
-        get_capital_authority = lambda: DefaultCapitalAuthority()
+        get_capital_authority = lambda: DefaultCapitalAuthority(command_store=command_store)
 
     router = APIRouter(tags=["capital"])
     service = CapitalService(
         get_read_store=resolved_get_read_store,
         get_capital_authority=get_capital_authority,
+        command_store=command_store,
         utc_now=utc_now,
     )
 

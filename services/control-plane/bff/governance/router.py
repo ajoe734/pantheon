@@ -19,7 +19,14 @@ from ..models import (
     redact_evidence_refs as _canonical_redact_evidence_refs,
     safe_redact_evidence_refs,
 )
-from .service import GovernanceService, SubmitAction, page_slice, split_csv, utc_now_rfc3339
+from .service import (
+    GovernanceAuthorityUnavailable,
+    GovernanceService,
+    SubmitAction,
+    page_slice,
+    split_csv,
+    utc_now_rfc3339,
+)
 
 
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
@@ -417,6 +424,10 @@ def create_governance_router(
                 dry_run=dry_run,
                 correlation_id=correlation_id,
             )
+        except GovernanceAuthorityUnavailable as exc:
+            _fail(503, "DEPENDENCY_UNAVAILABLE", "Governance authority unavailable", str(exc), precondition_failed="governance_authority_unavailable")
+        except (OSError, IOError) as exc:
+            _fail(500, "STORAGE_ERROR", "Governance storage failure", str(exc))
         except ValueError as exc:
             field = str(exc)
             _fail(422, "VALIDATION_FAILED", f"{field} is invalid", f"Invalid or missing {field}", precondition_failed=field)

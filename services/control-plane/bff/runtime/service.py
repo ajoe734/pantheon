@@ -41,6 +41,9 @@ class _LazyReadStore:
         return getattr(self._get_read_store(), name)
 
 
+_NO_DEFAULT = object()
+
+
 class RuntimeRouterService:
     """Resolve composition ports while preserving a late-bound BFF read store."""
 
@@ -55,14 +58,18 @@ class RuntimeRouterService:
             self._get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
         else:
             self._get_read_store = get_read_store
-        self._dependencies = dependencies or {}
+        self._dependencies = dict(dependencies) if dependencies else {}
 
     @property
     def read_store(self) -> _LazyReadStore:
         return _LazyReadStore(self._get_read_store)
 
-    def dependency(self, name: str) -> Any:
-        return self._dependencies.get(name, _MissingRuntimeDependency(name))
+    def dependency(self, name: str, default: Any = _NO_DEFAULT) -> Any:
+        if name in self._dependencies:
+            return self._dependencies[name]
+        if default is not _NO_DEFAULT:
+            return default
+        return _MissingRuntimeDependency(name)
 
     def runtime_event_stream(self) -> tuple[Any, Any]:
         buffers = self.dependency("_sse_buffers")

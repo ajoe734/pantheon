@@ -336,10 +336,22 @@ class CommandStore:
                 return value
 
         foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
+        record = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
+        if record.get("tenant_id"):
+            return str(record.get("tenant_id")).strip()
+
         trace = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
         tenant_ref = trace.get("tenant_ref") if isinstance(trace.get("tenant_ref"), dict) else {}
         value = str(tenant_ref.get("tenant_id") or trace.get("tenant_id") or "").strip()
-        return value or None
+        if value:
+            return value
+
+        params = command.get("params") if isinstance(command.get("params"), dict) else {}
+        for key in ("tenant_id", "tenant"):
+            val = str(params.get(key) or "").strip()
+            if val:
+                return val
+        return None
 
     def get_command_by_idempotency_key(
         self,
@@ -354,12 +366,14 @@ class CommandStore:
             foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
             record = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
             if record.get("idempotency_key") != idempotency_key:
-                continue
+                audit = cmd.get("audit") if isinstance(cmd.get("audit"), dict) else {}
+                if audit.get("idempotency_key") != idempotency_key:
+                    continue
             if clean_operator_id and self._operator_id_from_command(cmd) != clean_operator_id:
                 continue
             if clean_tenant_id:
                 cmd_tenant = self._tenant_id_from_command(cmd)
-                if cmd_tenant and cmd_tenant != clean_tenant_id:
+                if not cmd_tenant or cmd_tenant != clean_tenant_id:
                     continue
             return cmd
         return None

@@ -3,7 +3,7 @@
   "task_id": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
   "base_ref": "dev@24608d4c8e04767f658e77be466780b9e91f7525",
   "depends_on": "DOMAIN-WRITERS-001 (done), BFF-ROUTER-USECASE-CORRECTIVE-001 (done), GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 (done), JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 (done)",
-  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md \u00a7E; DOMAIN-WRITERS-001 corrective closure",
+  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md §E; DOMAIN-WRITERS-001 corrective closure",
   "defect_remediation": {
     "defect_1_dead_capital_write_routes": {
       "problem": "capital/router.py constructs CapitalService(get_read_store=..., get_capital_authority=...). App factory mounted create_capital_router without get_read_store or get_capital_authority, causing CapitalAuthorityUnavailable 503 on 8 POST routes.",
@@ -12,57 +12,129 @@
     "defect_2_latent_nameerror_personas": {
       "problem": "personas/service.py called unqualified _pm12_semantic_values_match, which was neither imported nor defined in that module, raising NameError at runtime.",
       "remediation": "Added resilient definition and fallback resolution for _pm12_semantic_values_match directly in personas/service.py."
+    },
+    "defect_3_capital_distinct_approve_and_sign_operations": {
+      "problem": "capital/service.py mapped both approve_rebalance and sign_rebalance to ApprovedApply, which routed directly to /apply on the capital backend.",
+      "remediation": "Bound distinct ApproveRebalance and SignRebalance operations in CapitalCommandAdapter that target /api/rebalances/{id}/approve and /api/rebalances/{id}/two-man-sign respectively, never calling /apply."
+    },
+    "defect_4_governance_durability_and_exception_propagation": {
+      "problem": "governance/service.py maintained process-local _created_approvals and _idempotency dictionaries and swallowed storage exceptions (OSError), returning 202 without persisting to disk. Additionally, app_factory did not wire command_store into create_governance_router.",
+      "remediation": "Eliminated process-local authority caches. Wired command_store in core/app_factory.py. Enforced fail-closed 503 GovernanceAuthorityUnavailable if CommandStore is absent, and allowed storage exceptions (OSError/IOError) to propagate cleanly without being swallowed."
+    },
+    "defect_5_idempotency_tenant_actor_request_scoping": {
+      "problem": "governance/service.py and command_adapters/service.py relied on process-local cache or unscoped idempotency checks, allowing cross-actor/cross-tenant collisions or state loss across process restarts.",
+      "remediation": "Implemented durable tenant+actor+command+request scoped idempotency backed by CommandStore.get_command_by_idempotency_key with strict tenant matching across foundation records, trace context, and parameters."
+    },
+    "defect_6_capital_authority_command_store_composition": {
+      "problem": "DefaultCapitalAuthority bypassed CommandStore admission by delegating directly to raw executor/adapter without composed command receipts.",
+      "remediation": "Composed DefaultCapitalAuthority with CommandStore to persist durable command receipts for all capital operations, and wired command_store in create_capital_router and app_factory."
+    },
+    "defect_7_runtime_manager_allow_local_retired": {
+      "problem": "runtime/router.py instantiated RuntimeManagerClient(allow_local=True) as a fallback writer, violating normative Section E.",
+      "remediation": "Retired allow_local fallback. Resolved runtime_owner_port from composition dependencies and enforced fail-closed 503 DEPENDENCY_UNAVAILABLE when the port is unconfigured."
     }
   },
   "mutation_caller_inventory": {
-    "capital": {
+    "runtime_binding": {
       "routes": [
-        "POST /bff/capital-pools",
-        "POST /bff/capital-pools/{pool_id}/actions/{action_id}",
-        "POST /bff/rebalances",
-        "POST /bff/rebalance-proposals",
-        "POST /bff/rebalances/execute",
-        "POST /bff/allocations",
-        "POST /bff/allocations/apply",
-        "POST /bff/allocations/rollback"
-      ],
-      "selected_owner": "services/control-plane/bff/capital/service.py (DefaultCapitalAuthority) -> services/control-plane/bff/command_executor.py (dispatch_domain_command) / CapitalCommandAdapter",
-      "durability_mechanism": "CommandStore JSONL persistence with aggregate identity, status, timestamp, and audit trail."
-    },
-    "governance": {
-      "routes": [
-        "POST /bff/governance/actions",
-        "POST /bff/governance/approvals/{id}/decide",
-        "POST /bff/approvals/batch-decide"
-      ],
-      "selected_owner": "services/control-plane/bff/governance/service.py (GovernanceService) & services/control-plane/bff/command_adapters/governance_adapter.py (GovernanceCommandAdapter)",
-      "durability_mechanism": "CommandStore persistence for approval decisions and action receipts; durable tenant/actor/request idempotency replay; anti-forgery preservation of session_id, candidate_digest, proof_digest, controller_record_ref, recorded_at, and authoritative status."
-    },
-    "runtime": {
-      "routes": [
+        "POST /bff/runtimes",
         "POST /bff/runtimes/deploy",
         "POST /bff/runtimes/{runtime_id}/pause",
         "POST /bff/runtimes/{runtime_id}/resume"
       ],
-      "selected_owner": "services/runtime_manager/runtime_manager_client.py (RuntimeManagerClient.deploy) and RuntimeCommandAdapter",
-      "durability_mechanism": "Eliminated hasattr(read_store, 'create_runtime_binding') fallback; runtime mutations dispatch through typed client and CommandAdapterService."
+      "selected_owner": "services/control-plane/bff/runtime/router.py via composition-injected runtime_owner_port (RuntimeManagerClient.deploy) and RuntimeCommandAdapter",
+      "durability_mechanism": "Eliminated hasattr(read_store, 'create_runtime_binding') and RuntimeManagerClient(allow_local=True) fallbacks; fail-closed 503 if owner port unconfigured; receipts logged via CommandAdapterService."
     },
-    "research": {
+    "deployment_plan": {
       "routes": [
-        "POST /bff/research/experiments",
-        "POST /bff/research/experiments/{id}/actions/{action_id}"
+        "POST /bff/deployment/plans",
+        "POST /bff/deployment/plans/{id}/approve",
+        "POST /bff/deployment/plans/{id}/execute",
+        "POST /bff/deployment/rollbacks"
       ],
-      "selected_owner": "services/control-plane/bff/ports/research_knowledge_source.py (DefaultResearchKnowledgeSourcePort.create_research_experiment)",
-      "durability_mechanism": "Eliminated read_store.create_experiment_bff fallback; routed directly to typed port with CommandStore logging."
+      "selected_owner": "services/deployment/outbox_consumer_worker.py, services/control-plane/bff/deployment/router.py, and DeploymentCommandAdapter",
+      "durability_mechanism": "CommandStore persistence with outbox lease acquisition, status transitions, and fail-closed admission."
     },
-    "personas": {
+    "persona_update": {
       "routes": [
         "POST /bff/personas",
         "POST /bff/personas/{id}/actions/{action_id}",
         "POST /bff/personas/{id}/leagues"
       ],
-      "selected_owner": "services/control-plane/bff/ports/persona_write_owner.py (PersonaRegistryHttpWritePort) via _get_active_write_owner()",
-      "durability_mechanism": "Typed HTTP write port with fallback-free mutation boundary."
+      "selected_owner": "services/control-plane/bff/ports/persona_write_owner.py (PersonaRegistryHttpWritePort) via _get_active_write_owner() and PersonaCommandAdapter",
+      "durability_mechanism": "Typed HTTP write port with fallback-free mutation boundary and durable CommandStore audit rows."
+    },
+    "experiment_query_command": {
+      "routes": [
+        "POST /bff/research/experiments",
+        "POST /bff/research/experiments/{id}/actions/{action_id}"
+      ],
+      "selected_owner": "services/control-plane/bff/ports/research_knowledge_source.py (DefaultResearchKnowledgeSourcePort.create_research_experiment) and ResearchCommandAdapter",
+      "durability_mechanism": "Eliminated read_store.create_experiment_bff fallback; routed directly to typed port with CommandStore logging."
+    },
+    "job_logs": {
+      "routes": [
+        "POST /bff/jobs/{job_id}/logs",
+        "POST /bff/jobs/{job_id}/actions/{action_id}"
+      ],
+      "selected_owner": "services/control-plane/bff/jobs/service.py and JobCommandAdapter",
+      "durability_mechanism": "CommandStore lifecycle with durable command/log rows and immutable UTC timestamping."
+    },
+    "research_ticket": {
+      "routes": [
+        "POST /bff/research/tickets",
+        "POST /bff/research/tickets/{id}/actions/{action_id}"
+      ],
+      "selected_owner": "services/control-plane/bff/ports/research_knowledge_source.py and ResearchCommandAdapter",
+      "durability_mechanism": "Typed command port with CommandStore receipt persistence."
+    },
+    "agora_audit": {
+      "routes": [
+        "POST /bff/agora/audit-events",
+        "POST /bff/agora/proposals/{id}/decide"
+      ],
+      "selected_owner": "services/control-plane/bff/command_adapters/agora_adapter.py (AgoraCommandAdapter)",
+      "durability_mechanism": "Typed domain command dispatch with audit receipt recorded in CommandStore."
+    },
+    "sponsor_decision": {
+      "routes": [
+        "POST /bff/governance/sponsor-decisions",
+        "POST /bff/governance/actions"
+      ],
+      "selected_owner": "services/control-plane/bff/governance/service.py (GovernanceService) and GovernanceCommandAdapter via get_governance_authority",
+      "durability_mechanism": "Bound to canonical governance owner; retired missing read_store.record_sponsor_decision; command results verified via owner readback."
+    },
+    "ranking_deprecated": {
+      "routes": [
+        "GET /bff/management/rankings"
+      ],
+      "selected_owner": "services/control-plane/bff/management_read_models/ranking_router.py (RankingRouterService)",
+      "durability_mechanism": "Preserved read-only query boundary; zero mutation methods on ReadSurfacePorts."
+    },
+    "approval_create": {
+      "routes": [
+        "POST /bff/governance/approvals/{id}/decide",
+        "POST /bff/approvals/batch-decide",
+        "POST /api/v1/approval-decisions"
+      ],
+      "selected_owner": "services/control-plane/bff/governance/service.py (GovernanceService) and GovernanceCommandAdapter backed by CommandStore",
+      "durability_mechanism": "CommandStore persistence for approval decisions and action receipts; fail-closed 503 if store unconfigured; durable tenant+actor+command+request idempotency replay; anti-forgery preservation of genuine governance controller metadata (session_id, candidate_digest, proof_digest, controller_record_ref, recorded_at, authority_status)."
+    },
+    "capital_mutation": {
+      "routes": [
+        "POST /bff/capital-pools",
+        "POST /bff/capital-pools/{pool_id}/actions/{action_id}",
+        "POST /bff/rebalances",
+        "POST /bff/rebalance-proposals",
+        "POST /bff/rebalances/{id}/approve",
+        "POST /bff/rebalances/{id}/sign",
+        "POST /bff/rebalances/execute",
+        "POST /bff/allocations",
+        "POST /bff/allocations/apply",
+        "POST /bff/allocations/rollback"
+      ],
+      "selected_owner": "services/control-plane/bff/capital/service.py (DefaultCapitalAuthority composed with CommandStore) -> CapitalCommandAdapter",
+      "durability_mechanism": "CommandStore JSONL persistence with aggregate identity, status, timestamp, audit trail, and distinct ApproveRebalance and SignRebalance operations that never execute /apply."
     },
     "command_adapters": {
       "routes": [
@@ -78,13 +150,19 @@
     "files_modified": [
       "services/control-plane/bff/capital/router.py",
       "services/control-plane/bff/capital/service.py",
+      "services/control-plane/bff/command_adapters/capital_adapter.py",
       "services/control-plane/bff/command_adapters/service.py",
+      "services/control-plane/bff/command_queue.py",
+      "services/control-plane/bff/core/app_factory.py",
       "services/control-plane/bff/governance/router.py",
       "services/control-plane/bff/governance/service.py",
       "services/control-plane/bff/personas/service.py",
       "services/control-plane/bff/research/service.py",
       "services/control-plane/bff/runtime/router.py",
-      "services/control-plane/bff/tests/test_command_adapters_router.py"
+      "services/control-plane/bff/runtime/service.py",
+      "services/control-plane/bff/tests/test_command_adapters_router.py",
+      "services/control-plane/bff/tests/test_domain_durability_corrective_p1.py",
+      "docs/deployment/evidence/DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001/evidence.json"
     ],
     "read_surface_invariants_preserved": "ReadSurfacePorts in services/control-plane/bff/ports/read_surface_ports.py is completely unmodified and maintains zero mutation methods, adhering strictly to RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE.",
     "command_durability_and_idempotency": "All domain mutation commands are backed by CommandStore with durable records, tenant/actor/request idempotency, and anti-forgery preservation of genuine governance controller metadata."
@@ -92,38 +170,44 @@
   "verification": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_command_adapters_router.py",
-        "result": "14 passed, 3 warnings in 5.71s",
-        "executed": 14,
-        "collected": 14
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_domain_durability_corrective_p1.py",
+        "result": "8 passed, 3 warnings in 3.71s",
+        "executed": 8,
+        "collected": 8
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 /tmp/test_domain_review_f440.py",
+        "result": "5 passed in 0.95s",
+        "executed": 5,
+        "collected": 5
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_domain_durability_corrective_p1.py",
+        "result": "81 passed, 3 warnings in 46.28s",
+        "executed": 81,
+        "collected": 81
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_command_executor.py",
-        "result": "45 passed, 3 warnings in 13.30s",
+        "result": "45 passed, 3 warnings in 12.26s",
         "executed": 45,
         "collected": 45
       },
       {
         "command": ".venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
-        "result": "26 passed in 1.214s",
+        "result": "26 passed in 1.383s",
         "executed": 26,
         "collected": 26
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
-        "result": "54 passed, 3 warnings in 37.37s",
-        "executed": 54,
-        "collected": 54
-      },
-      {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
-        "result": "119 passed, 3 warnings in 48.56s",
+        "result": "119 passed, 3 warnings in 46.61s",
         "executed": 119,
         "collected": 119
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
-        "result": "55 passed, 6 warnings in 35.93s",
+        "result": "55 passed, 6 warnings in 35.40s",
         "executed": 55,
         "collected": 55
       }
@@ -136,7 +220,12 @@
     "acceptance_4_anti_forgery_governance_authority_metadata": true,
     "acceptance_5_bounded_verification_and_clean_worktree": true,
     "defect_1_dead_capital_write_routes_resolved": true,
-    "defect_2_latent_nameerror_personas_resolved": true
+    "defect_2_latent_nameerror_personas_resolved": true,
+    "defect_3_capital_distinct_approve_and_sign_operations_resolved": true,
+    "defect_4_governance_durability_and_exception_propagation_resolved": true,
+    "defect_5_idempotency_tenant_actor_request_scoping_resolved": true,
+    "defect_6_capital_authority_command_store_composition_resolved": true,
+    "defect_7_runtime_manager_allow_local_retired_resolved": true
   },
   "review": {
     "reviewer": "Codex",

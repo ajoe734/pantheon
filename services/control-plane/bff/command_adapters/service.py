@@ -939,7 +939,39 @@ class CommandAdapterService:
             )
             return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
 
-        existing = self._gov_bff_idempotency.get(resolved_key)
+        store = self.command_store
+        if store is None:
+            raise self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Command persistence is unavailable",
+                "CommandStore is not configured; refusing to accept unpersisted command",
+                precondition_failed="command_store_unconfigured",
+            )
+
+        cache_key = f"{identity.operator_id}:{resolved_key}"
+        existing_cmd = store.get_command_by_idempotency_key(
+            resolved_key,
+            operator_id=identity.operator_id,
+            tenant_id=getattr(identity, "tenant_id", None),
+        )
+        if existing_cmd is not None:
+            foundation = existing_cmd.get("foundation") if isinstance(existing_cmd.get("foundation"), dict) else {}
+            idem_rec = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
+            saved_hash = idem_rec.get("request_hash") or existing_cmd.get("audit", {}).get("request_hash")
+            if saved_hash and saved_hash != request_hash:
+                raise self._raise_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency key was already used with a different payload",
+                    f"Key {resolved_key!r} is bound to a different request hash",
+                    precondition_failed="idempotency_conflict",
+                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                )
+            if existing_cmd.get("result"):
+                return existing_cmd["result"]
+
+        existing = self._gov_bff_idempotency.get(cache_key) or self._gov_bff_idempotency.get(resolved_key)
         if existing is not None:
             if existing.get("request_hash") != request_hash:
                 raise self._raise_error(
@@ -951,16 +983,6 @@ class CommandAdapterService:
                     suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
                 )
             return existing["result"]
-
-        store = self.command_store
-        if store is None:
-            raise self._raise_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Command persistence is unavailable",
-                "CommandStore is not configured; refusing to accept unpersisted command",
-                precondition_failed="command_store_unconfigured",
-            )
 
         staleness_warning = self.check_read_surface_state()
         command_id = str(uuid.uuid4())
@@ -982,6 +1004,15 @@ class CommandAdapterService:
             "idempotency_key": resolved_key,
             "request_hash": request_hash,
         }
+        foundation_record = {
+            "idempotency_record": {
+                "idempotency_key": resolved_key,
+                "request_hash": request_hash,
+                "operator_id": identity.operator_id,
+                "tenant_id": getattr(identity, "tenant_id", None),
+                "command_type": command_type.value if hasattr(command_type, "value") else str(command_type),
+            }
+        }
         if action_kind == "approval":
             preconditions_checked.append("concurrent_safety")
             audit_record["preconditions_checked"] = preconditions_checked
@@ -992,6 +1023,7 @@ class CommandAdapterService:
                 submitted_at=submitted_at,
                 params={"action_id": action_id, **payload},
                 audit_context=audit_record,
+                foundation_context=foundation_record,
             )
             if active is not None:
                 raise self._raise_error(
@@ -1011,6 +1043,7 @@ class CommandAdapterService:
                 submitted_at=submitted_at,
                 params={"action_id": action_id, **payload},
                 audit_context=audit_record,
+                foundation_context=foundation_record,
             )
         assert record is not None
 
@@ -1024,7 +1057,9 @@ class CommandAdapterService:
         res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
         if isinstance(res_dict, dict) and isinstance(res_dict.get("data"), dict):
             res_dict["data"].setdefault("action", action_id)
+        store.update_status(command_id, CommandStatus.SUBMITTED, result=res_dict)
         self._gov_bff_idempotency[resolved_key] = {"request_hash": request_hash, "result": res_dict}
+        self._gov_bff_idempotency[cache_key] = {"request_hash": request_hash, "result": res_dict}
         return res_dict
 
     def create_confirm_token(
