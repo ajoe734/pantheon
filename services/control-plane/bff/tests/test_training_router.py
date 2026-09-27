@@ -57,8 +57,11 @@ def test_training_router_owns_all_trainer_session_routes() -> None:
 
 
 def test_main_composes_training_router_without_trainer_decorators() -> None:
+    factory_source = (BFF_ROOT / "core" / "app_factory.py").read_text(encoding="utf-8")
+    assert "create_training_router" in factory_source
+    assert "create_training_router(" in factory_source
+
     main_source = (BFF_ROOT / "main.py").read_text(encoding="utf-8")
-    assert "from training.router import create_training_router" in main_source
     assert not re.search(
         r'@app\.(?:get|post|put|patch|delete)\([^\n]*"/api/v1/trainer/',
         main_source,

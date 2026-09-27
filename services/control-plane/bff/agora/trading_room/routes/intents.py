@@ -32,11 +32,7 @@ def build_intents_router(ctx: TradingRoomRouteContext) -> APIRouter:
         identity = ctx.extract_identity(authorization, session_cookie=pantheon_session)
         ctx.require_read_role(identity)
 
-        intent = ctx.store.get_intent(intent_id)
-        if intent is None:
-            raise ctx.bff_error(404, "NOT_FOUND", f"TradingIntent {intent_id!r} not found", "intent_not_found")
-        state = ctx.store.get_intent_state(intent_id) or "draft"
-        handoffs = ctx.store.list_handoffs_for_intent(intent_id)
+        intent, state, handoffs = ctx.service.get_intent_detail(intent_id)
 
         return {
             "object_ref": {"type": "trading_intent", "id": intent_id},
@@ -86,97 +82,17 @@ def build_intents_router(ctx: TradingRoomRouteContext) -> APIRouter:
         ctx._require_if_match(if_match)
         request_id = ctx._require_x_request_id(x_request_id)
 
-        if body.no_order_route_proof != "agora_request_only_no_order_route":
-            raise ctx.bff_error(
-                422,
-                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
-                "no_order_route_proof must be 'agora_request_only_no_order_route'",
-                "invalid_no_order_route_proof",
-            )
-
-        if body.intent_id != intent_id:
-            raise ctx.bff_error(
-                422,
-                "VALIDATION_ERROR",
-                "intent_id in body must match path parameter",
-                "intent_id_mismatch",
-            )
-
-        intent = ctx.store.get_intent(intent_id)
-        if intent is None:
-            raise ctx.bff_error(404, "NOT_FOUND", f"TradingIntent {intent_id!r} not found", "intent_not_found")
-
-        ctx._check_idempotency(
-            identity,
-            f"POST:/bff/agora/trading-intents/{intent_id}/handoffs",
-            idem_key,
+        data = ctx.service.submit_intent_handoff(
+            intent_id=intent_id,
+            body=body,
+            identity=identity,
+            idempotency_key=idem_key,
+            x_request_id=request_id,
         )
-
-        intent_state = ctx.store.get_intent_state(intent_id) or "draft"
-        if intent_state != "draft":
-            raise ctx.bff_error(
-                409,
-                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
-                f"TradingIntent {intent_id!r} is not draft; current state is '{intent_state}'",
-                "intent_not_handoffable",
-            )
-
-        if body.state not in {"draft", "submitted"}:
-            raise ctx.bff_error(
-                409,
-                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
-                "Agora can only create draft/submitted request-only handoffs",
-                "handoff_state_not_request_only",
-            )
-
-        stage_rule = ctx._handoff_stage_rule(body.requested_stage)
-        if body.handoff_type != stage_rule["handoff_type"]:
-            raise ctx.bff_error(
-                409,
-                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
-                (
-                    f"requested_stage '{body.requested_stage}' requires "
-                    f"handoff_type '{stage_rule['handoff_type']}'"
-                ),
-                "stage_handoff_type_mismatch",
-            )
-
-        if body.target_queue is not None and body.target_queue != stage_rule["target_queue"]:
-            raise ctx.bff_error(
-                409,
-                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
-                (
-                    f"requested_stage '{body.requested_stage}' requires "
-                    f"target_queue '{stage_rule['target_queue']}'"
-                ),
-                "stage_target_queue_mismatch",
-            )
-
-        if ctx.store.get_handoff(body.handoff_id) is not None:
-            raise ctx.bff_error(
-                409,
-                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
-                f"handoff_id {body.handoff_id!r} already exists",
-                "duplicate_handoff_id",
-            )
-
-        handoff = body.model_dump(exclude_none=True)
-        handoff["state"] = "submitted"
-        handoff["target_queue"] = stage_rule["target_queue"]
-        handoff["updated_at"] = handoff.get("updated_at") or ctx.utc_now()
-        ctx.store.upsert_handoff(handoff)
 
         return {
             "status": "queued",
-            "data": {
-                "handoff_id": body.handoff_id,
-                "intent_id": intent_id,
-                "requested_stage": body.requested_stage,
-                "handoff_type": body.handoff_type,
-                "target_queue": stage_rule["target_queue"],
-                "state": "submitted",
-                "no_order_route_proof": "agora_request_only_no_order_route",
-            },
+            "data": data,
             "meta": ctx._meta(idempotency_key=idem_key, x_request_id=request_id),
         }
 
@@ -205,27 +121,15 @@ def build_intents_router(ctx: TradingRoomRouteContext) -> APIRouter:
         ctx._require_if_match(if_match)
         request_id = ctx._require_x_request_id(x_request_id)
 
-        if ctx.store.get_intent(intent_id) is None:
-            raise ctx.bff_error(404, "NOT_FOUND", f"TradingIntent {intent_id!r} not found", "intent_not_found")
-
-        ctx._check_idempotency(
-            identity,
-            f"POST:/bff/agora/trading-intents/{intent_id}/withdraw",
-            idem_key,
+        data = ctx.service.withdraw_intent(
+            intent_id=intent_id,
+            identity=identity,
+            idempotency_key=idem_key,
         )
-
-        withdrawn_at = ctx.utc_now()
-        withdrawn = ctx.store.withdraw_intent(intent_id, withdrawn_at=withdrawn_at)
-        withdrawn_handoff_ids = withdrawn.get("withdrawn_handoff_ids", []) if withdrawn else []
 
         return {
             "status": "completed",
-            "data": {
-                "intent_id": intent_id,
-                "state": "withdrawn",
-                "withdrawn_at": withdrawn_at,
-                "withdrawn_handoff_ids": withdrawn_handoff_ids,
-            },
+            "data": data,
             "meta": ctx._meta(idempotency_key=idem_key, x_request_id=request_id),
         }
 

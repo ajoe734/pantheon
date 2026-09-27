@@ -102,6 +102,7 @@ def create_research_router(
     cross_entity_search: Optional[CrossEntitySearch] = None,
     list_synthesis_conflict_logs: Optional[ConflictLogList] = None,
     get_synthesis_conflict_log: Optional[ConflictLogGet] = None,
+    persona_reader: Optional[Callable[[Optional[str]], Optional[Dict[str, Any]]]] = None,
     service: Optional[ResearchRouterService] = None,
 ) -> APIRouter:
     """Compose and return the prepared Research API router."""
@@ -128,6 +129,7 @@ def create_research_router(
         cross_entity_search=cross_entity_search,
         list_synthesis_conflict_logs=list_synthesis_conflict_logs,
         get_synthesis_conflict_log=get_synthesis_conflict_log,
+        persona_reader=persona_reader,
         service=service,
     )
 
@@ -168,6 +170,7 @@ def create_research_router(
                     snapshot_meta=snapshot_meta,
                     dataset_surface_status=dataset_surface_status,
                     submit_experiment_action=submit_experiment_action,
+                    service=ctx.service,
                 ).routes
             )
 

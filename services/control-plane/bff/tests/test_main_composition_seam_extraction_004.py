@@ -240,17 +240,15 @@ def test_replay_submitted_commands_supports_legacy_process_command():
 
 
 def test_main_process_command_ast_injectable_seam():
-    """Verify _process_command in main.py has keyword-only command_store parameter."""
-    tree = ast.parse(MAIN_PY.read_text(encoding="utf-8"), filename=str(MAIN_PY))
-    proc_def: Optional[ast.AsyncFunctionDef] = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_process_command":
-            proc_def = node
-            break
+    """Verify process_command has keyword-only command_store parameter and main.py re-exports it."""
+    from services.control_plane.bff.command_adapters.service import process_command
+    import inspect
+    sig = inspect.signature(process_command)
+    assert "command_store" in sig.parameters
+    assert sig.parameters["command_store"].kind == inspect.Parameter.KEYWORD_ONLY
 
-    assert proc_def is not None, "_process_command not found in main.py"
-    kwonly_args = [arg.arg for arg in proc_def.args.kwonlyargs]
-    assert "command_store" in kwonly_args, "_process_command must accept keyword-only command_store"
+    main_text = MAIN_PY.read_text(encoding="utf-8")
+    assert "process_command as _process_command" in main_text
 
 
 # ============================================================================
@@ -290,17 +288,12 @@ def test_scanner_ignores_non_bff_service_mains(tmp_path: Path):
 
 
 def test_true_live_scan_non_whitelisted_importer_count():
-    """Verify live scan accurately reports the 15 true non-allowlisted main importers."""
+    """Verify live scan reports 0 non-allowlisted main importers after full migration."""
     inv = _load_inventory()
     allowlist = set(inv["composition_allowlist"])
     offenders = _live_scan_non_whitelisted_main_importers(allowlist)
 
-    assert len(offenders) == 15, f"Expected 15 live offenders, found {len(offenders)}: {offenders}"
-    # Verify the 4 previously hidden dynamic importers are among the offenders
-    assert "test_pkt005_sse_substrate_contract.py" in offenders
-    assert "tests/test_management_read_models_router.py" in offenders
-    assert "tests/test_main_composition_seam_extraction_002.py" in offenders
-    assert "tests/test_main_composition_seam_extraction_003.py" in offenders
+    assert len(offenders) == 0, f"Expected 0 live offenders after migration, found {len(offenders)}: {offenders}"
 
 
 # ============================================================================

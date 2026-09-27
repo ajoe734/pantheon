@@ -30,10 +30,8 @@ from ..store import TradingRoomStore, make_trading_room_store
 
 
 # ---------------------------------------------------------------------------
-# Module-level store (singleton per process)
+# SSE Buffers and Subscribers (per process)
 # ---------------------------------------------------------------------------
-
-_store: Optional[TradingRoomStore] = None
 
 _TR_SSE_BUFFER_SIZE = 500
 _trading_room_sse_buffers: Dict[str, deque] = {}
@@ -94,10 +92,8 @@ def _tr_replay_after(scope_key: str, last_event_id: str) -> List[Dict[str, Any]]
 
 
 def _get_store() -> TradingRoomStore:
-    global _store
-    if _store is None:
-        _store = make_trading_room_store()
-    return _store
+    from ..service import get_default_trading_room_store
+    return get_default_trading_room_store()
 
 
 # ---------------------------------------------------------------------------
@@ -1692,9 +1688,40 @@ class TradingRoomRouteContext:
     require_read_role: Callable[..., None]
     bff_error: Callable[..., HTTPException]
     utc_now: Callable[[], str]
-    store: TradingRoomStore
     require_write_role: Optional[Callable[..., None]] = None
+    service: Optional[Any] = None
     workshop_store: Optional[Any] = None
+
+    def __init__(
+        self,
+        *,
+        extract_identity: Callable[..., Any],
+        require_read_role: Callable[..., None],
+        bff_error: Callable[..., HTTPException],
+        utc_now: Callable[[], str],
+        service: Optional[Any] = None,
+        require_write_role: Optional[Callable[..., None]] = None,
+        workshop_store: Optional[Any] = None,
+        trading_room_store: Optional[Any] = None,
+        **kwargs: Any,
+    ):
+        self.extract_identity = extract_identity
+        self.require_read_role = require_read_role
+        self.bff_error = bff_error
+        self.utc_now = utc_now
+        self.require_write_role = require_write_role
+        self.workshop_store = workshop_store
+        if service is not None:
+            self.service = service
+        else:
+            from ..service import TradingRoomService
+            resolved_store = trading_room_store or kwargs.get("store")
+            self.service = TradingRoomService(
+                store=resolved_store,
+                workshop_store=workshop_store,
+                utc_now=utc_now,
+                bff_error=bff_error,
+            )
 
     def _check_write_auth(self, identity: Any) -> None:
         if self.require_write_role is not None:
@@ -1706,40 +1733,13 @@ class TradingRoomRouteContext:
         return meta
 
     def _error_code_enum(self) -> Any:
-        try:
-            from ....models import ErrorCode
-            return ErrorCode
-        except Exception:
-            pass
-        try:
-            from bff.models import ErrorCode
-            return ErrorCode
-        except Exception:
-            pass
-        try:
-            from services.control_plane.bff.models import ErrorCode
-            if hasattr(ErrorCode, "FORBIDDEN"):
-                return ErrorCode
-        except Exception:
-            pass
-        from enum import Enum
-        class FallbackErrorCode(str, Enum):
-            AUTH_REQUIRED = "AUTH_REQUIRED"
-            FORBIDDEN = "FORBIDDEN"
-            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-            VALIDATION_FAILED = "VALIDATION_FAILED"
-            RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
-            PRECONDITION_FAILED = "PRECONDITION_FAILED"
-            OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
-            IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-        return FallbackErrorCode
+        return self.service._error_code_enum()
 
     def _require_idempotency_key(self, key: Optional[str]) -> str:
         clean = str(key or "").strip()
         if clean:
             return clean
         ErrorCode = self._error_code_enum()
-
         raise self.bff_error(
             400,
             ErrorCode.VALIDATION_FAILED,
@@ -1753,7 +1753,6 @@ class TradingRoomRouteContext:
         if clean:
             return clean
         ErrorCode = self._error_code_enum()
-
         raise self.bff_error(
             400,
             ErrorCode.VALIDATION_FAILED,
@@ -1767,7 +1766,6 @@ class TradingRoomRouteContext:
         if clean:
             return clean
         ErrorCode = self._error_code_enum()
-
         raise self.bff_error(
             428,
             ErrorCode.PRECONDITION_FAILED,
@@ -1781,134 +1779,54 @@ class TradingRoomRouteContext:
         return f"{scope['tenant_id']}:{scope['user_id'] or 'unknown'}:{endpoint}"
 
     def _check_idempotency(self, identity: Any, endpoint: str, key: str) -> None:
-        if self.store.check_and_record_idempotency_key(self._idempotency_scope(identity, endpoint), key):
-            ErrorCode = self._error_code_enum()
-
-            raise self.bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Duplicate Idempotency-Key",
-                key,
-            )
+        self.service.check_idempotency(identity, endpoint, key)
 
     def _validation_failed(self, errors: List[str], *, status_code: int = 422) -> None:
-        ErrorCode = self._error_code_enum()
-        raise self.bff_error(
-            status_code,
-            ErrorCode.VALIDATION_FAILED,
-            "Trading Room workspace validation failed: " + "; ".join(errors),
-            "trading_room_workspace_validation_failed",
-            details_extra={"errors": errors},
-        )
+        self.service.validation_failed(errors, status_code=status_code)
 
     def _raise_workspace_forbidden(self, resource: str, resource_id: str) -> None:
-        ErrorCode = self._error_code_enum()
-        raise self.bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Agora Trading Room workspace resource is outside the current user scope",
-            "cross_user_workspace_access_forbidden",
-            precondition_failed="agora_user_scope",
-            details_extra={"resource": resource, "resource_id": resource_id},
-        )
+        self.service.raise_workspace_forbidden(resource, resource_id)
 
-    def _load_proposal_for_identity(self,
+    def _load_proposal_for_identity(
+        self,
         *,
         strategy_id: str,
         proposal_id: str,
         identity: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, str]]:
-        ErrorCode = self._error_code_enum()
-        record = self.store.get_workspace_proposal_record(proposal_id)
-        if record is None:
-            raise self.bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                f"TradingRoomWorkspaceProposal {proposal_id!r} not found",
-                "workspace_proposal_not_found",
-            )
-        scope = _workspace_scope(identity)
-        if not _record_visible_to_scope(record, scope):
-            self._raise_workspace_forbidden("workspace_proposal", proposal_id)
-        proposal = record["proposal"]
-        if proposal.get("strategyId") != strategy_id:
-            raise self.bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                f"TradingRoomWorkspaceProposal {proposal_id!r} not found for strategy {strategy_id!r}",
-                "workspace_proposal_not_found",
-            )
-        return proposal, scope
+        return self.service.load_proposal_for_identity(
+            strategy_id=strategy_id,
+            proposal_id=proposal_id,
+            identity=identity,
+        )
 
-    def _load_workspace_for_identity(self,
+    def _load_workspace_for_identity(
+        self,
         *,
         workspace_id: str,
         identity: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, str]]:
-        ErrorCode = self._error_code_enum()
-        record = self.store.get_workspace_record(workspace_id)
-        if record is None:
-            raise self.bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                f"TradingRoomWorkspace {workspace_id!r} not found",
-                "workspace_not_found",
-            )
-        scope = _workspace_scope(identity)
-        if not _record_visible_to_scope(record, scope):
-            self._raise_workspace_forbidden("workspace", workspace_id)
-        workspace = record["workspace"]
-        _normalize_views_legacy_data_availability(workspace.get("views") or [])
-        return workspace, scope
+        return self.service.load_workspace_for_identity(
+            workspace_id=workspace_id,
+            identity=identity,
+        )
 
-    def _load_revision_proposal_for_identity(self,
+    def _load_revision_proposal_for_identity(
+        self,
         *,
         proposal_id: str,
         identity: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, str]]:
-        ErrorCode = self._error_code_enum()
-        record = self.store.get_widget_revision_proposal_record(proposal_id)
-        if record is None:
-            raise self.bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                f"WidgetRevisionProposal {proposal_id!r} not found",
-                "widget_revision_proposal_not_found",
-            )
-        scope = _workspace_scope(identity)
-        if not _record_visible_to_scope(record, scope):
-            self._raise_workspace_forbidden("widget_revision_proposal", proposal_id)
-        proposal = _normalize_revision_proposal_legacy_data_availability(record["proposal"])
-        return proposal, scope
+        return self.service.load_revision_proposal_for_identity(
+            proposal_id=proposal_id,
+            identity=identity,
+        )
 
     def _require_workspace_etag(self, if_match: Optional[str], workspace: Dict[str, Any]) -> str:
-        ErrorCode = self._error_code_enum()
-        current = _workspace_etag(workspace)
-        supplied = str(if_match or "").strip()
-        if not supplied:
-            raise self.bff_error(
-                428,
-                ErrorCode.PRECONDITION_FAILED,
-                "If-Match header is required for Trading Room workspace mutation",
-                "missing_if_match",
-                suggestion="GET the workspace first and supply the returned ETag.",
-                details_extra={"current_etag": current},
-            )
-        if supplied != current:
-            raise self.bff_error(
-                412,
-                ErrorCode.PRECONDITION_FAILED,
-                "Trading Room workspace changed after the client snapshot.",
-                "workspace_etag_mismatch",
-                details_extra={
-                    "current_etag": current,
-                    "current_version": workspace.get("dashboardVersion"),
-                    "latest_href": f"/bff/agora/trading-room/workspaces/{workspace.get('id')}",
-                },
-            )
-        return current
+        return self.service.require_workspace_etag(if_match, workspace)
 
-    def _record_workspace_version(self,
+    def _record_workspace_version(
+        self,
         workspace: Dict[str, Any],
         *,
         scope: Dict[str, str],
@@ -1922,11 +1840,9 @@ class TradingRoomRouteContext:
         source_revision_proposal_id: Optional[str] = None,
         rollback_of_version_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        return self.store.record_workspace_version(
+        return self.service.record_workspace_version(
             workspace,
-            tenant_id=scope["tenant_id"],
-            user_id=scope["user_id"],
-            created_at=self.utc_now(),
+            scope=scope,
             change_summary=change_summary,
             generated_by=generated_by,
             changed_by=changed_by,
@@ -1938,7 +1854,8 @@ class TradingRoomRouteContext:
             rollback_of_version_id=rollback_of_version_id,
         )
 
-    def _persist_workspace_with_version(self,
+    def _persist_workspace_with_version(
+        self,
         workspace: Dict[str, Any],
         *,
         scope: Dict[str, str],
@@ -1952,12 +1869,7 @@ class TradingRoomRouteContext:
         source_revision_proposal_id: Optional[str] = None,
         rollback_of_version_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        self.store.upsert_workspace(
-            workspace,
-            tenant_id=scope["tenant_id"],
-            user_id=scope["user_id"],
-        )
-        return self._record_workspace_version(
+        return self.service.persist_workspace_with_version(
             workspace,
             scope=scope,
             change_summary=change_summary,
@@ -1972,109 +1884,22 @@ class TradingRoomRouteContext:
         )
 
     def _affected_widgets_from_operations(self, operations: List[Dict[str, Any]]) -> List[str]:
-        affected: List[str] = []
-        for op in operations:
-            if not isinstance(op, dict):
-                continue
-            widget_id = str(op.get("widgetId") or op.get("widget_id") or "").strip()
-            if not widget_id:
-                payload = op.get("payload") or {}
-                if isinstance(payload, dict):
-                    widget_id = str(payload.get("widgetId") or payload.get("widget_id") or "").strip()
-            if widget_id and widget_id not in affected:
-                affected.append(widget_id)
-        return affected
+        return self.service.affected_widgets_from_operations(operations)
 
     def _handoff_stage_rule(self, stage: str) -> Dict[str, str]:
-        return {
-            "shadow": {"handoff_type": "shadow_start", "target_queue": "shadow_research"},
-            "paper": {"handoff_type": "paper_validation_request", "target_queue": "management_governance"},
-            "canary": {"handoff_type": "promotion_review_request", "target_queue": "promotion_review"},
-            "live": {"handoff_type": "promotion_review_request", "target_queue": "promotion_review"},
-        }[stage]
+        return self.service._handoff_stage_rule(stage)
 
     def _intent_type_for_action(self, action: str) -> str:
-        return {
-            "enter": "entry_interest",
-            "entry": "entry_interest",
-            "add": "increase_exposure",
-            "reduce": "reduce_exposure",
-            "exit": "exit_intent",
-            "review": "hold_decision",
-            "no_action": "hold_decision",
-        }.get(action, "hold_decision")
+        return self.service._intent_type_for_action(action)
 
     def _direction_for_action(self, action: str, modifications: Dict[str, Any]) -> str:
-        requested = str(modifications.get("direction") or "").strip()
-        if requested in {"long", "short", "neutral", "reduce", "exit"}:
-            return requested
-        return {
-            "reduce": "reduce",
-            "exit": "exit",
-            "review": "neutral",
-            "no_action": "neutral",
-        }.get(action, "neutral")
+        return self.service._direction_for_action(action, modifications)
 
     def _rationale_text(self, event: Dict[str, Any], fallback: Optional[str]) -> Optional[str]:
-        if fallback:
-            return fallback
-        claims = [
-            str(item.get("claim", "")).strip()
-            for item in event.get("rationale", [])
-            if isinstance(item, dict) and str(item.get("claim", "")).strip()
-        ]
-        return "; ".join(claims) if claims else None
+        return self.service._rationale_text(event, fallback)
 
-    def _intent_from_decision(self,
-        *,
-        event: Dict[str, Any],
-        decision_record: Dict[str, Any],
-        body: TraderDecisionRequest,
-        identity: Any,
-        intent_id: str,
-        x_request_id: str,
-    ) -> Dict[str, Any]:
-        modifications = body.modifications or {}
-        action = str(
-            modifications.get("action")
-            or event.get("suggested_action")
-            or event.get("event_kind")
-            or "review"
-        )
-        subject = dict(event.get("subject") or {})
-        subject["strategy_ref"] = event.get("strategy_id")
-        suggested_size = event.get("suggested_size") or {}
-        size_hint = modifications.get("size_hint") or suggested_size.get("size_hint")
-        if size_hint not in {"small", "medium", "large", "full_position"}:
-            size_hint = None
-
-        scope = _workspace_scope(identity)
-        claims = getattr(identity, "claims", None)
-        if not isinstance(claims, dict):
-            claims = identity.get("claims", {}) if isinstance(identity, dict) else {}
-        session_id = (claims or {}).get("session_id") if isinstance(claims, dict) else None
-
-        intent = TradingIntent(
-            intent_id=intent_id,
-            operator_id=str(scope["user_id"] or "unknown"),
-            session_id=session_id,
-            intent_type=self._intent_type_for_action(action),  # type: ignore[arg-type]
-            direction=self._direction_for_action(action, modifications),  # type: ignore[arg-type]
-            subject=TradingIntentSubject(**subject),
-            rationale=self._rationale_text(event, body.rationale),
-            size_hint=size_hint,
-            confidence=(event.get("confidence") or {}).get("value"),
-            linked_event_ids=[str(event["decision_event_id"])],
-            expressed_at=str(decision_record["decided_at"]),
-            metadata={
-                "decision_record_id": decision_record["decision_record_id"],
-                "decision": body.decision,
-                "x_request_id": x_request_id,
-                "source": "agora_trading_room",
-            },
-        )
-        return intent.model_dump(exclude_none=True)
-
+    def _intent_from_decision(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.service._intent_from_decision(**kwargs)
 
     # Public aliases for callers
     check_write_auth = _check_write_auth

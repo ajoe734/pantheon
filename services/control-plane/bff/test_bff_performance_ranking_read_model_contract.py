@@ -172,32 +172,9 @@ _PM12_FUNCS = None
 
 
 def _compile_pm12_namespace(store: Any) -> dict[str, Any]:
-    global _PM12_FUNCS
-    if _PM12_FUNCS is None:
-        main_path = Path(__file__).resolve().parent / "main.py"
-        tree = ast.parse(main_path.read_text(encoding="utf-8"))
-        target_names = {
-            "_management_record_id",
-            "_management_first_non_empty",
-            "_management_dict_value",
-            "_management_nested_dict",
-            "_management_position_records",
-            "_management_latest_timestamp",
-            "_management_link",
-            "_filter_by_common_identifiers",
-            "_extract_ids_from_item",
-            "_performance_ranking_source_surface",
-            "_list_strategy_summaries",
-        }
-        _PM12_FUNCS = [
-            n for n in tree.body
-            if isinstance(n, ast.FunctionDef)
-            and (
-                n.name.startswith("_pm12_")
-                or (n.name.startswith("_management_") and not n.name.startswith("_management_ai_"))
-                or n.name in target_names
-            )
-        ]
+    from functools import partial
+    import inspect
+    import services.control_plane.bff.personas.service as personas_service
 
     def _page_slice(items: Any, page_token: Any, page_size: int) -> tuple[Any, Any]:
         start = int(page_token) if page_token else 0
@@ -205,8 +182,12 @@ def _compile_pm12_namespace(store: Any) -> dict[str, Any]:
         next_page_token = str(end) if end < len(items) else None
         return items[start:end], next_page_token
 
+    def _aggregate_group_surface(surface_key, source_surfaces, *, snapshot_at, unavailable_message, degraded_message):
+        return {"status": "ok", "snapshot_at": snapshot_at, "source": "bff_composed", "available": True}
+
     ns = dict(__import__("typing").__dict__)
     ns.update({
+        "__package__": "services.control_plane.bff.pm12",
         "datetime": datetime,
         "date": datetime.date,
         "timezone": timezone,
@@ -218,7 +199,7 @@ def _compile_pm12_namespace(store: Any) -> dict[str, Any]:
         "_PM12_ATTRIBUTION_DIMENSIONS": ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
         "ops_read_model_sanitize_metric": lambda v: v,
         "_page_slice": _page_slice,
-        "_aggregate_group_surface": lambda surface_key, source_surfaces, *, snapshot_at, unavailable_message, degraded_message: {"status": "ok", "snapshot_at": snapshot_at, "source": "bff_composed", "available": True},
+        "_aggregate_group_surface": _aggregate_group_surface,
         "_snapshot_meta": lambda snapshot_at: {"snapshot_at": snapshot_at},
         "_management_as_float": _management_as_float,
         "_management_nested_value": _management_nested_value,
@@ -226,7 +207,20 @@ def _compile_pm12_namespace(store: Any) -> dict[str, Any]:
         "_management_telemetry_rollup": _management_telemetry_rollup,
         "_resolve_param": _resolve_param,
     })
-    exec(compile(ast.Module(body=_PM12_FUNCS, type_ignores=[]), "main_pm12.py", "exec"), ns)
+    pm12_tree = ast.parse((Path(__file__).resolve().parent / "pm12" / "service.py").read_text(encoding="utf-8"))
+    funcs = [
+        n for n in pm12_tree.body
+        if isinstance(n, ast.FunctionDef) and (n.name.startswith("_pm12_") or n.name.startswith("_management_"))
+    ]
+    exec(compile(ast.Module(body=funcs, type_ignores=[]), "main_pm12.py", "exec"), ns)
+    for attr, val in list(ns.items()):
+        if callable(val) and attr.startswith(("_pm12_", "_management_")):
+            try:
+                sig = inspect.signature(val)
+                if "read_store" in sig.parameters:
+                    ns[attr] = partial(val, read_store=store)
+            except Exception:
+                pass
     return ns
 
 

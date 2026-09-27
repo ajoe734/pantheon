@@ -49,8 +49,6 @@ log = logging.getLogger(__name__)
 def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
     router = APIRouter(tags=["personas"], dependencies=[make_context_dependency(ctx)])
 
-    read_store = ctx.read_store
-    command_store = ctx.command_store
     _service = ctx.service
     _extract_identity = ctx.extract_identity
     _require_read_role = ctx.require_read_role
@@ -78,7 +76,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
         snapshot_at = utc_now()
         persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-        persona = read_store.get_persona(persona_id)
+        persona = _service.get_persona(persona_id)
         if not persona:
             _raise_if_read_surface_unavailable(persona_surface, label="Persona")
             raise _bff_error(
@@ -88,7 +86,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                 f"Persona {persona_id} does not exist",
             )
 
-        sessions = read_store.list_sessions_for_persona(persona_id, status=status) or []
+        sessions = _service.list_sessions_for_persona(persona_id, status=status) or []
         return {
             "data": sessions,
             "meta": _read_surface_meta(
@@ -108,7 +106,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
         snapshot_at = utc_now()
         session_surface = _dataset_surface_status("sessions", snapshot_at=snapshot_at)
-        session = read_store.get_session(session_id)
+        session = _service.get_session(session_id)
         if not session:
             _raise_if_read_surface_unavailable(session_surface, label="Session")
             raise _bff_error(
@@ -118,9 +116,9 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                 f"Session {session_id} does not exist",
             )
 
-        snapshot = read_store.get_capability_snapshot(session.get("capability_snapshot_id"))
+        snapshot = _service.get_capability_snapshot(session.get("capability_snapshot_id"))
         if snapshot is None:
-            snapshot = read_store.get_capability_snapshot_for_persona(session.get("persona_id"))
+            snapshot = _service.get_capability_snapshot_for_persona(session.get("persona_id"))
 
         payload = dict(session)
         if snapshot:
@@ -149,7 +147,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
         snapshot_at = utc_now()
         persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-        persona = read_store.get_persona(persona_id)
+        persona = _service.get_persona(persona_id)
         if not persona:
             _raise_if_read_surface_unavailable(persona_surface, label="Persona")
             raise _bff_error(
@@ -159,7 +157,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                 f"Persona {persona_id} does not exist",
             )
 
-        sessions = read_store.list_teaching_sessions_for_persona(persona_id, status=status) or []
+        sessions = _service.list_teaching_sessions_for_persona(persona_id, status=status) or []
         return {
             "data": sessions,
             "meta": _read_surface_meta(

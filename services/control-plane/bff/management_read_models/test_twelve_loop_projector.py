@@ -1262,3 +1262,450 @@ class TestTwelveLoopProjectorReviewRegressions:
         }
         assert reloaded_rows[1]["correlation_id"] == forward_rows[1]["correlation_id"]
         assert reloaded_rows[1]["status"] == forward_rows[1]["status"]
+
+
+class TestTwelveLoopProjectorScopeAndStorage:
+    """Test explicit tenant and environment scope under LOOP-RECEIPT-SCOPE-STORAGE-001."""
+
+    def test_canonical_receipt_and_observation_explicit_scope(self) -> None:
+        """Scope is explicit on CanonicalLoopReceipt and LoopObservation, and never inferred from payload."""
+        now = _utc()
+        # Scope is supplied explicitly via trusted fields
+        receipt = CanonicalLoopReceipt(
+            receipt_id="rcpt-scoped-01",
+            receipt_type="terminal",
+            loop_id=1,
+            correlation_id="corr-01",
+            release_id="rel-01",
+            owner="source-ingest connector",
+            provenance="live",
+            tenant_id="tenant-alpha",
+            environment="production",
+            status="completed",
+            observed_at=now,
+            payload={"tenant_id": "malicious-inferred-tenant", "environment": "inferred-env"},
+        )
+        assert receipt.tenant_id == "tenant-alpha"
+        assert receipt.environment == "production"
+
+        # to_dict preserves scope
+        d = receipt.to_dict()
+        assert d["tenant_id"] == "tenant-alpha"
+        assert d["environment"] == "production"
+
+        # from_dict deserializes trusted scope fields, and ignores payload labels
+        receipt_deserialized = CanonicalLoopReceipt.from_dict({
+            "receipt_id": "rcpt-scoped-02",
+            "receipt_type": "stimulus",
+            "loop_id": 1,
+            "correlation_id": "corr-02",
+            "release_id": "rel-02",
+            "tenant_id": "tenant-beta",
+            "environment": "staging",
+            "payload": {"tenant_id": "ignored-payload-tenant"},
+        })
+        assert receipt_deserialized.tenant_id == "tenant-beta"
+        assert receipt_deserialized.environment == "staging"
+
+        # LoopObservation carries scope
+        obs = LoopObservation(
+            release_id="rel-01",
+            correlation_id="corr-01",
+            loop_id=1,
+            owner="source-ingest connector",
+            tenant_id="tenant-alpha",
+            environment="production",
+            status="complete",
+        )
+        assert obs.tenant_id == "tenant-alpha"
+        assert obs.environment == "production"
+        obs_dict = obs.to_dict()
+        assert obs_dict["tenant_id"] == "tenant-alpha"
+        assert obs_dict["environment"] == "production"
+
+    def test_cross_tenant_isolation_identical_keys(self) -> None:
+        """Tenants alpha and beta share release/correlation/loop keys without cross-tenant collision or visibility."""
+        store = MemoryTwelveLoopStore()
+        projector = TwelveLoopTruthProjector(store, auto_load=False)
+        now = _utc()
+
+        # Tenant Alpha: complete loop
+        alpha_stimulus = CanonicalLoopReceipt(
+            receipt_id="alpha-stim",
+            receipt_type="stimulus",
+            loop_id=2,
+            correlation_id="shared-corr",
+            release_id="shared-rel",
+            owner="distillation",
+            provenance="live",
+            tenant_id="tenant-alpha",
+            environment="production",
+            observed_at=now,
+        )
+        alpha_terminal = CanonicalLoopReceipt(
+            receipt_id="alpha-term",
+            receipt_type="terminal",
+            loop_id=2,
+            correlation_id="shared-corr",
+            release_id="shared-rel",
+            owner="distillation",
+            provenance="live",
+            tenant_id="tenant-alpha",
+            environment="production",
+            status="completed",
+            observed_at=now + timedelta(seconds=1),
+            causation_id="alpha-stim",
+        )
+        alpha_next = CanonicalLoopReceipt(
+            receipt_id="alpha-next",
+            receipt_type="next_consumer",
+            loop_id=2,
+            correlation_id="shared-corr",
+            release_id="shared-rel",
+            owner="alpha-rep",
+            provenance="live",
+            tenant_id="tenant-alpha",
+            environment="production",
+            status="accepted",
+            observed_at=now + timedelta(seconds=2),
+            causation_id="alpha-term",
+        )
+
+        # Tenant Beta: failed loop on SAME release and correlation
+        beta_stimulus = CanonicalLoopReceipt(
+            receipt_id="beta-stim",
+            receipt_type="stimulus",
+            loop_id=2,
+            correlation_id="shared-corr",
+            release_id="shared-rel",
+            owner="distillation",
+            provenance="live",
+            tenant_id="tenant-beta",
+            environment="production",
+            observed_at=now,
+        )
+        beta_terminal = CanonicalLoopReceipt(
+            receipt_id="beta-term",
+            receipt_type="terminal",
+            loop_id=2,
+            correlation_id="shared-corr",
+            release_id="shared-rel",
+            owner="distillation",
+            provenance="live",
+            tenant_id="tenant-beta",
+            environment="production",
+            status="failed",
+            observed_at=now + timedelta(seconds=1),
+            causation_id="beta-stim",
+        )
+
+        # Ingest Tenant Alpha receipts
+        projector.ingest_receipts([alpha_stimulus, alpha_terminal, alpha_next])
+        # Ingest Tenant Beta receipts
+        projector.ingest_receipts([beta_stimulus, beta_terminal])
+
+        # Verify Alpha observation is complete and isolated
+        obs_alpha = projector.get_observation("shared-rel", "shared-corr", 2, tenant_id="tenant-alpha", environment="production")
+        assert obs_alpha is not None
+        assert obs_alpha.status == "complete"
+        assert obs_alpha.tenant_id == "tenant-alpha"
+        assert obs_alpha.terminal_id == "alpha-term"
+        assert obs_alpha.next_consumer_receipt_id == "alpha-next"
+
+        # Verify Beta observation is failed and isolated
+        obs_beta = projector.get_observation("shared-rel", "shared-corr", 2, tenant_id="tenant-beta", environment="production")
+        assert obs_beta is not None
+        assert obs_beta.status == "failed"
+        assert obs_beta.tenant_id == "tenant-beta"
+        assert obs_beta.terminal_id == "beta-term"
+
+        # Store queries respect scope
+        alpha_receipts = store.list_receipts(tenant_id="tenant-alpha", environment="production")
+        assert len(alpha_receipts) == 3
+        assert all(r.tenant_id == "tenant-alpha" for r in alpha_receipts)
+
+        beta_receipts = store.list_receipts(tenant_id="tenant-beta", environment="production")
+        assert len(beta_receipts) == 2
+        assert all(r.tenant_id == "tenant-beta" for r in beta_receipts)
+
+    def test_cross_environment_isolation_identical_keys(self) -> None:
+        """Same tenant across production and staging environments are isolated."""
+        store = MemoryTwelveLoopStore()
+        projector = TwelveLoopTruthProjector(store, auto_load=False)
+        now = _utc()
+
+        prod_stim = CanonicalLoopReceipt(
+            receipt_id="prod-stim",
+            receipt_type="stimulus",
+            loop_id=5,
+            correlation_id="c-env",
+            release_id="r-env",
+            owner="agora",
+            provenance="live",
+            tenant_id="tenant-acme",
+            environment="production",
+            observed_at=now,
+        )
+        staging_stim = CanonicalLoopReceipt(
+            receipt_id="staging-stim",
+            receipt_type="stimulus",
+            loop_id=5,
+            correlation_id="c-env",
+            release_id="r-env",
+            owner="agora",
+            provenance="live",
+            tenant_id="tenant-acme",
+            environment="staging",
+            observed_at=now,
+        )
+        staging_term = CanonicalLoopReceipt(
+            receipt_id="staging-term",
+            receipt_type="terminal",
+            loop_id=5,
+            correlation_id="c-env",
+            release_id="r-env",
+            owner="agora",
+            provenance="live",
+            tenant_id="tenant-acme",
+            environment="staging",
+            status="failed",
+            observed_at=now + timedelta(seconds=1),
+        )
+
+        projector.ingest_receipt(prod_stim)
+        projector.ingest_receipts([staging_stim, staging_term])
+
+        obs_prod = projector.get_observation("r-env", "c-env", 5, tenant_id="tenant-acme", environment="production")
+        assert obs_prod is not None
+        assert obs_prod.status == "open"
+        assert obs_prod.environment == "production"
+
+        obs_staging = projector.get_observation("r-env", "c-env", 5, tenant_id="tenant-acme", environment="staging")
+        assert obs_staging is not None
+        assert obs_staging.status == "failed"
+        assert obs_staging.environment == "staging"
+
+    def test_cross_tenant_shared_receipt_id_allowed_and_within_scope_conflict_rejected(self) -> None:
+        """Shared receipt_id across different tenants is valid; within-scope conflict is rejected."""
+        store = MemoryTwelveLoopStore()
+        projector = TwelveLoopTruthProjector(store=store, all_scopes=True, auto_load=False)
+        now = _utc()
+
+        r1 = CanonicalLoopReceipt(
+            receipt_id="shared-uuid",
+            receipt_type="terminal",
+            loop_id=1,
+            correlation_id="corr-1",
+            release_id="rel-1",
+            owner="source-ingest",
+            provenance="live",
+            tenant_id="tenant-alpha",
+            environment="production",
+            status="completed",
+            observed_at=now,
+        )
+        r2 = CanonicalLoopReceipt(
+            receipt_id="shared-uuid",
+            receipt_type="terminal",
+            loop_id=1,
+            correlation_id="corr-1",
+            release_id="rel-1",
+            owner="source-ingest",
+            provenance="live",
+            tenant_id="tenant-beta",
+            environment="production",
+            status="completed",
+            observed_at=now,
+        )
+
+        # Ingestion across distinct scopes succeeds (valid cross-scope collision)
+        obs1 = projector.ingest_receipt(r1)
+        assert obs1.tenant_id == "tenant-alpha"
+        obs2 = projector.ingest_receipt(r2)
+        assert obs2.tenant_id == "tenant-beta"
+
+        # Within the SAME scope (tenant-alpha, production), conflicting receipt identity is rejected
+        r_conflict = CanonicalLoopReceipt(
+            receipt_id="shared-uuid",
+            receipt_type="stimulus",
+            loop_id=1,
+            correlation_id="corr-1",
+            release_id="rel-1",
+            owner="source-ingest",
+            provenance="live",
+            tenant_id="tenant-alpha",
+            environment="production",
+            observed_at=now,
+        )
+        with pytest.raises(ValueError, match="Conflicting receipt identity"):
+            projector.ingest_receipt(r_conflict)
+
+        # Two scoped projectors sharing store do not reject each other's stimulus
+        p_alpha = TwelveLoopTruthProjector(store=store, tenant_id="tenant-alpha", environment="production")
+        p_beta = TwelveLoopTruthProjector(store=store, tenant_id="tenant-beta", environment="production")
+        assert p_alpha.get_observation("rel-1", "corr-1", 1) is not None
+        assert p_beta.get_observation("rel-1", "corr-1", 1) is not None
+
+        # All-scopes rebuild succeeds without collision
+        rebuilt = projector.rebuild()
+        assert len(rebuilt) == 2
+
+    def test_projector_scoped_rejects_conflicting_receipt_scope(self) -> None:
+        """A projector configured for a specific tenant rejects receipts with mismatched tenant scope."""
+        projector = TwelveLoopTruthProjector(tenant_id="tenant-alpha", environment="production")
+        now = _utc()
+
+        wrong_tenant_receipt = CanonicalLoopReceipt(
+            receipt_id="rcpt-wrong-tenant",
+            receipt_type="stimulus",
+            loop_id=1,
+            correlation_id="c",
+            release_id="r",
+            owner="owner",
+            provenance="live",
+            tenant_id="tenant-beta",
+            environment="production",
+            observed_at=now,
+        )
+        with pytest.raises(ValueError, match="conflicts with projector scoped tenant"):
+            projector.ingest_receipt(wrong_tenant_receipt)
+
+    def test_project_twelve_canonical_loops_tenant_scoping(self) -> None:
+        """project_twelve_canonical_loops returns rows strictly matching target tenant and environment."""
+        projector = TwelveLoopTruthProjector()
+        now = _utc()
+
+        alpha_receipt = CanonicalLoopReceipt(
+            receipt_id="alpha-rcpt",
+            receipt_type="terminal",
+            loop_id=3,
+            correlation_id="c-loop",
+            release_id="r-loop",
+            owner="alpha-rep",
+            provenance="live",
+            tenant_id="tenant-alpha",
+            environment="production",
+            status="completed",
+            observed_at=now,
+        )
+        projector.ingest_receipt(alpha_receipt)
+
+        # Project for tenant-alpha
+        rows_alpha = projector.project_twelve_canonical_loops("r-loop", "c-loop", tenant_id="tenant-alpha", environment="production")
+        assert len(rows_alpha) == 12
+        row_3_alpha = next(r for r in rows_alpha if r["loop_id"] == 3)
+        assert row_3_alpha["tenant_id"] == "tenant-alpha"
+        assert row_3_alpha["environment"] == "production"
+        assert row_3_alpha["terminal_id"] == "alpha-rcpt"
+
+        # Project for tenant-beta on same release/correlation: loop 3 must be unobserved
+        rows_beta = projector.project_twelve_canonical_loops("r-loop", "c-loop", tenant_id="tenant-beta", environment="production")
+        assert len(rows_beta) == 12
+        row_3_beta = next(r for r in rows_beta if r["loop_id"] == 3)
+        assert row_3_beta["tenant_id"] == "tenant-beta"
+        assert row_3_beta["environment"] == "production"
+        assert row_3_beta["status"] == "unobserved"
+        assert row_3_beta["terminal_id"] is None
+
+    def test_scoped_rebuild_incremental_equivalence_multi_tenant(self) -> None:
+        """Incremental ingestion equals full rebuild across multiple tenants and environments."""
+        store = MemoryTwelveLoopStore()
+        projector = TwelveLoopTruthProjector(store, auto_load=False)
+        now = _utc()
+
+        receipts = [
+            CanonicalLoopReceipt("t1-s", "stimulus", 1, "c1", "r1", "owner", "live", tenant_id="t1", environment="prod", observed_at=now),
+            CanonicalLoopReceipt("t2-s", "stimulus", 1, "c1", "r1", "owner", "live", tenant_id="t2", environment="prod", observed_at=now),
+            CanonicalLoopReceipt("t1-t", "terminal", 1, "c1", "r1", "owner", "live", tenant_id="t1", environment="prod", status="completed", observed_at=now + timedelta(seconds=1), causation_id="t1-s"),
+            CanonicalLoopReceipt("t2-t", "terminal", 1, "c1", "r1", "owner", "live", tenant_id="t2", environment="prod", status="failed", observed_at=now + timedelta(seconds=1), causation_id="t2-s"),
+            CanonicalLoopReceipt("t1-n", "next_consumer", 1, "c1", "r1", "owner", "live", tenant_id="t1", environment="prod", status="accepted", observed_at=now + timedelta(seconds=2), causation_id="t1-t"),
+        ]
+
+        for r in receipts:
+            projector.ingest_receipt(r)
+
+        incremental_t1 = projector.get_observation("r1", "c1", 1, tenant_id="t1", environment="prod").to_dict()
+        incremental_t2 = projector.get_observation("r1", "c1", 1, tenant_id="t2", environment="prod").to_dict()
+
+        # Rebuild from scratch
+        projector.rebuild()
+        rebuilt_t1 = projector.get_observation("r1", "c1", 1, tenant_id="t1", environment="prod").to_dict()
+        rebuilt_t2 = projector.get_observation("r1", "c1", 1, tenant_id="t2", environment="prod").to_dict()
+
+        assert incremental_t1 == rebuilt_t1
+        assert incremental_t2 == rebuilt_t2
+        assert incremental_t1["status"] == "complete"
+        assert incremental_t2["status"] == "failed"
+
+    def test_validate_scope_fail_closed_on_partial_scope(self) -> None:
+        """validate_scope fails closed on partial scope or blank strings."""
+        from services.control_plane.bff.management_read_models.twelve_loop_projector import validate_scope
+
+        # Fully scoped is valid
+        validate_scope("tenant-1", "production")
+
+        # Fully unscoped is valid
+        validate_scope(None, None)
+
+        # all_scopes explicitly permitted
+        validate_scope(None, None, allow_all_scopes=True)
+
+        # Partial scope fails closed
+        with pytest.raises(ValueError, match="Partial caller scope is invalid"):
+            validate_scope("tenant-1", None)
+
+        with pytest.raises(ValueError, match="Partial caller scope is invalid"):
+            validate_scope(None, "production")
+
+        # Blank strings fail closed
+        with pytest.raises(ValueError, match="tenant_id cannot be empty or blank"):
+            validate_scope("", "production")
+
+        with pytest.raises(ValueError, match="environment cannot be empty or blank"):
+            validate_scope("tenant-1", "   ")
+
+    def test_unscoped_legacy_stimulus_does_not_reduce_with_scoped_receipts_in_memory(self) -> None:
+        """Unscoped legacy receipts and scoped receipts on same release/correlation/loop never cross-reduce."""
+        store = MemoryTwelveLoopStore()
+        projector = TwelveLoopTruthProjector(store, auto_load=False)
+        now = _utc()
+
+        # Ingest scoped complete loop
+        projector.ingest_receipts([
+            CanonicalLoopReceipt("rcpt-s-scoped", "stimulus", 1, "c-cross", "r-cross", "owner", "live", tenant_id="tenant-a", environment="prod", observed_at=now),
+            CanonicalLoopReceipt("rcpt-t-scoped", "terminal", 1, "c-cross", "r-cross", "owner", "live", tenant_id="tenant-a", environment="prod", status="completed", observed_at=now + timedelta(seconds=1), causation_id="rcpt-s-scoped"),
+            CanonicalLoopReceipt("rcpt-n-scoped", "next_consumer", 1, "c-cross", "r-cross", "owner", "live", tenant_id="tenant-a", environment="prod", status="accepted", observed_at=now + timedelta(seconds=2), causation_id="rcpt-t-scoped"),
+        ])
+
+        # Ingest legacy unscoped stimulus
+        obs_legacy = projector.ingest_receipt(
+            CanonicalLoopReceipt("rcpt-s-legacy", "stimulus", 1, "c-cross", "r-cross", "owner", "live", observed_at=now)
+        )
+
+        # Legacy observation MUST NOT pick up the scoped terminal receipt
+        assert obs_legacy.tenant_id is None
+        assert obs_legacy.environment is None
+        assert obs_legacy.status == "open"
+        assert obs_legacy.terminal_id is None
+        assert obs_legacy.stimulus_id == "rcpt-s-legacy"
+
+        # Scoped observation remains complete
+        obs_scoped = projector.get_observation("r-cross", "c-cross", 1, tenant_id="tenant-a", environment="prod")
+        assert obs_scoped is not None
+        assert obs_scoped.tenant_id == "tenant-a"
+        assert obs_scoped.environment == "prod"
+        assert obs_scoped.status == "complete"
+        assert obs_scoped.terminal_id == "rcpt-t-scoped"
+
+    def test_scoped_projector_rejects_unscoped_and_mismatched_receipts(self) -> None:
+        """A projector configured for a specific tenant & env rejects unscoped or mismatched receipts."""
+        projector = TwelveLoopTruthProjector(tenant_id="tenant-x", environment="prod")
+        now = _utc()
+
+        unscoped = CanonicalLoopReceipt("rcpt-unscoped", "stimulus", 1, "c", "r", "owner", "live", observed_at=now)
+        with pytest.raises(ValueError, match="conflicts with projector scoped tenant"):
+            projector.ingest_receipt(unscoped)
+
+        mismatched_env = CanonicalLoopReceipt("rcpt-bad-env", "stimulus", 1, "c", "r", "owner", "live", tenant_id="tenant-x", environment="staging", observed_at=now)
+        with pytest.raises(ValueError, match="conflicts with projector scoped environment"):
+            projector.ingest_receipt(mismatched_env)

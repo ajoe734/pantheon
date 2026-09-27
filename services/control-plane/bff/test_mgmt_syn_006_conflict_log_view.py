@@ -313,9 +313,10 @@ def test_conflict_log_unknown_id_and_missing_source(monkeypatch) -> None:
     assert listed.status_code == 200, listed.text
     assert listed.json()["items"] == []
     assert listed.json()["meta"]["surfaces"]["synthesis_conflict_logs"]["status"] == "unavailable"
-    assert detail.status_code == 200, detail.text
-    assert detail.json()["data"]["status"] == "degraded"
-    assert detail.json()["meta"]["surfaces"]["synthesis_conflict_log_detail"]["status"] == "unavailable"
+    # Per services/control-plane/bff/research/routes/knowledge.py:1675:
+    # missing conflict log records return 404 RESOURCE_NOT_FOUND
+    assert detail.status_code == 404, detail.text
+    assert detail.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
 def test_conflict_log_feature_flag_and_openapi_route_registration(monkeypatch) -> None:

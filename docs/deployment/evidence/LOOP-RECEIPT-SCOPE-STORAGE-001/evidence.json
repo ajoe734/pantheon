@@ -1,0 +1,79 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "LOOP-RECEIPT-SCOPE-STORAGE-001",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "base_ref": "dev@3bb04edb292a171457c49bc608104c3d2174e704",
+  "depends_on": {
+    "LOOP-TRUTH-001": "done",
+    "BFF-TEST-PREEXISTING-FAILURE-TRIAGE-001": "done"
+  },
+  "normative_plan": "Audit at /tmp/pantheon-dependency-audit-20260927/REPORT.zh-TW.md; narrow implementation prerequisite extracted from LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001; re-opened to resolve Codex2 review defects",
+  "implementation": {
+    "files_modified": [
+      "services/control-plane/bff/migrations/003_scope_twelve_loop_truth_receipts.sql",
+      "services/control-plane/bff/migrations/twelve_loop_truth.py",
+      "services/control-plane/bff/management_read_models/twelve_loop_projector.py",
+      "services/control-plane/bff/management_read_models/test_twelve_loop_projector.py",
+      "services/control-plane/bff/migrations/test_twelve_loop_truth.py",
+      "docs/deployment/evidence/LOOP-RECEIPT-SCOPE-STORAGE-001/evidence.json"
+    ],
+    "summary": "Scope existing twelve-loop receipt schema and durable store with explicit tenant_id and environment before producer/read integration. Preserves honest legacy unscoped rows without invented provenance, enforces zero cross-tenant leakage, isolates unscoped legacy reduction from scoped partitions, provides non-lossy 002 rollback and pre-003 source compatibility, and establishes fresh-process restart and rebuild equivalence.",
+    "current_fix": "Resolved Codex2 review rejection P1 (1)-(3) acceptance defects: (1) Scoped TwelveLoopProjector._receipts cache identity by (tenant_id, environment, receipt_id) and bound both store.get_receipt lookups (pre-check and post-persist verification) to receipt scope. Allows distinct scoped projectors sharing PostgreSQL to process identical event IDs across tenants without cross-scope collision, ensures cold replay (auto_load=False) resolves the matching scoped partition without legacy NULL-scope collision, while preserving wrong-caller-scope and within-scope release/correlation/loop/type conflict rejection. (2) TwelveLoopStore.get_receipt (Memory and Postgres sync/async) now defaults to all_scopes=False and validates caller scope at entrance, failing closed (ValueError) on partial scope, protecting tenant receipts from unscoped callers, and querying exact legacy rows when unscoped. (3) 003_scope_twelve_loop_truth_receipts.sql backup restoration DO block checks all receipt semantic fields (receipt_type, loop_id, correlation_id, release_id, owner, provenance, status, observed_at, degradation_reason, causation_id, payload) and all 15 observation semantic fields against backup tables using IS DISTINCT FROM, failing closed and preserving backup tables transactionally on any semantic difference.",
+    "regressions": "PostgreSQL migration 002-to-003 upgrade and honest legacy row preservation, unscoped legacy reduction isolation from tenant receipts, non-lossy rollback to 002 and pre-003 source compatibility, pre-003 replay of identical receipt ID during rollback without data loss, fresh-process child-process restart and rebuild equivalence, multi-tenant streaming, cross-tenant collision allowance across isolated scopes, within-scope collision rejection, out-of-order delivery with provenance fencing, and fail-closed full-semantic backup restoration on conflicting content.",
+    "boundary": "Scoped receipt schema, storage, and read models only; no hosted deployment, no production-data migration, no credential changes, no second store or projector.",
+    "rollback_plan": "Execute rollback_to_002_schema_sync() or await rollback_to_002_schema(): archives scoped receipts to loop_receipts_scoped_backup, archives scoped observations to twelve_loop_observations_scoped_backup, drops scoped indexes, and restores twelve_loop_observations_pkey on (release_id, correlation_id, loop_id) and loop_receipts_pkey on (receipt_id). Allows pre-003 store and projector code to run with complete receipt and observation isolation without UniqueViolation or InvalidColumnReference. Forward re-migration 003 automatically restores all backed-up scoped receipts and observations without data loss, failing closed on conflicting content."
+  },
+  "verification": {
+    "tested_at_utc": "2026-09-27T19:34:00Z",
+    "collection": "Every listed batch was run in bounded foreground execution and terminal exit status was collected.",
+    "commands": [
+      {
+        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon .venv-pantheon/bin/python -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py services/control-plane/bff/management_read_models/test_twelve_loop_projector.py services/control-plane/bff/tests/test_management_read_models_router.py -q",
+        "exit_code": 0,
+        "result": "138 passed, 3 warnings in 253.74s",
+        "passed": 138,
+        "failed": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python /tmp/loop-scope-review-722305ed.py",
+        "exit_code": 0,
+        "result": "scoped receipt count after restore: 3 expected: 3; backup table: None; persisted complete; fresh projector complete"
+      },
+      {
+        "command": ".venv-pantheon/bin/python /tmp/loop-scope-review-6bd9c2c2.py",
+        "exit_code": 1,
+        "result": "AssertionError: Expected reviewed identity defect did not reproduce (cross-tenant collision allowed, unscoped/partial-scope calls fail closed, full semantic restore preserved)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python /tmp/loop-scope-cold-replay-6bd9c2c2.py",
+        "exit_code": 1,
+        "result": "AssertionError: Expected cold replay defect did not reproduce (cold replay with auto_load=False succeeds without legacy row collision)"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "result": "clean, no whitespace errors"
+      }
+    ],
+    "limitations": [
+      "Parent LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001 retains all genuine producer ingestion and mounted authenticated read wiring and 12-loop coverage.",
+      "No hosted deployment or live/capital-affecting write was performed; verification conducted against isolated containerized PostgreSQL 16."
+    ]
+  },
+  "acceptance_check": {
+    "scoped_schema_migration_003": "Forward migration 003 declared and validated; honest handling of legacy rows with NULLS NOT DISTINCT unique indexes on receipts and observations",
+    "zero_cross_tenant_leakage": "Scoped queries never return legacy or foreign-tenant rows; verified in test_postgres_scoped_migration_and_honest_legacy_handling",
+    "unscoped_legacy_reduction_isolation": "Legacy unscoped receipts never reduce with scoped receipts at same key; verified in test_postgres_unscoped_legacy_reduction_isolated_from_scoped_receipts and test_unscoped_legacy_stimulus_does_not_reduce_with_scoped_receipts_in_memory",
+    "non_lossy_rollback_and_pre003_compat": "Non-lossy rollback archives scoped rows to backup tables, drops scoped indexes, and restores 002 pkeys on receipts and observations; pre-003 replay of identical receipt IDs preserves both scoped and unscoped receipts on re-upgrade without data loss; verified in test_postgres_non_lossy_rollback_to_002_and_pre003_source_compatibility, test_postgres_async_non_lossy_rollback_to_002_and_pre003_source_compatibility, and test_postgres_fresh_process_rollback_pre003_replay_and_reupgrade",
+    "fail_closed_conflicting_restoration": "Forward migration fails closed when any semantic field differs between active and backup tables, preserving backup tables; verified in test_postgres_forward_migration_fails_closed_on_conflicting_content_preserving_backup, test_postgres_async_forward_migration_fails_closed_on_conflicting_content_preserving_backup, and observation conflict tests",
+    "durable_store_and_rebuild_equivalence": "Multi-tenant streaming, fresh child-process restart, and incremental-vs-rebuild equivalence verified in test_postgres_fresh_process_restart_and_rebuild_equivalence and test_postgres_fresh_process_rollback_pre003_replay_and_reupgrade",
+    "collision_and_tampering_rejection": "Conflicting receipt identity and scope mismatches rejected with ValueError; within-scope collisions rejected while cross-scope independent collisions allowed; verified in unit and postgres integration tests",
+    "out_of_order_and_provenance_fencing": "Provenance fencing and out-of-order receipt reduction preserved under scope; verified in test_postgres_scoped_out_of_order_and_provenance_fencing",
+    "independent_review": "pending Codex2 exact-head review"
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "decision": "pending independent exact-head review; no approval claimed"
+  }
+}
