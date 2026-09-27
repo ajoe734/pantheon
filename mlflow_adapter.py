@@ -10,7 +10,7 @@ class MLflowRegistryAdapter:
     def __init__(self, tracking_uri: str, experiment_name: str = "pantheon-strategies"):
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment(experiment_name)
-        self.version_pin = "2.11.0"  # Per OSS_INTEGRATION_CHECKLIST.md
+        self.version_pin = "3.16.1"
 
     def log_registry_entry(self, entry: Dict[str, Any], metrics: Dict[str, float] = None):
         """Logs a REG-001 registry entry as an MLflow run."""
