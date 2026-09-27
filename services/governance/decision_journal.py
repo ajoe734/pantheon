@@ -598,6 +598,12 @@ def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores
 
     base = Path(data_dir)
     backend = resolve_decision_journal_backend()
+    required_backend = os.getenv("PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND")
+    if required_backend and backend != required_backend:
+        raise ValueError(
+            "Decision Journal backend does not match PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND; "
+            "packaged consumers require the shared Postgres authority, not a separate local JSON writer"
+        )
     # Resolve DSN and bootstrap flag once so every store uses the same contract.
     dsn: Optional[str] = None
     bootstrap: bool = True

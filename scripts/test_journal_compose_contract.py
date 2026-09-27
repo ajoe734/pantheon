@@ -52,6 +52,7 @@ def validate_compose_contract(repo_root: Path = ROOT) -> dict:
         assert env["GOVERNANCE_STORE_BACKEND"] == "postgres"
         assert env["GOVERNANCE_STORE_DSN"] == rendered["services"]["governance"]["environment"]["DATABASE_URL"]
         assert env["GOVERNANCE_STORE_BOOTSTRAP"] == "1"
+        assert env["PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND"] == "postgres"
         assert env["PANTHEON_DECISION_JOURNAL_DATA_DIR"] == "/data/bff/decision_journal"
         assert "PANTHEON_BFF_DECISION_JOURNAL_STORE" not in env
         mounts = {row["target"]: row for row in bff["volumes"]}
@@ -105,6 +106,7 @@ def runtime_contract(rendered: dict, bff_image: str) -> None:
                         "-e", "RANKING_STORE_BOOTSTRAP=0",
                         "-e", "PANTHEON_STRATEGY_STORE_BOOTSTRAP=0"]
                 for key in ("GOVERNANCE_STORE_BACKEND", "GOVERNANCE_STORE_DSN", "GOVERNANCE_STORE_BOOTSTRAP",
+                            "PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND",
                             "PANTHEON_DECISION_JOURNAL_DATA_DIR", "PANTHEON_GOVERNANCE_DATA_DIR"):
                     value = bff_env[key]
                     if key == "GOVERNANCE_STORE_DSN":

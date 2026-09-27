@@ -397,6 +397,15 @@ class TestJournalRuntimeContract(unittest.TestCase):
                 self.assertIs(app.state.decision_journal_write_owner, owner)
                 self.assertEqual(owner.stores.idempotency.list_all(), [])
 
+    def test_packaged_json_override_cannot_create_second_authority(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            "GOVERNANCE_STORE_BACKEND": "json", "AGORA_GOVERNANCE_STORE_BACKEND": "json",
+            "PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND": "postgres",
+        }, clear=True):
+            with self.assertRaisesRegex(ValueError, "shared Postgres authority"):
+                build_decision_journal_stores(tmp)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
     def test_legacy_dsn_alone_is_rejected_without_local_fallback(self):
         with patch.dict(os.environ, {"AGORA_GOVERNANCE_STORE_DSN": "postgresql://unused"}, clear=True):
             with self.assertRaisesRegex(ValueError, "configure GOVERNANCE_STORE_DSN"):
