@@ -21,6 +21,11 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+try:
+    from services.research.quantlib.adapter import price_european
+except ImportError:
+    from adapter import price_european
+
 TASK_ID = "OSS-QUANTLIB-V2-001"
 BACKEND_ID = "quantlib_production_option_chain"
 CODE_VERSION = "pantheon:services/research/quantlib@OSS-QUANTLIB-V2-001"
@@ -346,42 +351,16 @@ def _black_scholes_merton(
     tenor: float,
     call_put: CallPut,
 ) -> dict[str, float]:
-    sqrt_t = math.sqrt(tenor)
-    discount_rate = math.exp(-rate * tenor)
-    discount_dividend = math.exp(-dividend_yield * tenor)
-    d1 = (
-        math.log(spot / strike)
-        + (rate - dividend_yield + 0.5 * vol * vol) * tenor
-    ) / (vol * sqrt_t)
-    d2 = d1 - vol * sqrt_t
-    pdf_d1 = _norm_pdf(d1)
-
-    if call_put == "call":
-        price = spot * discount_dividend * _norm_cdf(d1) - strike * discount_rate * _norm_cdf(d2)
-        delta = discount_dividend * _norm_cdf(d1)
-        theta_annual = (
-            -(spot * discount_dividend * pdf_d1 * vol) / (2.0 * sqrt_t)
-            - rate * strike * discount_rate * _norm_cdf(d2)
-            + dividend_yield * spot * discount_dividend * _norm_cdf(d1)
-        )
-    else:
-        price = strike * discount_rate * _norm_cdf(-d2) - spot * discount_dividend * _norm_cdf(-d1)
-        delta = discount_dividend * (_norm_cdf(d1) - 1.0)
-        theta_annual = (
-            -(spot * discount_dividend * pdf_d1 * vol) / (2.0 * sqrt_t)
-            + rate * strike * discount_rate * _norm_cdf(-d2)
-            - dividend_yield * spot * discount_dividend * _norm_cdf(-d1)
-        )
-
-    gamma = discount_dividend * pdf_d1 / (spot * vol * sqrt_t)
-    vega = spot * discount_dividend * pdf_d1 * sqrt_t
-    return {
-        "price": price,
-        "delta": delta,
-        "gamma": gamma,
-        "vega": vega,
-        "theta": theta_annual / 365.0,
-    }
+    """Unified numerical Black-Scholes-Merton option pricing via QuantLib."""
+    return price_european(
+        spot=spot,
+        strike=strike,
+        rate=rate,
+        vol=vol,
+        tenor=tenor,
+        option_type=call_put,
+        dividend_yield=dividend_yield,
+    )
 
 
 def _build_registry_entry(

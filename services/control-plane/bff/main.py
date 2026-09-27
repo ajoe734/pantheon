@@ -546,6 +546,7 @@ agora_audit_store = AgoraAuditStore()
 persona_write_owner = app_deps.persona_write_owner
 ranking_write_owner = app_deps.ranking_write_owner
 strategy_write_owner = app_deps.strategy_write_owner
+decision_journal_write_owner = app_deps.decision_journal_write_owner
 persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutationPort(
     persona_mutation_port=persona_write_owner,
 )
