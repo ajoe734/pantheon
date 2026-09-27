@@ -162,7 +162,13 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
 
     @property
     def read_only(self) -> bool:
+        if getattr(self, "_read_only_override", None) is not None:
+            return bool(self._read_only_override)
         return _read_only_filesystem(self.storage_path.parent)
+
+    @read_only.setter
+    def read_only(self, value: bool) -> None:
+        self._read_only_override = bool(value)
 
     def _read_snapshot(self, read: Callable[[], _ReadResult]) -> _ReadResult:
         def refreshed() -> _ReadResult:
