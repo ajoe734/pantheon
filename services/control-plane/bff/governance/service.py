@@ -28,6 +28,14 @@ from typing import (
     Union,
 )
 
+from ..models import (
+    _resolve_evidence_kind_and_capability,
+    fail_closed_redacted_refs,
+    safe_redact_evidence_refs,
+    safe_redact_scalar_ref,
+    EVIDENCE_CAPABILITY_MAP,
+)
+
 
 class ApprovalQueueReaderPort(Protocol):
     """Typed read port protocol for approval queue items."""
@@ -291,27 +299,21 @@ class GovernanceService:
 
     @staticmethod
     def _fail_closed_redact_evidence_refs(
-        identity: Any, refs: List[Dict[str, Any]], *, capabilities: Any = None
+        identity: Any, refs: List[Dict[str, Any]], *, capabilities: Any = None, **kwargs: Any
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Default used only when no canonical redaction policy is wired.
 
         Without the canonical evidence-kind/capability mapping owner, this
         default cannot verify that any individual evidence ref is safe to
         disclose, so it withholds all evidence rather than defaulting to
-        open disclosure.
+        open disclosure. Delegates to the shared ``models.fail_closed_redacted_refs``
+        so this fallback and ``safe_redact_evidence_refs``'s own fallback
+        report the same ``required_capability`` for a ref whose kind is known.
         """
         del identity, capabilities
-        redacted: List[Dict[str, Any]] = []
-        for ref in refs:
-            ref_id = str(ref.get("ref_id") or ref.get("id") or "") if isinstance(ref, dict) else str(ref)
-            redacted.append(
-                {
-                    "ref_id": ref_id,
-                    "redacted": True,
-                    "reason": "redaction_policy_unavailable",
-                }
-            )
-        return redacted, len(redacted)
+        default_kind = kwargs.get("default_kind")
+        kind_map = kwargs.get("kind_map")
+        return fail_closed_redacted_refs(refs, default_kind=default_kind, kind_map=kind_map)
 
     def _safe_dataset_surface_status(
         self, dataset: str, *, snapshot_at: str, source: Optional[str] = None, **kwargs: Any
@@ -670,6 +672,134 @@ class GovernanceService:
         snap = snapshot_at or self.utc_now()
         surface_state = self._committee_surface_state(committee, snapshot_at=snap)
         allowed_actions = self._committee_allowed_actions(committee, identity=identity, surface_state=surface_state)
+
+        raw_linked = copy.deepcopy(committee.get("linked_evidence") or [])
+        linked_evidence, linked_count = safe_redact_evidence_refs(
+            identity,
+            raw_linked,
+            redact_fn=self.redact_evidence_refs,
+            capabilities_fn=self.capabilities_for_identity,
+        )
+
+        ref_kind_map: Dict[str, str] = {}
+
+        def _register_ref(r: Any) -> None:
+            if isinstance(r, dict):
+                ref_id = str(r.get("id") or r.get("ref_id") or "").strip()
+                art_ref = str(r.get("artifact_ref") or "").strip()
+                kind_key, _, req_cap = _resolve_evidence_kind_and_capability(r)
+                if req_cap and kind_key in EVIDENCE_CAPABILITY_MAP:
+                    if ref_id:
+                        ref_kind_map[ref_id] = kind_key
+                    if art_ref:
+                        ref_kind_map[art_ref] = kind_key
+
+        for raw_ref in raw_linked:
+            _register_ref(raw_ref)
+
+        raw_handoff = committee.get("service_handoff") or {}
+        for raw_ref in (raw_handoff.get("evidence_refs") or []):
+            _register_ref(raw_ref)
+
+        raw_synth = committee.get("synthesis_summary") or {}
+        _register_ref(raw_synth.get("rationale_ref"))
+
+        raw_roster = committee.get("participant_roster") or []
+        if isinstance(raw_roster, list):
+            for p in raw_roster:
+                if isinstance(p, dict):
+                    _register_ref(p.get("rationale_ref"))
+
+        raw_sponsor = committee.get("sponsor_assignment") or {}
+        if isinstance(raw_sponsor, dict):
+            _register_ref(raw_sponsor.get("rationale_ref"))
+
+        synthesis_summary = copy.deepcopy(committee.get("synthesis_summary") or {})
+        synth_count = 0
+        if isinstance(synthesis_summary.get("evidence_refs"), list) and synthesis_summary["evidence_refs"]:
+            redacted_synth_refs, synth_count = safe_redact_evidence_refs(
+                identity,
+                synthesis_summary["evidence_refs"],
+                redact_fn=self.redact_evidence_refs,
+                capabilities_fn=self.capabilities_for_identity,
+                kind_map=ref_kind_map,
+            )
+            synthesis_summary["evidence_refs"] = redacted_synth_refs
+
+        synth_rationale_count = 0
+        if synthesis_summary.get("rationale_ref"):
+            redacted_rat, synth_rationale_count = safe_redact_scalar_ref(
+                identity,
+                synthesis_summary["rationale_ref"],
+                redact_fn=self.redact_evidence_refs,
+                capabilities_fn=self.capabilities_for_identity,
+                kind_map=ref_kind_map,
+            )
+            if synth_rationale_count > 0:
+                synthesis_summary["rationale_ref"] = redacted_rat
+
+        service_handoff = copy.deepcopy(committee.get("service_handoff") or {})
+        handoff_ev_count = 0
+        handoff_audit_count = 0
+        if isinstance(service_handoff.get("evidence_refs"), list) and service_handoff["evidence_refs"]:
+            redacted_handoff_ev, handoff_ev_count = safe_redact_evidence_refs(
+                identity,
+                service_handoff["evidence_refs"],
+                redact_fn=self.redact_evidence_refs,
+                capabilities_fn=self.capabilities_for_identity,
+                kind_map=ref_kind_map,
+            )
+            service_handoff["evidence_refs"] = redacted_handoff_ev
+        if isinstance(service_handoff.get("audit_refs"), list) and service_handoff["audit_refs"]:
+            redacted_handoff_audit, handoff_audit_count = safe_redact_evidence_refs(
+                identity,
+                service_handoff["audit_refs"],
+                redact_fn=self.redact_evidence_refs,
+                capabilities_fn=self.capabilities_for_identity,
+                default_kind="audit",
+            )
+            service_handoff["audit_refs"] = redacted_handoff_audit
+
+        participant_roster = copy.deepcopy(committee.get("participant_roster") or [])
+        roster_rationale_count = 0
+        if isinstance(participant_roster, list):
+            for participant in participant_roster:
+                if isinstance(participant, dict) and participant.get("rationale_ref"):
+                    redacted_rat, r_count = safe_redact_scalar_ref(
+                        identity,
+                        participant["rationale_ref"],
+                        redact_fn=self.redact_evidence_refs,
+                        capabilities_fn=self.capabilities_for_identity,
+                        kind_map=ref_kind_map,
+                    )
+                    if r_count > 0:
+                        participant["rationale_ref"] = redacted_rat
+                        roster_rationale_count += r_count
+
+        sponsor_assignment = copy.deepcopy(committee.get("sponsor_assignment") or {})
+        sponsor_rationale_count = 0
+        if isinstance(sponsor_assignment, dict) and sponsor_assignment.get("rationale_ref"):
+            redacted_rat, sp_count = safe_redact_scalar_ref(
+                identity,
+                sponsor_assignment["rationale_ref"],
+                redact_fn=self.redact_evidence_refs,
+                capabilities_fn=self.capabilities_for_identity,
+                kind_map=ref_kind_map,
+            )
+            if sp_count > 0:
+                sponsor_assignment["rationale_ref"] = redacted_rat
+                sponsor_rationale_count += sp_count
+
+        total_redacted = (
+            linked_count
+            + synth_count
+            + synth_rationale_count
+            + handoff_ev_count
+            + handoff_audit_count
+            + roster_rationale_count
+            + sponsor_rationale_count
+        )
+
         return {
             "committee_id": committee.get("committee_id"),
             "committee_ref": committee.get("committee_ref"),
@@ -679,18 +809,19 @@ class GovernanceService:
             "escalation_reason": copy.deepcopy(committee.get("escalation_reason") or {}),
             "quorum_state": committee.get("quorum_state"),
             "consensus_state": committee.get("consensus_state"),
-            "participant_roster": copy.deepcopy(committee.get("participant_roster") or []),
-            "sponsor_assignment": copy.deepcopy(committee.get("sponsor_assignment") or {}),
+            "participant_roster": participant_roster,
+            "sponsor_assignment": sponsor_assignment,
             "sponsor_decision": committee.get("sponsor_decision"),
             "sponsor_decided_at": committee.get("sponsor_decided_at"),
             "sponsor_decided_by": committee.get("sponsor_decided_by"),
-            "synthesis_summary": copy.deepcopy(committee.get("synthesis_summary") or {}),
-            "linked_evidence": copy.deepcopy(committee.get("linked_evidence") or []),
-            "service_handoff": copy.deepcopy(committee.get("service_handoff") or {}),
+            "synthesis_summary": synthesis_summary,
+            "linked_evidence": linked_evidence,
+            "service_handoff": service_handoff,
             "allowedActions": allowed_actions,
             "meta": {
                 "snapshot_at": snap,
                 "surfaces": {"committee_board": surface_state},
+                "redacted_evidence_count": total_redacted,
             },
         }
 

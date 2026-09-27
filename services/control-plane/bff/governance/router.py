@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
+from ..models import safe_redact_evidence_refs
 from .service import GovernanceService, SubmitAction, page_slice, split_csv, utc_now_rfc3339
 
 
@@ -161,16 +162,9 @@ def create_governance_router(
     _read_surface_state = read_surface_state or (lambda: "fresh")
 
     def _safe_redact(identity: Any, refs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
-        try:
-            caps = _capabilities(identity)
-        except Exception:
-            caps = None
-        if caps is None:
-            caps = []
-        try:
-            return _redact(identity, refs, capabilities=caps)
-        except Exception:
-            return GovernanceService._fail_closed_redact_evidence_refs(identity, refs, capabilities=[])
+        return safe_redact_evidence_refs(
+            identity, refs, redact_fn=_redact, capabilities_fn=_capabilities
+        )
 
     def _redact_review_queue_items(
         identity: Any, items: List[Dict[str, Any]]
