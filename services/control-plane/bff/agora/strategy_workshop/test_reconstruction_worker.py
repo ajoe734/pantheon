@@ -13,16 +13,9 @@ from typing import Any, Dict, Optional
 
 import pytest
 
-_BFF_DIR = Path(__file__).resolve().parents[2]
-if str(_BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(_BFF_DIR))
-_CONTROL_PLANE_DIR = Path(__file__).resolve().parents[3]
-if str(_CONTROL_PLANE_DIR) not in sys.path:
-    sys.path.insert(0, str(_CONTROL_PLANE_DIR))
-
-from agora.strategy_workshop.operations import CanonicalOperationError
-from agora.strategy_workshop.runner import reconstruction_card_id, run_reconstruction_worker
-from agora.strategy_workshop.store import MemoryWorkshopStore
+from services.control_plane.bff.agora.strategy_workshop.operations import CanonicalOperationError
+from services.control_plane.bff.agora.strategy_workshop.runner import reconstruction_card_id, run_reconstruction_worker
+from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
 
 
 class _NoRegistryOperations:
