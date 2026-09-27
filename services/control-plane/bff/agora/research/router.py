@@ -51,6 +51,7 @@ def create_research_router(
     workshop_store: Any = None,
     dataset_store: Any = None,
     adapter_registry: Optional[Any] = None,
+    service: Optional[Any] = None,
 ) -> APIRouter:
     """Build and return the Agora research APIRouter with strict write role and tenant isolation."""
     store = research_plan_store if research_plan_store is not None else make_research_plan_store()
@@ -72,6 +73,16 @@ def create_research_router(
         utc_now=utc_now,
         dataset_store=dataset_store,
     )
+    if service is None:
+        from .service import AgoraResearchService
+        service = AgoraResearchService(
+            store=store,
+            dispatcher=dispatcher,
+            workshop_store=workshop_store,
+            dataset_store=dataset_store,
+            utc_now=utc_now,
+            bff_error=bff_error,
+        )
     ctx = AgoraResearchRouteContext(
         extract_identity=extract_identity,
         require_read_role=require_read_role,
@@ -82,6 +93,7 @@ def create_research_router(
         dispatcher=dispatcher,
         workshop_store=workshop_store,
         dataset_store=dataset_store,
+        service=service,
     )
     router = APIRouter(tags=["agora-research"])
     router.routes.extend(build_candidates_router(ctx).routes)
@@ -90,4 +102,5 @@ def create_research_router(
     router.store = store
     router.dispatcher = dispatcher
     router.adapter_registry = adapter_registry
+    router.service = service
     return router

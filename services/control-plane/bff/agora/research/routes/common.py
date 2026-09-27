@@ -1314,18 +1314,6 @@ def _resolve_originating_correlation(
         return str(correlation_id).strip()
 
     store = workshop_store
-    if store is None:
-        try:
-            import main as bff_main
-            store = getattr(bff_main, "workshop_store", None)
-        except Exception:
-            store = None
-    if store is None:
-        try:
-            from services.control_plane.bff import main as bff_main
-            store = getattr(bff_main, "workshop_store", None)
-        except Exception:
-            store = None
 
     if workshop_id and store is not None and hasattr(store, "list_events"):
         try:
@@ -1567,6 +1555,19 @@ class AgoraResearchRouteContext:
     dispatcher: Optional[ResearchDispatcher] = None
     workshop_store: Optional[Any] = None
     dataset_store: Optional[Any] = None
+    service: Optional[Any] = None
+
+    def __post_init__(self) -> None:
+        if self.service is None and self.store is not None:
+            from ..service import AgoraResearchService
+            self.service = AgoraResearchService(
+                store=self.store,
+                dispatcher=self.dispatcher,
+                workshop_store=self.workshop_store,
+                dataset_store=self.dataset_store,
+                utc_now=self.utc_now,
+                bff_error=self.bff_error,
+            )
 
     def error_code_enum(self) -> Any:
         try:
@@ -1673,10 +1674,7 @@ class AgoraResearchRouteContext:
             )
 
     def check_idempotency(self, scope: Any, endpoint: str, key: str) -> None:
-        scope_str = f"{scope.user_id}:{scope.tenant_id}:{endpoint}"
-        if self.store.check_and_record_idempotency_key(scope_str, key):
-            ErrorCode = self.error_code_enum()
-            raise self.bff_error(409, ErrorCode.IDEMPOTENCY_CONFLICT, "Duplicate Idempotency-Key", key)
+        self.service.check_idempotency(scope, endpoint, key)
 
     def require_if_match(self, header: Optional[str]) -> None:
         if header is None:
@@ -1712,290 +1710,26 @@ class AgoraResearchRouteContext:
             )
 
     def get_plan_or_404(self, plan_id: str, scope: Any) -> Dict[str, Any]:
-        plan = self.store.get_plan(plan_id)
-        if plan is None or (plan.get("tenant_id") and plan.get("tenant_id") != scope.tenant_id) or (plan.get("user_id") and plan.get("user_id") != scope.user_id):
-            ErrorCode = self.error_code_enum()
-            raise self.bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research plan not found", plan_id)
-        return plan
+        return self.service.get_plan_or_404(plan_id, scope=scope)
 
     def get_run_or_404(self, run_id: str, scope: Any) -> Dict[str, Any]:
-        run = self.store.get_run(run_id)
-        if run is None or (run.get("tenant_id") and run.get("tenant_id") != scope.tenant_id) or (run.get("user_id") and run.get("user_id") != scope.user_id):
-            ErrorCode = self.error_code_enum()
-            raise self.bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research run not found", run_id)
-        return run
+        return self.service.get_run_or_404(run_id, scope=scope)
 
     def get_candidate_pool_or_404(self, pool_id: str) -> Dict[str, Any]:
-        pool = self.store.get_candidate_pool(pool_id)
-        if pool is None:
-            ErrorCode = self.error_code_enum()
-            raise self.bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate pool not found", pool_id)
-        return pool
+        return self.service.get_candidate_pool_or_404(pool_id)
 
     def require_pool_access(self, pool: Dict[str, Any], scope: Any) -> None:
-        if pool.get("tenant_id") != scope.tenant_id or pool.get("user_id") != scope.user_id:
-            ErrorCode = self.error_code_enum()
-            raise self.bff_error(403, ErrorCode.FORBIDDEN, "Candidate pool not owned by caller", pool["pool_id"])
+        self.service.require_pool_access(pool, scope)
 
     def get_member_or_404(self, pool_id: str, artifact_id: str) -> Dict[str, Any]:
-        member = self.store.get_candidate_member(pool_id, artifact_id)
-        if member is None:
-            ErrorCode = self.error_code_enum()
-            raise self.bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate pool member not found", artifact_id)
-        return member
+        return self.service.get_member_or_404(pool_id, artifact_id)
 
     def publish_research_event(self, workshop_id: str, event_type: str, data: Dict[str, Any]) -> None:
         publisher = _resolve_workshop_publisher()
         publisher(workshop_id, event_type, data, utc_now_fn=self.utc_now)
 
     def build_candidate_pool(self, body: CandidatePoolCreateRequest, scope: Any, now: str) -> Dict[str, Any]:
-        operator_id = getattr(scope, "operator_id", scope.user_id)
-        if body.operator_id not in {scope.user_id, operator_id}:
-            ErrorCode = self.error_code_enum()
-            raise self.bff_error(
-                422, ErrorCode.VALIDATION_FAILED,
-                "operator_id must match the authenticated Agora operator",
-                f"operator_id={body.operator_id!r}, authenticated={operator_id!r}",
-            )
-        recipe = _load_default_scoring_recipe()
-        if body.recipe_id and body.recipe_id != recipe["recipe_id"]:
-            ErrorCode = self.error_code_enum()
-            raise self.bff_error(
-                422, ErrorCode.VALIDATION_FAILED,
-                "Only the active winner-branch CandidateScoringRecipe is available in this BFF slice",
-                body.recipe_id,
-            )
-        pool_filter = (
-            body.filter.model_dump()
-            if body.filter is not None
-            else CandidatePoolFilterRequest().model_dump()
-        )
-        _validate_pool_filter(pool_filter, self.bff_error, self.error_code_enum)
-
-        candidates: List[Dict[str, Any]] = []
-        metrics_by_artifact: Dict[str, Dict[str, Any]] = {}
-        exclusion_reasons: List[str] = []
-
-        profile = (
-            body.profile
-            or os.environ.get("AGORA_CANDIDATE_POOL_PROFILE")
-            or ("demo" if os.environ.get("PANTHEON_BFF_AUTH_MODE") == "permissive" and not os.environ.get("AGORA_CANDIDATE_POOL_PROFILE") == "production" else "production")
-        ).lower()
-
-        if body.candidates is not None:
-            for candidate in body.candidates:
-                if not _candidate_matches_filter(candidate, pool_filter):
-                    continue
-                public_candidate = _candidate_public_member(candidate)
-                public_candidate["_updated_at"] = str(
-                    candidate.get("_updated_at")
-                    or public_candidate.get("created_at")
-                    or now
-                )
-
-                # Mandatory deletion of client-trusted real-provenance flags
-                public_candidate.pop("has_real_receipt", None)
-                for trust_key in ("trusted", "is_real", "verified", "no_order_route_proof"):
-                    public_candidate.pop(trust_key, None)
-
-                # Resolve terminal run and authentic execution receipt server-side
-                run_id = candidate.get("run_id")
-                if not run_id and candidate.get("run_ref"):
-                    ref_str = str(candidate["run_ref"])
-                    run_id = ref_str.split("/")[-1] if "/" in ref_str else ref_str
-
-                run = None
-                if run_id and self.store and hasattr(self.store, "get_run"):
-                    try:
-                        run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
-                    except TypeError:
-                        run = self.store.get_run(run_id)
-
-                # Strictly verify tenant isolation
-                if run:
-                    run_tenant = run.get("tenant_id")
-                    if run_tenant and scope.tenant_id and run_tenant != scope.tenant_id:
-                        run = None
-
-                receipt = None
-                resolved_prov = "simulation"
-                if run:
-                    status = str(run.get("execution_status") or "").lower()
-                    terminal_statuses = {"succeeded", "completed"}
-
-                    plan = None
-                    if hasattr(self.store, "get_plan") and run.get("plan_id"):
-                        try:
-                            plan = self.store.get_plan(run["plan_id"])
-                        except Exception:
-                            plan = None
-
-                    expected_correlation = (
-                        run.get("correlation_id")
-                        or run.get("trace_id")
-                        or (plan.get("correlation_id") if plan else None)
-                        or (plan.get("trace_id") if plan else None)
-                    )
-                    expected_owner = (
-                        run.get("executor")
-                        or run.get("owner")
-                        or (plan.get("executor") if plan else None)
-                        or (plan.get("owner") if plan else None)
-                    )
-
-                    from ..receipt import resolve_run_provenance
-                    prov, rec = resolve_run_provenance(
-                        self.store,
-                        run,
-                        expected_correlation_id=expected_correlation,
-                        expected_owner=expected_owner,
-                    )
-
-                    # Keep immutable receipt snapshot for client admission verification
-                    immutable_rec = rec
-                    cand_artifact_id = str(public_candidate.get("artifact_id") or "").strip()
-
-                    if immutable_rec is not None:
-                        cand_corr = candidate.get("correlation_id")
-                        if cand_corr and str(cand_corr).strip() != str(immutable_rec.get("correlation_id", "")).strip():
-                            prov = "unavailable"
-                            rec = None
-
-                        cand_owner = candidate.get("executor") or candidate.get("owner")
-                        if cand_owner and str(cand_owner).strip() != str(immutable_rec.get("executor", "")).strip():
-                            prov = "unavailable"
-                            rec = None
-
-                        cand_receipt_id = candidate.get("receipt_id")
-                        if cand_receipt_id and str(cand_receipt_id).strip() != str(immutable_rec.get("receipt_id", "")).strip():
-                            prov = "unavailable"
-                            rec = None
-
-                        cand_digest = candidate.get("artifact_digest")
-                        if cand_digest:
-                            expected_digest = str(immutable_rec.get("artifact_digest") or "").strip()
-                            if not expected_digest or str(cand_digest).strip() != expected_digest:
-                                prov = "unavailable"
-                                rec = None
-
-                        # Validate candidate artifact_id against canonical run artifacts from owner result
-                        canonical_art_ids, known_digests = _extract_run_artifact_identities(run)
-                        if not canonical_art_ids or cand_artifact_id not in canonical_art_ids:
-                            prov = "unavailable"
-                            rec = None
-                        else:
-                            art_digest = known_digests.get(cand_artifact_id)
-                            if immutable_rec.get("artifact_digest"):
-                                rec_digest = str(immutable_rec["artifact_digest"]).strip()
-                                if art_digest and art_digest != rec_digest:
-                                    prov = "unavailable"
-                                    rec = None
-                            if cand_digest and art_digest and str(cand_digest).strip() != art_digest:
-                                prov = "unavailable"
-                                rec = None
-
-                    if status not in terminal_statuses and prov == "real":
-                        prov = "simulation"
-                        rec = None
-
-                    resolved_prov = prov
-                    receipt = rec
-                else:
-                    stored_prov = str(candidate.get("provenance") or "").lower().strip()
-                    if stored_prov in ("fixture",):
-                        resolved_prov = "fixture"
-                    elif stored_prov in ("unavailable",):
-                        resolved_prov = "unavailable"
-                    else:
-                        resolved_prov = "simulation"
-
-                public_candidate["provenance"] = resolved_prov
-                public_candidate["has_real_receipt"] = bool(resolved_prov == "real" and receipt is not None)
-                if receipt and "receipt_id" in receipt:
-                    public_candidate["receipt_id"] = receipt["receipt_id"]
-                    if receipt.get("artifact_digest"):
-                        public_candidate["artifact_digest"] = receipt["artifact_digest"]
-                elif not receipt:
-                    public_candidate.pop("receipt_id", None)
-
-                candidates.append(public_candidate)
-                cand_metrics: Dict[str, Any] = {}
-                if run:
-                    # Resolve scoring/evidence inputs only from authoritative owner data;
-                    # do not fill absent owner fields from metrics_by_artifact or candidate._metrics.
-                    if run.get("metrics"):
-                        cand_metrics.update(_normalize_metrics_to_dict(run["metrics"]))
-                elif profile in ("demo", "test") or getattr(scope, "auth_stub", False):
-                    if body.metrics_by_artifact and public_candidate["artifact_id"] in body.metrics_by_artifact:
-                        client_art_metrics = body.metrics_by_artifact[public_candidate["artifact_id"]]
-                        if isinstance(client_art_metrics, dict):
-                            cand_metrics.update(client_art_metrics)
-                    elif candidate.get("_metrics") and isinstance(candidate.get("_metrics"), dict):
-                        cand_metrics.update(candidate["_metrics"])
-                metrics_by_artifact[public_candidate["artifact_id"]] = cand_metrics
-        elif profile in ("demo", "test") or getattr(scope, "auth_stub", False):
-            try:
-                import agora.research.router as _r_router
-                _cand_fn = getattr(_r_router, "_default_registry_candidates", _default_registry_candidates)
-            except Exception:
-                _cand_fn = _default_registry_candidates
-            for candidate in _cand_fn(now):
-                if not _candidate_matches_filter(candidate, pool_filter):
-                    continue
-                public_candidate = _candidate_public_member(candidate)
-                public_candidate["_updated_at"] = str(
-                    candidate.get("_updated_at")
-                    or public_candidate.get("created_at")
-                    or now
-                )
-                candidates.append(public_candidate)
-                metrics_by_artifact[public_candidate["artifact_id"]] = candidate.get("_metrics") or {}
-        else:
-            # Production behavior: never insert prototype candidates without authoritative input
-            exclusion_reasons = [
-                "no_authoritative_registry_candidates_discovered",
-                "no_eligible_research_artifacts_match_filter",
-            ]
-
-        pool_id = f"cpool-{uuid.uuid4().hex[:16]}"
-        strategy_family = (
-            pool_filter.get("strategy_families", [None])[0]
-            if pool_filter.get("strategy_families")
-            else recipe.get("strategy_family")
-        )
-        metadata: Dict[str, Any] = {
-            "strategy_family": strategy_family,
-            "recipe_id": recipe["recipe_id"],
-            "recipe_version": int(recipe["version"]),
-            "data_cutoff": now,
-            "last_score_run_at": None,
-            "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
-        }
-        if body.strategy_id:
-            metadata["strategy_id"] = body.strategy_id
-        if body.strategy_version:
-            metadata["strategy_version"] = body.strategy_version
-        if body.strategy_ref:
-            metadata["strategy_ref"] = body.strategy_ref
-        if exclusion_reasons:
-            metadata["exclusion_reasons"] = exclusion_reasons
-
-        pool = {
-            "spec_version": "1.0",
-            "pool_id": pool_id,
-            "operator_id": body.operator_id,
-            "tenant_id": scope.tenant_id,
-            "user_id": scope.user_id,
-            "filter": pool_filter,
-            "candidates": candidates,
-            "total": len(candidates),
-            "snapshot_at": now,
-            "lock_version": 1,
-            "metadata": metadata,
-        }
-        if exclusion_reasons:
-            pool["exclusion_reasons"] = exclusion_reasons
-        return self.store.create_candidate_pool(pool, metrics_by_artifact=metrics_by_artifact)
+        return self.service.create_candidate_pool(body, scope=scope)
 
     def compute_and_store_candidate_scores(
         self,
@@ -2003,49 +1737,7 @@ class AgoraResearchRouteContext:
         *,
         recipe_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        recipe = _load_default_scoring_recipe()
-        if recipe_id and recipe_id != recipe["recipe_id"]:
-            ErrorCode = self.error_code_enum()
-            raise self.bff_error(
-                422, ErrorCode.VALIDATION_FAILED,
-                "Unknown CandidateScoringRecipe for candidate pool score run",
-                recipe_id,
-            )
-        pool_id = pool["pool_id"]
-        scored_at = self.utc_now()
-        data_cutoff = (pool.get("metadata") or {}).get("data_cutoff") or pool.get("snapshot_at") or scored_at
-        scores = _rank_scores([
-            _score_candidate(
-                pool_id=pool_id,
-                candidate=candidate,
-                metrics=self.store.get_candidate_metrics(pool_id, candidate["artifact_id"]),
-                recipe=recipe,
-                data_cutoff=data_cutoff,
-                scored_at=scored_at,
-            )
-            for candidate in pool.get("candidates", [])
-        ])
-        self.store.replace_candidate_scores(
-            pool_id,
-            {score["candidate_id"]: score for score in scores},
-        )
-        metadata = dict(pool.get("metadata") or {})
-        metadata.update({
-            "recipe_id": recipe["recipe_id"],
-            "recipe_version": int(recipe["version"]),
-            "last_score_run_at": scored_at,
-            "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
-        })
-        self.store.update_candidate_pool(
-            pool_id,
-            {
-                "metadata": metadata,
-                "lock_version": int(pool.get("lock_version", 1)) + 1,
-            },
-            tenant_id=pool.get("tenant_id"),
-            user_id=pool.get("user_id"),
-        )
-        return scores
+        return self.service.compute_and_store_candidate_scores(pool, recipe_id=recipe_id)
 
     def member_projection(
         self,
@@ -2056,28 +1748,7 @@ class AgoraResearchRouteContext:
         *,
         evidence_summary_mode: str = "list_response",
     ) -> Dict[str, Any]:
-        pool_id = pool["pool_id"]
-        artifact_id = member["artifact_id"]
-        score = self.store.get_candidate_score(pool_id, artifact_id)
-        projection = _candidate_public_member(member)
-        if score is not None:
-            projection["current_score"] = _score_without_private_explanations(score)
-            projection["band"] = score["band"]
-            projection["rank"] = score["rank"]
-            projection["effective_score"] = score["effective_score"]
-        projection.update(
-            _member_truth_projection(
-                pool=pool,
-                member=member,
-                score=score,
-                reviews=self.store.list_candidate_reviews(pool_id, artifact_id),
-                monitoring=self.store.get_candidate_monitoring(pool_id, artifact_id),
-                recipe=recipe,
-                evidence_summary_mode=evidence_summary_mode,
-                operator_grade=_operator_grade_scope(scope),
-            )
-        )
-        return projection
+        return self.service.member_projection(pool, member, scope, recipe, evidence_summary_mode=evidence_summary_mode)
 
 
 def _resolve_workshop_publisher() -> Callable[..., str]:
