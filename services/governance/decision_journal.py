@@ -28,6 +28,7 @@ SD §5.3 scorecard requirements satisfied:
 from __future__ import annotations
 
 import copy
+import errno
 import fcntl
 import os
 import time
@@ -127,7 +128,7 @@ class _BundleFileLock:
 
     def __enter__(self) -> _BundleFileLock:
         if _read_only_filesystem(self.lock_path.parent):
-            raise PermissionError(f"Cannot acquire bundle write lock on read-only storage: {self.lock_path}")
+            raise PermissionError(errno.EROFS, "Decision journal storage is read-only", str(self.lock_path))
         held = getattr(_HELD_BUNDLE_LOCKS, "held", None)
         if held is None:
             held = {}
@@ -200,7 +201,7 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
 
     def put(self, record: Dict[str, Any]) -> None:
         if self.read_only:
-            raise PermissionError(f"Decision journal store is read-only: {self.storage_path}")
+            raise PermissionError(errno.EROFS, "Decision journal store is read-only", str(self.storage_path))
         with self._file_lock(), self._lock:
             self._refresh()
             super().put(record)
@@ -209,7 +210,7 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
         self, record: Dict[str, Any]
     ) -> tuple[bool, Dict[str, Any]]:
         if self.read_only:
-            raise PermissionError(f"Decision journal store is read-only: {self.storage_path}")
+            raise PermissionError(errno.EROFS, "Decision journal store is read-only", str(self.storage_path))
         with self._file_lock(), self._lock:
             self._refresh()
             return super().insert_if_absent(record)
@@ -220,14 +221,14 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
         record: Dict[str, Any],
     ) -> tuple[bool, Dict[str, Any] | None]:
         if self.read_only:
-            raise PermissionError(f"Decision journal store is read-only: {self.storage_path}")
+            raise PermissionError(errno.EROFS, "Decision journal store is read-only", str(self.storage_path))
         with self._file_lock(), self._lock:
             self._refresh()
             return super().compare_and_set(expected_record, record)
 
     def delete(self, record_id: str) -> bool:
         if self.read_only:
-            raise PermissionError(f"Decision journal store is read-only: {self.storage_path}")
+            raise PermissionError(errno.EROFS, "Decision journal store is read-only", str(self.storage_path))
         with self._file_lock(), self._lock:
             self._refresh()
             key = str(record_id)
@@ -243,7 +244,7 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
         expected_snapshot: Dict[str, Any],
     ) -> tuple[bool, Dict[str, Any] | None]:
         if self.read_only:
-            raise PermissionError(f"Decision journal store is read-only: {self.storage_path}")
+            raise PermissionError(errno.EROFS, "Decision journal store is read-only", str(self.storage_path))
         clean_id = str(record_id or "").strip()
         if not clean_id:
             return False, None

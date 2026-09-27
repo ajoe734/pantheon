@@ -377,6 +377,26 @@ class TestJournalRuntimeContract(unittest.TestCase):
             ),
         )
 
+    def test_factory_unavailable_owner_returns_503_without_replacement(self):
+        from fastapi.testclient import TestClient
+        from services.control_plane.bff.core.app_factory import compose_bff_app
+        from services.control_plane.bff.models import OperatorIdentity
+        with tempfile.TemporaryDirectory() as tmp:
+            owner = build_decision_journal_write_owner(data_dir=tmp)
+            owner.stores.entries.read_only = True
+            deps = AppDependencies.create_default(decision_journal_write_owner=owner)
+            with patch("services.control_plane.bff.agora.router.build_decision_journal_write_owner",
+                       side_effect=AssertionError("must not replace selected owner")):
+                app = compose_bff_app(app_deps=deps, _extract_identity=lambda *a, **k: OperatorIdentity(
+                    operator_id="paper-reviewer", roles=["operator"], claims={"tenant_id": "tenant-a"}))
+            with TestClient(app) as client:
+                response = client.post("/bff/agora/journal", json={"title": "Paper"},
+                                       headers={"Idempotency-Key": "paper"})
+                self.assertEqual(response.status_code, 503, response.text)
+                self.assertEqual(response.json()["error"]["code"], "DEPENDENCY_UNAVAILABLE")
+                self.assertIs(app.state.decision_journal_write_owner, owner)
+                self.assertEqual(owner.stores.idempotency.list_all(), [])
+
     def test_legacy_dsn_alone_is_rejected_without_local_fallback(self):
         with patch.dict(os.environ, {"AGORA_GOVERNANCE_STORE_DSN": "postgresql://unused"}, clear=True):
             with self.assertRaisesRegex(ValueError, "configure GOVERNANCE_STORE_DSN"):
@@ -420,7 +440,8 @@ def paper_factory_probe(phase: str) -> None:
     owner = deps.decision_journal_write_owner
     app = compose_bff_app(app_deps=deps, _extract_identity=identity)
     assert app.state.decision_journal_write_owner is owner
-    assert app.state.agora_router.agora_service.journal_write_owner is owner
+    if phase != "unavailable":
+        assert app.state.agora_router.agora_service.journal_write_owner is owner
     assert isinstance(owner.stores.entries, PostgresGovernanceRecordStore)
     # The actual read-only consumer mount remains unwritable, even while the
     # distinct Postgres authority accepts writes. Do not substitute chmod.
@@ -438,7 +459,8 @@ def paper_factory_probe(phase: str) -> None:
         if phase == "unavailable":
             assert not owner.is_storage_healthy
             response = client.post("/bff/agora/journal", json=payload, headers=headers)
-            assert response.status_code >= 500, response.text
+            assert response.status_code == 503, response.text
+            assert response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE", response.text
             assert not list(Path(os.environ["PANTHEON_DECISION_JOURNAL_DATA_DIR"]).glob("*.json"))
             print(json.dumps({"phase": phase, "status": response.status_code, "no_json_fallback": True}))
             return
@@ -458,14 +480,14 @@ def paper_factory_probe(phase: str) -> None:
             other = client.get("/bff/agora/journal", headers={"Authorization": "Bearer tenant-b"})
             assert other.status_code == 200 and other.json()["data"] == [], other.text
             denied = client.patch(f"/bff/agora/journal/{entry_id}", json={"title": "cross-tenant"},
-                                  headers={"Authorization": "Bearer tenant-b", "Idempotency-Key": "paper-patch"})
+                                  headers={"Authorization": "Bearer tenant-b", "Idempotency-Key": "paper-patch", "Content-Type": "application/merge-patch+json"})
             assert denied.status_code in (403, 404), denied.text
             patched = client.patch(f"/bff/agora/journal/{entry_id}", json={"title": "Paper reviewed"},
-                                   headers={"Idempotency-Key": "paper-patch"})
+                                   headers={"Idempotency-Key": "paper-patch", "Content-Type": "application/merge-patch+json"})
             assert patched.status_code == 200, patched.text
             assert patched.json()["data"]["version"] == 2, patched.text
             replay = client.patch(f"/bff/agora/journal/{entry_id}", json={"title": "Paper reviewed"},
-                                  headers={"Idempotency-Key": "paper-patch"})
+                                  headers={"Idempotency-Key": "paper-patch", "Content-Type": "application/merge-patch+json"})
             assert replay.status_code == 200 and replay.json()["meta"]["idempotency"]["replayed"], replay.text
             # The selected durable authority must reject a stale CAS from an
             # independent store instance, without replacing the committed row.

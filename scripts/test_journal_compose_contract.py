@@ -93,13 +93,17 @@ def runtime_contract(rendered: dict, bff_image: str) -> None:
                 raise RuntimeError("Disposable Postgres did not become ready")
 
             def paper(phase: str):
-                args = ["docker", "run", "--rm", "--network", network, "--read-only", "--cap-drop", "ALL",
+                container = name + "-" + phase
+                args = ["docker", "run", "--rm", "--name", container, "--network", network, "--read-only", "--cap-drop", "ALL",
                         "--security-opt", "no-new-privileges:true", "--user", f"{os.getuid()}:{os.getgid()}",
                         "--tmpfs", "/tmp", "-v", f"{ROOT}:/workspace:ro",
                         "-v", f"{consumer}:/data/governance:ro", "-v", f"{writer}:/data/bff:rw",
                         "-w", "/workspace", "-e", "PYTHONPATH=/workspace", "-e", "PYTHONDONTWRITEBYTECODE=1",
                         "-e", "BFF_DATA_DIR=/data/bff", "-e", "PANTHEON_ENV=test",
-                        "-e", "JOURNAL_REQUIRE_RO_MOUNT=1"]
+                        "-e", "JOURNAL_REQUIRE_RO_MOUNT=1",
+                        "-e", f"DATABASE_URL={bff_env['GOVERNANCE_STORE_DSN']}?connect_timeout=1",
+                        "-e", "RANKING_STORE_BOOTSTRAP=0",
+                        "-e", "PANTHEON_STRATEGY_STORE_BOOTSTRAP=0"]
                 for key in ("GOVERNANCE_STORE_BACKEND", "GOVERNANCE_STORE_DSN", "GOVERNANCE_STORE_BOOTSTRAP",
                             "PANTHEON_DECISION_JOURNAL_DATA_DIR", "PANTHEON_GOVERNANCE_DATA_DIR"):
                     value = bff_env[key]
@@ -108,7 +112,11 @@ def runtime_contract(rendered: dict, bff_image: str) -> None:
                     if phase == "unavailable" and key == "GOVERNANCE_STORE_BOOTSTRAP":
                         value = "0"
                     args += ["-e", f"{key}={value}"]
-                print(run(*args, "--entrypoint", "python", bff_image, PROBE, "--paper-probe", phase, timeout=90))
+                try:
+                    print(run(*args, "--entrypoint", "python", bff_image, PROBE, "--paper-probe", phase, timeout=90))
+                finally:
+                    # A killed CLI must not leave its task-owned container running.
+                    subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=30)
 
             paper("create")
             paper("restart")

@@ -1600,8 +1600,22 @@ def mount_bff_routers(
         )
     )
 
-    # 37: Agora
+    # 37: Agora. Select once at composition; never silently build a different
+    # local writer if the configured authority is absent or unreachable.
     from ..agora.router import create_agora_router
+    from ..models import ErrorCode
+    journal_owner = app_deps.decision_journal_write_owner
+
+    def get_journal_write_owner() -> Any:
+        if journal_owner is None or not journal_owner.is_storage_healthy:
+            raise _dep("_bff_error")(
+                503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Decision Journal storage is unavailable",
+                "The configured durable journal authority is not ready",
+                precondition_failed="decision_journal_storage",
+            )
+        return journal_owner
+
     agora_router = create_agora_router(
         extract_identity=_dep("_extract_identity"),
         require_read_role=_dep("_require_read_role"),
@@ -1629,7 +1643,7 @@ def mount_bff_routers(
         openclaw_ops_client_factory=lambda: _dep("OpenClawOpsClient", lambda: OpenClawOpsClient)(),
         handle_sse_stream=_dep("_handle_sse_stream"),
         publish_event_fn=_dep("_publish_event"),
-        journal_write_owner=getattr(app_deps, "decision_journal_write_owner", None),
+        get_journal_write_owner=get_journal_write_owner,
     )
     app.include_router(agora_router)
 
@@ -1637,7 +1651,7 @@ def mount_bff_routers(
     app.state.events_router = events_router
     app.state.deployment_router = deployment_router
     app.state.agora_router = agora_router
-    app.state.decision_journal_write_owner = agora_router.agora_service.journal_write_owner
+    app.state.decision_journal_write_owner = journal_owner
     app.state.runtime_router = runtime_router
     app.state.interaction_lifecycle = agora_router.interaction_lifecycle
     app.state.workshop_store = agora_router.workshop_store

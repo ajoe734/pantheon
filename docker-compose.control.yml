@@ -377,6 +377,7 @@ services:
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes: !override
       - bff-data:/data/bff
+      - governance-data:/data/governance:ro
     depends_on:
       telemetry:
         condition: service_healthy
