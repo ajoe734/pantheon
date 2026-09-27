@@ -27,7 +27,6 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from evolution.router import create_evolution_programs_router, create_evolution_router
 from evolution.service import EvolutionService

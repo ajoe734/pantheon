@@ -579,6 +579,27 @@ class PplRankingProjectionHarness:
         )
 
 
+class _CommandExecutorCapitalAuthority:
+    """Adapts ``command_executor``'s real owner-facing HTTP calls to the
+    generic method-dispatch contract ``CapitalService.write`` expects.
+
+    ``command_executor.create_capital_pool`` forwards its payload verbatim to
+    the real Capital owner, which requires ``actor_id``/``actor_role`` on the
+    request body. ``CapitalService.write`` only threads ``actor_id`` (not a
+    role) through its call context, so this adapter fills the same
+    ``actor_role`` default the production command adapters already use for
+    owner mutations without an explicit role
+    (``command_adapters/capital_adapter.py``'s ``_execute_rebalance_apply``/
+    ``_execute_containment``), rather than inventing fixture-only policy.
+    """
+
+    def create_capital_pool(self, payload: Dict[str, Any], *, actor_id: str, **_: Any) -> Dict[str, Any]:
+        body = dict(payload)
+        body.setdefault("actor_id", actor_id)
+        body.setdefault("actor_role", "operator")
+        return command_executor.create_capital_pool(body)
+
+
 def _build_authority_harness_app(
     read_surface: ReadSurfacePorts,
     command_store: CommandStore,
@@ -598,6 +619,7 @@ def _build_authority_harness_app(
     app.include_router(
         create_capital_router(
             read_surface=read_surface,
+            get_capital_authority=lambda: _CommandExecutorCapitalAuthority(),
             extract_identity=extract_identity,
             require_read_role=require_read_role,
             require_operator_role=require_operator_role,
@@ -627,8 +649,16 @@ def _build_authority_harness_app(
     )
 
     @app.post("/api/v1/bindings", status_code=201)
-    async def _create_binding(payload: Dict[str, Any] = Body(...)):
-        return command_executor.create_capital_binding(payload)
+    async def _create_binding(
+        payload: Dict[str, Any] = Body(...),
+        authorization: Optional[str] = Header(default=None),
+    ):
+        identity = extract_identity(authorization)
+        actor_id = str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator-1")
+        body = dict(payload)
+        body.setdefault("actor_id", actor_id)
+        body.setdefault("actor_role", "operator")
+        return command_executor.create_capital_binding(body)
 
     @app.get("/api/v1/bindings")
     async def _list_bindings():
@@ -721,8 +751,8 @@ class CapitalBffAuthorityHarness:
             headers={**HEADERS, "Idempotency-Key": "create-pool-real"},
         )
         assert response.status_code == 201, response.text
-        assert response.json()["pool_id"] == "pool-real"
-        assert response.json()["status"] == "active"
+        assert response.json()["data"]["pool_id"] == "pool-real"
+        assert response.json()["data"]["status"] == "active"
 
         response = self.client.post(
             "/api/v1/bindings",

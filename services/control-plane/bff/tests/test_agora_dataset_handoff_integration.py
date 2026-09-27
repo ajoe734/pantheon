@@ -14,8 +14,6 @@ import os
 import sys
 import uuid
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 import pytest
 from fastapi import FastAPI, HTTPException

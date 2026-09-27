@@ -3,8 +3,10 @@
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
   "total_test_files": 389,
-  "migrated_in_task_count": 32,
+  "migrated_in_task_count": 33,
   "composition_allowlist": [
+    "auth/test_composition_root_smoke.py",
+    "migrations/test_overlay_retirement.py",
     "smoke_test.py",
     "smoke_test_incident.py",
     "test_action_catalog.py",
@@ -15,16 +17,15 @@
     "test_route_resolution_no_shadowing.py",
     "tests/test_agora_servant_production_write_owner.py",
     "tests/test_bff_main_composition.py",
+    "tests/test_bff_rebalance_proposals.py",
     "tests/test_bff_test_architecture.py",
     "tests/test_http_auth_composition_owner.py",
     "tests/test_main_composition_seam_extraction_002.py",
     "tests/test_main_composition_seam_extraction_003.py",
+    "tests/test_management_read_timeout_and_capacity.py",
     "tests/test_read_store_final_deletion.py",
     "tests/test_read_store_fixture_boundaries.py",
-    "tests/test_read_surface_caller_migration.py",
-    "tests/test_bff_rebalance_proposals.py",
-    "migrations/test_overlay_retirement.py",
-    "tests/test_management_read_timeout_and_capacity.py"
+    "tests/test_read_surface_caller_migration.py"
   ],
   "migrated_suites": [
     "agora/performance/test_performance.py",
@@ -97,22 +98,19 @@
   "layer_summary": {
     "adapter": 53,
     "application": 190,
-    "composition": 18,
-    "hosted": 12,
-    "router": 116
+    "router": 115,
+    "composition": 19,
+    "hosted": 12
   },
   "main_by_layer": {
-    "adapter": 0,
-    "application": 3,
-    "composition": 13,
-    "hosted": 1,
-    "router": 7
+    "composition": 14,
+    "router": 1,
+    "hosted": 1
   },
   "disposition_summary": {
-    "ALLOWLIST": 20,
-    "DECOUPLED": 315,
+    "DECOUPLED": 323,
     "MIGRATED": 45,
-    "PLANNED": 9
+    "ALLOWLIST": 21
   },
   "tests": [
     {
@@ -287,8 +285,8 @@
       "file": "auth/test_policy.py",
       "layer": "adapter",
       "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "disposition": "MIGRATED",
+      "rationale": "Corrected this generation (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001, P1 AC1/AC2, independent-review rejection defect): test_composition_root_smoke() -- the sole reason this file imported main (via an isolated subprocess) -- has been extracted into its own dedicated composition file, auth/test_composition_root_smoke.py (composition_allowlist). This file now has zero main imports, direct or via subprocess/helper, and is fully migrated off the composition root."
     },
     {
       "file": "events/test_router.py",
@@ -594,9 +592,9 @@
     {
       "file": "test_bff_management_delta_routes.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
@@ -615,9 +613,9 @@
     {
       "file": "test_bff_mgmt_ops_001_operations_read_model_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_bff_mgmt_ops_006_operator_actions_contract.py",
@@ -965,9 +963,9 @@
     {
       "file": "test_management_data_sources_v2.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_management_list_contract_guardrail.py",
@@ -986,16 +984,16 @@
     {
       "file": "test_mcp_tool_import.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_mgmt_load_002_shell_summary.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_mgmt_load_005_read_concurrency.py",
@@ -1007,9 +1005,9 @@
     {
       "file": "test_mgmt_ooda_004_bff_routes.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_mgmt_ooda_005_control_room_card.py",
@@ -1028,9 +1026,9 @@
     {
       "file": "test_mgmt_syn_006_conflict_log_view.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "test_no_undefined_call_symbols.py",
@@ -2001,9 +1999,9 @@
     {
       "file": "tests/test_bff_consol_skills_mcp_registry_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "tests/test_bff_emergency_containment.py",
@@ -2064,16 +2062,16 @@
     {
       "file": "tests/test_bff_management_data_sources_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "tests/test_bff_management_gap_003_contract_schema.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Decoupled from main composition globals and verified zero main imports"
     },
     {
       "file": "tests/test_bff_me_locale.py",
@@ -2851,6 +2849,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001 regression coverage exercising live imported ManagementService/CommandAdapterService/CommandStore instances directly; never imports main."
+    },
+    {
+      "file": "auth/test_composition_root_smoke.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "Composition-root smoke test: proves main.py default wiring of auth_deps, session_lifecycle_store, and the logout guard by importing the real composition root in an isolated subprocess, matching the purpose of the other whole-app composition allowlist entries (smoke_test.py, test_bff_main_composition.py). Extracted out of auth/test_policy.py this generation so that file itself no longer needs to be in the allowlist."
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,
@@ -2893,5 +2898,5 @@
       "disposition": "File removed from live_scan_non_whitelisted_main_importers; no composition_allowlist entry needed since it no longer imports main.py at all."
     }
   ],
-  "live_scan_reconciliation_note": "Generation 10 update (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): independent review rejected generation 9 (PR #5961, head 705a67bc0) for four defects: (1) an unsupported blanket composition_allowlist expansion from 15 to 24 entries, allowlisting 7 real importers without authorization -- 2 of them (test_pkt005_sse_substrate_contract.py, tests/test_bff_rebalance_proposals.py) are declared artifacts of this task that had to be actually migrated or narrowly, individually justified, not blanket-allowlisted; the other 5 (test_bff_b6_001_security_hardening.py, test_bff_b6_003_nl_high_risk_refusal.py, test_bff_b6_management_nl_ask.py, test_management_nl_assistant_provider.py, test_management_nl_single_owner.py) are out of this task's declared scope and were required to be migrated through real seams or left as honestly-reported unresolved importers, not allowlisted; (2) the graph-aware helper-symbol scanner added in generation 9 missed several import forms (static imports inside/outside function bodies, importlib.import_module(name=...) keyword form, module-alias imports); (3) a commit-message trailer collision; (4) incomplete verification. This generation: (a) fixed the scanner (test_bff_test_architecture.py's _static_import_bff_main_bound_names/_module_level_bff_main_names/_function_directly_reaches_bff_main, all reusing the shared _import_call_target/_static_import_bff_main_bound_names helpers so the direct scanner and helper-graph scanner never drift apart), proven by five new regression tests covering each missed form; running the fixed scanner against the full on-disk BFF tree surfaced one previously-invisible real importer (migrations/test_overlay_retirement.py, via a static import nested inside a helper function body in production source migrations/overlay_retirement.py) that generation 9 never detected; (b) migrated test_pkt005_sse_substrate_contract.py fully off main.py (removed an assertion against main.py's own dead, unmounted legacy code that added no real coverage); (c) migrated tests/test_bff_rebalance_proposals.py's one remaining test onto a narrow, function-scoped, decoupled-from-the-shared-helper direct import, matching the reviewed precedent of tests/test_bff_main_composition.py and tests/test_main_composition_seam_extraction_002.py/_003.py; (d) rewired tests/rebalance_authority_test_support.py's shared management-NL accessors (get_management_nl_module, get_management_nl_read_store, set_management_nl_read_store, get_management_nl_sse_buffer, clear_management_nl_sse_buffer, management_nl_test_client) onto the real, already-extracted assistant.management_service seam and core.app_factory.compose_bff_app() (no main.py import at all), which fully migrated tests/test_bff_b6_001_security_hardening.py, tests/test_bff_b6_003_nl_high_risk_refusal.py, tests/test_bff_b6_management_nl_ask.py, and tests/test_management_nl_single_owner.py with zero further edits (they never imported main.py directly, only transitively through the shared helper); (e) migrated ~174 of 175 main-derived references in tests/test_management_nl_assistant_provider.py onto the same real seam, leaving exactly one test (test_assistant_provider_usage_summary_aggregates_history_and_quota) with a narrow, function-scoped direct main.py import because its route's collaborator (_assistant_provider_list) has no extracted seam; per explicit governance instruction for out-of-scope files, this residual importer is intentionally NOT allowlisted -- it is honestly reported in live_scan_non_whitelisted_main_importers with the ceiling raised from 0 to 1 to match, and flagged here as needing a scoped Human/Ops disposition. composition_allowlist is now 19 entries (down from the rejected generation's 24, and up from the pre-generation-9 baseline of 15 only by the two narrowly-justified additions: tests/test_bff_rebalance_proposals.py, a declared artifact with a genuine unextracted production seam gap, and migrations/test_overlay_retirement.py, newly surfaced by the scanner fix and likewise a genuine identity-check gap in production source this task may not edit); tests/test_main_composition_seam_extraction_002.py and _003.py were re-examined and kept allowlisted as legitimate, narrow, function-scoped identity/parity checks matching the tests/test_bff_main_composition.py precedent, not a blanket carry-over. REAPPLICATION (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001, this generation, 2026-09-25): Human/Ops granted the artifact-contract expansion the reviewer required (contract_revision in the canonical task row, updated_by Human/Ops, 2026-09-25), authorizing edits to tests/rebalance_authority_test_support.py and the five B6/management-NL test files. Generation 10's reverted commit (1decacd30, PR #5961 corrective) was independently re-verified byte-for-byte correct and reapplied rather than re-derived from scratch: tests/test_bff_b6_001_security_hardening.py, tests/test_bff_b6_003_nl_high_risk_refusal.py, tests/test_bff_b6_management_nl_ask.py, tests/test_management_nl_assistant_provider.py, and tests/test_management_nl_single_owner.py plus the shared helper are restored to that commit's content; live_scan_non_whitelisted_main_importer_ceiling is lowered from 5 back to 2 to match the true live-scanned count (true count published: 5 non-allowlisted importers before this generation's reapplication, 2 after). Verification this generation: test_bff_b6_001_security_hardening.py 5/5, test_bff_b6_003_nl_high_risk_refusal.py 7/7, test_bff_b6_management_nl_ask.py 16/16, test_management_nl_single_owner.py 10/10, test_management_nl_assistant_provider.py 65/65 (103 total), all green standalone per-file; test_bff_test_architecture.py 14/14. Additionally confirmed and newly documented: the file's own test_assistant_provider_usage_summary_aggregates_history_and_quota and management_service.py's _management_ai_audit_path() default (/tmp/pantheon-bff/management-ai-audit.jsonl, not tmp_path-scoped) mean repeated local pytest invocations across process runs can accumulate audit events on disk and make that one test flaky outside a fresh CI container or PANTHEON_MANAGEMENT_AI_AUDIT_PATH=off; this is a pre-existing production test-isolation gap unrelated to this task's main-decoupling scope (production source, not a declared artifact) and is reported here rather than patched. The remaining 2 residual real importers (tests/test_bff_b6_001_security_hardening.py, tests/test_management_nl_assistant_provider.py) are unchanged from generation 10's own honest conclusion: each has a small number of tests (2 and 4 respectively, see their per-file rationale entries above) that genuinely need main.py directly because their collaborators (_assistant_provider_list/_assistant_provider_usage_summary at main.py line ~8930/~6624, and the telemetry/persona-fleet projection DI wiring main.py performs only at its own module import time around lines ~3465+/~9080-9107) have no extracted seam in core/app_factory.py's standalone compose_bff_app() dependency resolver. AC1 forbids editing main.py or other production source in this task, so closing these to true zero requires a dedicated follow-up production-seam-extraction task (proposed: BFF-MGMT-NL-B6-SEAM-MIGRATION-001, matching the pattern BFF-MGMT-NL-HELPER-EXTRACTION-001 already used to unblock the other four files); per explicit task guidance, no composition_allowlist entry was added and the ceiling was not raised as a substitute for migration."
+  "live_scan_reconciliation_note": "Corrected this generation (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001, P1 AC1/AC2, independent-review rejection defect): the previously-tracked live offender auth/test_policy.py has been resolved by extracting its sole main-importing test (test_composition_root_smoke) into a dedicated, allowlisted composition file (auth/test_composition_root_smoke.py). The ceiling is restored to 0 and the live offenders list is empty; auth/test_policy.py itself now imports no main, directly or transitively."
 }

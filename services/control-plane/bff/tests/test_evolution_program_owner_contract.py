@@ -27,7 +27,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from evolution.router import create_evolution_programs_router  # noqa: E402
 from ports.evolution_program_commands import (  # noqa: E402

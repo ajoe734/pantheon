@@ -8,7 +8,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(__file__))
 from ports import create_in_memory_lifecycle_telemetry_governance_port
 
 

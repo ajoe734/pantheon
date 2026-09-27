@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from control_loops.router import create_control_loops_router
 from control_loops.service import ControlLoopsService
