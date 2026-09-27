@@ -896,11 +896,13 @@ def redact_ooda_packet(
     Handles top-level ``audit_refs`` and ``evidence_refs`` as well as nested
     bundles: ObserveBundle (``incident_refs``, ``signal_refs``, and any dict
     items in remaining lists), OrientBundle (``persona_proposal_refs``,
-    ``signal_inference_refs``, ``evidence_bundle_refs``), DecideBundle
-    (``policy_decision_refs``), ActBundle (``broker_evidence_refs``), and
+    ``signal_inference_refs``, ``evidence_bundle_refs``, and scalar
+    ``risk_adjudication_ref``), DecideBundle (``policy_decision_refs``, scalar
+    ``decision_rationale_ref``), ActBundle (``broker_evidence_refs``), and
     LearnBundle (``postmortem_refs``). Preserves full-capability visibility
     when the caller holds required capabilities, withholds unauthorized refs
-    with standard RedactedEvidenceRef metadata, and fails closed when
+    with standard RedactedEvidenceRef metadata, resolves repeated evidence
+    consistently across canonical packet locations, and fails closed when
     capabilities cannot be resolved.
     """
     if not isinstance(packet, dict):
@@ -908,6 +910,81 @@ def redact_ooda_packet(
 
     packet_copy = _copy.deepcopy(packet)
     total_redacted = 0
+
+    try:
+        resolved_caps = capabilities_fn(identity)
+    except Exception:
+        resolved_caps = None
+
+    # Step 1: Collect all references across canonical packet locations and build
+    # a unified kind_map so repeated references resolve consistently everywhere.
+    ref_kinds: dict[str, set[str]] = {}
+
+    def _inspect_ref(item: Any, default_kind: Optional[str]) -> None:
+        if not item:
+            return
+        ref_id = str(item.get("ref_id") or item.get("id") or "").strip() if isinstance(item, dict) else str(item).strip()
+        if not ref_id:
+            return
+        kind_key, _, _ = _resolve_evidence_kind_and_capability(item, default_kind=default_kind)
+        if kind_key:
+            ref_kinds.setdefault(ref_id, set()).add(kind_key)
+
+    def _inspect_field(container: Any, field_name: str, default_kind: Optional[str]) -> None:
+        if not isinstance(container, dict):
+            return
+        val = container.get(field_name)
+        if isinstance(val, list):
+            for elem in val:
+                _inspect_ref(elem, default_kind)
+        elif isinstance(val, (str, dict)) and val:
+            _inspect_ref(val, default_kind)
+
+    _inspect_field(packet_copy, "audit_refs", "audit")
+    _inspect_field(packet_copy, "evidence_refs", None)
+
+    obs = packet_copy.get("observe")
+    _inspect_field(obs, "incident_refs", "incident")
+    _inspect_field(obs, "signal_refs", "signal")
+    for f in ("source_refs", "telemetry_refs", "market_refs", "human_feedback_refs"):
+        _inspect_field(obs, f, None)
+
+    ori = packet_copy.get("orient")
+    _inspect_field(ori, "persona_proposal_refs", "persona")
+    _inspect_field(ori, "signal_inference_refs", "signal")
+    _inspect_field(ori, "evidence_bundle_refs", "artifact")
+    _inspect_field(ori, "risk_adjudication_ref", "policy")
+    for f in ("allocation_proposal_refs", "regime_state_ref", "universe_selection_ref"):
+        _inspect_field(ori, f, None)
+
+    dec = packet_copy.get("decide")
+    _inspect_field(dec, "policy_decision_refs", "policy")
+    _inspect_field(dec, "decision_rationale_ref", None)
+
+    act = packet_copy.get("act")
+    _inspect_field(act, "broker_evidence_refs", "audit")
+    for f in ("command_receipt_refs", "rollback_refs", "safe_mode_refs"):
+        _inspect_field(act, f, None)
+
+    lrn = packet_copy.get("learn")
+    _inspect_field(lrn, "postmortem_refs", "postmortem")
+    for f in ("telemetry_refs", "evolution_followthrough_refs", "trainer_refs", "retrain_refs"):
+        _inspect_field(lrn, f, None)
+
+    packet_kind_map: dict[str, str] = {}
+    if resolved_caps is not None:
+        cap_set = set(resolved_caps)
+        for ref_id, kinds in ref_kinds.items():
+            selected = None
+            for k in sorted(kinds):
+                req_cap = EVIDENCE_CAPABILITY_MAP.get(k)
+                if req_cap and req_cap not in cap_set:
+                    selected = k
+                    break
+            packet_kind_map[ref_id] = selected or sorted(kinds)[0]
+    else:
+        for ref_id, kinds in ref_kinds.items():
+            packet_kind_map[ref_id] = "audit" if "audit" in kinds else sorted(kinds)[0]
 
     def _redact_field(
         container: dict[str, Any], field_name: str, *, default_kind: Optional[str] = None
@@ -921,9 +998,22 @@ def redact_ooda_packet(
                 redact_fn=redact_fn,
                 capabilities_fn=capabilities_fn,
                 default_kind=default_kind,
+                kind_map=packet_kind_map,
             )
             container[field_name] = redacted_refs
             total_redacted += count
+        elif isinstance(raw, (str, dict)) and raw:
+            redacted_refs, count = safe_redact_evidence_refs(
+                identity,
+                [raw],
+                redact_fn=redact_fn,
+                capabilities_fn=capabilities_fn,
+                default_kind=default_kind,
+                kind_map=packet_kind_map,
+            )
+            if count > 0:
+                container[field_name] = redacted_refs[0]
+                total_redacted += count
 
     # Top-level refs:
     _redact_field(packet_copy, "audit_refs", default_kind="audit")
@@ -943,13 +1033,15 @@ def redact_ooda_packet(
         _redact_field(orient, "persona_proposal_refs", default_kind="persona")
         _redact_field(orient, "signal_inference_refs", default_kind="signal")
         _redact_field(orient, "evidence_bundle_refs", default_kind="artifact")
-        for other_field in ("allocation_proposal_refs",):
+        _redact_field(orient, "risk_adjudication_ref", default_kind="policy")
+        for other_field in ("allocation_proposal_refs", "regime_state_ref", "universe_selection_ref"):
             _redact_field(orient, other_field, default_kind=None)
 
     # DecideBundle:
     decide = packet_copy.get("decide")
     if isinstance(decide, dict):
         _redact_field(decide, "policy_decision_refs", default_kind="policy")
+        _redact_field(decide, "decision_rationale_ref", default_kind=None)
 
     # ActBundle:
     act = packet_copy.get("act")

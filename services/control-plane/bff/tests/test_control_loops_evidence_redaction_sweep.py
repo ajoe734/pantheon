@@ -39,6 +39,7 @@ from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.models import redact_evidence_refs, utc_now
 from services.control_plane.bff.settings_store import DEFAULT_SETTINGS_BUNDLE, SettingsStore
+from services.broker.sinopac.evidence_packet import build_ooda_packet
 
 
 def _call_with_supported_kwargs(fn: Callable[..., Any], **kwargs: Any) -> Any:
@@ -288,6 +289,26 @@ class _ControlLoopsSweepStore:
         return True, [{"loop_run_id": "run-1", "loop_id": "loop-1", "status": "completed"}]
 
 
+_PRODUCTION_OODA_PACKET: Dict[str, Any] = build_ooda_packet(
+    generated_at="2026-09-27T06:00:00Z",
+    task_packet_path="support/evidence/MGMT-BROKER-004/shioaji-sandbox-evidence-packet.json",
+    smoke_summary_path="support/evidence/MGMT-BROKER-004/smoke-summary.json",
+    packet_status="passed",
+)
+
+
+class _ProductionOodaSweepStore(_ControlLoopsSweepStore):
+    """Store returning canonical production-shaped OODA packets from build_ooda_packet."""
+
+    def list_ooda_packets(self, **_: Any) -> List[Dict[str, Any]]:
+        return [copy.deepcopy(_PRODUCTION_OODA_PACKET)]
+
+    def get_ooda_packet(self, packet_id: str) -> Optional[Dict[str, Any]]:
+        if packet_id == _PRODUCTION_OODA_PACKET["packet_id"]:
+            return copy.deepcopy(_PRODUCTION_OODA_PACKET)
+        return None
+
+
 def _build_control_loops_app(
     store: Optional[_ControlLoopsSweepStore] = None,
     *,
@@ -519,6 +540,167 @@ def test_ooda_packet_detail_fails_closed_when_capabilities_returns_none() -> Non
         assert len(payload["data"]["observe"]["telemetry_refs"]) == 1
         assert all(ref["redacted"] is True for ref in payload["data"]["observe"]["telemetry_refs"])
         assert payload["meta"]["redacted_evidence_count"] == 11
+
+
+def test_ooda_real_producer_list_redacts_for_low_capability_identity() -> None:
+    """Real producer packet: scalar risk_adjudication_ref and repeated smoke-summary are redacted on list route."""
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(store=_ProductionOodaSweepStore()))
+        response = client.get(
+            "/bff/ooda/packets",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        packet = payload["data"][0]
+        # Scalar capability-gated policy ref:
+        risk_ref = packet["orient"]["risk_adjudication_ref"]
+        assert isinstance(risk_ref, dict) and risk_ref.get("redacted") is True
+        assert risk_ref["required_capability"] == "policy.read"
+        assert risk_ref["ref_id"] == "policy://live-broker-and-capital-binding-fail-closed"
+        # Repeated evidence: smoke-summary.json in act.broker_evidence_refs and observe.market_refs
+        broker_ref = packet["act"]["broker_evidence_refs"][0]
+        assert isinstance(broker_ref, dict) and broker_ref.get("redacted") is True
+        assert broker_ref["required_capability"] == "audit.read"
+        market_ref = packet["observe"]["market_refs"][0]
+        assert isinstance(market_ref, dict) and market_ref.get("redacted") is True
+        assert market_ref["required_capability"] == "audit.read"
+        assert payload["meta"]["redacted_evidence_count"] == 11
+
+
+def test_ooda_real_producer_detail_redacts_for_low_capability_identity() -> None:
+    """Real producer packet: scalar risk_adjudication_ref and repeated smoke-summary are redacted on detail route."""
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(store=_ProductionOodaSweepStore()))
+        response = client.get(
+            f"/bff/ooda/packets/{_PRODUCTION_OODA_PACKET['packet_id']}",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        packet = payload["data"]
+        # Scalar capability-gated policy ref:
+        risk_ref = packet["orient"]["risk_adjudication_ref"]
+        assert isinstance(risk_ref, dict) and risk_ref.get("redacted") is True
+        assert risk_ref["required_capability"] == "policy.read"
+        assert risk_ref["ref_id"] == "policy://live-broker-and-capital-binding-fail-closed"
+        # Repeated evidence: smoke-summary.json in act.broker_evidence_refs and observe.market_refs
+        broker_ref = packet["act"]["broker_evidence_refs"][0]
+        assert isinstance(broker_ref, dict) and broker_ref.get("redacted") is True
+        assert broker_ref["required_capability"] == "audit.read"
+        market_ref = packet["observe"]["market_refs"][0]
+        assert isinstance(market_ref, dict) and market_ref.get("redacted") is True
+        assert market_ref["required_capability"] == "audit.read"
+        assert payload["meta"]["redacted_evidence_count"] == 11
+
+
+def test_ooda_real_producer_list_and_detail_pass_through_for_full_capability_identity() -> None:
+    """Real producer packet: all refs remain visible strings for full-capability caller."""
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(store=_ProductionOodaSweepStore()))
+        # List
+        list_resp = client.get(
+            "/bff/ooda/packets",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        list_payload = list_resp.json()
+        list_packet = list_payload["data"][0]
+        assert list_packet["orient"]["risk_adjudication_ref"] == "policy://live-broker-and-capital-binding-fail-closed"
+        assert list_packet["observe"]["market_refs"][0] == "support/evidence/MGMT-BROKER-004/smoke-summary.json"
+        assert list_packet["act"]["broker_evidence_refs"][0] == "support/evidence/MGMT-BROKER-004/smoke-summary.json"
+        assert list_payload["meta"]["redacted_evidence_count"] == 0
+
+        # Detail
+        detail_resp = client.get(
+            f"/bff/ooda/packets/{_PRODUCTION_OODA_PACKET['packet_id']}",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert detail_resp.status_code == 200, detail_resp.text
+        detail_payload = detail_resp.json()
+        detail_packet = detail_payload["data"]
+        assert detail_packet["orient"]["risk_adjudication_ref"] == "policy://live-broker-and-capital-binding-fail-closed"
+        assert detail_packet["observe"]["market_refs"][0] == "support/evidence/MGMT-BROKER-004/smoke-summary.json"
+        assert detail_packet["act"]["broker_evidence_refs"][0] == "support/evidence/MGMT-BROKER-004/smoke-summary.json"
+        assert detail_payload["meta"]["redacted_evidence_count"] == 0
+
+
+def test_ooda_real_producer_list_and_detail_fail_closed_when_capabilities_unresolvable() -> None:
+    """Real producer packet: fail closed when capabilities lookup raises."""
+    def _boom(identity: Any) -> List[str]:
+        raise RuntimeError("capability lookup unavailable")
+
+    with _stub_auth_env():
+        client = TestClient(_build_control_loops_app(store=_ProductionOodaSweepStore(), capabilities_for_identity=_boom))
+        # List
+        list_resp = client.get(
+            "/bff/ooda/packets",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        list_packet = list_resp.json()["data"][0]
+        risk_ref = list_packet["orient"]["risk_adjudication_ref"]
+        assert isinstance(risk_ref, dict) and risk_ref.get("redacted") is True
+        assert risk_ref["reason"] == "redaction_policy_unavailable"
+        market_ref = list_packet["observe"]["market_refs"][0]
+        assert isinstance(market_ref, dict) and market_ref.get("redacted") is True
+        assert market_ref["reason"] == "redaction_policy_unavailable"
+        assert list_resp.json()["meta"]["redacted_evidence_count"] == 14
+
+        # Detail
+        detail_resp = client.get(
+            f"/bff/ooda/packets/{_PRODUCTION_OODA_PACKET['packet_id']}",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert detail_resp.status_code == 200, detail_resp.text
+        detail_packet = detail_resp.json()["data"]
+        risk_ref_d = detail_packet["orient"]["risk_adjudication_ref"]
+        assert isinstance(risk_ref_d, dict) and risk_ref_d.get("redacted") is True
+        assert risk_ref_d["reason"] == "redaction_policy_unavailable"
+        market_ref_d = detail_packet["observe"]["market_refs"][0]
+        assert isinstance(market_ref_d, dict) and market_ref_d.get("redacted") is True
+        assert market_ref_d["reason"] == "redaction_policy_unavailable"
+        assert detail_resp.json()["meta"]["redacted_evidence_count"] == 14
+
+
+def test_ooda_real_producer_list_and_detail_fail_closed_when_capabilities_returns_none() -> None:
+    """Real producer packet: fail closed when capabilities lookup returns None."""
+    with _stub_auth_env():
+        client = TestClient(
+            _build_control_loops_app(
+                store=_ProductionOodaSweepStore(),
+                capabilities_for_identity=lambda _: None,
+            )
+        )
+        # List
+        list_resp = client.get(
+            "/bff/ooda/packets",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        list_packet = list_resp.json()["data"][0]
+        risk_ref = list_packet["orient"]["risk_adjudication_ref"]
+        assert isinstance(risk_ref, dict) and risk_ref.get("redacted") is True
+        assert risk_ref["reason"] == "redaction_policy_unavailable"
+        market_ref = list_packet["observe"]["market_refs"][0]
+        assert isinstance(market_ref, dict) and market_ref.get("redacted") is True
+        assert market_ref["reason"] == "redaction_policy_unavailable"
+        assert list_resp.json()["meta"]["redacted_evidence_count"] == 14
+
+        # Detail
+        detail_resp = client.get(
+            f"/bff/ooda/packets/{_PRODUCTION_OODA_PACKET['packet_id']}",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert detail_resp.status_code == 200, detail_resp.text
+        detail_packet = detail_resp.json()["data"]
+        risk_ref_d = detail_packet["orient"]["risk_adjudication_ref"]
+        assert isinstance(risk_ref_d, dict) and risk_ref_d.get("redacted") is True
+        assert risk_ref_d["reason"] == "redaction_policy_unavailable"
+        market_ref_d = detail_packet["observe"]["market_refs"][0]
+        assert isinstance(market_ref_d, dict) and market_ref_d.get("redacted") is True
+        assert market_ref_d["reason"] == "redaction_policy_unavailable"
+        assert detail_resp.json()["meta"]["redacted_evidence_count"] == 14
 
 
 # --- v5 interventions (list + detail) ---------------------------------------
