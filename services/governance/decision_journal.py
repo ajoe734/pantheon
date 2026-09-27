@@ -28,6 +28,7 @@ SD §5.3 scorecard requirements satisfied:
 from __future__ import annotations
 
 import copy
+import errno
 import fcntl
 import os
 import time
@@ -40,6 +41,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar
 from .record_store import (
     GovernanceRecordStore,
     JsonGovernanceRecordStore,
+    PostgresGovernanceRecordStore,
     _record_id,
     build_governance_record_store,
 )
@@ -125,6 +127,8 @@ class _BundleFileLock:
         self.lock_path = lock_path.resolve()
 
     def __enter__(self) -> _BundleFileLock:
+        if _read_only_filesystem(self.lock_path.parent):
+            raise PermissionError(errno.EROFS, "Decision journal storage is read-only", str(self.lock_path))
         held = getattr(_HELD_BUNDLE_LOCKS, "held", None)
         if held is None:
             held = {}
@@ -160,7 +164,13 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
 
     @property
     def read_only(self) -> bool:
+        if getattr(self, "_read_only_override", None) is not None:
+            return bool(self._read_only_override)
         return _read_only_filesystem(self.storage_path.parent)
+
+    @read_only.setter
+    def read_only(self, value: bool) -> None:
+        self._read_only_override = bool(value)
 
     def _read_snapshot(self, read: Callable[[], _ReadResult]) -> _ReadResult:
         def refreshed() -> _ReadResult:
@@ -190,6 +200,8 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
             return super().list_all()
 
     def put(self, record: Dict[str, Any]) -> None:
+        if self.read_only:
+            raise PermissionError(errno.EROFS, "Decision journal store is read-only", str(self.storage_path))
         with self._file_lock(), self._lock:
             self._refresh()
             super().put(record)
@@ -197,6 +209,8 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
     def insert_if_absent(
         self, record: Dict[str, Any]
     ) -> tuple[bool, Dict[str, Any]]:
+        if self.read_only:
+            raise PermissionError(errno.EROFS, "Decision journal store is read-only", str(self.storage_path))
         with self._file_lock(), self._lock:
             self._refresh()
             return super().insert_if_absent(record)
@@ -206,11 +220,15 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
         expected_record: Dict[str, Any],
         record: Dict[str, Any],
     ) -> tuple[bool, Dict[str, Any] | None]:
+        if self.read_only:
+            raise PermissionError(errno.EROFS, "Decision journal store is read-only", str(self.storage_path))
         with self._file_lock(), self._lock:
             self._refresh()
             return super().compare_and_set(expected_record, record)
 
     def delete(self, record_id: str) -> bool:
+        if self.read_only:
+            raise PermissionError(errno.EROFS, "Decision journal store is read-only", str(self.storage_path))
         with self._file_lock(), self._lock:
             self._refresh()
             key = str(record_id)
@@ -225,6 +243,8 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
         record_id: str,
         expected_snapshot: Dict[str, Any],
     ) -> tuple[bool, Dict[str, Any] | None]:
+        if self.read_only:
+            raise PermissionError(errno.EROFS, "Decision journal store is read-only", str(self.storage_path))
         clean_id = str(record_id or "").strip()
         if not clean_id:
             return False, None
@@ -364,8 +384,59 @@ class DecisionJournalAccessDeniedError(PermissionError):
     """Raised when accessing a private decision journal entry outside of authorized tenant/actor scope."""
 
 
+def resolve_decision_journal_backend() -> str:
+    """Resolve the persistence backend for the Decision Journal.
+
+    Enforces the canonical contract:
+    - Supported backends: 'json' (dev/local tests), 'postgres' (staging/prod/packaged runtime).
+    - If GOVERNANCE_STORE_BACKEND is set, validate it must be 'json' or 'postgres'.
+    - If GOVERNANCE_STORE_BACKEND is unset, but DATABASE_URL or GOVERNANCE_STORE_DSN is set,
+      select 'postgres' (never silently default to JSON despite DATABASE_URL).
+    - If legacy AGORA_GOVERNANCE_STORE_BACKEND is set:
+        - If unsupported (e.g. 'memory', 'off', etc.), raise ValueError.
+        - If GOVERNANCE_STORE_BACKEND is also set with a different value, raise ValueError on conflict.
+        - If GOVERNANCE_STORE_BACKEND is unset, reconcile 'postgres' -> 'postgres', 'json' -> 'json'.
+    - Otherwise default to 'json'.
+    """
+    raw_gov = os.getenv("GOVERNANCE_STORE_BACKEND")
+    raw_agora = os.getenv("AGORA_GOVERNANCE_STORE_BACKEND")
+    dsn = os.getenv("GOVERNANCE_STORE_DSN") or os.getenv("DATABASE_URL")
+    if os.getenv("AGORA_GOVERNANCE_STORE_DSN") and not dsn:
+        raise ValueError(
+            "AGORA_GOVERNANCE_STORE_DSN alone is not a Decision Journal DSN; "
+            "configure GOVERNANCE_STORE_DSN or DATABASE_URL explicitly"
+        )
+
+    gov_backend = raw_gov.strip().lower() if raw_gov is not None and raw_gov.strip() else None
+    agora_backend = raw_agora.strip().lower() if raw_agora is not None and raw_agora.strip() else None
+
+    if agora_backend is not None and agora_backend not in ("json", "postgres"):
+        raise ValueError(
+            f"Unsupported legacy environment backend AGORA_GOVERNANCE_STORE_BACKEND={raw_agora!r}; "
+            "Decision Journal requires 'json' or 'postgres'"
+        )
+
+    if gov_backend is not None and agora_backend is not None:
+        if gov_backend != agora_backend:
+            raise ValueError(
+                f"Conflicting backend configuration: GOVERNANCE_STORE_BACKEND={raw_gov!r} "
+                f"conflicts with AGORA_GOVERNANCE_STORE_BACKEND={raw_agora!r}"
+            )
+
+    selected = gov_backend or agora_backend
+    if selected is not None:
+        if selected not in ("json", "postgres"):
+            raise ValueError(f"GOVERNANCE_STORE_BACKEND must be json or postgres, got {raw_gov!r}")
+        return selected
+
+    if dsn and dsn.strip():
+        return "postgres"
+
+    return "json"
+
+
 def _persistence_mode() -> str:
-    backend = os.getenv("GOVERNANCE_STORE_BACKEND", "json").strip().lower()
+    backend = resolve_decision_journal_backend()
     return "governance_postgres_store" if backend == "postgres" else "governance_json_store"
 
 
@@ -483,11 +554,31 @@ def _build_journal_record_store(
     *,
     table: str,
     id_fields: Sequence[str],
+    backend: str,
+    dsn: Optional[str] = None,
+    bootstrap: bool = True,
 ) -> GovernanceRecordStore:
-    backend = os.getenv("GOVERNANCE_STORE_BACKEND", "json").strip().lower()
-    if backend in ("", "json"):
+    """Build a single journal record store with the already-resolved backend contract.
+
+    The caller (``build_decision_journal_stores``) must resolve the backend and DSN
+    once and pass them in explicitly.  This prevents a secondary env-read from
+    silently returning a JsonGovernanceRecordStore even when the resolved backend
+    is postgres.
+    """
+    if backend == "json":
         return CoordinatingJsonGovernanceRecordStore(storage_path, id_fields=id_fields)
-    return build_governance_record_store(storage_path, table=table, id_fields=id_fields)
+    # backend == "postgres": construct directly with the pre-resolved DSN so no
+    # second env-read can override the resolved contract.
+    if not dsn:
+        raise ValueError(
+            "GOVERNANCE_STORE_DSN or DATABASE_URL is required for Postgres governance store"
+        )
+    return PostgresGovernanceRecordStore(
+        dsn=dsn,
+        table=table,
+        id_fields=id_fields,
+        bootstrap=bootstrap,
+    )
 
 
 def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores:
@@ -497,31 +588,60 @@ def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores
     staging/production) -- the same posture already governing freeze orders
     and rollbacks -- so this owner never silently downgrades to a
     process-local dict when a durable backend is configured.
+
+    The backend and DSN are resolved **once** here and propagated into every
+    store builder.  ``build_governance_record_store`` is intentionally not
+    delegated to for postgres: that helper independently re-reads
+    ``GOVERNANCE_STORE_BACKEND`` and would silently return a
+    ``JsonGovernanceRecordStore`` if the variable was absent or changed.
     """
 
     base = Path(data_dir)
+    backend = resolve_decision_journal_backend()
+    required_backend = os.getenv("PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND")
+    if required_backend and backend != required_backend:
+        raise ValueError(
+            "Decision Journal backend does not match PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND; "
+            "packaged consumers require the shared Postgres authority, not a separate local JSON writer"
+        )
+    # Resolve DSN and bootstrap flag once so every store uses the same contract.
+    dsn: Optional[str] = None
+    bootstrap: bool = True
+    if backend == "postgres":
+        dsn = os.getenv("GOVERNANCE_STORE_DSN") or os.getenv("DATABASE_URL")
+        bootstrap = os.getenv("GOVERNANCE_STORE_BOOTSTRAP", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+        )
+
+    _kw: Dict[str, Any] = {"backend": backend, "dsn": dsn, "bootstrap": bootstrap}
+
     entries = _build_journal_record_store(
         base / "decision_journal_entries.json",
         table="governance.decision_journal_entries",
         id_fields=_ENTRY_ID_FIELDS,
+        **_kw,
     )
     idempotency = _build_journal_record_store(
         base / "decision_journal_idempotency.json",
         table="governance.decision_journal_idempotency",
         id_fields=_IDEMPOTENCY_ID_FIELDS,
+        **_kw,
     )
     audit = _build_journal_record_store(
         base / "decision_journal_audit.json",
         table="governance.decision_journal_audit",
         id_fields=_AUDIT_ID_FIELDS,
+        **_kw,
     )
-    backend = os.getenv("GOVERNANCE_STORE_BACKEND", "json").strip().lower()
     outbox = None
-    if backend in ("", "json") or os.getenv("PANTHEON_DECISION_JOURNAL_OUTBOX") == "1":
+    if backend == "json" or os.getenv("PANTHEON_DECISION_JOURNAL_OUTBOX") == "1":
         outbox = _build_journal_record_store(
             base / "decision_journal_outbox.json",
             table="governance.decision_journal_outbox",
             id_fields=_OUTBOX_ID_FIELDS,
+            **_kw,
         )
     return DecisionJournalStores(
         entries=entries,
