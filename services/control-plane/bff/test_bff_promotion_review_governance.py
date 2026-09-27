@@ -483,6 +483,7 @@ def _isolated_client(
     with tempfile.TemporaryDirectory() as td:
         store = PromotionReviewTestReadPorts(allow_fallback=True)
         command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+
         app = _build_promotion_review_app(
             store, command_store, run_management_read=run_management_read
         )
@@ -1351,12 +1352,23 @@ def test_cockpit_timeout_degrades_without_blocking_health() -> None:
     restored for ``/bff/alerts`` in ``test_mgmt_load_005_read_concurrency.py``.
     """
     with _isolated_client() as (client, store, command_store):
+        # Warm up route and schema cache on isolated client before measuring concurrent responsiveness
+        client.get("/health")
+        client.get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+
         def slow_list_personas(*_args, **_kwargs):
             time.sleep(0.6)
             return []
 
         store.list_personas = slow_list_personas
-        with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05",
+                "PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS": "0.05",
+                "PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS": "0.05",
+            },
+        ):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 cockpit_future = pool.submit(
                     client.get, "/bff/management/cockpit", headers=OPERATOR_HEADERS
@@ -1762,6 +1774,7 @@ def test_promotion_review_idempotency_replay_has_no_direct_live_mutation() -> No
 
 
 def test_command_store_caching(tmp_path) -> None:
+
     db_file = tmp_path / "commands_test.jsonl"
     store = CommandStore(str(db_file))
     assert store._cache is None

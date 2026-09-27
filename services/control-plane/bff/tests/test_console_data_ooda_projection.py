@@ -22,9 +22,8 @@ from fastapi.testclient import TestClient
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SCRIPTS_ROOT = REPO_ROOT / "scripts"
-sys.path.insert(0, str(SCRIPTS_ROOT))
 
-import project_ooda_to_bff_surfaces as projector  # noqa: E402
+import scripts.project_ooda_to_bff_surfaces as projector  # noqa: E402
 
 from services.control_plane.bff.control_loops.router import create_control_loops_router  # noqa: E402
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports  # noqa: E402

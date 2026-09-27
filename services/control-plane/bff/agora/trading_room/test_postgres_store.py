@@ -7,7 +7,6 @@ import uuid
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from bff.agora.trading_room import store as store_module
 

@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from ports import ReadSurfacePorts, TrainingSessionTrainerPort, create_in_memory_read_surface_ports
 
