@@ -114,14 +114,16 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
     """Deterministic, isolated in-memory store for unit and acceptance tests."""
 
     def __init__(self) -> None:
-        self._receipts: Dict[str, CanonicalLoopReceipt] = {}
+        self._receipts: Dict[Tuple[Optional[str], Optional[str], str], CanonicalLoopReceipt] = {}
         self._observations: Dict[Tuple[Optional[str], Optional[str], str, str, int], LoopObservation] = {}
         self._scoped_backup: Dict[Tuple[Optional[str], Optional[str], str, str, int], LoopObservation] = {}
+        self._scoped_receipts_backup: Dict[Tuple[Optional[str], Optional[str], str], CanonicalLoopReceipt] = {}
 
     def record_receipt(self, receipt: CanonicalLoopReceipt) -> None:
         validate_scope(receipt.tenant_id, receipt.environment)
-        if receipt.receipt_id not in self._receipts:
-            self._receipts[receipt.receipt_id] = receipt
+        key = (receipt.tenant_id, receipt.environment, receipt.receipt_id)
+        if key not in self._receipts:
+            self._receipts[key] = receipt
 
     def get_receipt(
         self,
@@ -131,23 +133,15 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
         environment: Optional[str] = None,
         all_scopes: bool = True,
     ) -> Optional[CanonicalLoopReceipt]:
-        r = self._receipts.get(receipt_id)
-        if r is None:
-            return None
         if not all_scopes:
             validate_scope(tenant_id, environment)
-            if tenant_id is None and environment is None:
-                if r.tenant_id is not None or r.environment is not None:
-                    return None
-            else:
-                if r.tenant_id != tenant_id or r.environment != environment:
-                    return None
-        else:
-            if tenant_id is not None and r.tenant_id != tenant_id:
-                return None
-            if environment is not None and r.environment != environment:
-                return None
-        return r
+            return self._receipts.get((tenant_id, environment, receipt_id))
+        if tenant_id is not None or environment is not None:
+            return self._receipts.get((tenant_id, environment, receipt_id))
+        for (t, e, rid), r in self._receipts.items():
+            if rid == receipt_id:
+                return r
+        return None
 
     def list_receipts(
         self,
@@ -313,7 +307,7 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                 owner, provenance, status, observed_at, degradation_reason,
                 causation_id, payload, tenant_id, environment
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (receipt_id) DO NOTHING;
+            ON CONFLICT (tenant_id, environment, receipt_id) DO NOTHING;
         """
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -350,7 +344,7 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                         owner, provenance, status, observed_at, degradation_reason,
                         causation_id, payload, tenant_id, environment
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                    ON CONFLICT (receipt_id) DO NOTHING;
+                    ON CONFLICT (tenant_id, environment, receipt_id) DO NOTHING;
                 """
                 await conn.execute(
                     query,
@@ -897,13 +891,27 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         INSERT INTO {schema}.loop_receipts_scoped_backup
         SELECT * FROM {schema}.loop_receipts
         WHERE tenant_id IS NOT NULL OR environment IS NOT NULL
-        ON CONFLICT (receipt_id) DO NOTHING;
+        ON CONFLICT (tenant_id, environment, receipt_id) DO NOTHING;
 
         DELETE FROM {schema}.loop_receipts
         WHERE tenant_id IS NOT NULL OR environment IS NOT NULL;
 
+        DROP INDEX IF EXISTS {schema}.idx_loop_receipts_scoped_key;
         DROP INDEX IF EXISTS {schema}.idx_loop_receipts_scope_key;
         DROP INDEX IF EXISTS {schema}.idx_loop_receipts_scope_correlation;
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'loop_receipts_pkey'
+                  AND conrelid = '{schema}.loop_receipts'::regclass
+            ) THEN
+                ALTER TABLE {schema}.loop_receipts
+                    ADD CONSTRAINT loop_receipts_pkey
+                    PRIMARY KEY (receipt_id);
+            END IF;
+        END $$;
 
         CREATE TABLE IF NOT EXISTS {schema}.twelve_loop_observations_scoped_backup (
             LIKE {schema}.twelve_loop_observations INCLUDING ALL
@@ -911,7 +919,7 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         INSERT INTO {schema}.twelve_loop_observations_scoped_backup
         SELECT * FROM {schema}.twelve_loop_observations
         WHERE tenant_id IS NOT NULL OR environment IS NOT NULL
-        ON CONFLICT DO NOTHING;
+        ON CONFLICT (tenant_id, environment, release_id, correlation_id, loop_id) DO NOTHING;
 
         DELETE FROM {schema}.twelve_loop_observations
         WHERE tenant_id IS NOT NULL OR environment IS NOT NULL;
