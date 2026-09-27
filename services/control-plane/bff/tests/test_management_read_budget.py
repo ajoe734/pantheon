@@ -33,32 +33,39 @@ def _ok_surface() -> dict[str, str]:
 
 
 def _compile_pm12_namespace(store: Any) -> dict[str, Any]:
-    tree = ast.parse(Path(__file__).resolve().parent.parent.joinpath("main.py").read_text())
-    target_names = {
-        "_management_avg",
-        "_management_record_id",
-        "_management_first_non_empty",
-        "_management_dict_value",
-        "_management_nested_dict",
-        "_management_position_records",
-        "_management_latest_timestamp",
-        "_management_link",
-        "_filter_by_common_identifiers",
-        "_performance_ranking_source_surface",
-        "_list_strategy_summaries",
-        "_pm12_performance_attribution_sources",
-    }
+    from functools import partial
+    import inspect
+    from services.control_plane.bff.shared.cross_domain_utils import (
+        _management_as_float,
+        _management_first_float,
+        _management_nested_value,
+        _management_telemetry_rollup,
+    )
+    pm12_tree = ast.parse(Path(__file__).resolve().parent.parent.joinpath("pm12", "service.py").read_text())
     funcs = [
-        n for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name in target_names
+        n for n in pm12_tree.body
+        if isinstance(n, ast.FunctionDef) and (n.name.startswith("_pm12_") or n.name.startswith("_management_"))
     ]
     ns = dict(__import__("typing").__dict__)
     ns.update({
+        "__package__": "services.control_plane.bff.pm12",
         "read_store": store,
         "_list_persona_records": lambda *a, **kw: [],
         "_list_strategy_summaries": lambda *a, **kw: [],
+        "_management_as_float": _management_as_float,
+        "_management_nested_value": _management_nested_value,
+        "_management_first_float": _management_first_float,
+        "_management_telemetry_rollup": _management_telemetry_rollup,
     })
-    exec(compile(ast.Module(body=funcs, type_ignores=[]), "main_pm12.py", "exec"), ns)
+    exec(compile(ast.Module(body=funcs, type_ignores=[]), "pm12_service.py", "exec"), ns)
+    for attr, val in list(ns.items()):
+        if callable(val) and attr.startswith(("_pm12_", "_management_")):
+            try:
+                sig = inspect.signature(val)
+                if "read_store" in sig.parameters:
+                    ns[attr] = partial(val, read_store=store)
+            except Exception:
+                pass
     return ns
 
 

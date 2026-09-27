@@ -58,7 +58,8 @@ NOW = "2026-09-08T18:00:00Z"
 def _collect_context(store: SimpleNamespace, tenant_id: str = "tenant-a", focus: str = "portfolio") -> dict:
     """Execute the exact committed context collector plus its tenant-scoping
     helpers, isolating unrelated adapters."""
-    tree = ast.parse(Path("services/control-plane/bff/main.py").read_text())
+    service_path = Path(__file__).resolve().parents[1] / "assistant" / "management_service.py"
+    tree = ast.parse(service_path.read_text())
     names = {
         "_mgmt_nl_collect_context",
         "_mgmt_nl_filter_tenant_records",
@@ -130,7 +131,8 @@ def test_telemetry_read_failure_returns_explicit_unavailable_observation() -> No
 
 def test_telemetry_failure_remains_explicit_in_portfolio_context() -> None:
     # Execute the exact committed context collector, isolating unrelated adapters.
-    tree = ast.parse(Path("services/control-plane/bff/main.py").read_text())
+    service_path = Path(__file__).resolve().parents[1] / "assistant" / "management_service.py"
+    tree = ast.parse(service_path.read_text())
     node = next(
         n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_mgmt_nl_collect_context"
     )

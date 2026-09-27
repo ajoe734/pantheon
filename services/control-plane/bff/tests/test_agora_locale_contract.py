@@ -4,11 +4,13 @@ from __future__ import annotations
 import inspect
 import re
 
-from agora.trading_room import router
+from services.control_plane.bff.agora.trading_room.routes.common import (
+    _build_winner_branch_views,
+)
 
 
 def test_workspace_proposal_emits_stable_i18n_keys_and_codes() -> None:
-    views = router._build_winner_branch_views("strategy-1", "v1")
+    views = _build_winner_branch_views("strategy-1", "v1")
 
     assert views
     for view in views:
@@ -26,5 +28,5 @@ def test_workspace_proposal_emits_stable_i18n_keys_and_codes() -> None:
 
 
 def test_workspace_generator_source_contains_no_cjk_display_copy() -> None:
-    source = inspect.getsource(router._build_winner_branch_views)
+    source = inspect.getsource(_build_winner_branch_views)
     assert re.search(r"[\u3400-\u9fff]", source) is None

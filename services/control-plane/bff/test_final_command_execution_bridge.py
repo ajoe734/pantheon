@@ -211,6 +211,7 @@ def _build_test_app() -> FastAPI:
         extract_identity=_test_extract_identity,
         final_contract_idempotency=_FINAL_CONTRACT_IDEMPOTENCY,
         gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
+        process_command_task=lambda cmd_id: None,
     )
     service.sem_command_response = _test_sem_command_response
 

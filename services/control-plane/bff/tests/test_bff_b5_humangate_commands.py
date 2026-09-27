@@ -61,6 +61,29 @@ class MockReadStore:
     def list_v5_interventions(self) -> list[dict[str, Any]]:
         return list(self.interventions)
 
+    def get_ranking_snapshot(self, snapshot_id: str) -> Optional[dict[str, Any]]:
+        from datetime import datetime, timezone
+        from services.control_plane.bff.pm12.service import _stable_json_hash, _PM12_LEAGUE_FORMULA_VERSION
+        now = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "surface": "quarterly",
+            "period": "2026-Q1",
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "items": [
+                {
+                    "persona_id": "p-1",
+                    "score": 90.0,
+                    "components": {"risk_score": 80.0, "execution_score": 75.0},
+                }
+            ],
+        }
+        return {
+            "snapshot_id": snapshot_id,
+            "created_at": now,
+            **payload,
+            "content_digest": _stable_json_hash(payload),
+        }
+
 
 command_store: Optional[CommandStore] = None
 read_store: Optional[MockReadStore] = None
@@ -108,13 +131,14 @@ def _build_test_app() -> FastAPI:
         quarter: Optional[str] = Query(default=None),
         page_size: int = Query(default=20),
     ):
+        q = quarter or "2026-Q1"
         return {
             "data": {
                 "items": [
                     {
-                        "quarter": quarter or "2026-Q1",
-                        "recommendation_id": "rec-b5-001",
-                        "action_id": "submit_recommendation",
+                        "quarter": q,
+                        "recommendation_id": f"pm12-{q.lower()}-p-1-promote_to_canary_candidate",
+                        "action_id": "promote_to_canary_candidate",
                         "persona_id": "p-1",
                         "ranking_snapshot_id": "snap-b5-001",
                         "live_capital_mutation": False,
@@ -301,6 +325,8 @@ def test_quarterly_ranking_recommendation_submit_uses_command_response_without_l
                 "quarter": item["quarter"],
                 "recommendation_id": item["recommendation_id"],
                 "recommendation_action_id": item["action_id"],
+                "action_id": "submit_recommendation",
+                "actionId": "submit_recommendation",
                 "persona_id": item["persona_id"],
                 "ranking_snapshot_id": item["ranking_snapshot_id"],
                 "live_capital_mutation": item["live_capital_mutation"],

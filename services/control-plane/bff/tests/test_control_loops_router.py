@@ -385,23 +385,13 @@ def test_ast_route_inventory_proves_single_owner_across_assembly_handoff() -> No
     )
     assert prepared_pairs == Counter({route: 1 for route in EXPECTED_ROUTES})
     assert {route: legacy_pairs[route] for route in EXPECTED_ROUTES} == {
-        route: 1 for route in EXPECTED_ROUTES
+        route: 0 for route in EXPECTED_ROUTES
     }
 
-    # The prepared router is additive-only and is not mounted yet, so main.py
-    # remains the sole current runtime owner.  Main Assembly performs one
-    # atomic ownership transfer: remove these legacy decorators, then include
-    # the prepared router.  The projected composition retains one owner for
-    # every method/path pair rather than registering a duplicate.
-    main_source = (bff_root / "main.py").read_text(encoding="utf-8")
-    assert "from control_loops.router import" not in main_source
-    projected = legacy_pairs.copy()
-    for route in EXPECTED_ROUTES:
-        projected[route] -= 1
-    projected.update(prepared_pairs)
-    assert {route: projected[route] for route in EXPECTED_ROUTES} == {
-        route: 1 for route in EXPECTED_ROUTES
-    }
+    # Assembly handoff completed: control_loops.router is mounted via core/app_factory.py,
+    # and main.py removed all 24 legacy decorators so there is single ownership.
+    app_factory_source = (bff_root / "core" / "app_factory.py").read_text(encoding="utf-8")
+    assert "create_control_loops_router" in app_factory_source
 
 
 def test_review_evidence_manifest_matches_task_acceptance() -> None:

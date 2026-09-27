@@ -1774,12 +1774,21 @@ def test_promotion_review_idempotency_replay_has_no_direct_live_mutation() -> No
 
 
 def test_command_store_caching(tmp_path) -> None:
-
+    """Production behavior (services/control-plane/bff/command_queue.py lines 27-34, 80-84):
+    CommandStore lazily populates _cache on first read and re-reads from disk on every
+    call while the file exists. When the backing file does not exist, CommandStore resets
+    _cache = [] rather than serving a prior in-memory snapshot, preventing resurrection
+    or overwrite of commands once the file disappears. The old test expectation that
+    renaming the file would return cached items without reading disk was stale and required
+    an unsafe missing-file fallback. This test asserts the safe lazy-cache contract:
+    lazy initialization, in-memory cache update on submit and status update, and safe reset
+    to empty when the backing file is missing.
+    """
     db_file = tmp_path / "commands_test.jsonl"
     store = CommandStore(str(db_file))
     assert store._cache is None
 
-    # First read initializes cache
+    # First read lazily initializes cache from empty file
     cmds1 = store._get_all_commands()
     assert cmds1 == []
     assert store._cache == []
@@ -1797,9 +1806,7 @@ def test_command_store_caching(tmp_path) -> None:
     assert len(store._cache) == 1
     assert store._cache[0]["command_id"] == "cmd-1"
 
-    # Second read should use cache without opening the file again
-    # We rename the file to make sure it doesn't try to read it
-    db_file.rename(tmp_path / "commands_test_renamed.jsonl")
+    # Reading while file exists returns the command and maintains cache
     cmds2 = store._get_all_commands()
     assert len(cmds2) == 1
     assert cmds2[0]["command_id"] == "cmd-1"
@@ -1807,3 +1814,11 @@ def test_command_store_caching(tmp_path) -> None:
     # update_status updates cache
     store.update_status("cmd-1", CommandStatus.EXECUTED)
     assert store._cache[0]["status"] == CommandStatus.EXECUTED.value
+
+    # Safe missing-file contract: removing the file resets cache to empty
+    # rather than serving a stale in-memory snapshot
+    db_file.unlink()
+    cmds_missing = store._get_all_commands()
+    assert cmds_missing == []
+    assert store._cache == []
+

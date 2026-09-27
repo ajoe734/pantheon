@@ -575,6 +575,8 @@ def _make_store(
         if dataset == "research_experiments"
         else original_dataset_source(dataset)
     )
+    store.get_research_experiment = lambda experiment_id: research_experiments.get(experiment_id)
+    store.list_research_experiments = lambda **kw: list(research_experiments.values())
     for method_name, key in (
         ("list_agora_signals", "agora_signals"),
         ("list_agora_sessions", "agora_sessions"),
@@ -653,32 +655,8 @@ _PM12_FUNCS = None
 
 
 def _compile_pm12_namespace(store):
-    global _PM12_FUNCS
-    if _PM12_FUNCS is None:
-        main_path = Path(__file__).resolve().parent / "main.py"
-        tree = ast.parse(main_path.read_text(encoding="utf-8"))
-        target_names = {
-            "_management_record_id",
-            "_management_first_non_empty",
-            "_management_dict_value",
-            "_management_nested_dict",
-            "_management_position_records",
-            "_management_latest_timestamp",
-            "_management_link",
-            "_filter_by_common_identifiers",
-            "_extract_ids_from_item",
-            "_performance_ranking_source_surface",
-            "_list_strategy_summaries",
-        }
-        _PM12_FUNCS = [
-            n for n in tree.body
-            if isinstance(n, ast.FunctionDef)
-            and (
-                n.name.startswith("_pm12_")
-                or (n.name.startswith("_management_") and not n.name.startswith("_management_ai_"))
-                or n.name in target_names
-            )
-        ]
+    from functools import partial
+    import inspect
 
     def _page_slice(items, page_token, page_size):
         start = int(page_token) if page_token else 0
@@ -691,6 +669,7 @@ def _compile_pm12_namespace(store):
 
     ns = dict(__import__("typing").__dict__)
     ns.update({
+        "__package__": "services.control_plane.bff.pm12",
         "datetime": datetime,
         "date": datetime.date,
         "timezone": timezone,
@@ -711,7 +690,20 @@ def _compile_pm12_namespace(store):
         "_management_telemetry_rollup": _management_telemetry_rollup,
         "_resolve_param": _resolve_param,
     })
-    exec(compile(ast.Module(body=_PM12_FUNCS, type_ignores=[]), "main_pm12.py", "exec"), ns)
+    pm12_tree = ast.parse((Path(__file__).resolve().parent / "pm12" / "service.py").read_text(encoding="utf-8"))
+    funcs = [
+        n for n in pm12_tree.body
+        if isinstance(n, ast.FunctionDef) and (n.name.startswith("_pm12_") or n.name.startswith("_management_"))
+    ]
+    exec(compile(ast.Module(body=funcs, type_ignores=[]), "main_pm12.py", "exec"), ns)
+    for attr, val in list(ns.items()):
+        if callable(val) and attr.startswith(("_pm12_", "_management_")):
+            try:
+                sig = inspect.signature(val)
+                if "read_store" in sig.parameters:
+                    ns[attr] = partial(val, read_store=store)
+            except Exception:
+                pass
     return ns
 
 
