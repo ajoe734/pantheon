@@ -1485,9 +1485,10 @@ class TestTwelveLoopProjectorScopeAndStorage:
         assert obs_staging.status == "failed"
         assert obs_staging.environment == "staging"
 
-    def test_cross_tenant_duplicate_receipt_id_rejected(self) -> None:
-        """Attempting to re-ingest an existing receipt_id under a different tenant raises conflicting identity."""
-        projector = TwelveLoopTruthProjector()
+    def test_cross_tenant_shared_receipt_id_allowed_and_within_scope_conflict_rejected(self) -> None:
+        """Shared receipt_id across different tenants is valid; within-scope conflict is rejected."""
+        store = MemoryTwelveLoopStore()
+        projector = TwelveLoopTruthProjector(store=store, all_scopes=True, auto_load=False)
         now = _utc()
 
         r1 = CanonicalLoopReceipt(
@@ -1517,9 +1518,37 @@ class TestTwelveLoopProjectorScopeAndStorage:
             observed_at=now,
         )
 
-        projector.ingest_receipt(r1)
+        # Ingestion across distinct scopes succeeds (valid cross-scope collision)
+        obs1 = projector.ingest_receipt(r1)
+        assert obs1.tenant_id == "tenant-alpha"
+        obs2 = projector.ingest_receipt(r2)
+        assert obs2.tenant_id == "tenant-beta"
+
+        # Within the SAME scope (tenant-alpha, production), conflicting receipt identity is rejected
+        r_conflict = CanonicalLoopReceipt(
+            receipt_id="shared-uuid",
+            receipt_type="stimulus",
+            loop_id=1,
+            correlation_id="corr-1",
+            release_id="rel-1",
+            owner="source-ingest",
+            provenance="live",
+            tenant_id="tenant-alpha",
+            environment="production",
+            observed_at=now,
+        )
         with pytest.raises(ValueError, match="Conflicting receipt identity"):
-            projector.ingest_receipt(r2)
+            projector.ingest_receipt(r_conflict)
+
+        # Two scoped projectors sharing store do not reject each other's stimulus
+        p_alpha = TwelveLoopTruthProjector(store=store, tenant_id="tenant-alpha", environment="production")
+        p_beta = TwelveLoopTruthProjector(store=store, tenant_id="tenant-beta", environment="production")
+        assert p_alpha.get_observation("rel-1", "corr-1", 1) is not None
+        assert p_beta.get_observation("rel-1", "corr-1", 1) is not None
+
+        # All-scopes rebuild succeeds without collision
+        rebuilt = projector.rebuild()
+        assert len(rebuilt) == 2
 
     def test_projector_scoped_rejects_conflicting_receipt_scope(self) -> None:
         """A projector configured for a specific tenant rejects receipts with mismatched tenant scope."""

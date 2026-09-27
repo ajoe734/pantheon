@@ -65,9 +65,9 @@ BEGIN
               ON (r.tenant_id IS NOT DISTINCT FROM b.tenant_id)
              AND (r.environment IS NOT DISTINCT FROM b.environment)
              AND r.receipt_id = b.receipt_id
-            WHERE (r.receipt_type, r.loop_id, r.correlation_id, r.release_id, r.owner, r.provenance, r.status, r.payload)
+            WHERE (r.receipt_type, r.loop_id, r.correlation_id, r.release_id, r.owner, r.provenance, r.status, r.observed_at, r.degradation_reason, r.causation_id, r.payload)
                IS DISTINCT FROM
-                  (b.receipt_type, b.loop_id, b.correlation_id, b.release_id, b.owner, b.provenance, b.status, b.payload)
+                  (b.receipt_type, b.loop_id, b.correlation_id, b.release_id, b.owner, b.provenance, b.status, b.observed_at, b.degradation_reason, b.causation_id, b.payload)
         ) THEN
             RAISE EXCEPTION 'Conflicting receipt content detected between loop_receipts and loop_receipts_scoped_backup';
         END IF;
@@ -108,9 +108,41 @@ BEGIN
              AND o.release_id = b.release_id
              AND o.correlation_id = b.correlation_id
              AND o.loop_id = b.loop_id
-            WHERE (o.owner, o.status, o.freshness_status, o.provenance, o.receipt_ids)
+            WHERE (
+                o.owner,
+                o.stimulus_id,
+                o.stimulus_observed_at,
+                o.terminal_id,
+                o.terminal_status,
+                o.terminal_observed_at,
+                o.next_consumer_receipt_id,
+                o.next_consumer_observed_at,
+                o.status,
+                o.freshness_status,
+                o.provenance,
+                o.observed_at,
+                o.degradation_reason,
+                o.causation_id,
+                o.receipt_ids
+            )
                IS DISTINCT FROM
-                  (b.owner, b.status, b.freshness_status, b.provenance, b.receipt_ids)
+            (
+                b.owner,
+                b.stimulus_id,
+                b.stimulus_observed_at,
+                b.terminal_id,
+                b.terminal_status,
+                b.terminal_observed_at,
+                b.next_consumer_receipt_id,
+                b.next_consumer_observed_at,
+                b.status,
+                b.freshness_status,
+                b.provenance,
+                b.observed_at,
+                b.degradation_reason,
+                b.causation_id,
+                b.receipt_ids
+            )
         ) THEN
             RAISE EXCEPTION 'Conflicting observation content detected between twelve_loop_observations and twelve_loop_observations_scoped_backup';
         END IF;

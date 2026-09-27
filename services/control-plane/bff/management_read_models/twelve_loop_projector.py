@@ -278,8 +278,8 @@ class TwelveLoopTruthProjector:
         self.all_scopes = all_scopes
         self.max_age_seconds = max_age_seconds
         self.max_future_skew_seconds = max_future_skew_seconds
-        # raw receipts: receipt_id -> CanonicalLoopReceipt
-        self._receipts: Dict[str, CanonicalLoopReceipt] = {}
+        # raw receipts: (tenant_id, environment, receipt_id) -> CanonicalLoopReceipt
+        self._receipts: Dict[Tuple[Optional[str], Optional[str], str], CanonicalLoopReceipt] = {}
         # projected observations: (tenant_id, environment, release_id, correlation_id, loop_id) -> LoopObservation
         self._observations: Dict[Tuple[Optional[str], Optional[str], str, str, int], LoopObservation] = {}
         # receipt receipts-by-key index: (tenant_id, environment, release_id, correlation_id, loop_id) -> dict[receipt_id, CanonicalLoopReceipt]
@@ -312,7 +312,7 @@ class TwelveLoopTruthProjector:
                 all_scopes=self.all_scopes,
             )
             for r in stored_receipts:
-                self._receipts[r.receipt_id] = r
+                self._receipts[(r.tenant_id, r.environment, r.receipt_id)] = r
                 key = (r.tenant_id, r.environment, r.release_id, r.correlation_id, r.loop_id)
                 self._receipts_by_key.setdefault(key, {})[r.receipt_id] = r
             self.rebuild()
@@ -334,12 +334,17 @@ class TwelveLoopTruthProjector:
                 )
 
         key = (receipt.tenant_id, receipt.environment, receipt.release_id, receipt.correlation_id, receipt.loop_id)
+        receipt_key = (receipt.tenant_id, receipt.environment, receipt.receipt_id)
 
         # 0. Check for existing receipt identity in-memory or store
-        existing_receipt: Optional[CanonicalLoopReceipt] = self._receipts.get(receipt.receipt_id)
+        existing_receipt: Optional[CanonicalLoopReceipt] = self._receipts.get(receipt_key)
         if existing_receipt is None and self.store is not None:
             try:
-                existing_receipt = self.store.get_receipt(receipt.receipt_id)
+                existing_receipt = self.store.get_receipt(
+                    receipt.receipt_id,
+                    tenant_id=receipt.tenant_id,
+                    environment=receipt.environment,
+                )
             except Exception as exc:
                 logger.debug("Failed checking store for existing receipt %s: %s", receipt.receipt_id, exc)
 
@@ -363,7 +368,7 @@ class TwelveLoopTruthProjector:
             receipt = existing_receipt
 
             # Idempotency check: if exact receipt is already in-memory and observation is durable, return cached observation
-            if receipt.receipt_id in self._receipts and key in self._observations:
+            if receipt_key in self._receipts and key in self._observations:
                 obs = self._observations[key]
                 self._recompute_freshness(obs, now=datetime.now(timezone.utc))
                 return obs
@@ -375,7 +380,11 @@ class TwelveLoopTruthProjector:
             # Atomically resolve persisted identity/content after insert:
             # In concurrent race where a duplicate was inserted after get_receipt but before/during record_receipt,
             # bind to the actual persisted receipt and reject conflicting key/type/scope.
-            persisted = self.store.get_receipt(receipt.receipt_id)
+            persisted = self.store.get_receipt(
+                receipt.receipt_id,
+                tenant_id=receipt.tenant_id,
+                environment=receipt.environment,
+            )
             if persisted is not None:
                 if (
                     persisted.tenant_id != receipt.tenant_id
@@ -437,13 +446,11 @@ class TwelveLoopTruthProjector:
                     key_receipts = {r.receipt_id: r for r in stored_receipts}
 
         # 4. Durable persistence succeeded: commit to in-memory caches
-        self._receipts[receipt.receipt_id] = receipt
+        self._receipts[receipt_key] = receipt
         for r in key_receipts.values():
-            self._receipts[r.receipt_id] = r
+            self._receipts[(r.tenant_id, r.environment, r.receipt_id)] = r
         self._receipts_by_key[key] = key_receipts
         self._observations[key] = obs
-
-        return obs
 
         return obs
 

@@ -994,23 +994,57 @@ def test_postgres_scoped_cross_tenant_collisions_and_duplicate_receipt_handling(
     )
     store.record_receipt(rcpt_b)
 
-    # Store must preserve Tenant A receipt unchanged (ON CONFLICT DO NOTHING)
-    stored = store.get_receipt(shared_rcpt_id)
-    assert stored is not None
-    assert stored.tenant_id == "tenant-a"
-    assert stored.owner == "owner-a"
+    # Store preserves both Tenant A and Tenant B receipts (valid cross-tenant collision)
+    stored_a = store.get_receipt(shared_rcpt_id, tenant_id="tenant-a", environment="prod")
+    assert stored_a is not None
+    assert stored_a.tenant_id == "tenant-a"
+    assert stored_a.owner == "owner-a"
 
-    # Projector scope mismatch raises ValueError
-    proj_a = TwelveLoopTruthProjector(tenant_id="tenant-a", environment="prod")
+    stored_b = store.get_receipt(shared_rcpt_id, tenant_id="tenant-b", environment="prod")
+    assert stored_b is not None
+    assert stored_b.tenant_id == "tenant-b"
+    assert stored_b.owner == "owner-b"
+
+    # Default unscoped lookup does not expose tenant receipts
+    assert store.get_receipt(shared_rcpt_id) is None
+
+    # Partial scope lookup raises ValueError
+    with pytest.raises(ValueError, match="Partial caller scope"):
+        store.get_receipt(shared_rcpt_id, tenant_id="tenant-a")
+
+    # Explicit all_scopes opt-in can find the receipt
+    assert store.get_receipt(shared_rcpt_id, all_scopes=True) is not None
+
+    # Projector scope mismatch raises ValueError (wrong-caller-scope)
+    proj_a = TwelveLoopTruthProjector(store=store, tenant_id="tenant-a", environment="prod")
     proj_a.ingest_receipt(rcpt_a)
     with pytest.raises(ValueError, match="conflicts with projector scoped tenant"):
         proj_a.ingest_receipt(rcpt_b)
 
-    # Projector duplicate receipt_id with different scope raises ValueError
-    unscoped_proj = TwelveLoopTruthProjector()
-    unscoped_proj.ingest_receipt(rcpt_a)
+    # Within-scope conflict rejection: same receipt_id within Tenant A with different type/correlation
+    rcpt_conflict = CanonicalLoopReceipt(
+        receipt_id=shared_rcpt_id,
+        receipt_type="terminal",
+        loop_id=1,
+        correlation_id="corr-coll-diff",
+        release_id="rel-coll-1",
+        owner="owner-a",
+        provenance="live",
+        observed_at=now,
+        tenant_id="tenant-a",
+        environment="prod",
+    )
     with pytest.raises(ValueError, match="Conflicting receipt identity"):
-        unscoped_proj.ingest_receipt(rcpt_b)
+        proj_a.ingest_receipt(rcpt_conflict)
+
+    # Valid cross-scope collisions: two scoped projectors sharing PostgreSQL do NOT reject each other
+    proj_b = TwelveLoopTruthProjector(store=store, tenant_id="tenant-b", environment="prod")
+    proj_b.ingest_receipt(rcpt_b)
+
+    # All-scopes projector can rebuild across scopes
+    proj_all = TwelveLoopTruthProjector(store=store, all_scopes=True)
+    obs_all = proj_all.rebuild()
+    assert len(obs_all) >= 2
 
 
 def test_postgres_scoped_out_of_order_and_provenance_fencing() -> None:
@@ -1482,6 +1516,186 @@ def test_postgres_forward_migration_fails_closed_on_conflicting_content_preservi
                 assert cur.fetchone()[0] is not None
                 cur.execute(f"SELECT COUNT(*) FROM {schema}.loop_receipts_scoped_backup;")
                 assert cur.fetchone()[0] == 1
+    finally:
+        with store._connect() as conn:
+            conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("causation_id", "conflicting-cause"),
+    ("observed_at", datetime(2000, 1, 1, tzinfo=timezone.utc)),
+    ("degradation_reason", "conflicting-degradation"),
+])
+def test_postgres_fail_closed_on_conflicting_receipt_semantic_fields_sync(field: str, value: Any) -> None:
+    """Verify forward migration 003 fails closed on receipt semantic field conflict (sync)."""
+    from uuid import uuid4
+    schema = f"test_fc_rcpt_{uuid4().hex[:8]}"
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
+    store.apply_migration_sync()
+    now = datetime.now(timezone.utc)
+    try:
+        r = CanonicalLoopReceipt(
+            "rcpt-fc", "terminal", 1, "c", "r", "owner", "live",
+            tenant_id="tenant-fc", environment="paper", status="completed",
+            observed_at=now, causation_id="cause-1", degradation_reason="none",
+        )
+        store.record_receipt(r)
+        store.rollback_to_002_schema_sync()
+        with store._connect() as conn:
+            conn.execute(f"INSERT INTO {schema}.loop_receipts SELECT * FROM {schema}.loop_receipts_scoped_backup")
+            conn.execute(f"UPDATE {schema}.loop_receipts SET {field} = %s", (value,))
+        with pytest.raises(Exception, match="Conflicting receipt content detected"):
+            store.apply_migration_sync()
+        with store._connect() as conn:
+            backup = conn.execute("SELECT to_regclass(%s)", (f"{schema}.loop_receipts_scoped_backup",)).fetchone()[0]
+            assert backup is not None
+    finally:
+        with store._connect() as conn:
+            conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("field,value", [
+    ("causation_id", "conflicting-cause-async"),
+    ("observed_at", datetime(2000, 1, 1, tzinfo=timezone.utc)),
+])
+async def test_postgres_fail_closed_on_conflicting_receipt_semantic_fields_async(field: str, value: Any) -> None:
+    """Verify forward migration 003 fails closed on receipt semantic field conflict (async)."""
+    from uuid import uuid4
+    schema = f"test_fc_rcpt_a_{uuid4().hex[:8]}"
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
+    store.apply_migration_sync()
+    now = datetime.now(timezone.utc)
+    try:
+        r = CanonicalLoopReceipt(
+            "rcpt-fc-a", "terminal", 1, "c", "r", "owner", "live",
+            tenant_id="tenant-fc", environment="paper", status="completed",
+            observed_at=now, causation_id="cause-1",
+        )
+        store.record_receipt(r)
+        await store.rollback_to_002_schema()
+        with store._connect() as conn:
+            conn.execute(f"INSERT INTO {schema}.loop_receipts SELECT * FROM {schema}.loop_receipts_scoped_backup")
+            conn.execute(f"UPDATE {schema}.loop_receipts SET {field} = %s", (value,))
+        with pytest.raises(Exception, match="Conflicting receipt content detected"):
+            await store.apply_migration()
+        with store._connect() as conn:
+            backup = conn.execute("SELECT to_regclass(%s)", (f"{schema}.loop_receipts_scoped_backup",)).fetchone()[0]
+            assert backup is not None
+    finally:
+        with store._connect() as conn:
+            conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("causation_id", "conflicting-obs-cause"),
+    ("observed_at", datetime(2000, 1, 1, tzinfo=timezone.utc)),
+    ("terminal_status", "failed"),
+    ("stimulus_id", "conflicting-stim-id"),
+    ("degradation_reason", "conflicting observation degradation"),
+])
+def test_postgres_fail_closed_on_conflicting_observation_semantic_fields_sync(field: str, value: Any) -> None:
+    """Verify forward migration 003 fails closed on observation semantic field conflict (sync)."""
+    from uuid import uuid4
+    schema = f"test_fc_obs_{uuid4().hex[:8]}"
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
+    store.apply_migration_sync()
+    now = datetime.now(timezone.utc)
+    try:
+        obs = LoopObservation(
+            release_id="rel-1", correlation_id="corr-1", loop_id=1,
+            owner="owner", tenant_id="tenant-fc", environment="paper",
+            status="complete", freshness_status="fresh", provenance="live",
+            observed_at=now, stimulus_id="stim-1", terminal_id="term-1",
+            terminal_status="completed", next_consumer_receipt_id="next-1",
+            causation_id="cause-orig", degradation_reason="none",
+        )
+        store.upsert_observation(obs)
+        store.rollback_to_002_schema_sync()
+        with store._connect() as conn:
+            conn.execute(f"INSERT INTO {schema}.twelve_loop_observations SELECT * FROM {schema}.twelve_loop_observations_scoped_backup")
+            conn.execute(f"UPDATE {schema}.twelve_loop_observations SET {field} = %s", (value,))
+        with pytest.raises(Exception, match="Conflicting observation content detected"):
+            store.apply_migration_sync()
+        with store._connect() as conn:
+            backup = conn.execute("SELECT to_regclass(%s)", (f"{schema}.twelve_loop_observations_scoped_backup",)).fetchone()[0]
+            assert backup is not None
+    finally:
+        with store._connect() as conn:
+            conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+
+
+@pytest.mark.anyio
+async def test_postgres_fail_closed_on_conflicting_observation_semantic_fields_async() -> None:
+    """Verify forward migration 003 fails closed on observation semantic field conflict (async)."""
+    from uuid import uuid4
+    schema = f"test_fc_obs_a_{uuid4().hex[:8]}"
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
+    store.apply_migration_sync()
+    now = datetime.now(timezone.utc)
+    try:
+        obs = LoopObservation(
+            release_id="rel-1", correlation_id="corr-1", loop_id=1,
+            owner="owner", tenant_id="tenant-fc", environment="paper",
+            status="complete", freshness_status="fresh", provenance="live",
+            observed_at=now, stimulus_id="stim-1", terminal_id="term-1",
+            terminal_status="completed", next_consumer_receipt_id="next-1",
+            causation_id="cause-orig",
+        )
+        store.upsert_observation(obs)
+        await store.rollback_to_002_schema()
+        with store._connect() as conn:
+            conn.execute(f"INSERT INTO {schema}.twelve_loop_observations SELECT * FROM {schema}.twelve_loop_observations_scoped_backup")
+            conn.execute(f"UPDATE {schema}.twelve_loop_observations SET causation_id = %s", ("conflicting-async-cause",))
+        with pytest.raises(Exception, match="Conflicting observation content detected"):
+            await store.apply_migration()
+        with store._connect() as conn:
+            backup = conn.execute("SELECT to_regclass(%s)", (f"{schema}.twelve_loop_observations_scoped_backup",)).fetchone()[0]
+            assert backup is not None
+    finally:
+        with store._connect() as conn:
+            conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+
+
+def test_postgres_cold_replay_after_rollback_pre003_replay_and_reupgrade() -> None:
+    """Reproduction fix: Cold scoped projector ingests receipt after rollback/pre-003 replay/re-upgrade."""
+    from uuid import uuid4
+    schema = f"test_cold_{uuid4().hex[:8]}"
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
+    store.apply_migration_sync()
+    now = datetime.now(timezone.utc)
+    try:
+        p = TwelveLoopTruthProjector(store=store, tenant_id="tenant-a", environment="paper", auto_load=False)
+        receipts = [
+            CanonicalLoopReceipt(f"event-{kind}", kind, 1, "corr", "rel", "owner", "live", tenant_id="tenant-a", environment="paper", status="completed", observed_at=now)
+            for kind in ("stimulus", "terminal", "next_consumer")
+        ]
+        p.ingest_receipts(receipts)
+        assert store.get_observation("rel", "corr", 1, tenant_id="tenant-a", environment="paper").status == "complete"
+
+        # Rollback to 002
+        store.rollback_to_002_schema_sync()
+
+        # Pre-003 writer omits scope, replaying same source event ID
+        with store._connect() as conn:
+            conn.execute(
+                f"""INSERT INTO {schema}.loop_receipts
+                (receipt_id, receipt_type, loop_id, correlation_id, release_id, owner, provenance, status, observed_at, payload)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                ("event-terminal", "terminal", 1, "corr", "rel", "owner", "live", "completed", now, "{}"),
+            )
+
+        # Re-upgrade to 003
+        store.apply_migration_sync()
+        restored = store.list_receipts(tenant_id="tenant-a", environment="paper")
+        assert len(restored) == 3
+
+        # Cold projector with auto_load=False replaying event-terminal MUST succeed
+        cold = TwelveLoopTruthProjector(store=store, tenant_id="tenant-a", environment="paper", auto_load=False)
+        obs = cold.ingest_receipt(receipts[1])
+        assert obs is not None
+        assert obs.tenant_id == "tenant-a"
+        assert obs.status == "complete"
     finally:
         with store._connect() as conn:
             conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")

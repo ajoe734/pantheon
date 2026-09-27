@@ -58,7 +58,7 @@ class TwelveLoopStore:
         *,
         tenant_id: Optional[str] = None,
         environment: Optional[str] = None,
-        all_scopes: bool = True,
+        all_scopes: bool = False,
     ) -> Optional[CanonicalLoopReceipt]:
         raise NotImplementedError
 
@@ -131,10 +131,10 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
         *,
         tenant_id: Optional[str] = None,
         environment: Optional[str] = None,
-        all_scopes: bool = True,
+        all_scopes: bool = False,
     ) -> Optional[CanonicalLoopReceipt]:
+        validate_scope(tenant_id, environment, allow_all_scopes=all_scopes)
         if not all_scopes:
-            validate_scope(tenant_id, environment)
             return self._receipts.get((tenant_id, environment, receipt_id))
         if tenant_id is not None or environment is not None:
             return self._receipts.get((tenant_id, environment, receipt_id))
@@ -247,16 +247,52 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
         self.rollback_to_002_schema_sync()
 
     def restore_from_002_rollback(self) -> None:
-        if hasattr(self, "_scoped_backup"):
-            for k, v in self._scoped_backup.items():
-                if k not in self._observations:
-                    self._observations[k] = v
-            del self._scoped_backup
         if hasattr(self, "_scoped_receipts_backup"):
-            for k, v in self._scoped_receipts_backup.items():
-                if k not in self._receipts:
-                    self._receipts[k] = v
+            for k, b in self._scoped_receipts_backup.items():
+                if k in self._receipts:
+                    r = self._receipts[k]
+                    if (
+                        r.receipt_type != b.receipt_type
+                        or r.loop_id != b.loop_id
+                        or r.correlation_id != b.correlation_id
+                        or r.release_id != b.release_id
+                        or r.owner != b.owner
+                        or r.provenance != b.provenance
+                        or r.status != b.status
+                        or r.observed_at != b.observed_at
+                        or r.degradation_reason != b.degradation_reason
+                        or r.causation_id != b.causation_id
+                        or r.payload != b.payload
+                    ):
+                        raise RuntimeError("Conflicting receipt content detected between loop_receipts and loop_receipts_scoped_backup")
+                else:
+                    self._receipts[k] = b
             del self._scoped_receipts_backup
+        if hasattr(self, "_scoped_backup"):
+            for k, b in self._scoped_backup.items():
+                if k in self._observations:
+                    o = self._observations[k]
+                    if (
+                        o.owner != b.owner
+                        or o.stimulus_id != b.stimulus_id
+                        or o.stimulus_observed_at != b.stimulus_observed_at
+                        or o.terminal_id != b.terminal_id
+                        or o.terminal_status != b.terminal_status
+                        or o.terminal_observed_at != b.terminal_observed_at
+                        or o.next_consumer_receipt_id != b.next_consumer_receipt_id
+                        or o.next_consumer_observed_at != b.next_consumer_observed_at
+                        or o.status != b.status
+                        or o.freshness_status != b.freshness_status
+                        or o.provenance != b.provenance
+                        or o.observed_at != b.observed_at
+                        or o.degradation_reason != b.degradation_reason
+                        or o.causation_id != b.causation_id
+                        or o.receipt_ids != b.receipt_ids
+                    ):
+                        raise RuntimeError("Conflicting observation content detected between twelve_loop_observations and twelve_loop_observations_scoped_backup")
+                else:
+                    self._observations[k] = b
+            del self._scoped_backup
 
 
 class PostgresTwelveLoopStore(TwelveLoopStore):
@@ -374,12 +410,12 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         *,
         tenant_id: Optional[str] = None,
         environment: Optional[str] = None,
-        all_scopes: bool = True,
+        all_scopes: bool = False,
     ) -> Optional[CanonicalLoopReceipt]:
+        validate_scope(tenant_id, environment, allow_all_scopes=all_scopes)
         clauses = ["receipt_id = %s"]
         params: List[Any] = [receipt_id]
         if not all_scopes:
-            validate_scope(tenant_id, environment)
             if tenant_id is None and environment is None:
                 clauses.append("tenant_id IS NULL")
                 clauses.append("environment IS NULL")
@@ -438,8 +474,9 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         *,
         tenant_id: Optional[str] = None,
         environment: Optional[str] = None,
-        all_scopes: bool = True,
+        all_scopes: bool = False,
     ) -> Optional[CanonicalLoopReceipt]:
+        validate_scope(tenant_id, environment, allow_all_scopes=all_scopes)
         try:
             import asyncpg
             conn = await asyncpg.connect(self.dsn)
@@ -448,7 +485,6 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                 params: List[Any] = [receipt_id]
                 idx = 2
                 if not all_scopes:
-                    validate_scope(tenant_id, environment)
                     if tenant_id is None and environment is None:
                         clauses.append("tenant_id IS NULL")
                         clauses.append("environment IS NULL")
