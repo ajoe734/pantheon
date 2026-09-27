@@ -8,9 +8,10 @@ cutover.
 """
 from __future__ import annotations
 
+import copy
 import inspect
 import uuid
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Body, Header, Query, Request
 
@@ -26,6 +27,11 @@ from services.control_plane.bff.models import (
     InterventionListResponse,
     ObjectType,
     OperatorIdentity,
+    redact_evidence_field_items,
+    redact_evidence_refs as _default_redact_evidence_refs,
+    redact_ooda_packet,
+    redact_ooda_packet_items,
+    safe_redact_evidence_refs,
 )
 
 from .service import ControlLoopsService, default_bff_error
@@ -147,6 +153,8 @@ def create_control_loops_router(
     bff_error: Optional[Callable[..., Exception]] = None,
     utc_now_fn: Optional[Callable[[], str]] = None,
     deployed_environment: Optional[str] = None,
+    redact_evidence_refs: Optional[Callable[..., Tuple[List[Dict[str, Any]], int]]] = None,
+    capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
 ) -> APIRouter:
     """Build the exact 24-decorator Control Loops router."""
 
@@ -155,6 +163,17 @@ def create_control_loops_router(
     _require_read = require_read_role or _default_require_read_role
     _require_operator = require_operator_role or _default_require_operator_role
     _err = bff_error or default_bff_error
+    _redact = redact_evidence_refs or _default_redact_evidence_refs
+    _capabilities = capabilities_for_identity or (lambda identity: [])
+
+    def _redact_items(identity: Any, items: List[Any]) -> Tuple[List[Any], int]:
+        return redact_evidence_field_items(
+            identity, items, field="evidence_refs", redact_fn=_redact, capabilities_fn=_capabilities
+        )
+
+    def _redact_single(identity: Any, item: Any) -> Tuple[Any, int]:
+        redacted, count = _redact_items(identity, [item])
+        return redacted[0], count
 
     if service is None:
         if read_surface is not None:
@@ -237,8 +256,8 @@ def create_control_loops_router(
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _read_identity(authorization)
-        return resolved_service.list_ooda_packets(
+        identity = _read_identity(authorization)
+        response = resolved_service.list_ooda_packets(
             status=status,
             stage=stage,
             strategy_id=strategy_id,
@@ -247,14 +266,26 @@ def create_control_loops_router(
             page_token=page_token,
             page_size=page_size,
         )
+        redacted_items, redacted_count = redact_ooda_packet_items(
+            identity, response["items"], redact_fn=_redact, capabilities_fn=_capabilities
+        )
+        response["items"] = redacted_items
+        response["data"] = redacted_items
+        response.setdefault("meta", {})["redacted_evidence_count"] = redacted_count
+        return response
 
     @router.get("/bff/ooda/packets/{packet_id}")
     async def bff_get_ooda_packet(
         packet_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _read_identity(authorization)
-        return resolved_service.get_ooda_packet(str(packet_id or "").strip())
+        identity = _read_identity(authorization)
+        response = resolved_service.get_ooda_packet(str(packet_id or "").strip())
+        response["data"], redacted_count = redact_ooda_packet(
+            identity, response["data"], redact_fn=_redact, capabilities_fn=_capabilities
+        )
+        response.setdefault("meta", {})["redacted_evidence_count"] = redacted_count
+        return response
 
     # 3-4: intervention list and critical remediation admission.
     @router.get("/bff/v5/interventions", response_model=InterventionListResponse)
@@ -263,6 +294,10 @@ def create_control_loops_router(
         kind: Optional[str] = Query(default=None),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
+        # response_model=InterventionListResponse -> InterventionRecord has no
+        # `evidence_refs` field and no extra="allow" config, so FastAPI's
+        # response-model serialization always drops any such field before it
+        # reaches the wire; there is nothing to redact on this list surface.
         _read_identity(authorization)
         return resolved_service.list_interventions(status=status, kind=kind)
 
@@ -571,8 +606,60 @@ def create_control_loops_router(
     async def bff_v5_downstream_health(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _read_identity(authorization)
-        return resolved_service.downstream_health()
+        identity = _read_identity(authorization)
+        raw_result = resolved_service.downstream_health()
+        result = copy.deepcopy(raw_result)
+        data = result.get("data")
+        total_redacted = 0
+        if isinstance(data, dict):
+            replays = data.get("delivery_replays")
+            if isinstance(replays, list) and replays:
+                for replay in replays:
+                    if isinstance(replay, dict):
+                        if replay.get("approval_ref"):
+                            redacted_ref, count = safe_redact_evidence_refs(
+                                identity,
+                                [replay["approval_ref"]],
+                                redact_fn=_redact,
+                                capabilities_fn=_capabilities,
+                                default_kind="approval",
+                            )
+                            if count > 0:
+                                replay["approval_ref"] = redacted_ref[0]
+                                total_redacted += count
+                        if isinstance(replay.get("evidence_refs"), list) and replay["evidence_refs"]:
+                            redacted_refs, count = safe_redact_evidence_refs(
+                                identity,
+                                replay["evidence_refs"],
+                                redact_fn=_redact,
+                                capabilities_fn=_capabilities,
+                            )
+                            replay["evidence_refs"] = redacted_refs
+                            total_redacted += count
+            incidents = data.get("incidents")
+            if isinstance(incidents, dict):
+                for inc_row in incidents.values():
+                    if isinstance(inc_row, dict) and isinstance(inc_row.get("evidence_refs"), list) and inc_row["evidence_refs"]:
+                        redacted_refs, count = safe_redact_evidence_refs(
+                            identity,
+                            inc_row["evidence_refs"],
+                            redact_fn=_redact,
+                            capabilities_fn=_capabilities,
+                        )
+                        inc_row["evidence_refs"] = redacted_refs
+                        total_redacted += count
+            for key in ("evidence_refs", "linked_evidence"):
+                if isinstance(data.get(key), list) and data[key]:
+                    redacted_refs, count = safe_redact_evidence_refs(
+                        identity,
+                        data[key],
+                        redact_fn=_redact,
+                        capabilities_fn=_capabilities,
+                    )
+                    data[key] = redacted_refs
+                    total_redacted += count
+        result.setdefault("meta", {})["redacted_evidence_count"] = total_redacted
+        return result
 
     @router.post("/bff/v5/downstream-health/dlq/replay")
     async def bff_v5_downstream_health_dlq_replay(
@@ -625,24 +712,42 @@ def create_control_loops_router(
         finding_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _read_identity(authorization)
-        return resolved_service.get_sentinel_finding(str(finding_id or "").strip())
+        identity = _read_identity(authorization)
+        response = resolved_service.get_sentinel_finding(str(finding_id or "").strip())
+        response["data"], redacted_count = _redact_single(identity, response["data"])
+        response.setdefault("meta", {})["redacted_evidence_count"] = redacted_count
+        return response
 
     # 23-24: aggregate control room and intervention detail.
     @router.get("/bff/v5/control-room")
     async def bff_v5_control_room(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _read_identity(authorization)
-        return resolved_service.control_room()
+        identity = _read_identity(authorization)
+        response = resolved_service.control_room()
+        loops_items, loops_count = _redact_items(identity, response["loops"]["items"])
+        response["loops"]["items"] = loops_items
+        interventions_items, interventions_count = _redact_items(
+            identity, response["interventions"]["items"]
+        )
+        response["interventions"]["items"] = interventions_items
+        sentinel_items, sentinel_count = _redact_items(identity, response["sentinel"]["items"])
+        response["sentinel"]["items"] = sentinel_items
+        response.setdefault("meta", {})["redacted_evidence_count"] = (
+            loops_count + interventions_count + sentinel_count
+        )
+        return response
 
     @router.get("/bff/v5/interventions/{intervention_id}")
     async def bff_v5_intervention_detail(
         intervention_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _read_identity(authorization)
-        return resolved_service.get_intervention(intervention_id)
+        identity = _read_identity(authorization)
+        response = resolved_service.get_intervention(intervention_id)
+        response["data"], redacted_count = _redact_single(identity, response["data"])
+        response.setdefault("meta", {})["redacted_evidence_count"] = redacted_count
+        return response
 
     return router
 

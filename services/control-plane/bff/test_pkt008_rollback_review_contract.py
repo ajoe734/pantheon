@@ -5,7 +5,6 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(__file__))
 from ports import create_in_memory_read_surface_ports
 
 

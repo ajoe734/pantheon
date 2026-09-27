@@ -510,8 +510,13 @@ def _patch_persona_create_coordination_seam():
         assert persona_service._PERSONA_PROVISIONING_STORE is _ORIGINAL_PERSONA_PROVISIONING_STORE
 
 
+facade_state = None
+
+
 class _DynamicStoreProxy:
     def __getattr__(self, name: str) -> Any:
+        if facade_state is None or getattr(facade_state, "read_store", None) is None:
+            raise AttributeError(name)
         return getattr(facade_state.read_store, name)
 
 

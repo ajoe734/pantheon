@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
 
 from ports import DefaultResearchKnowledgeSourcePort  # noqa: E402
 
