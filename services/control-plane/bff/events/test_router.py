@@ -10,6 +10,7 @@ import sys
 
 
 from services.control_plane.bff.events.router import create_events_router
+from services.control_plane.bff.events.service import EventStreamService
 
 
 def _make_mock_read_store(events_list: Optional[List[Dict[str, Any]]] = None, status: str = "ok"):
@@ -219,7 +220,7 @@ def _make_finite_service(service: EventStreamService, limit: int = 10):
 
 def test_events_router_tenant_isolation_in_memory_and_file_replay(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from events.service import EventStreamService
+    from services.control_plane.bff.events.service import EventStreamService
 
     # 1. In-memory tenant isolation test
     service = EventStreamService(channels=("approval", "tool"))
@@ -278,7 +279,7 @@ def test_events_router_tenant_isolation_in_memory_and_file_replay(tmp_path, monk
 
 def test_events_router_cursor_handling_and_409_conflict():
     from types import SimpleNamespace
-    from events.service import EventStreamService
+    from services.control_plane.bff.events.service import EventStreamService
 
     service = EventStreamService(channels=("approval",))
     id_1 = service.publish(
@@ -347,7 +348,7 @@ def test_events_router_real_operator_identity_jwt_and_cookie_tenant_isolation(mo
         TEST_JWT_ISSUER,
         TEST_JWT_AUDIENCE,
     )
-    from events.service import EventStreamService
+    from services.control_plane.bff.events.service import EventStreamService
 
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
@@ -427,7 +428,7 @@ def test_events_router_tenant_scoping_forbidden_for_unauthorized_tenant(monkeypa
         TEST_JWT_ISSUER,
         TEST_JWT_AUDIENCE,
     )
-    from events.service import EventStreamService
+    from services.control_plane.bff.events.service import EventStreamService
 
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
@@ -477,7 +478,7 @@ def test_events_router_live_events_tenant_filtering(monkeypatch, tmp_path):
         TEST_JWT_ISSUER,
         TEST_JWT_AUDIENCE,
     )
-    from events.service import EventStreamService
+    from services.control_plane.bff.events.service import EventStreamService
 
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
