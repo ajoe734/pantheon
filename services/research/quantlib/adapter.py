@@ -72,7 +72,7 @@ def price_european(
     }
 
 
-def price_american_binomial(
+def american_binomial_metrics(
     spot: float,
     strike: float,
     rate: float,
@@ -83,8 +83,7 @@ def price_american_binomial(
     steps: int = 512,
     dividend_yield: float = 0.0,
 ) -> dict[str, float]:
-    """Price a vanilla American option with a QuantLib Cox-Ross-Rubinstein tree."""
-
+    """Compute price and Greeks for vanilla American options via QuantLib CRR."""
     opt_type = _validate_inputs(spot, strike, rate, vol, tenor, option_type, dividend_yield)
     if steps < 3:
         raise ValueError("steps must be at least 3")
@@ -101,13 +100,18 @@ def price_american_binomial(
             "delta": float(delta),
             "gamma": 0.0,
             "vega": 0.0,
+            "theta": 0.0,
+            "rho": 0.0,
         }
 
     price = _american_binomial_price_ql(
         spot, strike, rate, vol, tenor, opt_type, steps=steps, dividend_yield=dividend_yield
     )
     spot_bump = max(spot * 0.01, 0.01)
-    vol_bump = 0.001
+    vol_bump = 0.01
+    rate_bump = 0.0001
+    day_dt = 1.0 / 365.0
+
     price_up = _american_binomial_price_ql(
         spot + spot_bump, strike, rate, vol, tenor, opt_type, steps=steps, dividend_yield=dividend_yield
     )
@@ -124,15 +128,55 @@ def price_american_binomial(
     price_vol_up = _american_binomial_price_ql(
         spot, strike, rate, vol + vol_bump, tenor, opt_type, steps=steps, dividend_yield=dividend_yield
     )
+    price_rate_up = _american_binomial_price_ql(
+        spot, strike, rate + rate_bump, vol, tenor, opt_type, steps=steps, dividend_yield=dividend_yield
+    )
+    if tenor > day_dt:
+        price_next_day = _american_binomial_price_ql(
+            spot, strike, rate, vol, tenor - day_dt, opt_type, steps=steps, dividend_yield=dividend_yield
+        )
+        theta = price_next_day - price
+    else:
+        theta = 0.0
 
     delta = (price_up - price_down) / (2.0 * spot_bump)
     gamma = (price_up - 2.0 * price + price_down) / (spot_bump**2)
     vega = (price_vol_up - price) / vol_bump
+    rho = (price_rate_up - price) / rate_bump
+
     return {
         "price": float(price),
         "delta": float(delta),
         "gamma": float(gamma),
         "vega": float(vega),
+        "theta": float(theta),
+        "rho": float(rho),
+    }
+
+
+def price_american_binomial(
+    spot: float,
+    strike: float,
+    rate: float,
+    vol: float,
+    tenor: float,
+    option_type: OptionType | str,
+    *,
+    steps: int = 512,
+    dividend_yield: float = 0.0,
+    include_extended_greeks: bool = False,
+) -> dict[str, float]:
+    """Price a vanilla American option with a QuantLib Cox-Ross-Rubinstein tree."""
+    metrics = american_binomial_metrics(
+        spot, strike, rate, vol, tenor, option_type, steps=steps, dividend_yield=dividend_yield
+    )
+    if include_extended_greeks:
+        return metrics
+    return {
+        "price": metrics["price"],
+        "delta": metrics["delta"],
+        "gamma": metrics["gamma"],
+        "vega": metrics["vega"],
     }
 
 
@@ -180,35 +224,42 @@ def _american_binomial_price_ql(
     steps: int,
     dividend_yield: float = 0.0,
 ) -> float:
-    today = ql.Date(1, 1, 2026)
-    ql.Settings.instance().evaluationDate = today
-    day_count = ql.Actual365Fixed()
-    calendar = ql.NullCalendar()
-    days = 180
-    maturity = today + days
-    t_ql = day_count.yearFraction(today, maturity)
-    scale = tenor / t_ql
+    if tenor <= 0.0:
+        return float(max(0.0, spot - strike) if option_type == "call" else max(0.0, strike - spot))
 
-    spot_handle = ql.QuoteHandle(ql.SimpleQuote(spot))
-    rate_handle = ql.YieldTermStructureHandle(
-        ql.FlatForward(today, rate * scale, day_count)
-    )
-    div_handle = ql.YieldTermStructureHandle(
-        ql.FlatForward(today, dividend_yield * scale, day_count)
-    )
-    vol_handle = ql.BlackVolTermStructureHandle(
-        ql.BlackConstantVol(today, calendar, vol * math.sqrt(scale), day_count)
-    )
+    settings = ql.Settings.instance()
+    prev_date = settings.evaluationDate
+    try:
+        today = prev_date
+        day_count = ql.Actual365Fixed()
+        calendar = ql.NullCalendar()
+        days = 180
+        maturity = today + days
+        t_ql = day_count.yearFraction(today, maturity)
+        scale = tenor / t_ql
 
-    process = ql.BlackScholesMertonProcess(
-        spot_handle, div_handle, rate_handle, vol_handle
-    )
-    ql_type = ql.Option.Call if option_type == "call" else ql.Option.Put
-    payoff = ql.PlainVanillaPayoff(ql_type, strike)
-    exercise = ql.AmericanExercise(today, maturity)
-    option = ql.VanillaOption(payoff, exercise)
-    option.setPricingEngine(ql.BinomialVanillaEngine(process, "crr", steps))
-    return float(option.NPV())
+        spot_handle = ql.QuoteHandle(ql.SimpleQuote(spot))
+        rate_handle = ql.YieldTermStructureHandle(
+            ql.FlatForward(today, rate * scale, day_count)
+        )
+        div_handle = ql.YieldTermStructureHandle(
+            ql.FlatForward(today, dividend_yield * scale, day_count)
+        )
+        vol_handle = ql.BlackVolTermStructureHandle(
+            ql.BlackConstantVol(today, calendar, vol * math.sqrt(scale), day_count)
+        )
+
+        process = ql.BlackScholesMertonProcess(
+            spot_handle, div_handle, rate_handle, vol_handle
+        )
+        ql_type = ql.Option.Call if option_type == "call" else ql.Option.Put
+        payoff = ql.PlainVanillaPayoff(ql_type, strike)
+        exercise = ql.AmericanExercise(today, maturity)
+        option = ql.VanillaOption(payoff, exercise)
+        option.setPricingEngine(ql.BinomialVanillaEngine(process, "crr", steps))
+        return float(option.NPV())
+    finally:
+        settings.evaluationDate = prev_date
 
 
-__all__ = ["price_european", "price_american_binomial"]
+__all__ = ["price_european", "price_american_binomial", "american_binomial_metrics"]

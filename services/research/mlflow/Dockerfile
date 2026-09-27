@@ -1,7 +1,8 @@
 FROM python:3.11-slim
 WORKDIR /app
-COPY requirements.txt entrypoint.py ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY dependencies/locks/services-research-mlflow.txt ./requirements.lock
+RUN pip install --no-cache-dir -r requirements.lock
+COPY services/research/mlflow/entrypoint.py ./entrypoint.py
 RUN addgroup --system pantheon \
     && adduser --system --ingroup pantheon --home /home/pantheon pantheon \
     && chown -R pantheon:pantheon /app /home/pantheon

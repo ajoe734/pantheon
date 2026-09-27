@@ -412,13 +412,14 @@ def reference_crr_american_analytical(
     tenor: float,
     option_type: str,
     steps: int = 512,
+    dividend_yield: float = 0.0,
 ) -> float:
     """Analytical CRR tree reference formula retained only as test fixture."""
     dt = tenor / steps
     up = math.exp(vol * math.sqrt(dt))
     down = 1.0 / up
     discount = math.exp(-rate * dt)
-    probability = (math.exp(rate * dt) - down) / (up - down)
+    probability = (math.exp((rate - dividend_yield) * dt) - down) / (up - down)
 
     def payoff(s: float) -> float:
         return max(s - strike, 0.0) if option_type == "call" else max(strike - s, 0.0)
@@ -490,6 +491,154 @@ class TestQuantLibNumericalEngineVersusReferenceFixtures(unittest.TestCase):
         ql_put = price_american_binomial(spot, 95.0, rate, vol, tenor, "put", steps=512)
         euro_put = price_european(spot, 95.0, rate, vol, tenor, "put")
         self.assertGreaterEqual(ql_put["price"], euro_put["price"] - 1e-4)
+
+    def test_evaluation_date_preservation_and_moving_curve_regression(self) -> None:
+        """P1 regression: ensure caller Settings.evaluationDate and moving curves are not mutated."""
+        import QuantLib as ql
+        from adapter import price_american_binomial
+
+        settings = ql.Settings.instance()
+        target_date = ql.Date(27, 9, 2026)
+        settings.evaluationDate = target_date
+        curve = ql.FlatForward(0, ql.NullCalendar(), 0.03, ql.Actual365Fixed())
+
+        self.assertEqual(settings.evaluationDate, target_date)
+        self.assertEqual(curve.referenceDate(), target_date)
+
+        # Call price_american_binomial
+        res = price_american_binomial(100.0, 100.0, 0.03, 0.2, 0.5, "put")
+        self.assertGreater(res["price"], 0.0)
+
+        # Verify evaluationDate and moving curve referenceDate remain untouched
+        self.assertEqual(settings.evaluationDate, target_date)
+        self.assertEqual(curve.referenceDate(), target_date)
+
+        # Verify preservation on error
+        with self.assertRaises(ValueError):
+            price_american_binomial(-10.0, 100.0, 0.03, 0.2, 0.5, "put")
+
+        self.assertEqual(settings.evaluationDate, target_date)
+        self.assertEqual(curve.referenceDate(), target_date)
+
+    def test_american_binomial_crr_matches_reference_fixtures_with_dividends(self) -> None:
+        """Verify American CRR pricing with continuous dividend yield against independent analytical tree."""
+        from adapter import price_american_binomial
+
+        test_cases = [
+            (100.0, 100.0, 0.05, 0.20, 0.5, 0.02),
+            (105.0, 100.0, 0.03, 0.25, 0.75, 0.04),
+            (95.0, 100.0, 0.04, 0.18, 0.5, 0.03),
+        ]
+        for spot, strike, rate, vol, tenor, div in test_cases:
+            for opt_type in ("call", "put"):
+                ql_res = price_american_binomial(spot, strike, rate, vol, tenor, opt_type, steps=512, dividend_yield=div)
+                ref_res = reference_crr_american_analytical(spot, strike, rate, vol, tenor, opt_type, steps=512, dividend_yield=div)
+                self.assertAlmostEqual(
+                    ql_res["price"], ref_res, delta=2e-3,
+                    msg=f"American dividend CRR mismatch for {opt_type} at S={spot}, K={strike}, div={div}"
+                )
+
+    def test_american_option_early_exercise_premium_and_greeks_with_dividends(self) -> None:
+        """Verify early exercise premium and Greeks behavior on dividend-paying options."""
+        from adapter import price_american_binomial, price_european
+
+        spot, strike, rate, vol, tenor, div = 100.0, 80.0, 0.02, 0.20, 0.5, 0.08
+        am_call = price_american_binomial(
+            spot, strike, rate, vol, tenor, "call", steps=512, dividend_yield=div, include_extended_greeks=True
+        )
+        eu_call = price_european(spot, strike, rate, vol, tenor, "call", dividend_yield=div)
+
+        # Early exercise premium exists for deep ITM dividend-paying call: American > European
+        self.assertGreater(am_call["price"], eu_call["price"] + 0.1)
+
+        # Verify Greeks boundaries
+        self.assertGreater(am_call["delta"], 0.8)
+        self.assertLessEqual(am_call["delta"], 1.0)
+        self.assertGreaterEqual(am_call["gamma"], 0.0)
+        self.assertGreaterEqual(am_call["vega"], 0.0)
+
+        # Put with dividends: higher dividend increases put price compared to zero dividend
+        am_put_div = price_american_binomial(
+            spot, strike, rate, vol, tenor, "put", steps=512, dividend_yield=div, include_extended_greeks=True
+        )
+        am_put_nodiv = price_american_binomial(
+            spot, strike, rate, vol, tenor, "put", steps=512, dividend_yield=0.0, include_extended_greeks=True
+        )
+        self.assertGreater(am_put_div["price"], am_put_nodiv["price"])
+        self.assertLess(am_put_div["delta"], 0.0)
+        self.assertGreaterEqual(am_put_div["delta"], -1.0)
+
+    def test_american_option_rates_sensitivity_and_greeks(self) -> None:
+        """Verify American option pricing and Greeks across various interest rate regimes."""
+        from adapter import price_american_binomial
+
+        spot, strike, vol, tenor = 100.0, 100.0, 0.20, 0.5
+        m_zero_rate = price_american_binomial(
+            spot, strike, 0.0, vol, tenor, "call", steps=512, include_extended_greeks=True
+        )
+        m_high_rate = price_american_binomial(
+            spot, strike, 0.08, vol, tenor, "call", steps=512, include_extended_greeks=True
+        )
+
+        # Higher interest rate increases call price, decreases put price
+        self.assertGreater(m_high_rate["price"], m_zero_rate["price"])
+        self.assertGreater(m_high_rate["rho"], 0.0)
+
+        m_put_zero = price_american_binomial(
+            spot, strike, 0.0, vol, tenor, "put", steps=512, include_extended_greeks=True
+        )
+        m_put_high = price_american_binomial(
+            spot, strike, 0.08, vol, tenor, "put", steps=512, include_extended_greeks=True
+        )
+        self.assertLess(m_put_high["price"], m_put_zero["price"])
+        self.assertLess(m_put_high["rho"], 0.0)
+
+        # Deep ITM American put satisfies price >= strike - spot (early exercise boundary)
+        deep_itm_put = price_american_binomial(
+            50.0, 100.0, 0.05, 0.20, 0.5, "put", steps=512, include_extended_greeks=True
+        )
+        self.assertGreaterEqual(deep_itm_put["price"], 50.0 - 1e-4)
+        self.assertAlmostEqual(deep_itm_put["delta"], -1.0, delta=0.05)
+
+    def test_american_option_short_maturity_and_boundary_behavior(self) -> None:
+        """Verify American option CRR stability at very short maturities."""
+        from adapter import price_american_binomial
+
+        for short_tenor in (1.0 / 365.0, 0.5 / 365.0, 1e-4):
+            # ITM Call -> price converges to spot - strike
+            m_itm_c = price_american_binomial(
+                105.0, 100.0, 0.03, 0.20, short_tenor, "call", steps=128, include_extended_greeks=True
+            )
+            self.assertAlmostEqual(m_itm_c["price"], 5.0, delta=0.2)
+            self.assertTrue(math.isfinite(m_itm_c["delta"]))
+            self.assertTrue(math.isfinite(m_itm_c["gamma"]))
+            self.assertTrue(math.isfinite(m_itm_c["vega"]))
+
+            # OTM Put -> price converges to 0
+            m_otm_p = price_american_binomial(
+                105.0, 100.0, 0.03, 0.20, short_tenor, "put", steps=128, include_extended_greeks=True
+            )
+            self.assertAlmostEqual(m_otm_p["price"], 0.0, delta=0.1)
+
+    def test_american_option_calendar_to_pricing_conventions(self) -> None:
+        """Verify calendar-to-pricing conventions matching QuantLib Actual365Fixed day-counting."""
+        import QuantLib as ql
+        from adapter import price_american_binomial
+
+        calendar = ql.Taiwan()
+        day_count = ql.Actual365Fixed()
+        d_val = ql.Date(17, 4, 2026)
+        d_mat = ql.Date(17, 10, 2026)
+        days = d_mat - d_val
+        tenor_from_dates = day_count.yearFraction(d_val, d_mat)
+        self.assertEqual(days, 183)
+        self.assertAlmostEqual(tenor_from_dates, 183.0 / 365.0, places=6)
+
+        # Price American option with tenor derived from official calendar dates
+        res = price_american_binomial(100.0, 100.0, 0.03, 0.22, tenor_from_dates, "call", steps=512)
+        self.assertGreater(res["price"], 0.0)
+        self.assertGreater(res["delta"], 0.5)
+        self.assertGreater(res["vega"], 0.0)
 
 
 class TestQuantLibCalendarsAndConventions(unittest.TestCase):

@@ -112,24 +112,39 @@ class GovernedQuantLibInputAdapter:
             raise QuantLibWorkflowError("Bond payment_frequency must be positive")
 
 
+def _get_core_adapter():
+    import importlib.util
+    from pathlib import Path
+
+    adapter_file = Path(__file__).resolve().parents[1] / "adapter.py"
+    spec = importlib.util.spec_from_file_location("_quantlib_core_adapter", adapter_file)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load QuantLib option adapter from {adapter_file}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _bs_metrics(option: GovernedOptionSpec) -> dict[str, float]:
     """Compute option metrics via the unified QuantLib numerical backend."""
-    import QuantLib as ql
-
+    adapter_mod = _get_core_adapter()
     t = option.maturity_days / 365.0
-    forward = option.spot * math.exp((option.risk_free_rate - option.dividend_yield) * t)
-    std_dev = option.volatility * math.sqrt(t)
-    discount = math.exp(-option.risk_free_rate * t)
-    ql_type = ql.Option.Call if option.option_type == "call" else ql.Option.Put
-    payoff = ql.PlainVanillaPayoff(ql_type, option.strike)
-    calc = ql.BlackCalculator(payoff, forward, std_dev, discount)
+    res = adapter_mod.price_european(
+        spot=option.spot,
+        strike=option.strike,
+        rate=option.risk_free_rate,
+        vol=option.volatility,
+        tenor=t,
+        option_type=option.option_type,
+        dividend_yield=option.dividend_yield,
+    )
     return {
-        "npv": round(calc.value() * abs(option.quantity), 6),
-        "delta": round(calc.delta(option.spot) * option.quantity, 6),
-        "gamma": round(calc.gamma(option.spot) * abs(option.quantity), 6),
-        "vega": round(calc.vega(t) * abs(option.quantity) / 100.0, 6),
-        "theta": round(calc.thetaPerDay(option.spot, t) * option.quantity, 6),
-        "rho": round(calc.rho(t) * option.quantity / 100.0, 6),
+        "npv": round(res["price"] * abs(option.quantity), 6),
+        "delta": round(res["delta"] * option.quantity, 6),
+        "gamma": round(res["gamma"] * abs(option.quantity), 6),
+        "vega": round(res["vega"] * abs(option.quantity) / 100.0, 6),
+        "theta": round(res["theta"] * option.quantity, 6),
+        "rho": round(res["rho"] * option.quantity / 100.0, 6),
     }
 
 
@@ -196,211 +211,107 @@ class QuantLibBackend:
     """Real backend wrapping QuantLib-Python for governed research use."""
 
     def price_options(self, snapshot: GovernedMarketSnapshot) -> dict[str, Any]:
+        adapter_mod = _get_core_adapter()
         import QuantLib as ql
 
-        valuation_dt = dt.date.fromisoformat(snapshot.valuation_date)
-        self._set_evaluation_date(valuation_dt)
-
-        priced: dict[str, Any] = {}
-        for option in snapshot.option_specs:
-            spot = ql.SimpleQuote(option.spot)
-            spot_handle = ql.QuoteHandle(spot)
-            day_count = ql.Actual365Fixed()
-            calendar = ql.NullCalendar()
-            maturity_date = ql.Settings.instance().evaluationDate + int(option.maturity_days)
-
-            risk_ts = ql.YieldTermStructureHandle(
-                ql.FlatForward(0, calendar, option.risk_free_rate, day_count)
-            )
-            div_ts = ql.YieldTermStructureHandle(
-                ql.FlatForward(0, calendar, option.dividend_yield, day_count)
-            )
-            vol_ts = ql.BlackVolTermStructureHandle(
-                ql.BlackConstantVol(0, calendar, option.volatility, day_count)
-            )
-            process = ql.BlackScholesMertonProcess(spot_handle, div_ts, risk_ts, vol_ts)
-            payoff = ql.PlainVanillaPayoff(
-                ql.Option.Call if option.option_type == "call" else ql.Option.Put,
-                option.strike,
+        settings = ql.Settings.instance()
+        prev_date = settings.evaluationDate
+        try:
+            valuation_dt = dt.date.fromisoformat(snapshot.valuation_date)
+            settings.evaluationDate = ql.Date(
+                valuation_dt.day, valuation_dt.month, valuation_dt.year
             )
 
-            if option.style == "european":
-                exercise = ql.EuropeanExercise(maturity_date)
-                instrument = ql.VanillaOption(payoff, exercise)
-                instrument.setPricingEngine(ql.AnalyticEuropeanEngine(process))
-                result = {
-                    "npv": round(instrument.NPV() * abs(option.quantity), 6),
-                    "delta": round(instrument.delta() * option.quantity, 6),
-                    "gamma": round(instrument.gamma() * abs(option.quantity), 6),
-                    "vega": round(instrument.vega() * abs(option.quantity) / 100.0, 6),
-                    "theta": round(instrument.thetaPerDay() * option.quantity, 6),
-                    "rho": round(instrument.rho() * option.quantity / 100.0, 6),
-                    "model": "analytic_european",
-                    "style": option.style,
-                    "option_type": option.option_type,
-                }
-            else:
-                base_npv = self._american_npv(option, valuation_date=valuation_dt)
-                result = {
-                    "npv": round(base_npv * abs(option.quantity), 6),
-                    **self._finite_difference_greeks(option, valuation_date=valuation_dt, base_npv=base_npv),
-                    "model": "binomial_crr",
-                    "style": option.style,
-                    "option_type": option.option_type,
-                }
+            priced: dict[str, Any] = {}
+            for option in snapshot.option_specs:
+                if option.style == "european":
+                    metrics = _bs_metrics(option)
+                    result = {
+                        **metrics,
+                        "model": "analytic_european",
+                        "style": option.style,
+                        "option_type": option.option_type,
+                    }
+                else:
+                    t = option.maturity_days / 365.0
+                    m = adapter_mod.american_binomial_metrics(
+                        spot=option.spot,
+                        strike=option.strike,
+                        rate=option.risk_free_rate,
+                        vol=option.volatility,
+                        tenor=t,
+                        option_type=option.option_type,
+                        steps=200,
+                        dividend_yield=option.dividend_yield,
+                    )
+                    result = {
+                        "npv": round(m["price"] * abs(option.quantity), 6),
+                        "delta": round(m["delta"] * option.quantity, 6),
+                        "gamma": round(m["gamma"] * abs(option.quantity), 6),
+                        "vega": round(m["vega"] * abs(option.quantity) / 100.0, 6),
+                        "theta": round(m["theta"] * option.quantity, 6),
+                        "rho": round(m["rho"] * option.quantity / 100.0, 6),
+                        "model": "binomial_crr",
+                        "style": option.style,
+                        "option_type": option.option_type,
+                    }
 
-            priced[option.option_id] = result
-        return priced
-
-    def _set_evaluation_date(self, valuation_date: dt.date) -> None:
-        import QuantLib as ql
-
-        ql.Settings.instance().evaluationDate = ql.Date(
-            valuation_date.day, valuation_date.month, valuation_date.year
-        )
-
-    def _american_npv(
-        self,
-        option: GovernedOptionSpec,
-        *,
-        valuation_date: dt.date,
-        maturity_days: int | None = None,
-        spot: float | None = None,
-        volatility: float | None = None,
-        risk_free_rate: float | None = None,
-    ) -> float:
-        import QuantLib as ql
-
-        self._set_evaluation_date(valuation_date)
-        day_count = ql.Actual365Fixed()
-        calendar = ql.NullCalendar()
-        maturity = max(1, maturity_days if maturity_days is not None else option.maturity_days)
-        evaluation_date = ql.Settings.instance().evaluationDate
-        maturity_date = evaluation_date + int(maturity)
-        payoff = ql.PlainVanillaPayoff(
-            ql.Option.Call if option.option_type == "call" else ql.Option.Put,
-            option.strike,
-        )
-        exercise = ql.AmericanExercise(evaluation_date, maturity_date)
-        process = ql.BlackScholesMertonProcess(
-            ql.QuoteHandle(ql.SimpleQuote(spot if spot is not None else option.spot)),
-            ql.YieldTermStructureHandle(
-                ql.FlatForward(0, calendar, option.dividend_yield, day_count)
-            ),
-            ql.YieldTermStructureHandle(
-                ql.FlatForward(
-                    0,
-                    calendar,
-                    risk_free_rate if risk_free_rate is not None else option.risk_free_rate,
-                    day_count,
-                )
-            ),
-            ql.BlackVolTermStructureHandle(
-                ql.BlackConstantVol(
-                    0,
-                    calendar,
-                    volatility if volatility is not None else option.volatility,
-                    day_count,
-                )
-            ),
-        )
-        instrument = ql.VanillaOption(payoff, exercise)
-        instrument.setPricingEngine(ql.BinomialVanillaEngine(process, "crr", 200))
-        return instrument.NPV()
-
-    def _finite_difference_greeks(
-        self,
-        option: GovernedOptionSpec,
-        *,
-        valuation_date: dt.date,
-        base_npv: float | None = None,
-    ) -> dict[str, float]:
-        base = base_npv if base_npv is not None else self._american_npv(
-            option, valuation_date=valuation_date
-        )
-        spot_bump = max(option.spot * 0.01, 0.01)
-        vol_bump = 0.01
-        rate_bump = 0.0001
-
-        up = self._american_npv(
-            option,
-            valuation_date=valuation_date,
-            spot=option.spot + spot_bump,
-        )
-        down = self._american_npv(
-            option,
-            valuation_date=valuation_date,
-            spot=max(0.01, option.spot - spot_bump),
-        )
-        vol_up = self._american_npv(
-            option,
-            valuation_date=valuation_date,
-            volatility=option.volatility + vol_bump,
-        )
-        rate_up = self._american_npv(
-            option,
-            valuation_date=valuation_date,
-            risk_free_rate=option.risk_free_rate + rate_bump,
-        )
-        next_day = self._american_npv(
-            option,
-            valuation_date=valuation_date + dt.timedelta(days=1),
-            maturity_days=max(1, option.maturity_days - 1),
-        )
-        return {
-            "delta": round(((up - down) / (2.0 * spot_bump)) * option.quantity, 6),
-            "gamma": round(((up - 2.0 * base + down) / (spot_bump**2)) * abs(option.quantity), 6),
-            "vega": round((vol_up - base) * abs(option.quantity), 6),
-            "theta": round((next_day - base) * option.quantity, 6),
-            "rho": round((((rate_up - base) / rate_bump) / 100.0) * option.quantity, 6),
-        }
+                priced[option.option_id] = result
+            return priced
+        finally:
+            settings.evaluationDate = prev_date
 
     def analyze_fixed_income(self, snapshot: GovernedMarketSnapshot) -> dict[str, Any]:
         import QuantLib as ql
 
-        valuation_dt = dt.date.fromisoformat(snapshot.valuation_date)
-        ql.Settings.instance().evaluationDate = ql.Date(
-            valuation_dt.day, valuation_dt.month, valuation_dt.year
-        )
+        settings = ql.Settings.instance()
+        prev_date = settings.evaluationDate
+        try:
+            valuation_dt = dt.date.fromisoformat(snapshot.valuation_date)
+            settings.evaluationDate = ql.Date(
+                valuation_dt.day, valuation_dt.month, valuation_dt.year
+            )
 
-        results: dict[str, Any] = {}
-        for bond in snapshot.bond_specs:
-            schedule = ql.Schedule(
-                ql.Settings.instance().evaluationDate,
-                ql.Settings.instance().evaluationDate + ql.Period(bond.maturity_years, ql.Years),
-                ql.Period(int(12 / bond.payment_frequency), ql.Months),
-                ql.NullCalendar(),
-                ql.Unadjusted,
-                ql.Unadjusted,
-                ql.DateGeneration.Forward,
-                False,
-            )
-            instrument = ql.FixedRateBond(0, bond.face_value, schedule, [bond.coupon_rate], ql.ActualActual(ql.ActualActual.ISDA))
-            discount_curve = ql.YieldTermStructureHandle(
-                ql.FlatForward(0, ql.NullCalendar(), bond.market_rate, ql.ActualActual(ql.ActualActual.ISDA))
-            )
-            instrument.setPricingEngine(ql.DiscountingBondEngine(discount_curve))
-            clean_price = instrument.cleanPrice()
-            duration = ql.BondFunctions.duration(
-                instrument,
-                ql.InterestRate(bond.market_rate, ql.ActualActual(ql.ActualActual.ISDA), ql.Compounded, ql.Semiannual),
-                ql.Duration.Modified,
-            )
-            convexity = ql.BondFunctions.convexity(
-                instrument,
-                ql.InterestRate(bond.market_rate, ql.ActualActual(ql.ActualActual.ISDA), ql.Compounded, ql.Semiannual),
-            )
-            results[bond.instrument_id] = {
-                "clean_price": round(clean_price, 6),
-                "duration": round(duration, 6),
-                "convexity": round(convexity, 6),
-                "dv01": round(duration * clean_price * 0.0001, 6),
-                "curve_points": [
-                    {"tenor_years": 0.5, "zero_rate": round(max(0.0001, bond.market_rate - 0.0025), 6)},
-                    {"tenor_years": float(bond.maturity_years), "zero_rate": round(bond.market_rate, 6)},
-                ],
-            }
-        return results
+            results: dict[str, Any] = {}
+            for bond in snapshot.bond_specs:
+                schedule = ql.Schedule(
+                    settings.evaluationDate,
+                    settings.evaluationDate + ql.Period(bond.maturity_years, ql.Years),
+                    ql.Period(int(12 / bond.payment_frequency), ql.Months),
+                    ql.NullCalendar(),
+                    ql.Unadjusted,
+                    ql.Unadjusted,
+                    ql.DateGeneration.Forward,
+                    False,
+                )
+                instrument = ql.FixedRateBond(0, bond.face_value, schedule, [bond.coupon_rate], ql.ActualActual(ql.ActualActual.ISDA))
+                discount_curve = ql.YieldTermStructureHandle(
+                    ql.FlatForward(0, ql.NullCalendar(), bond.market_rate, ql.ActualActual(ql.ActualActual.ISDA))
+                )
+                instrument.setPricingEngine(ql.DiscountingBondEngine(discount_curve))
+                clean_price = instrument.cleanPrice()
+                duration = ql.BondFunctions.duration(
+                    instrument,
+                    ql.InterestRate(bond.market_rate, ql.ActualActual(ql.ActualActual.ISDA), ql.Compounded, ql.Semiannual),
+                    ql.Duration.Modified,
+                )
+                convexity = ql.BondFunctions.convexity(
+                    instrument,
+                    ql.InterestRate(bond.market_rate, ql.ActualActual(ql.ActualActual.ISDA), ql.Compounded, ql.Semiannual),
+                )
+                results[bond.instrument_id] = {
+                    "clean_price": round(clean_price, 6),
+                    "duration": round(duration, 6),
+                    "convexity": round(convexity, 6),
+                    "dv01": round(duration * clean_price * 0.0001, 6),
+                    "curve_points": [
+                        {"tenor_years": 0.5, "zero_rate": round(max(0.0001, bond.market_rate - 0.0025), 6)},
+                        {"tenor_years": float(bond.maturity_years), "zero_rate": round(bond.market_rate, 6)},
+                    ],
+                }
+            return results
+        finally:
+            settings.evaluationDate = prev_date
 
 
 def _build_artifact_bundle(*, analysis_path: str, results: dict[str, Any]) -> dict[str, Any]:
