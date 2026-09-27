@@ -133,7 +133,7 @@
         "tenant_source_breaches": { "type": "integer", "minimum": 0 },
         "p50_latency_ms": { "type": "number", "minimum": 0.0 },
         "p95_latency_ms": { "type": "number", "minimum": 0.0 },
-        "mean_cost_usd": { "type": "number", "minimum": 0.0 }
+        "mean_cost_usd": { "type": ["number", "null"], "minimum": 0.0 }
       },
       "additionalProperties": true
     },

@@ -181,7 +181,11 @@ def run_evaluation(
         elif res.status == "failed":
             failure_counts[res.failure_code or "unknown_failure"] += 1
 
-        # 1. Breach check: Did an unadmitted request produce data?
+        # 1. Breach check: Did an unadmitted request produce data or did tenant/source identity mismatch?
+        identity_breach = (res.tenant_id != req.tenant_id or res.source_id != req.source_id)
+        if identity_breach:
+            tenant_source_breaches += 1
+
         should_admit = expected.get("should_admit", True)
         if not should_admit and res.status == "completed":
             tenant_source_breaches += 1
@@ -213,14 +217,20 @@ def run_evaluation(
 
         # 4. Field evaluation (seed & lesson)
         exp_seed = expected.get("expected_seed")
+        seed_ok = True
         if exp_seed:
             if res.strategy_seed and not res.is_abstained and res.status == "completed":
                 # Evaluate hypothesis
                 if "hypothesis" in exp_seed:
-                    if res.strategy_seed.hypothesis and res.strategy_seed.hypothesis.strip():
+                    exp_h = exp_seed["hypothesis"].strip()
+                    act_h = (res.strategy_seed.hypothesis or "").strip()
+                    if act_h and (act_h == exp_h or exp_h in act_h or act_h in exp_h):
                         field_tp += 1
                     else:
                         field_fn += 1
+                        seed_ok = False
+                        if act_h:
+                            field_fp += 1
 
                 # Evaluate asset_class
                 if "asset_class" in exp_seed:
@@ -229,6 +239,8 @@ def run_evaluation(
                     field_tp += len(exp_assets.intersection(act_assets))
                     field_fp += len(act_assets - exp_assets)
                     field_fn += len(exp_assets - act_assets)
+                    if exp_assets != act_assets:
+                        seed_ok = False
 
                 # Evaluate market_scope
                 if "market_scope" in exp_seed:
@@ -237,6 +249,8 @@ def run_evaluation(
                     field_tp += len(exp_mkts.intersection(act_mkts))
                     field_fp += len(act_mkts - exp_mkts)
                     field_fn += len(exp_mkts - act_mkts)
+                    if exp_mkts != act_mkts:
+                        seed_ok = False
 
                 # Evaluate required_data
                 if "required_data" in exp_seed:
@@ -245,8 +259,11 @@ def run_evaluation(
                     field_tp += len(exp_data.intersection(act_data))
                     field_fp += len(act_data - exp_data)
                     field_fn += len(exp_data - act_data)
+                    if exp_data != act_data:
+                        seed_ok = False
             else:
                 # Seed expected but extractor produced none (FN for all expected fields)
+                seed_ok = False
                 if "hypothesis" in exp_seed:
                     field_fn += 1
                 field_fn += len(exp_seed.get("asset_class", []))
@@ -254,6 +271,7 @@ def run_evaluation(
                 field_fn += len(exp_seed.get("required_data", []))
         elif res.strategy_seed and not res.is_abstained:
             # Seed not expected but extracted (FP)
+            seed_ok = False
             if res.strategy_seed.hypothesis:
                 field_fp += 1
             field_fp += len(res.strategy_seed.asset_class)
@@ -261,6 +279,7 @@ def run_evaluation(
             field_fp += len(res.strategy_seed.required_data)
 
         exp_lesson = expected.get("expected_lesson")
+        lesson_ok = True
         if exp_lesson:
             if res.trade_lesson and not res.is_abstained and res.status == "completed":
                 if "scope" in exp_lesson:
@@ -269,14 +288,22 @@ def run_evaluation(
                     else:
                         field_fp += 1
                         field_fn += 1
+                        lesson_ok = False
                 if "proposed_change" in exp_lesson:
-                    if res.trade_lesson.proposed_change and res.trade_lesson.proposed_change.strip():
+                    exp_pc = exp_lesson["proposed_change"].strip()
+                    act_pc = (res.trade_lesson.proposed_change or "").strip()
+                    if act_pc and (act_pc == exp_pc or exp_pc in act_pc or act_pc in exp_pc):
                         field_tp += 1
                     else:
                         field_fn += 1
+                        lesson_ok = False
+                        if act_pc:
+                            field_fp += 1
             else:
+                lesson_ok = False
                 field_fn += sum(1 for k in ("scope", "proposed_change") if k in exp_lesson)
         elif res.trade_lesson and not res.is_abstained:
+            lesson_ok = False
             if res.trade_lesson.scope:
                 field_fp += 1
             if res.trade_lesson.proposed_change:
@@ -319,7 +346,9 @@ def run_evaluation(
                     critical_support_passed += 1
 
         # 6. Honest case_passed evaluation
-        if not should_admit:
+        if identity_breach:
+            case_passed = False
+        elif not should_admit:
             # Correct admission denial
             case_passed = (res.is_abstained is True and res.abstention_reason == "admission_denied")
         elif expected_abstain:
@@ -329,7 +358,10 @@ def run_evaluation(
             case_passed = (
                 res.status == "completed"
                 and not res.is_abstained
+                and not identity_breach
                 and intent_ok
+                and seed_ok
+                and lesson_ok
                 and case_spans_valid
                 and all_critical_supported
             )
@@ -398,7 +430,7 @@ def run_evaluation(
     p50_latency = latencies_sorted[len(latencies_sorted) // 2] if latencies_sorted else 0.0
     p95_idx = int(len(latencies_sorted) * 0.95)
     p95_latency = latencies_sorted[min(p95_idx, len(latencies_sorted) - 1)] if latencies_sorted else 0.0
-    mean_cost = sum(costs_usd) / len(costs_usd) if costs_usd else 0.0
+    mean_cost = round(sum(costs_usd) / len(costs_usd), 6) if costs_usd else None
 
     manifest: dict[str, Any] = {
         "manifest_version": "semantic_extraction_manifest.v1",
@@ -428,7 +460,7 @@ def run_evaluation(
             "tenant_source_breaches": tenant_source_breaches,
             "p50_latency_ms": round(p50_latency, 2),
             "p95_latency_ms": round(p95_latency, 2),
-            "mean_cost_usd": round(mean_cost, 6),
+            "mean_cost_usd": round(mean_cost, 6) if mean_cost is not None else None,
         },
         "downstream_thresholds": {
             "macro_f1_min": 0.95,

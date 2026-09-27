@@ -515,3 +515,275 @@ class TestSemanticExtractionClientBoundedFailures:
         assert metrics["critical_support_pct"] == 0.0
         assert metrics["source_validity_pct"] == 0.0
 
+    def test_loopback_http_keepalive_content_length_does_not_stall(self):
+        payload_data = {
+            "status": "completed",
+            "output": {
+                "structured_data": {
+                    "is_abstained": True,
+                    "abstention_reason": "insufficient_evidence",
+                    "source_spans": [],
+                }
+            },
+        }
+        raw_bytes = json.dumps({"status": "ok", "data": payload_data}).encode("utf-8")
+
+        class KeepAliveHandler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw_bytes)))
+                self.end_headers()
+                self.wfile.write(raw_bytes)
+                self.wfile.flush()
+                # Server keeps connection open and sleeps without closing
+                time.sleep(0.8)
+                self.close_connection = True
+
+            def log_message(self, format, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), KeepAliveHandler)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            client = SemanticExtractionClient(adapter_url=f"http://127.0.0.1:{server.server_port}")
+            req = _base_req(timeout_seconds=1.0)
+            t0 = time.monotonic()
+            res = client.extract(req)
+            elapsed = time.monotonic() - t0
+            assert res.status == "abstained"
+            assert res.failure_code is None
+            # Must complete well under the 0.8s keep-alive sleep
+            assert elapsed < 0.4
+        finally:
+            server.shutdown()
+            t.join()
+            server.server_close()
+
+    def test_loopback_http_chunked_transfer_decoding(self):
+        payload_data = {
+            "status": "completed",
+            "output": {
+                "structured_data": {
+                    "is_abstained": True,
+                    "abstention_reason": "insufficient_evidence",
+                    "source_spans": [],
+                }
+            },
+        }
+        raw_bytes = json.dumps({"status": "ok", "data": payload_data}).encode("utf-8")
+
+        class ChunkedHandler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                # Emit chunked response
+                chunk_header = f"{len(raw_bytes):x}\r\n".encode("utf-8")
+                self.wfile.write(chunk_header + raw_bytes + b"\r\n0\r\n\r\n")
+                self.wfile.flush()
+                self.close_connection = True
+
+            def log_message(self, format, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ChunkedHandler)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            client = SemanticExtractionClient(adapter_url=f"http://127.0.0.1:{server.server_port}")
+            req = _base_req(timeout_seconds=1.0)
+            res = client.extract(req)
+            assert res.status == "abstained"
+            assert res.failure_code is None
+        finally:
+            server.shutdown()
+            t.join()
+            server.server_close()
+
+    def test_loopback_http_error_trickle_deadline_timeout(self):
+        class TrickleErrorHandler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(500)
+                self.send_header("Content-Length", "20")
+                self.end_headers()
+                try:
+                    for _ in range(20):
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                        time.sleep(0.01)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def log_message(self, format, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), TrickleErrorHandler)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            client = SemanticExtractionClient(adapter_url=f"http://127.0.0.1:{server.server_port}")
+            req = _base_req(timeout_seconds=0.05, max_retries=0)
+            t0 = time.monotonic()
+            res = client.extract(req)
+            elapsed = time.monotonic() - t0
+            assert res.is_abstained is True
+            assert res.failure_code == ExtractionFailureCode.TIMEOUT.value
+            # Must timeout near 0.05s rather than taking >= 0.20s
+            assert elapsed < 0.15
+        finally:
+            server.shutdown()
+            t.join()
+            server.server_close()
+
+    def test_provider_remaining_timeout_and_deadline_enforcement(self):
+        passed_timeouts = []
+
+        class MockProvider:
+            def _gateway_call(self, *args, **kw):
+                time.sleep(0.06)
+                return {"valid": True, "config": {"agents": {"list": [{"id": "main", "tools": {"deny": ["*"]}}]}}}
+
+            def invoke_structured(self, *args, **kw):
+                passed_timeouts.append(kw.get("timeout_seconds"))
+                time.sleep(0.06)
+                return type("R", (), {
+                    "to_dict": lambda _: {
+                        "status": "completed",
+                        "output": {
+                            "structured_data": {
+                                "is_abstained": True,
+                                "abstention_reason": "insufficient_evidence",
+                                "source_spans": [],
+                            }
+                        },
+                    }
+                })()
+
+        provider = MockProvider()
+        client = SemanticExtractionClient(provider=provider)
+        req = _base_req(timeout_seconds=0.1, max_retries=0)
+        t0 = time.monotonic()
+        res = client.extract(req)
+        elapsed = time.monotonic() - t0
+
+        # invoke_structured must have received remaining budget (~0.04s), not the original 0.1s
+        assert len(passed_timeouts) == 1
+        assert passed_timeouts[0] < 0.08
+        # Since policy (0.06s) + invoke (0.06s) = 0.12s > 0.1s budget, result must be timeout
+        assert res.is_abstained is True
+        assert res.failure_code == ExtractionFailureCode.TIMEOUT.value
+        assert elapsed < 0.25
+
+    def test_strict_support_validation_rejects_non_canonical_and_invalid_spans(self):
+        client = SemanticExtractionClient(
+            transport_fn=lambda _: {
+                "status": "completed",
+                "output": {
+                    "structured_data": {
+                        "is_abstained": False,
+                        "strategy_seed": {
+                            "hypothesis": "Buy unrelated lunar rocks",
+                            "asset_class": ["equities"],
+                            "market_scope": ["us"],
+                            "required_data": ["ohlcv"],
+                            "confidence": 0.9,
+                        },
+                        "source_spans": [
+                            # Non-canonical field path
+                            {"field_name": "bogus_hypothesis_suffix", "start_char": 0, "end_char": 10, "exact_text": "Momentum i"},
+                            # Invalid offsets span
+                            {"field_name": "strategy_seed.asset_class", "start_char": 999, "end_char": 1005, "exact_text": "equities"},
+                        ],
+                    }
+                },
+            }
+        )
+        req = _base_req(text="Momentum in US equities produces excess returns.")
+        res = client.extract(req)
+        # Non-canonical / invalid spans must not be silently ignored or accepted
+        assert res.is_abstained is True
+        assert res.abstention_reason == AbstentionReason.MISSING_CRITICAL_SUPPORT.value
+        assert res.failure_code == ExtractionFailureCode.MISSING_SUPPORT.value
+
+    def test_pricing_unknown_model_preserves_none_and_roundtrip(self):
+        client = SemanticExtractionClient()
+        # Cataloged model returns honest cost
+        known_cost = client.calculate_cost(1000, 1000, model_id="openclaw/main")
+        assert known_cost == 0.0125
+
+        # Unknown model preserves None (honest tracking)
+        unknown_cost = client.calculate_cost(1000, 1000, model_id="unknown-subscription-model")
+        assert unknown_cost is None
+
+        # None input tokens preserves None
+        assert client.calculate_cost(None, 1000) is None
+
+        # Result with unknown usage safely serializes and deserializes
+        res = SemanticExtractionClient(
+            transport_fn=lambda _: {
+                "status": "completed",
+                "output": {
+                    "structured_data": {
+                        "is_abstained": True,
+                        "abstention_reason": "insufficient_evidence",
+                        "source_spans": [],
+                    }
+                },
+            }
+        ).extract(_base_req())
+        assert res.usage is None
+        assert res.cost_usd is None
+        data = res.to_dict()
+        assert data["usage"] is None
+        assert data["cost_usd"] is None
+        roundtrip = SemanticExtractionResult.from_dict(data)
+        assert roundtrip.usage is None
+        assert roundtrip.cost_usd is None
+
+    def test_corrupted_output_evaluator_rejects_bad_fields_and_identities(self, tmp_path):
+        from services.source_ingestion.evaluation.run_semantic_extraction_eval import run_evaluation, DEFAULT_CASES_PATH
+
+        cases = [json.loads(l) for l in DEFAULT_CASES_PATH.read_text().splitlines()]
+        by_source = {c["input"]["source_id"]: c for c in cases}
+
+        class CorruptedOutputExtractor:
+            def extract(self, req):
+                c = by_source[req.source_id]
+                exp = c["expected"]
+                abstain = exp.get("is_abstained", False) or not exp.get("should_admit", True)
+                spans = [SourceSpan("intent.primary_intent", 0, len(req.text), req.text)]
+                return SemanticExtractionResult(
+                    extraction_id="probe",
+                    source_id="WRONG-SOURCE",
+                    tenant_id="WRONG-TENANT",
+                    task_type=req.normalized_task_type().value,
+                    status="abstained" if abstain else "completed",
+                    is_abstained=abstain,
+                    abstention_reason="admission_denied" if not exp.get("should_admit", True) else "insufficient_evidence" if abstain else None,
+                    strategy_seed=StrategySeedExtractionPayload("WRONG UNRELATED HYPOTHESIS", ("equities",), ("us",), ("ohlcv",), 0.9),
+                    trade_lesson=TradeLessonExtractionPayload("strategy", "WRONG UNRELATED CHANGE", 0.9),
+                    source_spans=tuple(spans),
+                    cost_usd=None,
+                )
+
+        manifest = run_evaluation(
+            client=CorruptedOutputExtractor(),
+            manifest_out=tmp_path / "bad_fields_manifest.json",
+        )
+        # Evaluator must catch all 210 identity breaches and pass 0 cases
+        assert manifest["baseline_metrics"]["tenant_source_breaches"] == 210
+        assert sum(c["passed"] for c in manifest["case_results"]) == 0
+        assert manifest["baseline_metrics"]["mean_cost_usd"] is None
+

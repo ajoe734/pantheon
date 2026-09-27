@@ -545,8 +545,8 @@ class SemanticExtractionResult:
     config_digest: str = ""
     failure_code: Optional[str] = None
     failure_message: Optional[str] = None
-    usage: Mapping[str, Any] = field(default_factory=dict)
-    cost_usd: float = 0.0
+    usage: Optional[Mapping[str, Any]] = None
+    cost_usd: Optional[float] = None
     latency_ms: float = 0.0
     retry_count: int = 0
     created_at: str = field(default_factory=_utc_now)
@@ -573,7 +573,7 @@ class SemanticExtractionResult:
             "config_digest": self.config_digest,
             "failure_code": self.failure_code,
             "failure_message": self.failure_message,
-            "usage": dict(self.usage),
+            "usage": dict(self.usage) if self.usage is not None else None,
             "cost_usd": self.cost_usd,
             "latency_ms": self.latency_ms,
             "retry_count": self.retry_count,
@@ -608,8 +608,8 @@ class SemanticExtractionResult:
             config_digest=str(data.get("config_digest") or ""),
             failure_code=str(data["failure_code"]) if data.get("failure_code") else None,
             failure_message=str(data["failure_message"]) if data.get("failure_message") else None,
-            usage=dict(data.get("usage") or {}),
-            cost_usd=float(data.get("cost_usd", 0.0)),
+            usage=dict(data["usage"]) if data.get("usage") is not None else None,
+            cost_usd=float(data["cost_usd"]) if data.get("cost_usd") is not None else None,
             latency_ms=float(data.get("latency_ms", 0.0)),
             retry_count=int(data.get("retry_count", 0)),
             created_at=str(data.get("created_at") or _utc_now()),

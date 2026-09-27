@@ -15,7 +15,7 @@
     },
     "frozen_evaluation_cases": {
       "file": "services/source_ingestion/evaluation/semantic_extraction_cases.jsonl",
-      "sha256": "f4d013763b8fc86fd1dd516c90ece31ab8a715f3dc86c38d7751a1c3998bb8f6",
+      "sha256": "340592a802d3675a18bfe7acea84189af8869b44985336ddf8d82f0b0891fd51",
       "total_cases": 210,
       "language_counts": {
         "zh-TW": 108,
@@ -30,7 +30,7 @@
     },
     "evaluation_manifest_schema": {
       "file": "services/source_ingestion/evaluation/semantic_extraction_manifest.schema.json",
-      "sha256": "0beeab431b1979f8ea69b6863888c21a31896aea4efe35afadc40c1a7e03fd75",
+      "sha256": "b146ef60eb27261af28bce4997d0074fde472c76a3f0412594c727f3967c1024",
       "detail": "Valid JSON Schema Draft-7 defining manifest metadata, full frozen corpus constraints (corpus_total_cases, corpus_split_counts, corpus_language_counts), evaluated subset metrics (total_cases, evaluated_split), acceptance thresholds, and auditable per-case result records."
     },
     "evaluation_runner_and_baseline": {
@@ -49,17 +49,17 @@
   },
   "verification": [
     {
-      "command": "/tmp/clean-bff-venv/bin/python -m compileall -q services/source_ingestion/semantic_extraction.py services/source_ingestion/semantic_extraction_client.py services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py services/source_ingestion/evaluation/run_semantic_extraction_eval.py",
+      "command": ".venv-pantheon/bin/python3 -m compileall -q services/source_ingestion/semantic_extraction.py services/source_ingestion/semantic_extraction_client.py services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py services/source_ingestion/evaluation/run_semantic_extraction_eval.py",
       "result": "pass (5/5 files compiled cleanly with exit code 0)"
     },
     {
-      "command": "/tmp/clean-bff-venv/bin/python -m pytest -v services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py",
-      "result": "43 passed, 0 failed in 8.15s",
-      "executed": 43,
-      "collected": 43
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py",
+      "result": "50 passed, 0 failed in 10.09s",
+      "executed": 50,
+      "collected": 50
     },
     {
-      "command": "/tmp/clean-bff-venv/bin/python services/source_ingestion/evaluation/run_semantic_extraction_eval.py --manifest-out /tmp/eval_manifest_run.json",
+      "command": ".venv-pantheon/bin/python3 services/source_ingestion/evaluation/run_semantic_extraction_eval.py --manifest-out /tmp/eval_manifest_run.json",
       "result": "pass, 210 cases executed, critical support 100.0%, source validity 100.0%, breaches 0, manifest validated against Draft-7 schema",
       "executed": 210,
       "collected": 210

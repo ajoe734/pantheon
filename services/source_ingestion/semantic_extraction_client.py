@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import select
+import socket
 import sys
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -49,17 +50,94 @@ from services.source_ingestion.semantic_extraction import (
 logger = logging.getLogger(__name__)
 
 
-# Standard official rates per 1,000,000 tokens (USD)
-# Used for honest cost tracking; subscription/unknown costs are never treated as $0.00
-_DEFAULT_RATES: dict[str, float] = {
-    "input_per_million": 2.50,
-    "output_per_million": 10.00,
+# Standard verified model rates per 1,000,000 tokens (USD)
+# Used for honest cost tracking; subscription/unknown costs are preserved as None, never treated as $0.00
+_VERIFIED_MODEL_RATES: dict[str, dict[str, float]] = {
+    "openclaw/main": {
+        "input_per_million": 2.50,
+        "output_per_million": 10.00,
+    },
+    "openclaw/default": {
+        "input_per_million": 2.50,
+        "output_per_million": 10.00,
+    },
+    "claude-3-5-sonnet": {
+        "input_per_million": 3.00,
+        "output_per_million": 15.00,
+    },
+    "gpt-4o": {
+        "input_per_million": 2.50,
+        "output_per_million": 10.00,
+    },
+    "gpt-4o-mini": {
+        "input_per_million": 0.15,
+        "output_per_million": 0.60,
+    },
 }
+
+_CANONICAL_FIELD_PATHS: frozenset[str] = frozenset({
+    "intent.primary_intent",
+    "intent.secondary_intents",
+    "strategy_seed.hypothesis",
+    "strategy_seed.asset_class",
+    "strategy_seed.market_scope",
+    "strategy_seed.required_data",
+    "trade_lesson.scope",
+    "trade_lesson.proposed_change",
+})
 
 _DEFAULT_TOKEN_LIMITS: dict[str, int] = {
     "max_input_tokens": 8000,
     "max_output_tokens": 1000,
 }
+
+
+def _extract_socket(stream: Any) -> Optional[Any]:
+    for path in (
+        ("fp", "fp", "raw", "_sock"),
+        ("fp", "raw", "_sock"),
+        ("raw", "_sock"),
+    ):
+        curr = stream
+        for attr in path:
+            curr = getattr(curr, attr, None)
+            if curr is None:
+                break
+        if curr is not None:
+            return curr
+    return None
+
+
+def _read_http_body_bounded(stream: Any, deadline_at: float, max_bytes: int = 10_000_000) -> bytes:
+    sock = _extract_socket(stream)
+    chunks: list[bytes] = []
+    total_bytes = 0
+    read_fn = getattr(stream, "read1", None) or getattr(stream, "read", None)
+    if read_fn is None:
+        return b""
+
+    while True:
+        if getattr(stream, "isclosed", lambda: False)():
+            break
+        rem = deadline_at - time.monotonic()
+        if rem <= 0:
+            raise TimeoutError("HTTP response read exceeded wall-clock deadline")
+        if sock is not None:
+            try:
+                sock.settimeout(max(0.001, rem))
+            except Exception:
+                pass
+        chunk = read_fn(4096)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total_bytes += len(chunk)
+        if total_bytes > max_bytes:
+            raise ValueError(f"HTTP response body exceeded {max_bytes} bytes")
+        if time.monotonic() >= deadline_at:
+            raise TimeoutError("HTTP response read exceeded wall-clock deadline")
+
+    return b"".join(chunks)
 
 
 class SemanticExtractionClientError(RuntimeError):
@@ -105,19 +183,37 @@ class SemanticExtractionClient:
         self._max_deadline_seconds = min(max(0.001, float(max_deadline_seconds)), _MAX_TURN_DEADLINE_SECONDS)
         self._target_timeout_seconds = min(float(target_timeout_seconds), self._max_deadline_seconds)
         self._token_limits = dict(token_bucket_limits or _DEFAULT_TOKEN_LIMITS)
-        self._official_rates = dict(official_rates or _DEFAULT_RATES)
+        self._official_rates = dict(official_rates) if official_rates is not None else None
         self._rate_provenance = "official_catalog_2026" if official_rates is None else "custom_override"
         self._fallback_to_baseline = fallback_to_baseline
 
-    def calculate_cost(self, input_tokens: Optional[int], output_tokens: Optional[int]) -> Optional[float]:
+    def calculate_cost(
+        self,
+        input_tokens: Optional[int],
+        output_tokens: Optional[int],
+        model_id: Optional[str] = None,
+    ) -> Optional[float]:
         """Calculate honest cost in USD based on execution token counts.
 
-        Returns None if input_tokens or output_tokens is None to preserve unknown.
+        Returns None if input_tokens or output_tokens is None, or if the model
+        rate provenance cannot be verified (to prevent fabricating $0.00 or unverified rate).
         """
         if input_tokens is None or output_tokens is None:
             return None
-        input_rate = self._official_rates.get("input_per_million", 2.50) / 1_000_000.0
-        output_rate = self._official_rates.get("output_per_million", 10.00) / 1_000_000.0
+
+        if self._official_rates is not None:
+            rates = self._official_rates
+        else:
+            resolved_model = model_id or self._default_model
+            if resolved_model in _VERIFIED_MODEL_RATES:
+                rates = _VERIFIED_MODEL_RATES[resolved_model]
+            elif self._default_model in _VERIFIED_MODEL_RATES and resolved_model in (None, "", "openclaw/default"):
+                rates = _VERIFIED_MODEL_RATES[self._default_model]
+            else:
+                return None
+
+        input_rate = rates.get("input_per_million", 2.50) / 1_000_000.0
+        output_rate = rates.get("output_per_million", 10.00) / 1_000_000.0
         return round(input_tokens * input_rate + output_tokens * output_rate, 6)
 
     def _resolve_model_identity(self, raw_response: Optional[dict[str, Any]], request: SemanticExtractionRequest) -> str:
@@ -216,6 +312,7 @@ class SemanticExtractionClient:
         last_error_msg: Optional[str] = None
         raw_response: Optional[dict[str, Any]] = None
         accumulated_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
+        has_accumulated_usage = False
 
         while attempt < max_attempts:
             elapsed = time.monotonic() - start_time
@@ -243,6 +340,8 @@ class SemanticExtractionClient:
             except SemanticExtractionClientError as exc:
                 last_error_code = exc.failure_code
                 last_error_msg = exc.message
+                if exc.failure_code == ExtractionFailureCode.TIMEOUT:
+                    break
                 # Non-retryable failures: invalid schema, wrong tool, refusal, budget breach, admission denied
                 if exc.failure_code in (
                     ExtractionFailureCode.INVALID_SCHEMA,
@@ -254,9 +353,10 @@ class SemanticExtractionClient:
                     break
             except Exception as exc:
                 err_str = str(exc)
-                if "timed out" in err_str.lower() or "deadline" in err_str.lower():
+                if isinstance(exc, (TimeoutError, socket.timeout)) or "timed out" in err_str.lower() or "deadline" in err_str.lower():
                     last_error_code = ExtractionFailureCode.TIMEOUT
                     last_error_msg = err_str
+                    break
                 else:
                     last_error_code = ExtractionFailureCode.TRANSPORT_ERROR
                     last_error_msg = err_str
@@ -264,13 +364,32 @@ class SemanticExtractionClient:
             attempt += 1
             if attempt < max_attempts:
                 # Bounded backoff if deadline permits
-                time.sleep(min(0.2, max(0.01, remaining / 10.0)))
+                rem_before_sleep = total_deadline - (time.monotonic() - start_time)
+                if rem_before_sleep <= 0.02:
+                    last_error_code = ExtractionFailureCode.TIMEOUT
+                    last_error_msg = f"Turn deadline exhausted before backoff sleep for attempt {attempt + 1}"
+                    break
+                time.sleep(min(0.2, max(0.01, rem_before_sleep / 10.0)))
 
         # Handle failed turn dispatch
         if raw_response is None:
             failure_code = last_error_code or ExtractionFailureCode.TRANSPORT_ERROR
             is_timeout = failure_code == ExtractionFailureCode.TIMEOUT
             model_id = self._resolve_model_identity(None, request)
+            usage_res = (
+                {
+                    "input_tokens": accumulated_usage["input_tokens"],
+                    "output_tokens": accumulated_usage["output_tokens"],
+                    "total_tokens": accumulated_usage["input_tokens"] + accumulated_usage["output_tokens"],
+                }
+                if has_accumulated_usage
+                else None
+            )
+            cost_res = (
+                self.calculate_cost(accumulated_usage["input_tokens"], accumulated_usage["output_tokens"], model_id=model_id)
+                if has_accumulated_usage
+                else None
+            )
             return SemanticExtractionResult(
                 extraction_id=str(uuid.uuid4()),
                 source_id=request.source_id,
@@ -287,6 +406,8 @@ class SemanticExtractionClient:
                 config_digest=hashlib.sha256(b"dispatch_failed").hexdigest()[:16],
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
                 retry_count=max(0, attempt - 1),
+                usage=usage_res,
+                cost_usd=cost_res,
             )
 
         # 3. Parse and validate structured output
@@ -327,8 +448,12 @@ class SemanticExtractionClient:
 
         # 2. Direct provider object (AssistantOpenClawProvider)
         if self._provider is not None:
+            deadline_at = time.monotonic() + timeout_seconds
             # Enforce native-tool denial policy before calling provider
-            self._assert_provider_policy(self._provider, deadline=time.monotonic() + timeout_seconds)
+            self._assert_provider_policy(self._provider, deadline=deadline_at)
+            rem_timeout = max(0.001, deadline_at - time.monotonic())
+            if time.monotonic() >= deadline_at:
+                raise TimeoutError(f"Turn deadline of {timeout_seconds:.3f}s exhausted during policy verification")
             try:
                 res = self._provider.invoke_structured(
                     prompt,
@@ -338,8 +463,10 @@ class SemanticExtractionClient:
                     mode="user",
                     operator_id=request.operator_id or "system",
                     trace_id=request.trace_id or f"trace-extract-{uuid.uuid4().hex[:8]}",
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=rem_timeout,
                 )
+                if time.monotonic() >= deadline_at:
+                    raise TimeoutError(f"Turn deadline of {timeout_seconds:.3f}s exhausted during invoke_structured")
                 if hasattr(res, "to_dict"):
                     return res.to_dict()
                 return {"output": getattr(res, "output", {})}
@@ -347,16 +474,17 @@ class SemanticExtractionClient:
                 raise
             except Exception as exc:
                 err_str = str(exc)
+                if isinstance(exc, (TimeoutError, socket.timeout)) or "TIMEOUT" in err_str or "timed out" in err_str.lower():
+                    raise SemanticExtractionClientError(err_str, ExtractionFailureCode.TIMEOUT, 504) from exc
                 if "INVALID_JSON" in err_str or "SCHEMA" in err_str:
                     raise SemanticExtractionClientError(err_str, ExtractionFailureCode.INVALID_SCHEMA, 422) from exc
                 if "TOOL" in err_str or "NO_MATCH" in err_str or "MISMATCH" in err_str:
                     raise SemanticExtractionClientError(err_str, ExtractionFailureCode.WRONG_TOOL, 502) from exc
-                if "TIMEOUT" in err_str:
-                    raise SemanticExtractionClientError(err_str, ExtractionFailureCode.TIMEOUT, 504) from exc
                 raise SemanticExtractionClientError(err_str, ExtractionFailureCode.TRANSPORT_ERROR, 500) from exc
 
         # 3. HTTP Adapter call (Admitted restricted OpenClaw HTTP path)
         if self._adapter_url:
+            deadline_at = time.monotonic() + timeout_seconds
             endpoint = f"{self._adapter_url}/api/openclaw-adapter/assistant/providers/openclaw/structured"
             body = {
                 "prompt": prompt,
@@ -378,31 +506,18 @@ class SemanticExtractionClient:
                 headers=headers,
                 method="POST",
             )
-            deadline_at = time.monotonic() + timeout_seconds
             try:
-                # urlopen timeout parameter is socket inactivity timeout; read with strict wall-clock bound
-                with urllib.request.urlopen(req, timeout=min(timeout_seconds, 15.0)) as resp:
-                    chunks = []
-                    sock = getattr(resp.fp.raw, "_sock", None) if hasattr(resp, "fp") and hasattr(resp.fp, "raw") else None
-                    while True:
-                        remaining_read = deadline_at - time.monotonic()
-                        if remaining_read <= 0:
-                            raise TimeoutError(f"HTTP response read exceeded wall-clock deadline of {timeout_seconds:.3f}s")
-                        if sock:
-                            rlist, _, _ = select.select([sock], [], [], max(0.0, min(remaining_read, 0.5)))
-                            if not rlist:
-                                raise TimeoutError(f"HTTP response read stalled past wall-clock deadline of {timeout_seconds:.3f}s")
-                        chunk = resp.fp.read1(4096) if (hasattr(resp, "fp") and hasattr(resp.fp, "read1")) else resp.read(min(4096, 65536))
-                        if not chunk:
-                            break
-                        chunks.append(chunk)
-                    if time.monotonic() >= deadline_at:
-                        raise TimeoutError(f"HTTP response read exceeded wall-clock deadline of {timeout_seconds:.3f}s")
-                    raw_data = json.loads(b"".join(chunks).decode("utf-8"))
+                rem_conn = max(0.001, deadline_at - time.monotonic())
+                with urllib.request.urlopen(req, timeout=min(rem_conn, 15.0)) as resp:
+                    raw_bytes = _read_http_body_bounded(resp, deadline_at=deadline_at)
+                    raw_data = json.loads(raw_bytes.decode("utf-8"))
                     data_obj = raw_data.get("data") or {}
                     return data_obj
             except urllib.error.HTTPError as exc:
-                err_body = exc.read().decode("utf-8", errors="replace")
+                try:
+                    err_body = _read_http_body_bounded(exc, deadline_at=deadline_at).decode("utf-8", errors="replace")
+                except (TimeoutError, socket.timeout) as te:
+                    raise SemanticExtractionClientError("HTTP error read timed out", ExtractionFailureCode.TIMEOUT, 504) from te
                 if exc.code == 422:
                     raise SemanticExtractionClientError(err_body, ExtractionFailureCode.INVALID_SCHEMA, 422) from exc
                 if exc.code == 504:
@@ -410,10 +525,18 @@ class SemanticExtractionClient:
                 if exc.code == 502:
                     raise SemanticExtractionClientError(err_body, ExtractionFailureCode.WRONG_TOOL, 502) from exc
                 raise SemanticExtractionClientError(err_body, ExtractionFailureCode.TRANSPORT_ERROR, exc.code) from exc
-            except TimeoutError as exc:
+            except (TimeoutError, socket.timeout) as exc:
                 raise SemanticExtractionClientError("HTTP request timed out", ExtractionFailureCode.TIMEOUT, 504) from exc
+            except urllib.error.URLError as exc:
+                err_str = str(exc)
+                if isinstance(exc.reason, (socket.timeout, TimeoutError)) or "timed out" in err_str.lower():
+                    raise SemanticExtractionClientError("HTTP connection timed out", ExtractionFailureCode.TIMEOUT, 504) from exc
+                raise SemanticExtractionClientError(err_str, ExtractionFailureCode.TRANSPORT_ERROR, 500) from exc
             except Exception as exc:
-                raise SemanticExtractionClientError(str(exc), ExtractionFailureCode.TRANSPORT_ERROR, 500) from exc
+                err_str = str(exc)
+                if isinstance(exc, (socket.timeout, TimeoutError)) or "timed out" in err_str.lower():
+                    raise SemanticExtractionClientError(err_str, ExtractionFailureCode.TIMEOUT, 504) from exc
+                raise SemanticExtractionClientError(err_str, ExtractionFailureCode.TRANSPORT_ERROR, 500) from exc
 
         # 4. Fallback to deterministic baseline if explicitly allowed
         if self._fallback_to_baseline:
@@ -523,12 +646,12 @@ class SemanticExtractionClient:
         usage_data = output_obj.get("usage") if isinstance(output_obj, dict) else None
         usage_obj: Optional[dict[str, int]] = None
         cost_usd: Optional[float] = None
-        if isinstance(usage_data, dict) and "input_tokens" in usage_data:
+        if isinstance(usage_data, dict) and "input_tokens" in usage_data and usage_data.get("input_tokens") is not None:
             in_tok = int(usage_data.get("input_tokens", 0)) + accumulated_usage.get("input_tokens", 0)
             out_tok = int(usage_data.get("output_tokens", 0)) + accumulated_usage.get("output_tokens", 0)
             tot_tok = in_tok + out_tok
             usage_obj = {"input_tokens": in_tok, "output_tokens": out_tok, "total_tokens": tot_tok}
-            cost_usd = self.calculate_cost(in_tok, out_tok)
+            cost_usd = self.calculate_cost(in_tok, out_tok, model_id=model_identity)
 
             if (
                 in_tok > self._token_limits["max_input_tokens"]
@@ -578,19 +701,36 @@ class SemanticExtractionClient:
         is_abstained = bool(structured.get("is_abstained", False))
         abstention_reason = structured.get("abstention_reason")
 
-        # Parse source spans
+        # Parse and strictly validate source spans
         raw_spans = structured.get("source_spans") or []
         valid_spans: list[SourceSpan] = []
         supported_fields: list[str] = []
         missing_fields: list[str] = []
+        has_invalid_span = False
+        invalid_span_reason = ""
+
+        if not isinstance(raw_spans, list):
+            has_invalid_span = True
+            invalid_span_reason = "source_spans must be a list"
+            raw_spans = []
 
         for item in raw_spans:
-            if isinstance(item, dict):
-                span = SourceSpan.from_dict(item)
-                if span.is_valid(request.text):
-                    valid_spans.append(span)
-                    if span.field_name not in supported_fields:
-                        supported_fields.append(span.field_name)
+            if not isinstance(item, dict):
+                has_invalid_span = True
+                invalid_span_reason = "Non-dict item in source_spans"
+                continue
+            span = SourceSpan.from_dict(item)
+            if span.field_name not in _CANONICAL_FIELD_PATHS:
+                has_invalid_span = True
+                invalid_span_reason = f"Non-canonical span field path: {span.field_name}"
+                continue
+            if not span.is_valid(request.text):
+                has_invalid_span = True
+                invalid_span_reason = f"Invalid span {span.field_name} [{span.start_char}:{span.end_char}] does not match source text"
+                continue
+            valid_spans.append(span)
+            if span.field_name not in supported_fields:
+                supported_fields.append(span.field_name)
 
         # Parse payloads
         intent_payload: Optional[IntentExtractionPayload] = None
@@ -728,6 +868,10 @@ class SemanticExtractionClient:
         missing_support = False
         missing_support_reason = ""
 
+        if has_invalid_span:
+            missing_support = True
+            missing_support_reason = f"Invalid or non-canonical span detected: {invalid_span_reason}"
+
         if task_type in (ExtractionTaskType.INTENT, ExtractionTaskType.COMPREHENSIVE) and intent_payload and not is_abstained:
             has_intent_span = any(s.field_name.startswith("intent") for s in valid_spans)
             if not has_intent_span:
@@ -736,18 +880,30 @@ class SemanticExtractionClient:
                 missing_fields.append("intent.primary_intent")
 
         if task_type in (ExtractionTaskType.STRATEGY_SEED, ExtractionTaskType.COMPREHENSIVE) and seed_payload and not is_abstained:
-            has_hypothesis_span = any("hypothesis" in s.field_name for s in valid_spans)
-            if not has_hypothesis_span:
+            hypo_spans = [s for s in valid_spans if s.field_name == "strategy_seed.hypothesis"]
+            if not hypo_spans:
                 missing_support = True
                 missing_support_reason = "Missing valid source span for strategy_seed.hypothesis."
                 missing_fields.append("strategy_seed.hypothesis")
+            else:
+                hypo_str = seed_payload.hypothesis.strip()
+                if not any(s.exact_text in hypo_str or hypo_str in s.exact_text or s.exact_text in request.text for s in hypo_spans):
+                    missing_support = True
+                    missing_support_reason = "Strategy hypothesis is not grounded in source span."
+                    missing_fields.append("strategy_seed.hypothesis")
 
         if task_type in (ExtractionTaskType.TRADE_LESSON, ExtractionTaskType.COMPREHENSIVE) and lesson_payload and not is_abstained:
-            has_lesson_span = any("proposed_change" in s.field_name for s in valid_spans)
-            if not has_lesson_span:
+            lesson_spans = [s for s in valid_spans if s.field_name == "trade_lesson.proposed_change"]
+            if not lesson_spans:
                 missing_support = True
                 missing_support_reason = "Missing valid source span for trade_lesson.proposed_change."
                 missing_fields.append("trade_lesson.proposed_change")
+            else:
+                change_str = lesson_payload.proposed_change.strip()
+                if not any(s.exact_text in change_str or change_str in s.exact_text or s.exact_text in request.text for s in lesson_spans):
+                    missing_support = True
+                    missing_support_reason = "Trade lesson proposed_change is not grounded in source span."
+                    missing_fields.append("trade_lesson.proposed_change")
 
         if missing_support and not is_abstained:
             is_abstained = True
