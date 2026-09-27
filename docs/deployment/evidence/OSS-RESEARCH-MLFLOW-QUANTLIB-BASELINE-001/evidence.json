@@ -101,7 +101,8 @@
       "services/research/quantlib/production_option_chain.py: removed duplicate analytical BSM formula, delegated to price_european",
       "services/research/quantlib/adapter/quantlib_adapter.py: _bs_metrics and american_binomial_metrics delegate directly to core adapter"
     ],
-    "reference_fixtures": "Analytical BSM formulas and CRR tree reference formulas retained strictly in services/research/quantlib/test_adapter.py as frozen comparison fixtures with tolerances: price/delta/gamma 1e-4, vega/theta 1e-3. 6 regression tests verify dividend yields, early exercise premiums, interest rate sensitivities, short maturities/boundary values, calendar conventions, and evaluationDate preservation."
+    "reference_fixtures": "Analytical BSM formulas and CRR tree reference formulas retained strictly in services/research/quantlib/test_adapter.py as frozen comparison fixtures with tolerances: price/delta/gamma 1e-4, vega/theta 1e-3. 6 regression tests verify dividend yields, early exercise premiums, interest rate sensitivities, short maturities/boundary values, calendar conventions, and evaluationDate preservation.",
+    "consumer_import_compatibility": "Preserved read-only consumer imports (GovernedMarketSnapshot DTOs, registry admission packet validation, and persona oss_runtime) by deferring QuantLib import to actual numerical execution within services/research/quantlib/adapter.py. Added subprocess regression suite TestConsumerImportsWithoutQuantLib in services/research/quantlib/test_adapter.py proving imports succeed without QuantLib installed while maintaining full numerical verification."
   },
   "mlflow_security_and_runtime_verification": {
     "tracking_and_artifact_roundtrip": "Verified in test_sqlite_tracking_and_artifact_roundtrip using isolated temporary SQLite store and local artifact repository.",
@@ -127,7 +128,7 @@
     {
       "service": "services/research/quantlib",
       "image_tag": "pantheon-test-research-quantlib:latest",
-      "image_id": "sha256:506ce06848893635bcb122e05171d844c5eae32c98548c333239c9f20a8a012e",
+      "image_id": "sha256:28458e27d4a98bde366f8082b0f49e2bcec99282399ec4f97530d29a469e49ba",
       "verification_command": "docker run --rm pantheon-test-research-quantlib:latest",
       "exit_code": 0,
       "output": "SMOKE TEST PASSED (checksum 36756edc406bb29ffcedbb968a9f798dd1f6ed67cbe283c2bb869956349dbb6f)"
@@ -138,11 +139,11 @@
       "batch": "python_unit_and_integration_tests",
       "command": "pytest -v services/registry/experiments/test_adapter.py services/research/mlflow/test_security_boundary.py services/research/quantlib/test_adapter.py services/research/quantlib/test_production_option_chain.py services/research/quantlib/smoke_test.py",
       "exit_code": 0,
-      "passed": 66,
+      "passed": 69,
       "failed": 0,
       "skipped": 0,
       "xfail": 0,
-      "elapsed_seconds": 53.08
+      "elapsed_seconds": 51.75
     },
     {
       "batch": "registry_experiments_smoke",
@@ -160,7 +161,7 @@
     }
   ],
   "validation_total": {
-    "unique_test_cases_passed": 68,
+    "unique_test_cases_passed": 71,
     "failed": 0,
     "skipped": 0,
     "xfail": 0

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import math
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -769,6 +770,119 @@ class TestQuantLibEdgeCases(unittest.TestCase):
         # Negative rate
         res_neg = price_european(100.0, 100.0, -0.005, 0.20, 1.0, "call")
         self.assertGreater(res_neg["price"], 0.0)
+
+
+class TestConsumerImportsWithoutQuantLib(unittest.TestCase):
+    """Subprocess regression proving DTO, admission, and persona imports without QuantLib."""
+
+    def _find_repo_root(self) -> Path | None:
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if (parent / "services" / "persona" / "oss_runtime.py").is_file():
+                return parent
+        return None
+
+    def test_adapter_module_import_succeeds_without_quantlib(self) -> None:
+        """Verify adapter.py itself can be imported when QuantLib is not installed."""
+        adapter_path = Path(__file__).resolve().parent / "adapter.py"
+        script = (
+            "import sys\n"
+            "sys.modules['QuantLib'] = None\n"
+            "import importlib.util\n"
+            f"adapter_path = r'{adapter_path}'\n"
+            "spec = importlib.util.spec_from_file_location('adapter_isolated', adapter_path)\n"
+            "assert spec is not None and spec.loader is not None\n"
+            "mod = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(mod)\n"
+            "assert hasattr(mod, 'price_european')\n"
+            "assert hasattr(mod, 'price_american_binomial')\n"
+            "try:\n"
+            "    mod.price_european(100.0, 100.0, 0.03, 0.2, 1.0, 'call')\n"
+            "except (RuntimeError, ModuleNotFoundError):\n"
+            "    pass\n"
+            "else:\n"
+            "    raise AssertionError('price_european must fail when QuantLib is absent')\n"
+            "print('ADAPTER_WITHOUT_QUANTLIB_OK')\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(Path(__file__).resolve().parent),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            proc.returncode,
+            0,
+            f"Subprocess failed with code {proc.returncode}:\nstdout: {proc.stdout}\nstderr: {proc.stderr}",
+        )
+        self.assertIn("ADAPTER_WITHOUT_QUANTLIB_OK", proc.stdout)
+
+    def test_consumer_imports_in_isolated_process_without_quantlib(self) -> None:
+        repo_root = self._find_repo_root()
+        if repo_root is None:
+            self.skipTest("Full repository tree (services/persona) not present in test environment")
+        script = (
+            "import sys\n"
+            "sys.modules['QuantLib'] = None\n"
+            "from services.research.quantlib.adapter.quantlib_adapter import (\n"
+            "    GovernedMarketSnapshot, GovernedOptionSpec, GovernedBondSpec\n"
+            ")\n"
+            "from services.research.quantlib.registry_admission_packet import validate_admission_packet\n"
+            "import services.persona.oss_runtime\n"
+            "import services.research.quantlib as ql_pkg\n"
+            "assert hasattr(ql_pkg, 'price_european')\n"
+            "assert hasattr(ql_pkg, 'price_american_binomial')\n"
+            "try:\n"
+            "    ql_pkg.price_european(100.0, 100.0, 0.03, 0.2, 1.0, 'call')\n"
+            "except (RuntimeError, ModuleNotFoundError):\n"
+            "    pass\n"
+            "else:\n"
+            "    raise AssertionError('price_european must fail when QuantLib is absent')\n"
+            "print('ISOLATED_CONSUMER_IMPORTS_OK')\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            proc.returncode,
+            0,
+            f"Subprocess failed with code {proc.returncode}:\nstdout: {proc.stdout}\nstderr: {proc.stderr}",
+        )
+        self.assertIn("ISOLATED_CONSUMER_IMPORTS_OK", proc.stdout)
+
+    def test_consumer_imports_with_system_python_if_available(self) -> None:
+        system_py = "/usr/bin/python3"
+        if not Path(system_py).is_file():
+            self.skipTest(f"{system_py} is not available on this host")
+        repo_root = self._find_repo_root()
+        if repo_root is None:
+            self.skipTest("Full repository tree (services/persona) not present in test environment")
+        script = (
+            "from services.research.quantlib.adapter.quantlib_adapter import (\n"
+            "    GovernedMarketSnapshot, GovernedOptionSpec, GovernedBondSpec\n"
+            ")\n"
+            "from services.research.quantlib.registry_admission_packet import validate_admission_packet\n"
+            "import services.persona.oss_runtime\n"
+            "print('SYSTEM_PYTHON_CONSUMER_IMPORTS_OK')\n"
+        )
+        proc = subprocess.run(
+            [system_py, "-c", script],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            proc.returncode,
+            0,
+            f"System python subprocess failed with code {proc.returncode}:\nstdout: {proc.stdout}\nstderr: {proc.stderr}",
+        )
+        self.assertIn("SYSTEM_PYTHON_CONSUMER_IMPORTS_OK", proc.stdout)
 
 
 if __name__ == "__main__":

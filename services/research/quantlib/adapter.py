@@ -12,8 +12,6 @@ import math
 from pathlib import Path
 from typing import Literal
 
-import QuantLib as ql
-
 # Keep the pre-existing ``adapter/`` package importable for older governed
 # QuantLib tests that use ``from adapter.quantlib_adapter import ...``.
 _LEGACY_PACKAGE_DIR = Path(__file__).with_suffix("")
@@ -21,6 +19,23 @@ if _LEGACY_PACKAGE_DIR.is_dir():
     __path__ = [str(_LEGACY_PACKAGE_DIR)]  # type: ignore[var-annotated]
 
 OptionType = Literal["call", "put"]
+
+
+def _get_quantlib():
+    """Lazily import and return the official QuantLib numerical library.
+
+    Deferred import preserves read-only consumer imports (DTOs, admission packets,
+    registry validation, persona oss_runtime) when QuantLib is not installed.
+    """
+    try:
+        import QuantLib as ql
+
+        return ql
+    except ImportError as exc:
+        raise RuntimeError(
+            "QuantLib numerical library is required for option pricing execution. "
+            "Install QuantLib according to services/research/quantlib/requirements.txt."
+        ) from exc
 
 
 def price_european(
@@ -58,6 +73,7 @@ def price_european(
     forward = spot * math.exp((rate - dividend_yield) * tenor)
     std_dev = vol * math.sqrt(tenor)
     discount = math.exp(-rate * tenor)
+    ql = _get_quantlib()
     ql_type = ql.Option.Call if opt_type == "call" else ql.Option.Put
     payoff = ql.PlainVanillaPayoff(ql_type, strike)
     calc = ql.BlackCalculator(payoff, forward, std_dev, discount)
@@ -227,6 +243,7 @@ def _american_binomial_price_ql(
     if tenor <= 0.0:
         return float(max(0.0, spot - strike) if option_type == "call" else max(0.0, strike - spot))
 
+    ql = _get_quantlib()
     settings = ql.Settings.instance()
     prev_date = settings.evaluationDate
     try:
