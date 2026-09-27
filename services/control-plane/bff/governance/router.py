@@ -192,6 +192,63 @@ def create_governance_router(
             redacted_items.append(item_copy)
         return redacted_items, total_redacted
 
+    def _redact_evidence_field_items(
+        identity: Any, items: List[Any], *, field: str = "evidence_refs"
+    ) -> Tuple[List[Any], int]:
+        """Redact a top-level evidence-ref list field on each item in ``items``.
+
+        Shared by every handler whose response is a flat list of dicts that
+        may carry a ``field`` (default ``evidence_refs``) list directly on
+        the item -- approval decisions/queue items, audit events, ledger
+        entries, and transcript events all share this shape.
+        """
+        total_redacted = 0
+        redacted_items: List[Any] = []
+        for item in items:
+            if not isinstance(item, dict):
+                redacted_items.append(item)
+                continue
+            item_copy = copy.deepcopy(item)
+            raw_refs = item_copy.get(field)
+            if isinstance(raw_refs, list) and raw_refs:
+                processed_refs, count = _safe_redact(identity, raw_refs)
+                item_copy[field] = processed_refs
+                total_redacted += count
+            redacted_items.append(item_copy)
+        return redacted_items, total_redacted
+
+    def _redact_consultation_metadata_evidence(
+        identity: Any, items: List[Any]
+    ) -> Tuple[List[Any], int]:
+        """Redact ``metadata.consultation.evidence_refs`` on session-shaped dicts.
+
+        Consultation session/participant/outcome records carry evidence refs
+        nested under ``metadata.consultation.evidence_refs`` rather than at
+        the top level (see ``ports/operations_consultation.py``).
+        """
+        total_redacted = 0
+        redacted_items: List[Any] = []
+        for item in items:
+            if not isinstance(item, dict):
+                redacted_items.append(item)
+                continue
+            item_copy = copy.deepcopy(item)
+            metadata = item_copy.get("metadata")
+            if isinstance(metadata, dict):
+                consult = metadata.get("consultation")
+                if isinstance(consult, dict):
+                    raw_refs = consult.get("evidence_refs")
+                    if isinstance(raw_refs, list) and raw_refs:
+                        processed_refs, count = _safe_redact(identity, raw_refs)
+                        consult = dict(consult)
+                        consult["evidence_refs"] = processed_refs
+                        metadata = dict(metadata)
+                        metadata["consultation"] = consult
+                        item_copy["metadata"] = metadata
+                        total_redacted += count
+            redacted_items.append(item_copy)
+        return redacted_items, total_redacted
+
     resolved_service = governance_service
 
     def _service() -> GovernanceService:
@@ -311,17 +368,20 @@ def create_governance_router(
         state: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         decisions = _service().list_approval_decisions(outcome=outcome, state=state)
+        redacted_decisions, total_redacted = _redact_evidence_field_items(identity, decisions)
         snapshot_at = _now()
+        meta = _read_meta(
+            "approval_decisions",
+            "approval_decision_list",
+            snapshot_at=snapshot_at,
+            total=len(redacted_decisions),
+        )
+        meta["redacted_evidence_count"] = total_redacted
         return {
-            "data": decisions,
-            "meta": _read_meta(
-                "approval_decisions",
-                "approval_decision_list",
-                snapshot_at=snapshot_at,
-                total=len(decisions),
-            ),
+            "data": redacted_decisions,
+            "meta": meta,
         }
 
     @router.post("/api/v1/approval-decisions", status_code=202)
@@ -358,7 +418,7 @@ def create_governance_router(
         decision_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         snapshot_at = _now()
         decision = _service().get_approval_detail(decision_id)
         surface = _surface(
@@ -370,14 +430,17 @@ def create_governance_router(
             if surface.get("status") == "unavailable":
                 _fail(503, "DEPENDENCY_UNAVAILABLE", "Approval decision unavailable", "Approval decision read surface is unavailable")
             _not_found("Approval decision", decision_id)
+        redacted, total_redacted = _redact_evidence_field_items(identity, [decision])
+        meta = _read_meta(
+            "approval_decisions",
+            "approval_decision_detail",
+            snapshot_at=snapshot_at,
+            surface=surface,
+        )
+        meta["redacted_evidence_count"] = total_redacted
         return {
-            "data": decision,
-            "meta": _read_meta(
-                "approval_decisions",
-                "approval_decision_detail",
-                snapshot_at=snapshot_at,
-                surface=surface,
-            ),
+            "data": redacted[0],
+            "meta": meta,
         }
 
     # 4-12. Consultation workbench, requests, committees, and memos ----
@@ -655,20 +718,24 @@ def create_governance_router(
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         resolved_state = decision_state if decision_state is not None else state
         items = _service().list_approval_queue(
             decision_types=split_csv(decision_type),
             risk_levels=split_csv(risk_level),
             decision_states=split_csv(resolved_state),
         )
-        return _paged(
+        response = _paged(
             items,
             page_token=page_token,
             page_size=page_size,
             surface_key="governance_approval_queue",
             dataset="approval_queue_items",
         )
+        redacted_page, total_redacted = _redact_evidence_field_items(identity, response["items"])
+        response["items"] = redacted_page
+        response["meta"]["redacted_evidence_count"] = total_redacted
+        return response
 
     @router.get("/api/v1/operator/governance/audit")
     async def list_governance_audit_trail(
@@ -681,7 +748,7 @@ def create_governance_router(
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         items = _service().list_audit_events(
             actor=actor,
             action_types=split_csv(action_type),
@@ -689,13 +756,17 @@ def create_governance_router(
             from_ts=_parse_datetime(from_ts),
             to_ts=_parse_datetime(to_ts),
         )
-        return _paged(
+        response = _paged(
             items,
             page_token=page_token,
             page_size=page_size,
             surface_key="governance_audit",
             dataset="governance_audit_events",
         )
+        redacted_page, total_redacted = _redact_evidence_field_items(identity, response["items"])
+        response["items"] = redacted_page
+        response["meta"]["redacted_evidence_count"] = total_redacted
+        return response
 
     @router.get("/api/v1/operator/mutation-review/{decision_id}")
     async def get_mutation_review(
@@ -774,7 +845,7 @@ def create_governance_router(
         page_size: int = Query(default=20, ge=1, le=100),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         if _service().get_persona(persona_id) is None:
             _not_found("Persona", persona_id)
         consultations = _service().list_consultations_for_persona(
@@ -788,6 +859,7 @@ def create_governance_router(
             return {"data": [], "meta": {"total": 0, "page": page, "page_size": page_size, "staleness": {"served_from": "unavailable", "last_known_at": _now()}}}
         start = (page - 1) * page_size
         page_data = consultations[start : start + page_size]
+        redacted_page, total_redacted = _redact_consultation_metadata_evidence(identity, page_data)
         return {
             "data": [
                 {
@@ -798,9 +870,15 @@ def create_governance_router(
                         "outcome": f"/api/v1/consultations/{session['session_id']}/outcome",
                     },
                 }
-                for session in page_data
+                for session in redacted_page
             ],
-            "meta": {"total": len(consultations), "page": page, "page_size": page_size, "staleness": _staleness()},
+            "meta": {
+                "total": len(consultations),
+                "page": page,
+                "page_size": page_size,
+                "staleness": _staleness(),
+                "supporting_counts": {"redacted_evidence_count": total_redacted},
+            },
         }
 
     @router.get("/api/v1/consultations/{session_id}")
@@ -808,13 +886,14 @@ def create_governance_router(
         session_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         session = _service().get_consultation(session_id)
         if session is None:
             _not_found("Consultation session", session_id)
+        redacted, total_redacted = _redact_consultation_metadata_evidence(identity, [session])
         return {
             "data": {
-                **session,
+                **redacted[0],
                 "_links": {
                     "self": f"/api/v1/consultations/{session_id}",
                     "participants": f"/api/v1/consultations/{session_id}/participants",
@@ -822,7 +901,7 @@ def create_governance_router(
                     "evidence": f"/api/v1/consultations/{session_id}/evidence",
                 },
             },
-            "meta": {"staleness": _staleness()},
+            "meta": {"staleness": _staleness(), "supporting_counts": {"redacted_evidence_count": total_redacted}},
         }
 
     @router.get("/api/v1/consultations/{session_id}/participants")
@@ -830,10 +909,11 @@ def create_governance_router(
         session_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         participants = _service().get_consultation_participants(session_id)
         if participants is None:
             _not_found("Consultation session", session_id)
+        redacted_participants, total_redacted = _redact_consultation_metadata_evidence(identity, participants)
         return {
             "data": [
                 {
@@ -843,9 +923,13 @@ def create_governance_router(
                         "persona": f"/api/v1/personas/{participant['persona_id']}",
                     },
                 }
-                for participant in participants
+                for participant in redacted_participants
             ],
-            "meta": {"total": len(participants), "staleness": _staleness()},
+            "meta": {
+                "total": len(participants),
+                "staleness": _staleness(),
+                "supporting_counts": {"redacted_evidence_count": total_redacted},
+            },
         }
 
     @router.get("/api/v1/consultations/{session_id}/outcome")
@@ -853,11 +937,15 @@ def create_governance_router(
         session_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         outcome = _service().get_consultation_outcome(session_id)
         if outcome is None:
             _not_found("Consultation session", session_id)
-        return {"data": outcome, "meta": {"staleness": _staleness()}}
+        redacted, total_redacted = _redact_consultation_metadata_evidence(identity, [outcome])
+        return {
+            "data": redacted[0],
+            "meta": {"staleness": _staleness(), "supporting_counts": {"redacted_evidence_count": total_redacted}},
+        }
 
     @router.get("/api/v1/consultations/{session_id}/evidence")
     def get_consultation_evidence(
@@ -879,7 +967,7 @@ def create_governance_router(
         from_sequence_no: Optional[int] = None,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         transcript = _service().get_consult_transcript(
             session_id,
             from_sequence_no=from_sequence_no,
@@ -888,6 +976,14 @@ def create_governance_router(
         )
         if transcript is None:
             _not_found("Consultation session", session_id)
+        events = transcript.get("events") if isinstance(transcript, dict) else None
+        if isinstance(events, list):
+            transcript = dict(transcript)
+            redacted_events, total_redacted = _redact_evidence_field_items(identity, events)
+            transcript["events"] = redacted_events
+            meta = dict(transcript.get("meta") or {})
+            meta["redacted_evidence_count"] = total_redacted
+            transcript["meta"] = meta
         return transcript
 
     @router.get("/api/v1/personas/{persona_id}/consult-policy")
@@ -920,7 +1016,7 @@ def create_governance_router(
     async def list_bff_approvals(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         snapshot_at = _now()
         if run_management_read is not None:
             try:
@@ -945,7 +1041,13 @@ def create_governance_router(
                 }
         else:
             items = _service().list_pending_approvals()
-        return {"items": items, "count": len(items), "generated_at": snapshot_at}
+        redacted_items, total_redacted = _redact_evidence_field_items(identity, items)
+        return {
+            "items": redacted_items,
+            "count": len(redacted_items),
+            "generated_at": snapshot_at,
+            "meta": {"redacted_evidence_count": total_redacted},
+        }
 
     @router.get("/bff/management/governance-ledger")
     async def bff_management_governance_ledger(
@@ -956,14 +1058,23 @@ def create_governance_router(
         page_size: int = Query(default=50, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
-        return _service().governance_ledger(
+        identity = _identity(authorization)
+        response = _service().governance_ledger(
             source_type=source_type,
             status=status,
             q=q,
             page_token=page_token,
             page_size=page_size,
         )
+        data = dict(response.get("data") or {})
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        redacted_items, total_redacted = _redact_evidence_field_items(identity, items)
+        data["items"] = redacted_items
+        response["data"] = data
+        meta = dict(response.get("meta") or {})
+        meta["redacted_evidence_count"] = total_redacted
+        response["meta"] = meta
+        return response
 
     # 26-32. Review compatibility surfaces -----------------------------
 
@@ -1068,7 +1179,7 @@ def create_governance_router(
         review_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         clean_id = review_id.strip()
         events = [
             event
@@ -1076,7 +1187,17 @@ def create_governance_router(
             if str(event.get("target_id") or event.get("item_id") or "") == clean_id
             and str(event.get("target_type") or "") in {"Review", "GovernanceReviewItem"}
         ]
-        return {"review_id": clean_id, "events": events, "meta": {"snapshot_at": _now(), "correlation_id": clean_id, "staleness": _staleness()}}
+        redacted_events, total_redacted = _redact_evidence_field_items(identity, events)
+        return {
+            "review_id": clean_id,
+            "events": redacted_events,
+            "meta": {
+                "snapshot_at": _now(),
+                "correlation_id": clean_id,
+                "staleness": _staleness(),
+                "redacted_evidence_count": total_redacted,
+            },
+        }
 
     @router.get("/bff/approvals/{approval_id}/evidence")
     async def bff_approval_evidence(
@@ -1105,11 +1226,14 @@ def create_governance_router(
         approval_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         detail = _service().get_approval_detail(approval_id)
         if detail is None:
             _not_found("Approval decision", approval_id)
-        return {"data": detail, "meta": _snapshot(_now())}
+        redacted, total_redacted = _redact_evidence_field_items(identity, [detail])
+        meta = _snapshot(_now())
+        meta["redacted_evidence_count"] = total_redacted
+        return {"data": redacted[0], "meta": meta}
 
     # 34-35. Single and batch approval decisions -----------------------
 
