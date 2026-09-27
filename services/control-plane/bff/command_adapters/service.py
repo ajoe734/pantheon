@@ -901,6 +901,85 @@ class CommandAdapterService:
         self._final_contract_idempotency[cache_key] = {"request_hash": request_hash, "result": result_content}
         return JSONResponse(status_code=status_code, content=result_content)
 
+    def _revalidate_governance_admitted_record(
+        self,
+        record: Dict[str, Any],
+        *,
+        resolved_key: str,
+        identity: OperatorIdentity,
+        command_type: Any,
+        entity_type: Any,
+        target_id: str,
+        request_hash: str,
+    ) -> None:
+        foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
+        idem_rec = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
+        audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+
+        saved_hash = idem_rec.get("request_hash") or audit.get("request_hash")
+        if saved_hash and saved_hash != request_hash:
+            raise self._raise_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different request hash",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+
+        saved_tenant = idem_rec.get("tenant_id") or audit.get("tenant_id")
+        caller_tenant = getattr(identity, "tenant_id", None)
+        if saved_tenant != caller_tenant:
+            raise self._raise_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used by a different tenant",
+                f"Key {resolved_key!r} is bound to a different tenant",
+                precondition_failed="tenant_mismatch",
+            )
+
+        saved_op = idem_rec.get("operator_id") or audit.get("operator_id")
+        if saved_op and saved_op != identity.operator_id:
+            raise self._raise_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used by a different operator",
+                f"Key {resolved_key!r} is bound to a different operator",
+                precondition_failed="operator_mismatch",
+            )
+
+        saved_cmd_type = record.get("type") or idem_rec.get("command_type")
+        expected_cmd_type = command_type.value if hasattr(command_type, "value") else str(command_type)
+        if saved_cmd_type and saved_cmd_type != expected_cmd_type:
+            raise self._raise_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different command",
+                f"Key {resolved_key!r} is bound to a different command type",
+                precondition_failed="command_mismatch",
+            )
+
+        saved_target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        saved_target_type = saved_target.get("type")
+        saved_target_id = saved_target.get("id")
+        expected_target_type = entity_type.value if hasattr(entity_type, "value") else str(entity_type)
+        if saved_target_type and saved_target_type != expected_target_type:
+            raise self._raise_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different target type",
+                f"Key {resolved_key!r} is bound to target type {saved_target_type!r}",
+                precondition_failed="target_type_mismatch",
+            )
+        if saved_target_id and str(saved_target_id) != str(target_id):
+            raise self._raise_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different target",
+                f"Key {resolved_key!r} is bound to target {saved_target_id!r}",
+                precondition_failed="target_id_mismatch",
+            )
+
     def submit_governance_action(
         self,
         *,
@@ -949,26 +1028,39 @@ class CommandAdapterService:
                 precondition_failed="command_store_unconfigured",
             )
 
-        existing_cmd = store.get_command_by_idempotency_key(
-            resolved_key,
-            operator_id=identity.operator_id,
-            tenant_id=getattr(identity, "tenant_id", None),
-        )
+        existing_cmd = None
+        if resolved_key:
+            existing_cmd = store.get_command_by_idempotency_key(
+                resolved_key,
+                operator_id=identity.operator_id,
+                tenant_id=getattr(identity, "tenant_id", None),
+            )
         if existing_cmd is not None:
-            foundation = existing_cmd.get("foundation") if isinstance(existing_cmd.get("foundation"), dict) else {}
-            idem_rec = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
-            saved_hash = idem_rec.get("request_hash") or existing_cmd.get("audit", {}).get("request_hash")
-            if saved_hash and saved_hash != request_hash:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key was already used with a different payload",
-                    f"Key {resolved_key!r} is bound to a different request hash",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                )
+            self._revalidate_governance_admitted_record(
+                existing_cmd,
+                resolved_key=resolved_key,
+                identity=identity,
+                command_type=command_type,
+                entity_type=entity_type,
+                target_id=target_id,
+                request_hash=request_hash,
+            )
             if existing_cmd.get("result"):
                 return existing_cmd["result"]
+            admitted_command_id = existing_cmd["command_id"]
+            admitted_submitted_at = existing_cmd.get("submitted_at") or self._utc_now()
+            result = project_final_command_response(
+                command_id=admitted_command_id,
+                command=command_type,
+                accepted_at=admitted_submitted_at,
+                status=CommandStatus.SUBMITTED,
+                staleness_warning=self.check_read_surface_state(),
+            )
+            res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+            if isinstance(res_dict, dict) and isinstance(res_dict.get("data"), dict):
+                res_dict["data"].setdefault("action", action_id)
+            store.update_status(admitted_command_id, CommandStatus.SUBMITTED, result=res_dict)
+            return res_dict
 
         staleness_warning = self.check_read_surface_state()
         command_id = str(uuid.uuid4())
@@ -1033,17 +1125,33 @@ class CommandAdapterService:
             )
         assert record is not None
 
+        if record.get("command_id") != command_id:
+            self._revalidate_governance_admitted_record(
+                record,
+                resolved_key=resolved_key,
+                identity=identity,
+                command_type=command_type,
+                entity_type=entity_type,
+                target_id=target_id,
+                request_hash=request_hash,
+            )
+            if record.get("result"):
+                return record["result"]
+
+        admitted_command_id = record["command_id"]
+        admitted_submitted_at = record.get("submitted_at") or submitted_at
+
         result = project_final_command_response(
-            command_id=command_id,
+            command_id=admitted_command_id,
             command=command_type,
-            accepted_at=submitted_at,
+            accepted_at=admitted_submitted_at,
             status=CommandStatus.SUBMITTED,
             staleness_warning=staleness_warning,
         )
         res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
         if isinstance(res_dict, dict) and isinstance(res_dict.get("data"), dict):
             res_dict["data"].setdefault("action", action_id)
-        store.update_status(command_id, CommandStatus.SUBMITTED, result=res_dict)
+        store.update_status(admitted_command_id, CommandStatus.SUBMITTED, result=res_dict)
         return res_dict
 
     def create_confirm_token(

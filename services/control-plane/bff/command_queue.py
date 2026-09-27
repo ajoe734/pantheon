@@ -205,6 +205,17 @@ class CommandStore:
         target_type = target.type.value if hasattr(target, "type") and hasattr(target.type, "value") else (target.get("type") if isinstance(target, dict) else str(getattr(target, "type", "")))
         target_id = target.id if hasattr(target, "id") else (target.get("id") if isinstance(target, dict) else "")
         with self.serialized_transaction():
+            idem_key = (
+                (audit_context or {}).get("idempotency_key")
+                or (params or {}).get("idempotency_key")
+                or ((foundation_context or {}).get("idempotency_record") or {}).get("idempotency_key")
+            )
+            if idem_key:
+                op_id = self._operator_id_from_command({"audit": audit_context, "foundation": foundation_context, "params": params})
+                ten_id = self._tenant_id_from_command({"audit": audit_context, "foundation": foundation_context, "params": params})
+                existing = self.get_command_by_idempotency_key(idem_key, operator_id=op_id, tenant_id=ten_id)
+                if existing is not None:
+                    return existing, None
             active = self.get_active_commands_for_target(str(target_type), str(target_id))
             if active:
                 return None, active[0]
@@ -232,6 +243,17 @@ class CommandStore:
         target_type = target.type.value if hasattr(target, "type") and hasattr(target.type, "value") else (target.get("type") if isinstance(target, dict) else str(getattr(target, "type", "")))
         target_id = target.id if hasattr(target, "id") else (target.get("id") if isinstance(target, dict) else "")
         with self.serialized_transaction():
+            idem_key = (
+                (audit_context or {}).get("idempotency_key")
+                or (params or {}).get("idempotency_key")
+                or ((foundation_context or {}).get("idempotency_record") or {}).get("idempotency_key")
+            )
+            if idem_key:
+                op_id = self._operator_id_from_command({"audit": audit_context, "foundation": foundation_context, "params": params})
+                ten_id = self._tenant_id_from_command({"audit": audit_context, "foundation": foundation_context, "params": params})
+                existing = self.get_command_by_idempotency_key(idem_key, operator_id=op_id, tenant_id=ten_id)
+                if existing is not None:
+                    return existing, None
             active = self.get_active_commands_for_target(str(target_type), str(target_id))
             if active:
                 return None, active[0]

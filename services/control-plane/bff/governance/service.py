@@ -476,16 +476,35 @@ class GovernanceService:
             "approver_id": _identity_operator_id(identity),
             "decided_at": decided_at,
         }
+        receipt = {
+            "command_id": decision_id,
+            "aggregate_type": "ApprovalDecision",
+            "aggregate_id": decision_id,
+            "aggregate_version": 1,
+            "status": "accepted",
+            "event_id": f"evt-{decision_id}",
+            "correlation_id": correlation_id,
+            "owner": "governance",
+            "committed_at": decided_at,
+        }
         data = {
             "status": "accepted",
             "commandId": decision_id,
             "command_id": decision_id,
+            "aggregate_type": "ApprovalDecision",
+            "aggregate_id": decision_id,
+            "aggregate_version": 1,
+            "event_id": f"evt-{decision_id}",
+            "correlation_id": correlation_id,
+            "owner": "governance",
+            "committed_at": decided_at,
             "plan_id": plan_id,
             "decision": decision,
             "approver_id": record["approver_id"],
             "approverId": record["approver_id"],
             "decided_at": decided_at,
             "decidedAt": decided_at,
+            "receipt": receipt,
         }
         result = {
             "data": data,
@@ -495,6 +514,7 @@ class GovernanceService:
                 "correlationId": correlation_id,
                 "evidenceKind": "approval.decide",
             },
+            **receipt,
         }
         if not dry_run:
             from ..models import CommandType, ObjectType, TargetObject
@@ -521,6 +541,7 @@ class GovernanceService:
                     "decision": decision,
                 },
                 "approval_record": copy.deepcopy(record),
+                "receipt": copy.deepcopy(receipt),
             }
             admitted = self.command_store.submit_terminal_command(
                 command_id=decision_id,

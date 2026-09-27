@@ -108,6 +108,18 @@
     "defect_26_governance_atomic_terminal_command_submission": {
       "problem": "governance/service.py:521 submit_terminal_command was not atomic with idempotency lookup; concurrent identical approval created 202/202 with two durable decision IDs.",
       "remediation": "Wrapped CommandStore.submit_terminal_command inside serialized_transaction with atomic idempotency lookup returning existing command on duplicate key; revalidated tenant, actor, command, and request hash against admitted record, raising 409 on mismatch and replaying admitted result."
+    },
+    "defect_27_governance_action_admission_identity_and_restart_parity": {
+      "problem": "command_adapters/service.py:1025-1046 ignored CommandStore.submit_command returned identity and admitted request hash. Concurrent identical POST /bff/reviews returned distinct command IDs with only one durable row; different payloads under same idempotency key returned 202/202 instead of 202/409. Injecting update_status OSError after admission then retrying with fresh client returned 500 then 202 with new nonexistent command ID while original row had result=None.",
+      "remediation": "Implemented _revalidate_governance_admitted_record to revalidate admitted tenant, operator, command type, target, and request hash. Projected and persisted admitted command ID; on restart/retry after receipt-write failure, recovers admitted command ID and projects/persists result without duplicate IDs."
+    },
+    "defect_28_sd44_approval_decision_canonical_receipt": {
+      "problem": "governance/service.py:479-498 POST /api/v1/approval-decisions accepted without aggregate_type, aggregate_id, aggregate_version, event_id, owner, or committed_at in response or durable receipt.",
+      "remediation": "Normalized and durably persisted complete SD 4.4 canonical receipt fields (command_id, aggregate_type, aggregate_id, aggregate_version, status, event_id, correlation_id, owner, committed_at) across response data, durable result, and foundation.receipt while preserving public envelopes and authoritative metadata."
+    },
+    "defect_29_capital_pool_receipt_command_identity": {
+      "problem": "capital/service.py:465-486 POST /bff/capital-pools persisted and returned raw owner body without command_id and without canonical status when absent upstream.",
+      "remediation": "Ensured command_id, commandId, status ('executed'), and canonical SD 4.4 aggregate/event metadata are populated on result before CommandStore.update_status, preserving command identity across store persistence and response envelopes."
     }
   },
   "mutation_caller_inventory": {
@@ -329,6 +341,18 @@
         "result": "100 passed, 6 warnings in 60.83s",
         "executed": 100,
         "collected": 100
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q -s /tmp/test_domain_review_a356.py",
+        "result": "5 passed, 1 warning in 4.31s",
+        "executed": 5,
+        "collected": 5
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "result": "105 passed, 7 warnings in 62.32s",
+        "executed": 105,
+        "collected": 105
       }
     ]
   },
@@ -363,7 +387,10 @@
     "defect_23_runtime_receipt_and_restart_replay_resolved": true,
     "defect_24_runtime_concurrent_conflict_guard_resolved": true,
     "defect_25_capital_concurrent_target_and_operation_revalidation_resolved": true,
-    "defect_26_governance_atomic_terminal_command_submission_resolved": true
+    "defect_26_governance_atomic_terminal_command_submission_resolved": true,
+    "defect_27_governance_action_admission_identity_and_restart_parity_resolved": true,
+    "defect_28_sd44_approval_decision_canonical_receipt_resolved": true,
+    "defect_29_capital_pool_receipt_command_identity_resolved": true
   },
   "review": {
     "reviewer": "Codex",

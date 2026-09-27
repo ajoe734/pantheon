@@ -13,6 +13,7 @@ from services.control_plane.bff.capital.router import create_capital_router
 from services.control_plane.bff.capital.service import DefaultCapitalAuthority
 from services.control_plane.bff.runtime.router import create_runtime_router
 from services.control_plane.bff.runtime.service import _resolve_default_runtime_owner_port
+from services.control_plane.bff.command_adapters.service import CommandAdapterService
 
 PAYLOAD = {"plan_id": "review-plan", "decision": "approve", "memo": "isolated reviewer check"}
 IDENTITY = SimpleNamespace(operator_id="reviewer-test", roles=["admin", "approver", "operator"])
@@ -422,4 +423,72 @@ def test_governance_concurrent_replay_keeps_single_durable_decision(tmp_path):
             responses = list(pool.map(lambda client: client.post('/api/v1/approval-decisions', json={'plan_id': 'review-plan', 'decision': 'approve', 'memo': 'isolated reviewer check'}, headers={'Idempotency-Key': 'review-key'}), clients))
     rows = CommandStore(path)._get_all_commands()
     assert len(rows) == 1, {'statuses': [r.status_code for r in responses], 'ids': [r['command_id'] for r in rows]}
+
+
+REVIEW_IDENTITY = SimpleNamespace(operator_id='review-actor', tenant_id='review-tenant', roles=['admin'])
+REVIEW_HEADERS = {'Idempotency-Key': 'isolated-review-key'}
+
+
+def review_client(store):
+    service = CommandAdapterService(command_store=store, check_read_surface_state=lambda: None)
+    app = FastAPI()
+    app.include_router(create_governance_router(command_store=store, submit_action=service.submit_governance_action, extract_identity=lambda auth: REVIEW_IDENTITY))
+    return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.mark.parametrize('different', [False, True])
+def test_mounted_review_concurrent_admission(tmp_path, different):
+    path = str(tmp_path / 'commands.jsonl')
+    clients = [review_client(CommandStore(path)) for _ in range(2)]
+    barrier = Barrier(2)
+    original = CommandStore.submit_command
+    def synchronized(self, *args, **kwargs):
+        barrier.wait(timeout=5)
+        return original(self, *args, **kwargs)
+    with patch.object(CommandStore, 'submit_command', synchronized):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda i: clients[i].post('/bff/reviews', json={'review_id': f'review-{i if different else 0}'}, headers=REVIEW_HEADERS), range(2)))
+    rows = CommandStore(path)._get_all_commands()
+    bodies = [r.json() for r in responses]
+    ids = [b.get('data', {}).get('command_id') or b.get('data', {}).get('commandId') for b in bodies]
+    evidence = {'statuses': [r.status_code for r in responses], 'response_ids': ids, 'durable_ids': [r['command_id'] for r in rows], 'bodies': bodies}
+    if different:
+        assert sorted(r.status_code for r in responses) == [202, 409], evidence
+    else:
+        assert len(rows) == 1 and ids == [rows[0]['command_id']] * 2, evidence
+
+
+def test_review_restart_after_receipt_write_failure(tmp_path):
+    path = str(tmp_path / 'commands.jsonl')
+    store = CommandStore(path)
+    with patch.object(store, 'update_status', side_effect=OSError('isolated receipt write failure')):
+        first = review_client(store).post('/bff/reviews', json={'review_id': 'review-0'}, headers=REVIEW_HEADERS)
+    second = review_client(CommandStore(path)).post('/bff/reviews', json={'review_id': 'review-0'}, headers=REVIEW_HEADERS)
+    rows = CommandStore(path)._get_all_commands()
+    b = second.json()
+    returned = b.get('data', {}).get('command_id') or b.get('data', {}).get('commandId')
+    evidence = {'statuses': [first.status_code, second.status_code], 'returned': returned, 'durable_ids': [r['command_id'] for r in rows], 'durable_results': [r['result'] for r in rows]}
+    assert second.status_code == 202 and returned == rows[0]['command_id'] and rows[0]['result'], evidence
+
+
+def test_approval_decision_has_sd44_receipt(tmp_path):
+    store = CommandStore(str(tmp_path / 'commands.jsonl'))
+    client, _ = governance_client(store)
+    r = client.post('/api/v1/approval-decisions', json=PAYLOAD, headers=REVIEW_HEADERS)
+    assert r.status_code == 202
+    required = {'command_id', 'aggregate_type', 'aggregate_id', 'aggregate_version', 'status', 'event_id', 'correlation_id', 'owner', 'committed_at'}
+    row = store._get_all_commands()[0]
+    candidates = [r.json().get('data', {}), row.get('result') or {}, (row.get('foundation') or {}).get('receipt') or {}]
+    missing = [sorted(required - set(x)) for x in candidates]
+    assert any(required <= set(x) for x in candidates), missing
+
+
+def test_capital_pool_receipt_keeps_command_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv('PANTHEON_CAPITAL_API_URL', 'http://isolated.invalid')
+    store = CommandStore(str(tmp_path / 'commands.jsonl'))
+    with patch('services.control_plane.bff.command_executor._post_json', side_effect=lambda url, payload: dict(payload)):
+        r = capital_client(store).post('/bff/capital-pools', json={'name': 'isolated-pool'}, headers=REVIEW_HEADERS)
+    assert r.status_code == 201, r.text
+    row = store._get_all_commands()[0]
+    assert row['result'].get('command_id') == row['command_id'], row
 

@@ -463,11 +463,19 @@ class DefaultCapitalAuthority:
         # Dispatch to downstream adapter / executor
         try:
             result = execute_fn(cmd_id, params)
+            if hasattr(result, "model_dump"):
+                result = result.model_dump(mode="json")
             if isinstance(result, dict):
+                if "command_id" not in result:
+                    result["command_id"] = cmd_id
+                if "commandId" not in result:
+                    result["commandId"] = cmd_id
+                if "status" not in result or not result["status"]:
+                    result["status"] = "executed"
                 if "aggregate_type" not in result:
                     result["aggregate_type"] = target_type
-                if "aggregate_id" not in result:
-                    result["aggregate_id"] = target_id
+                if "aggregate_id" not in result or not result["aggregate_id"] or result["aggregate_id"] == "pending":
+                    result["aggregate_id"] = target_id if (target_id and target_id != "pending") else (result.get("pool_id") or result.get("id") or target_id)
                 if "aggregate_version" not in result:
                     result["aggregate_version"] = 1
                 if "event_id" not in result:
