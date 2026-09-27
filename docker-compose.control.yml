@@ -305,6 +305,11 @@ services:
       AGORA_TRADING_ROOM_STORE_BACKEND: ${AGORA_TRADING_ROOM_STORE_BACKEND:-postgres}
       AGORA_TRADING_ROOM_STORE_DSN: ${AGORA_TRADING_ROOM_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_TRADING_ROOM_STORE_SCHEMA: ${AGORA_TRADING_ROOM_STORE_SCHEMA:-agora}
+      GOVERNANCE_STORE_BACKEND: ${GOVERNANCE_STORE_BACKEND:-postgres}
+      GOVERNANCE_STORE_DSN: ${GOVERNANCE_STORE_DSN:-${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}}
+      GOVERNANCE_STORE_BOOTSTRAP: ${GOVERNANCE_STORE_BOOTSTRAP:-1}
+      PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND: postgres
+      PANTHEON_DECISION_JOURNAL_DATA_DIR: ${PANTHEON_DECISION_JOURNAL_DATA_DIR:-/data/bff/decision_journal}
       BFF_READ_SURFACE_STATE: ${BFF_READ_SURFACE_STATE:-fresh}
       PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
       PANTHEON_BFF_CAPABILITY_SNAPSHOT_STORE: /data/bff/capability_snapshots.json
@@ -373,6 +378,7 @@ services:
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes: !override
       - bff-data:/data/bff
+      - governance-data:/data/governance:ro
     depends_on:
       telemetry:
         condition: service_healthy

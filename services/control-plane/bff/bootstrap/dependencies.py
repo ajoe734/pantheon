@@ -25,6 +25,11 @@ from services.control_plane.bff.ports import (
     create_read_surface_ports,
     create_strategy_write_owner,
 )
+from services.control_plane.bff.governance.decision_journal_write_owner import (
+    DecisionJournalOwnerAdapter,
+    DecisionJournalWriteOwner,
+    build_decision_journal_write_owner,
+)
 from services.control_plane.bff.settings_store import SettingsStore
 
 
@@ -44,6 +49,7 @@ class AppDependencies:
     ranking_write_owner: RankingSnapshotWriteOwnerPort
     strategy_write_owner: StrategyWriteOwnerPort
     settings_store: SettingsStore
+    decision_journal_write_owner: Optional[DecisionJournalWriteOwner] = None
 
     @classmethod
     def create_default(
@@ -57,6 +63,7 @@ class AppDependencies:
         ranking_write_owner: Optional[RankingSnapshotWriteOwnerPort] = None,
         strategy_write_owner: Optional[StrategyWriteOwnerPort] = None,
         settings_store: Optional[SettingsStore] = None,
+        decision_journal_write_owner: Optional[DecisionJournalWriteOwner] = None,
     ) -> AppDependencies:
         """Construct the concrete production dependencies once during startup.
 
@@ -141,6 +148,17 @@ class AppDependencies:
                 f"strategy_write_owner must implement StrategyWriteOwnerPort, got {type(resolved_strategy_write_owner)}"
             )
 
+        resolved_decision_journal_write_owner = decision_journal_write_owner
+        if resolved_decision_journal_write_owner is None:
+            resolved_decision_journal_write_owner = build_decision_journal_write_owner()
+        if not isinstance(
+            resolved_decision_journal_write_owner,
+            (DecisionJournalWriteOwner, DecisionJournalOwnerAdapter),
+        ):
+            raise TypeError(
+                f"decision_journal_write_owner must implement DecisionJournalWriteOwner, got {type(resolved_decision_journal_write_owner)}"
+            )
+
         return cls(
             deployment_queries=resolved_deployment_queries,
             deployment_commands=resolved_deployment_commands,
@@ -150,6 +168,7 @@ class AppDependencies:
             ranking_write_owner=resolved_ranking_write_owner,
             strategy_write_owner=resolved_strategy_write_owner,
             settings_store=resolved_settings_store,
+            decision_journal_write_owner=resolved_decision_journal_write_owner,
         )
 
 

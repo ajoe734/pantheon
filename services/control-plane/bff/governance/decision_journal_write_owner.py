@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from services.governance.decision_journal import (
@@ -37,15 +38,25 @@ from services.governance.decision_journal import (
 def resolve_decision_journal_data_dir() -> str:
     """Resolve the durable Decision Journal data directory.
 
-    Follows the same direct-store convention already used by other BFF-side
-    consumers of governance-owned durable state (see ``services/capital`` and
-    ``services/deployment``): a domain-specific override first, then the
-    shared governance data directory, then a dev-only fallback.
+    Follows the direct-store convention used by BFF-side consumers of governance-owned
+    durable state:
+    1. Domain-specific override PANTHEON_DECISION_JOURNAL_DATA_DIR
+    2. Shared governance data directory PANTHEON_GOVERNANCE_DATA_DIR / GOVERNANCE_DATA_DIR
+    3. Dev-only fallback /tmp/pantheon/governance
+
+    The retired BFF-only file override is rejected: the canonical read port
+    never consumed it, so accepting it splits reads and writes across owners.
     """
+    if os.getenv("PANTHEON_BFF_DECISION_JOURNAL_STORE"):
+        raise ValueError(
+            "PANTHEON_BFF_DECISION_JOURNAL_STORE is retired; use "
+            "PANTHEON_DECISION_JOURNAL_DATA_DIR for both reads and writes"
+        )
+    if os.getenv("PANTHEON_DECISION_JOURNAL_DATA_DIR"):
+        return os.environ["PANTHEON_DECISION_JOURNAL_DATA_DIR"]
 
     return (
-        os.getenv("PANTHEON_DECISION_JOURNAL_DATA_DIR")
-        or os.getenv("PANTHEON_GOVERNANCE_DATA_DIR")
+        os.getenv("PANTHEON_GOVERNANCE_DATA_DIR")
         or os.getenv("GOVERNANCE_DATA_DIR")
         or "/tmp/pantheon/governance"
     )
@@ -65,6 +76,39 @@ class DecisionJournalOwnerAdapter:
     @property
     def stores(self) -> DecisionJournalStores:
         return self._stores
+
+    @property
+    def is_storage_healthy(self) -> bool:
+        """Return True if the underlying stores are writeable and healthy.
+
+        For JSON-backed stores the check is filesystem write-access on the
+        storage path (unchanged).  For Postgres-backed stores the check is a
+        real connectivity probe via ``list_all()``; any ``OperationalError`` or
+        other connection failure returns ``False`` so that misconfigured or
+        unreachable databases are not silently reported as healthy
+        (including when ``GOVERNANCE_STORE_BOOTSTRAP=0`` suppresses DDL).
+        """
+        try:
+            if hasattr(self._stores, "entries") and self._stores.entries is not None:
+                entries = self._stores.entries
+                if getattr(entries, "read_only", False):
+                    return False
+                storage_path = getattr(entries, "storage_path", None)
+                if storage_path is not None:
+                    # JSON-backed store: check filesystem write access.
+                    p = Path(storage_path)
+                    if p.exists() and not os.access(p, os.W_OK):
+                        return False
+                    if not p.exists() and p.parent.exists() and not os.access(p.parent, os.W_OK):
+                        return False
+                else:
+                    # Non-JSON store (e.g. Postgres): probe via a real list call.
+                    # Any connection failure, OperationalError, or misconfiguration
+                    # raises an exception that we catch below and map to unhealthy.
+                    entries.list_all()
+            return True
+        except Exception:
+            return False
 
     def list_decision_journal_entries(
         self,
