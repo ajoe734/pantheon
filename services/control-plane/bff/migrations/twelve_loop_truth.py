@@ -246,9 +246,23 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
     def rollback_to_002_schema_sync(self) -> None:
         self._scoped_backup = {k: v for k, v in self._observations.items() if k[0] is not None or k[1] is not None}
         self._observations = {k: v for k, v in self._observations.items() if k[0] is None and k[1] is None}
+        self._scoped_receipts_backup = {k: v for k, v in self._receipts.items() if v.tenant_id is not None or v.environment is not None}
+        self._receipts = {k: v for k, v in self._receipts.items() if v.tenant_id is None and v.environment is None}
 
     async def rollback_to_002_schema(self) -> None:
         self.rollback_to_002_schema_sync()
+
+    def restore_from_002_rollback(self) -> None:
+        if hasattr(self, "_scoped_backup"):
+            for k, v in self._scoped_backup.items():
+                if k not in self._observations:
+                    self._observations[k] = v
+            del self._scoped_backup
+        if hasattr(self, "_scoped_receipts_backup"):
+            for k, v in self._scoped_receipts_backup.items():
+                if k not in self._receipts:
+                    self._receipts[k] = v
+            del self._scoped_receipts_backup
 
 
 class PostgresTwelveLoopStore(TwelveLoopStore):
@@ -874,35 +888,59 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                 cur.execute(f"DELETE FROM {self.schema}.twelve_loop_observations;")
             conn.commit()
 
+    @staticmethod
+    def _build_rollback_to_002_sql(schema: str) -> str:
+        return f"""
+        CREATE TABLE IF NOT EXISTS {schema}.loop_receipts_scoped_backup (
+            LIKE {schema}.loop_receipts INCLUDING ALL
+        );
+        INSERT INTO {schema}.loop_receipts_scoped_backup
+        SELECT * FROM {schema}.loop_receipts
+        WHERE tenant_id IS NOT NULL OR environment IS NOT NULL
+        ON CONFLICT (receipt_id) DO NOTHING;
+
+        DELETE FROM {schema}.loop_receipts
+        WHERE tenant_id IS NOT NULL OR environment IS NOT NULL;
+
+        DROP INDEX IF EXISTS {schema}.idx_loop_receipts_scope_key;
+        DROP INDEX IF EXISTS {schema}.idx_loop_receipts_scope_correlation;
+
+        CREATE TABLE IF NOT EXISTS {schema}.twelve_loop_observations_scoped_backup (
+            LIKE {schema}.twelve_loop_observations INCLUDING ALL
+        );
+        INSERT INTO {schema}.twelve_loop_observations_scoped_backup
+        SELECT * FROM {schema}.twelve_loop_observations
+        WHERE tenant_id IS NOT NULL OR environment IS NOT NULL
+        ON CONFLICT DO NOTHING;
+
+        DELETE FROM {schema}.twelve_loop_observations
+        WHERE tenant_id IS NOT NULL OR environment IS NOT NULL;
+
+        DROP INDEX IF EXISTS {schema}.idx_loop_obs_scoped_key;
+        DROP INDEX IF EXISTS {schema}.idx_loop_obs_scope_release_corr;
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'twelve_loop_observations_pkey'
+                  AND conrelid = '{schema}.twelve_loop_observations'::regclass
+            ) THEN
+                ALTER TABLE {schema}.twelve_loop_observations
+                    ADD CONSTRAINT twelve_loop_observations_pkey
+                    PRIMARY KEY (release_id, correlation_id, loop_id);
+            END IF;
+        END $$;
+    """
+
+
     def rollback_to_002_schema_sync(self) -> None:
         """Rollback schema to 002 compatibility non-lossily.
-        Archives scoped rows into `twelve_loop_observations_scoped_backup`
-        and restores the pre-003 `twelve_loop_observations_pkey` constraint.
+        Archives scoped loop receipts into `loop_receipts_scoped_backup`,
+        archives scoped observations into `twelve_loop_observations_scoped_backup`,
+        drops scoped indexes, and restores the pre-003 `twelve_loop_observations_pkey` constraint.
         """
-        sql = f"""
-            CREATE TABLE IF NOT EXISTS {self.schema}.twelve_loop_observations_scoped_backup AS
-            SELECT * FROM {self.schema}.twelve_loop_observations
-            WHERE tenant_id IS NOT NULL OR environment IS NOT NULL;
-
-            DELETE FROM {self.schema}.twelve_loop_observations
-            WHERE tenant_id IS NOT NULL OR environment IS NOT NULL;
-
-            DROP INDEX IF EXISTS {self.schema}.idx_loop_obs_scoped_key;
-            DROP INDEX IF EXISTS {self.schema}.idx_loop_obs_scope_release_corr;
-
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint
-                    WHERE conname = 'twelve_loop_observations_pkey'
-                      AND conrelid = '{self.schema}.twelve_loop_observations'::regclass
-                ) THEN
-                    ALTER TABLE {self.schema}.twelve_loop_observations
-                        ADD CONSTRAINT twelve_loop_observations_pkey
-                        PRIMARY KEY (release_id, correlation_id, loop_id);
-                END IF;
-            END $$;
-        """
+        sql = self._build_rollback_to_002_sql(self.schema)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql)
@@ -913,30 +951,7 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
             import asyncpg
             conn = await asyncpg.connect(self.dsn)
             try:
-                sql = f"""
-                    CREATE TABLE IF NOT EXISTS {self.schema}.twelve_loop_observations_scoped_backup AS
-                    SELECT * FROM {self.schema}.twelve_loop_observations
-                    WHERE tenant_id IS NOT NULL OR environment IS NOT NULL;
-
-                    DELETE FROM {self.schema}.twelve_loop_observations
-                    WHERE tenant_id IS NOT NULL OR environment IS NOT NULL;
-
-                    DROP INDEX IF EXISTS {self.schema}.idx_loop_obs_scoped_key;
-                    DROP INDEX IF EXISTS {self.schema}.idx_loop_obs_scope_release_corr;
-
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM pg_constraint
-                            WHERE conname = 'twelve_loop_observations_pkey'
-                              AND conrelid = '{self.schema}.twelve_loop_observations'::regclass
-                        ) THEN
-                            ALTER TABLE {self.schema}.twelve_loop_observations
-                                ADD CONSTRAINT twelve_loop_observations_pkey
-                                PRIMARY KEY (release_id, correlation_id, loop_id);
-                        END IF;
-                    END $$;
-                """
+                sql = self._build_rollback_to_002_sql(self.schema)
                 await conn.execute(sql)
             finally:
                 await conn.close()

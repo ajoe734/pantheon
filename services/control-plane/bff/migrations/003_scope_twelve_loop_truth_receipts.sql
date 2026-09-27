@@ -38,9 +38,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_loop_obs_scoped_key
 CREATE INDEX IF NOT EXISTS idx_loop_obs_scope_release_corr
     ON loop_truth_projection.twelve_loop_observations (tenant_id, environment, release_id, correlation_id);
 
--- 3. If re-applying migration 003 after a 002 rollback, restore any backed-up scoped observations
+-- 3. If re-applying migration 003 after a 002 rollback, restore any backed-up scoped observations and receipts
 DO $$
 BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'loop_truth_projection'
+          AND table_name = 'loop_receipts_scoped_backup'
+    ) THEN
+        INSERT INTO loop_truth_projection.loop_receipts
+        SELECT * FROM loop_truth_projection.loop_receipts_scoped_backup
+        ON CONFLICT (receipt_id) DO NOTHING;
+
+        DROP TABLE loop_truth_projection.loop_receipts_scoped_backup;
+    END IF;
+
     IF EXISTS (
         SELECT 1 FROM information_schema.tables
         WHERE table_schema = 'loop_truth_projection'

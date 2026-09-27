@@ -19,34 +19,20 @@
       "docs/deployment/evidence/LOOP-RECEIPT-SCOPE-STORAGE-001/evidence.json"
     ],
     "summary": "Scope existing twelve-loop receipt schema and durable store with explicit tenant_id and environment before producer/read integration. Preserves honest legacy unscoped rows without invented provenance, enforces zero cross-tenant leakage, isolates unscoped legacy reduction from scoped partitions, provides non-lossy 002 rollback and pre-003 source compatibility, and establishes fresh-process restart and rebuild equivalence.",
-    "current_fix": "Forward migration 003 adds nullable tenant_id and environment columns to loop_receipts and twelve_loop_observations with NULLS NOT DISTINCT unique index. Fixed reviewer P1 defect 1 by enforcing exact partition queries (tenant_id IS NULL AND environment IS NULL for legacy; tenant_id = %s AND environment = %s for scoped) and fail-closed validation on partial scope, preventing legacy and scoped reduction mixing. Fixed reviewer P1 defect 2 by adding tested non-lossy rollback (rollback_to_002_schema_sync) which archives scoped rows to twelve_loop_observations_scoped_backup and restores twelve_loop_observations_pkey constraint, enabling pre-003 store operations without InvalidColumnReference or UniqueViolation, and automatically restoring scoped rows on re-migration. Fixed reviewer P2 defect 3 by adding a real child-process verification test proving fresh-process restart, multi-tenant/environment isolation, and rebuild equivalence.",
+    "current_fix": "Forward migration 003 adds nullable tenant_id and environment columns to loop_receipts and twelve_loop_observations with NULLS NOT DISTINCT unique index. Fixed reviewer P1 defect 1 by preserving and isolating scoped loop_receipts (via loop_receipts_scoped_backup) as well as observations (via twelve_loop_observations_scoped_backup) during both sync and async rollback entrypoints (rollback_to_002_schema_sync and rollback_to_002_schema), dropping scoped indexes, restoring the twelve_loop_observations_pkey constraint, and verifying actual pre-003 store and projector read/rebuild/write behavior where legacy loops remain incomplete without scoped pollution. Re-applying migration 003 forward cleanly restores backed-up scoped receipts and observations. Fixed reviewer P1 defect 2 by replacing the hard-coded external /tmp artifact with a reproducible pinned pre-003 source fixture established by the test from base commit 3bb04edb292a171457c49bc608104c3d2174e704 inside declared scope. Fixed reviewer P2 defect 3 by verifying child-process restart, multi-tenant/environment isolation, and rebuild equivalence.",
     "regressions": "PostgreSQL migration 002-to-003 upgrade and honest legacy row preservation, unscoped legacy reduction isolation from tenant receipts, non-lossy rollback to 002 and pre-003 source compatibility, fresh-process child-process restart and rebuild equivalence, multi-tenant streaming, cross-tenant collision rejection, out-of-order delivery with provenance fencing, and failed persistence error handling.",
     "boundary": "Scoped receipt schema, storage, and read models only; no hosted deployment, no production-data migration, no credential changes, no second store or projector.",
-    "rollback_plan": "Execute rollback_to_002_schema_sync(): archives scoped rows to twelve_loop_observations_scoped_backup, drops scoped indexes, and restores twelve_loop_observations_pkey on (release_id, correlation_id, loop_id). Allows pre-003 store code to run without UniqueViolation or InvalidColumnReference. Forward re-migration 003 automatically restores all backed-up scoped rows without data loss."
+    "rollback_plan": "Execute rollback_to_002_schema_sync() or await rollback_to_002_schema(): archives scoped receipts to loop_receipts_scoped_backup, archives scoped observations to twelve_loop_observations_scoped_backup, drops scoped indexes, and restores twelve_loop_observations_pkey on (release_id, correlation_id, loop_id). Allows pre-003 store and projector code to run with complete receipt and observation isolation without UniqueViolation or InvalidColumnReference. Forward re-migration 003 automatically restores all backed-up scoped receipts and observations without data loss."
   },
   "verification": {
-    "tested_at_utc": "2026-09-27T18:14:20Z",
+    "tested_at_utc": "2026-09-27T18:38:04Z",
     "collection": "Every listed batch was run in bounded foreground execution and terminal exit status was collected.",
     "commands": [
       {
-        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon .venv-pantheon/bin/python -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py",
+        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon .venv-pantheon/bin/python -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py services/control-plane/bff/management_read_models/test_twelve_loop_projector.py services/control-plane/bff/tests/test_management_read_models_router.py -q",
         "exit_code": 0,
-        "result": "28 passed in 71.90s",
-        "passed": 28,
-        "failed": 0
-      },
-      {
-        "command": ".venv-pantheon/bin/python -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py",
-        "exit_code": 0,
-        "result": "52 passed in 10.19s",
-        "passed": 52,
-        "failed": 0
-      },
-      {
-        "command": ".venv-pantheon/bin/python -m pytest services/control-plane/bff/tests/test_management_read_models_router.py",
-        "exit_code": 0,
-        "result": "43 passed, 3 warnings in 37.90s",
-        "passed": 43,
+        "result": "124 passed, 3 warnings in 150.24s",
+        "passed": 124,
         "failed": 0
       },
       {

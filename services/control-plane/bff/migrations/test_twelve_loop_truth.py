@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 import os
+from pathlib import Path
+from typing import Any, Tuple
 import pytest
 
 from services.control_plane.bff.management_read_models.twelve_loop_projector import (
@@ -1176,9 +1178,47 @@ def test_postgres_unscoped_legacy_reduction_isolated_from_scoped_receipts() -> N
             conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
 
 
-def test_postgres_non_lossy_rollback_to_002_and_pre003_source_compatibility() -> None:
-    """Defect 2 regression: 003 rollback safely archives scoped rows, restores 002 pkey, and allows pre-003 store execution."""
+def _load_pre003_modules(tmp_dir: Path) -> Tuple[Any, Any]:
+    """Load pre-003 store and projector modules from pinned base commit 3bb04edb292a171457c49bc608104c3d2174e704.
+
+    Established inside declared test scope with zero external /tmp or reviewer dependencies.
+    """
     import importlib.util
+    import subprocess
+    import sys
+
+    base_commit = "3bb04edb292a171457c49bc608104c3d2174e704"
+    proj_src = subprocess.check_output(
+        ["git", "show", f"{base_commit}:services/control-plane/bff/management_read_models/twelve_loop_projector.py"],
+        text=True,
+    )
+    store_src = subprocess.check_output(
+        ["git", "show", f"{base_commit}:services/control-plane/bff/migrations/twelve_loop_truth.py"],
+        text=True,
+    )
+
+    proj_file = tmp_dir / "pre003_twelve_loop_projector.py"
+    store_file = tmp_dir / "pre003_twelve_loop_truth.py"
+    proj_file.write_text(proj_src, encoding="utf-8")
+    store_file.write_text(store_src, encoding="utf-8")
+
+    spec_p = importlib.util.spec_from_file_location("pre003_projector", proj_file)
+    mod_p = importlib.util.module_from_spec(spec_p)
+    sys.modules["pre003_projector"] = mod_p
+    spec_p.loader.exec_module(mod_p)
+
+    spec_s = importlib.util.spec_from_file_location("pre003_store", store_file)
+    mod_s = importlib.util.module_from_spec(spec_s)
+    sys.modules["pre003_store"] = mod_s
+    spec_s.loader.exec_module(mod_s)
+
+    return mod_s, mod_p
+
+
+def test_postgres_non_lossy_rollback_to_002_and_pre003_source_compatibility(tmp_path: Path) -> None:
+    """Defect 2 regression: 003 rollback safely archives scoped receipts and observations, restores 002 pkey,
+    and isolates pre-003 store and projector read/rebuild/write behavior, with full forward restoration.
+    """
     from uuid import uuid4
     schema = f"test_rb_{uuid4().hex[:8]}"
     store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
@@ -1188,30 +1228,34 @@ def test_postgres_non_lossy_rollback_to_002_and_pre003_source_compatibility() ->
     shared_corr = f"corr-rb-{uuid4().hex[:6]}"
 
     try:
-        # Seed coexisting scoped and legacy rows on identical release_id, correlation_id, loop_id
+        # Seed coexisting scoped and legacy receipts on identical release_id, correlation_id, loop_id
+        # Legacy stream has only a stimulus (incomplete)
         store.record_receipt(
-            CanonicalLoopReceipt("rcpt-legacy-term", "terminal", 1, shared_corr, shared_rel, "owner-l", "live", status="completed", observed_at=now)
+            CanonicalLoopReceipt("rcpt-legacy-stim", "stimulus", 1, shared_corr, shared_rel, "owner-l", "live", observed_at=now)
         )
-        store.upsert_observation(
-            LoopObservation(
-                release_id=shared_rel, correlation_id=shared_corr, loop_id=1, owner="owner-l",
-                terminal_id="rcpt-legacy-term", terminal_status="completed", status="complete",
-                freshness_status="fresh", provenance="live", observed_at=now,
-                receipt_ids=["rcpt-legacy-term"], tenant_id=None, environment=None
-            )
-        )
+        p_legacy = TwelveLoopTruthProjector(store=store, auto_load=False)
+        p_legacy.load_from_store()
+        obs_legacy = store.get_observation(shared_rel, shared_corr, 1)
+        assert obs_legacy is not None
+        assert obs_legacy.status != "complete"
+        assert obs_legacy.terminal_id is None
 
+        # Scoped stream has stimulus, terminal, next-consumer (complete)
         store.record_receipt(
-            CanonicalLoopReceipt("rcpt-scoped-term", "terminal", 1, shared_corr, shared_rel, "owner-s", "live", tenant_id="tenant-rb", environment="production", status="completed", observed_at=now)
+            CanonicalLoopReceipt("rcpt-scoped-stim", "stimulus", 1, shared_corr, shared_rel, "owner-s", "live", tenant_id="tenant-rb", environment="production", observed_at=now)
         )
-        store.upsert_observation(
-            LoopObservation(
-                release_id=shared_rel, correlation_id=shared_corr, loop_id=1, owner="owner-s",
-                terminal_id="rcpt-scoped-term", terminal_status="completed", status="complete",
-                freshness_status="fresh", provenance="live", observed_at=now,
-                receipt_ids=["rcpt-scoped-term"], tenant_id="tenant-rb", environment="production"
-            )
+        store.record_receipt(
+            CanonicalLoopReceipt("rcpt-scoped-term", "terminal", 1, shared_corr, shared_rel, "owner-s", "live", tenant_id="tenant-rb", environment="production", status="completed", observed_at=now + timedelta(seconds=1))
         )
+        store.record_receipt(
+            CanonicalLoopReceipt("rcpt-scoped-next", "next_consumer", 1, shared_corr, shared_rel, "owner-s", "live", tenant_id="tenant-rb", environment="production", status="accepted", observed_at=now + timedelta(seconds=2))
+        )
+        p_scoped = TwelveLoopTruthProjector(store=store, tenant_id="tenant-rb", environment="production", auto_load=False)
+        p_scoped.load_from_store()
+        obs_scoped = store.get_observation(shared_rel, shared_corr, 1, tenant_id="tenant-rb", environment="production")
+        assert obs_scoped is not None
+        assert obs_scoped.status == "complete"
+        assert obs_scoped.terminal_id == "rcpt-scoped-term"
 
         # 1. Execute non-lossy rollback
         store.rollback_to_002_schema_sync()
@@ -1219,13 +1263,19 @@ def test_postgres_non_lossy_rollback_to_002_and_pre003_source_compatibility() ->
         # 2. Verify scoped rows archived and legacy row intact
         with store._connect() as conn:
             with conn.cursor() as cur:
+                # Scoped receipts archived and removed from loop_receipts
+                cur.execute(f"SELECT COUNT(*) FROM {schema}.loop_receipts_scoped_backup;")
+                assert cur.fetchone()[0] == 3
+
+                cur.execute(f"SELECT COUNT(*) FROM {schema}.loop_receipts;")
+                assert cur.fetchone()[0] == 1
+
+                # Scoped observations archived and removed from twelve_loop_observations
                 cur.execute(f"SELECT COUNT(*) FROM {schema}.twelve_loop_observations_scoped_backup;")
-                backup_count = cur.fetchone()[0]
-                assert backup_count == 1
+                assert cur.fetchone()[0] == 1
 
                 cur.execute(f"SELECT COUNT(*) FROM {schema}.twelve_loop_observations;")
-                obs_count = cur.fetchone()[0]
-                assert obs_count == 1
+                assert cur.fetchone()[0] == 1
 
                 # Check pkey constraint is restored
                 cur.execute(f"""
@@ -1235,26 +1285,116 @@ def test_postgres_non_lossy_rollback_to_002_and_pre003_source_compatibility() ->
                 """)
                 assert cur.fetchone() is not None
 
-        # 3. Pre-003 store compatibility: pre-003 store relies on ON CONFLICT (release_id, correlation_id, loop_id)
-        spec = importlib.util.spec_from_file_location("pre003_store", "/tmp/codex2-loop-scope-review-001/pre003_store.py")
-        old = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(old)
-        old_store = old.PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
-        # Pre-003 upsert succeeds without InvalidColumnReference or UniqueViolation
-        updated_obs = store.get_observation(shared_rel, shared_corr, 1)
-        old_store.upsert_observation(updated_obs)
+        # 3. Pre-003 store & projector compatibility:
+        # Load pinned pre-003 source from base commit without external /tmp dependency
+        mod_s, mod_p = _load_pre003_modules(tmp_path)
+        old_store = mod_s.PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
 
-        # 4. Re-apply migration 003 forward: automatically restores backed-up scoped rows
+        # Pre-003 list_receipts returns ONLY legacy receipts; scoped receipts are fully isolated
+        old_rcpts = old_store.list_receipts(release_id=shared_rel, correlation_id=shared_corr, loop_id=1)
+        assert len(old_rcpts) == 1
+        assert old_rcpts[0].receipt_id == "rcpt-legacy-stim"
+
+        # Pre-003 projector rebuilds and does NOT see scoped receipts
+        old_projector = mod_p.TwelveLoopTruthProjector(store=old_store, auto_load=False)
+        old_projector.load_from_store()
+        old_obs = old_store.get_observation(shared_rel, shared_corr, 1)
+        assert old_obs is not None
+        assert old_obs.status != "complete"
+        assert old_obs.terminal_id is None
+
+        # Pre-003 upsert succeeds against restored 002 schema without InvalidColumnReference or UniqueViolation
+        old_store.upsert_observation(old_obs)
+
+        # 4. Re-apply migration 003 forward: automatically restores backed-up scoped receipts and observations
         store.apply_migration_sync()
         with store._connect() as conn:
             with conn.cursor() as cur:
+                cur.execute(f"SELECT to_regclass('{schema}.loop_receipts_scoped_backup');")
+                assert cur.fetchone()[0] is None
                 cur.execute(f"SELECT to_regclass('{schema}.twelve_loop_observations_scoped_backup');")
                 assert cur.fetchone()[0] is None
+
+                cur.execute(f"SELECT COUNT(*) FROM {schema}.loop_receipts;")
+                assert cur.fetchone()[0] == 4
 
         restored_scoped = store.get_observation(shared_rel, shared_corr, 1, tenant_id="tenant-rb", environment="production")
         assert restored_scoped is not None
         assert restored_scoped.tenant_id == "tenant-rb"
         assert restored_scoped.terminal_id == "rcpt-scoped-term"
+        assert restored_scoped.status == "complete"
+
+        restored_legacy = store.get_observation(shared_rel, shared_corr, 1)
+        assert restored_legacy is not None
+        assert restored_legacy.terminal_id is None
+        assert restored_legacy.status != "complete"
+    finally:
+        with store._connect() as conn:
+            conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+
+
+@pytest.mark.anyio
+async def test_postgres_async_non_lossy_rollback_to_002_and_pre003_source_compatibility(tmp_path: Path) -> None:
+    """Verify async rollback entrypoint rollback_to_002_schema isolates receipts and observations and re-applies cleanly."""
+    from uuid import uuid4
+    schema = f"test_async_rb_{uuid4().hex[:8]}"
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
+    await store.apply_migration()
+    now = datetime.now(timezone.utc)
+    shared_rel = f"rel-async-rb-{uuid4().hex[:6]}"
+    shared_corr = f"corr-async-rb-{uuid4().hex[:6]}"
+
+    try:
+        # Seed coexisting scoped and legacy receipts
+        await store.record_receipt_async(
+            CanonicalLoopReceipt("rcpt-async-legacy-stim", "stimulus", 1, shared_corr, shared_rel, "owner-l", "live", observed_at=now)
+        )
+        await store.record_receipt_async(
+            CanonicalLoopReceipt("rcpt-async-scoped-stim", "stimulus", 1, shared_corr, shared_rel, "owner-s", "live", tenant_id="tenant-rb", environment="production", observed_at=now)
+        )
+        await store.record_receipt_async(
+            CanonicalLoopReceipt("rcpt-async-scoped-term", "terminal", 1, shared_corr, shared_rel, "owner-s", "live", tenant_id="tenant-rb", environment="production", status="completed", observed_at=now + timedelta(seconds=1))
+        )
+        await store.record_receipt_async(
+            CanonicalLoopReceipt("rcpt-async-scoped-next", "next_consumer", 1, shared_corr, shared_rel, "owner-s", "live", tenant_id="tenant-rb", environment="production", status="accepted", observed_at=now + timedelta(seconds=2))
+        )
+
+        p_scoped = TwelveLoopTruthProjector(store=store, tenant_id="tenant-rb", environment="production", auto_load=False)
+        p_scoped.load_from_store()
+        p_legacy = TwelveLoopTruthProjector(store=store, auto_load=False)
+        p_legacy.load_from_store()
+
+        # 1. Async rollback entrypoint
+        await store.rollback_to_002_schema()
+
+        # 2. Pre-003 execution against async-rolled-back schema
+        mod_s, mod_p = _load_pre003_modules(tmp_path)
+        old_store = mod_s.PostgresTwelveLoopStore(POSTGRES_TEST_DSN, schema=schema)
+
+        old_rcpts = old_store.list_receipts(release_id=shared_rel, correlation_id=shared_corr, loop_id=1)
+        assert len(old_rcpts) == 1
+        assert old_rcpts[0].receipt_id == "rcpt-async-legacy-stim"
+
+        old_projector = mod_p.TwelveLoopTruthProjector(store=old_store, auto_load=False)
+        old_projector.load_from_store()
+        old_obs = old_store.get_observation(shared_rel, shared_corr, 1)
+        assert old_obs is not None
+        assert old_obs.status != "complete"
+        assert old_obs.terminal_id is None
+        old_store.upsert_observation(old_obs)
+
+        # 3. Async re-apply forward migration 003
+        await store.apply_migration()
+
+        restored_scoped = store.get_observation(shared_rel, shared_corr, 1, tenant_id="tenant-rb", environment="production")
+        assert restored_scoped is not None
+        assert restored_scoped.status == "complete"
+        assert restored_scoped.terminal_id == "rcpt-async-scoped-term"
+
+        restored_legacy = store.get_observation(shared_rel, shared_corr, 1)
+        assert restored_legacy is not None
+        assert restored_legacy.status != "complete"
+        assert restored_legacy.terminal_id is None
     finally:
         with store._connect() as conn:
             conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
