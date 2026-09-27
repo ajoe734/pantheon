@@ -1025,12 +1025,19 @@ def create_runtime_router(
             try:
                 from services.control_plane.bff.command_queue import CommandStore
                 cmd_store = CommandStore(cmd_file)
+            except OSError as exc:
+                raise _bff_error(
+                    500,
+                    ErrorCode.INTERNAL_ERROR,
+                    f"Admission storage failure: {exc}",
+                )
             except Exception:
                 cmd_store = None
         if isinstance(cmd_store, _MissingRuntimeDependency):
             cmd_store = None
 
         scoped_cache_key = f"{tenant_id}:{operator_id}:POST /bff/runtimes:{resolved_key}" if resolved_key else None
+        existing_cmd = None
         if not dry_run and resolved_key:
             if cmd_store is not None:
                 existing_cmd = cmd_store.get_command_by_idempotency_key(
@@ -1087,13 +1094,15 @@ def create_runtime_router(
         client_runtime_id = str(payload.get("runtime_id") or payload.get("id") or "").strip()
         if client_runtime_id:
             runtime_id = client_runtime_id
+        elif existing_cmd is not None and ((existing_cmd.get("target") or {}).get("id") or existing_cmd.get("params", {}).get("runtime_id")):
+            runtime_id = str((existing_cmd.get("target") or {}).get("id") or existing_cmd.get("params", {}).get("runtime_id")).strip()
         elif resolved_key:
             id_hash = hashlib.sha256(
                 f"{tenant_id}:{operator_id}:{fields['binding_id']}:{fields['deployment_plan_id']}:{resolved_key}".encode("utf-8")
             ).hexdigest()[:8]
-            runtime_id = f"runtime-{snapshot_at[:10].replace('-', '')}-{id_hash}"
+            runtime_id = f"runtime-{id_hash}"
         else:
-            runtime_id = f"runtime-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+            runtime_id = f"runtime-{uuid.uuid4().hex[:8]}"
 
         record = {
             "id": runtime_id,
@@ -1120,7 +1129,13 @@ def create_runtime_router(
                     "Runtime owner authority is unavailable",
                     "No runtime owner port configured",
                 )
+
+            extra_params = dict(payload.get("params")) if isinstance(payload.get("params"), dict) else {}
+            for reserved_key in ("tenant_id", "actor_id", "idempotency_key", "runtime_id", "binding_id", "deployment_plan_id", "persona_id", "name", "deployment_mode"):
+                extra_params.pop(reserved_key, None)
+
             deploy_req = {
+                **extra_params,
                 "deployment_plan_id": fields["deployment_plan_id"],
                 "binding_id": fields["binding_id"],
                 "runtime_id": runtime_id,
@@ -1130,8 +1145,44 @@ def create_runtime_router(
                 "actor_id": operator_id,
                 "tenant_id": tenant_id if tenant_id else None,
                 "idempotency_key": resolved_key if resolved_key else None,
-                **(payload.get("params") if isinstance(payload.get("params"), dict) else {}),
             }
+
+            if cmd_store is not None:
+                cmd_id = str(uuid.uuid4())
+                audit_ctx = {
+                    "operator_id": operator_id,
+                    "tenant_id": tenant_id if tenant_id else None,
+                    "idempotency_key": resolved_key,
+                    "request_hash": request_hash,
+                    "timestamp": snapshot_at,
+                }
+                foundation_ctx = {
+                    "idempotency_record": {
+                        "idempotency_key": resolved_key,
+                        "request_hash": request_hash,
+                        "operator_id": operator_id,
+                        "tenant_id": tenant_id if tenant_id else None,
+                    }
+                }
+                try:
+                    admitted = cmd_store.submit_command(
+                        command_id=cmd_id,
+                        command_type="RuntimeCreate",
+                        target={"type": "RuntimeBinding", "id": runtime_id},
+                        submitted_at=snapshot_at,
+                        params=deploy_req,
+                        audit_context=audit_ctx,
+                        foundation_context=foundation_ctx,
+                    )
+                    if admitted and isinstance(admitted, dict) and admitted.get("command_id"):
+                        cmd_id = admitted["command_id"]
+                except OSError as exc:
+                    raise _bff_error(
+                        500,
+                        ErrorCode.INTERNAL_ERROR,
+                        f"Admission storage failure: {exc}",
+                    )
+
             if hasattr(owner_port, "deploy") and callable(owner_port.deploy):
                 record = owner_port.deploy(deploy_req)
             elif callable(owner_port):

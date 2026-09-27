@@ -331,6 +331,7 @@ class DefaultCapitalAuthority:
         kwargs: Dict[str, Any],
         execute_fn: Callable[[str, Dict[str, Any]], Dict[str, Any]],
         operation: Optional[str] = None,
+        request_digest: Optional[str] = None,
     ) -> Dict[str, Any]:
         if self._command_store is None:
             raise CapitalAuthorityUnavailable(
@@ -340,7 +341,7 @@ class DefaultCapitalAuthority:
         now_iso = datetime.now(timezone.utc).isoformat()
         tenant_id = kwargs.get("tenant_id") or payload.get("tenant_id")
         idempotency_key = kwargs.get("idempotency_key") or payload.get("idempotency_key")
-        request_hash = stable_digest(payload)
+        request_hash = request_digest or stable_digest(payload)
 
         params = {
             **payload,
@@ -416,7 +417,7 @@ class DefaultCapitalAuthority:
             # submit_command appends to CommandStore with status=SUBMITTED.
             # If disk/storage fails (e.g. OSError), this raises BEFORE any downstream execution!
             if hasattr(self._command_store, "submit_command"):
-                self._command_store.submit_command(
+                admitted = self._command_store.submit_command(
                     command_id=cmd_id,
                     command_type=command_type,
                     target={"type": target_type, "id": target_id or "pending"},
@@ -425,6 +426,15 @@ class DefaultCapitalAuthority:
                     audit_context=audit_context,
                     foundation_context=foundation_context,
                 )
+                if admitted and isinstance(admitted, dict) and admitted.get("command_id"):
+                    original_id = cmd_id
+                    cmd_id = admitted["command_id"]
+                    if cmd_id != original_id or admitted.get("status") in (CommandStatus.EXECUTED.value, "executed"):
+                        saved_hash = admitted.get("audit", {}).get("request_hash") or (admitted.get("foundation", {}).get("idempotency_record", {}).get("request_hash"))
+                        if saved_hash and saved_hash != request_hash:
+                            raise CapitalValidationError("Idempotency key was already used with a different request")
+                        if admitted.get("status") in (CommandStatus.EXECUTED.value, "executed") and admitted.get("result"):
+                            return admitted["result"]
 
         # Dispatch to downstream adapter / executor
         try:
@@ -465,12 +475,21 @@ class DefaultCapitalAuthority:
             raise
 
     def create_capital_pool(self, payload: Dict[str, Any], *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
-        body = dict(payload)
-        pool_id = str(body.get("pool_id") or body.get("id") or "").strip()
+        pool_id = str(payload.get("pool_id") or payload.get("id") or "").strip()
+        idempotency_key = kwargs.get("idempotency_key") or payload.get("idempotency_key")
+        tenant_id = kwargs.get("tenant_id") or payload.get("tenant_id")
+        if not pool_id and idempotency_key and self._command_store is not None and hasattr(self._command_store, "get_command_by_idempotency_key"):
+            existing = self._command_store.get_command_by_idempotency_key(
+                idempotency_key, operator_id=actor_id, tenant_id=tenant_id
+            )
+            if existing is not None:
+                pool_id = (existing.get("target") or {}).get("id") or existing.get("params", {}).get("pool_id") or ""
         if not pool_id:
             pool_id = f"pool-{uuid.uuid4().hex[:8]}"
-            body["pool_id"] = pool_id
-            body["id"] = pool_id
+
+        body = dict(payload)
+        body["pool_id"] = pool_id
+        body["id"] = pool_id
 
         def _exec(cmd_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
             executor = self._get_executor()
@@ -495,6 +514,7 @@ class DefaultCapitalAuthority:
             kwargs=kwargs,
             execute_fn=_exec,
             operation="create_pool",
+            request_digest=stable_digest(payload),
         )
 
     def patch_capital_pool(self, payload: Dict[str, Any], pool_id: str, *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:

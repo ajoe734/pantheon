@@ -7,6 +7,7 @@ BFF to assemble its read, command, and streaming surfaces.
 from __future__ import annotations
 
 from collections import deque
+import os
 from typing import Any, Callable, Mapping, Optional
 
 

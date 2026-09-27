@@ -1,8 +1,10 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from types import SimpleNamespace
 from unittest.mock import patch
 import pytest
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.governance.service import GovernanceService
@@ -10,6 +12,7 @@ from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.capital.router import create_capital_router
 from services.control_plane.bff.capital.service import DefaultCapitalAuthority
 from services.control_plane.bff.runtime.router import create_runtime_router
+from services.control_plane.bff.runtime.service import _resolve_default_runtime_owner_port
 
 PAYLOAD = {"plan_id": "review-plan", "decision": "approve", "memo": "isolated reviewer check"}
 IDENTITY = SimpleNamespace(operator_id="reviewer-test", roles=["admin", "approver", "operator"])
@@ -239,3 +242,103 @@ def test_runtime_router_resolves_runtime_owner_port():
     assert response.status_code == 201
     assert len(recorded) == 1
     assert response.json()["data"]["id"] == recorded[0]["runtime_id"]
+
+
+RUNTIME_REG_PAYLOAD = {'deployment_plan_id': 'dp-1', 'binding_id': 'b-1', 'name': 'runtime-test', 'persona_id': 'p-1', 'runtime_kind': 'paper'}
+RUNTIME_REG_HEADERS = {'Idempotency-Key': 'review-key'}
+RUNTIME_REG_IDENTITY = SimpleNamespace(operator_id='actor-a', tenant_id='tenant-a', roles=['admin'])
+
+
+def _isolated_runtime_client(dispatches, *, date='2026-09-27T00:00:00Z', owner=True):
+    deps = {
+        '_extract_identity': lambda auth: RUNTIME_REG_IDENTITY,
+        '_require_operator_role': lambda identity: None,
+        '_resolve_final_idempotency_key': lambda k, d=None: k or d,
+        '_reject_body_idempotency_key': lambda p: None,
+        '_dataset_surface_status': lambda *a, **k: {},
+        '_snapshot_meta': lambda *a, **k: {},
+        '_bff_error': lambda s, c, m, *a, **kw: HTTPException(s, detail=m),
+        '_stable_json_hash': lambda p: str(p),
+        '_request_dry_run_requested': lambda: False,
+        '_GOV_BFF_IDEMPOTENCY': {},
+        '_sse_buffers': {'runtime': []},
+        '_sse_subscribers': {'runtime': []},
+        '_publish_event': lambda *a, **k: None,
+        'utc_now': lambda: date,
+    }
+    port = SimpleNamespace(deploy=lambda req: (dispatches.append(req), dict(req, status='running'))[1]) if owner else None
+    app = FastAPI()
+    app.include_router(create_runtime_router(read_surface=SimpleNamespace(list_runtime_bindings=lambda: []), runtime_owner_port=port, dependencies=deps))
+    return TestClient(app)
+
+
+def test_runtime_default_owner_resolves_without_nameerror(monkeypatch):
+    monkeypatch.delenv('PANTHEON_RUNTIME_MANAGER_URL', raising=False)
+    assert _resolve_default_runtime_owner_port() is None
+
+
+def test_runtime_restart_preserves_request_conflict(tmp_path, monkeypatch):
+    monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path))
+    calls = []
+    first = _isolated_runtime_client(calls).post('/bff/runtimes', json=RUNTIME_REG_PAYLOAD, headers=RUNTIME_REG_HEADERS)
+    second = _isolated_runtime_client(calls).post('/bff/runtimes', json={**RUNTIME_REG_PAYLOAD, 'name': 'changed'}, headers=RUNTIME_REG_HEADERS)
+    rows = CommandStore(str(tmp_path / 'commands.jsonl'))._get_all_commands()
+    assert first.status_code == 201
+    assert second.status_code == 409, {'second': second.json(), 'dispatches': len(calls), 'durable_commands': rows}
+
+
+def test_runtime_store_failure_prevents_dispatch(tmp_path, monkeypatch):
+    monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path))
+    calls = []
+    with patch('services.control_plane.bff.command_queue.CommandStore', side_effect=OSError('isolated admission storage failure')):
+        response = _isolated_runtime_client(calls).post('/bff/runtimes', json=RUNTIME_REG_PAYLOAD, headers=RUNTIME_REG_HEADERS)
+    assert response.status_code >= 500 and not calls, {'status': response.status_code, 'dispatches': calls}
+
+
+def test_runtime_authenticated_identity_cannot_be_overridden(tmp_path, monkeypatch):
+    monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path))
+    calls = []
+    response = _isolated_runtime_client(calls).post('/bff/runtimes', json={**RUNTIME_REG_PAYLOAD, 'params': {'tenant_id': 'forged-tenant', 'actor_id': 'forged-actor', 'idempotency_key': 'forged-key', 'runtime_id': 'forged-runtime'}}, headers=RUNTIME_REG_HEADERS)
+    assert response.status_code < 400
+    assert calls[0]['tenant_id'] == 'tenant-a' and calls[0]['actor_id'] == 'actor-a' and calls[0]['idempotency_key'] == 'review-key', calls
+
+
+def test_runtime_cross_day_restart_keeps_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path))
+    calls = []
+    for date in ('2026-09-27T23:59:59Z', '2026-09-28T00:00:01Z'):
+        response = _isolated_runtime_client(calls, date=date).post('/bff/runtimes', json=RUNTIME_REG_PAYLOAD, headers=RUNTIME_REG_HEADERS)
+        assert response.status_code == 201
+    assert calls[0]['runtime_id'] == calls[1]['runtime_id'], calls
+
+
+def test_capital_pool_create_replays_original_request(tmp_path, monkeypatch):
+    monkeypatch.setenv('PANTHEON_CAPITAL_API_URL', 'http://isolated.invalid')
+    monkeypatch.setattr('services.control_plane.bff.command_adapters.capital_adapter.capital_url', lambda p: 'http://isolated.invalid' + p)
+    path = str(tmp_path / 'commands.jsonl')
+    with patch('services.control_plane.bff.command_executor._post_json', side_effect=lambda url, payload: dict(payload)) as http:
+        first = capital_client(CommandStore(path)).post('/bff/capital-pools', json={'name': 'isolated-review-pool'}, headers=RUNTIME_REG_HEADERS)
+        second = capital_client(CommandStore(path)).post('/bff/capital-pools', json={'name': 'isolated-review-pool'}, headers=RUNTIME_REG_HEADERS)
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201 and http.call_count == 1, {'second': second.json(), 'posts': http.call_count}
+
+
+def test_capital_concurrent_admission_keeps_one_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv('PANTHEON_CAPITAL_API_URL', 'http://isolated.invalid')
+    monkeypatch.setattr('services.control_plane.bff.command_adapters.capital_adapter.capital_url', lambda p: 'http://isolated.invalid' + p)
+    path = str(tmp_path / 'commands.jsonl')
+    clients = [capital_client(CommandStore(path)) for _ in range(2)]
+    barrier = Barrier(2)
+    original_submit = CommandStore.submit_command
+
+    def synchronized_submit(self, *args, **kwargs):
+        barrier.wait(timeout=10)
+        return original_submit(self, *args, **kwargs)
+
+    with patch.object(CommandStore, 'submit_command', synchronized_submit), patch('services.control_plane.bff.command_adapters.capital_adapter.http_request_json', return_value={'rebalance_id': 'r1', 'status': 'approved'}) as http:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda client: client.post('/bff/rebalances/r1/approve', json={'memo': 'isolated'}, headers=RUNTIME_REG_HEADERS), clients))
+    posts = [call for call in http.call_args_list if call.kwargs.get('method') == 'POST']
+    ids = [call.kwargs['payload']['command_id'] for call in posts]
+    assert len(set(ids)) == 1, {'statuses': [r.status_code for r in responses], 'command_ids': ids, 'rows': len(CommandStore(path)._get_all_commands())}
+

@@ -64,6 +64,30 @@
     "defect_15_canonical_receipt_sd44_fields": {
       "problem": "capital/service.py and command_adapters/capital_adapter.py did not persist canonical receipt aggregate/version, owner, event_id, correlation_id, or committed_at; domain receipt helper emitted entity fields/executed_at only, violating SD 4.4.",
       "remediation": "Updated build_domain_receipt to emit canonical SD 4.4 fields: aggregate_type, aggregate_id, aggregate_version, event_id, correlation_id, owner, committed_at. Passed explicit canonical values in CapitalCommandAdapter and defaulted them reliably in DefaultCapitalAuthority._execute_with_durability."
+    },
+    "defect_16_runtime_router_durable_admission_and_fail_closed": {
+      "problem": "POST /bff/runtimes admitted commands non-durably or after dispatch, swallowed CommandStore construction OSError (causing fallback to memory instead of 500 fail-closed), and did not persist request conflict across restarts.",
+      "remediation": "Enforced CommandStore construction and required durable submit_command before dispatch, failing closed with 500 INTERNAL_ERROR on storage OSError, and verified durable 409 Conflict across restart."
+    },
+    "defect_17_runtime_router_payload_params_anti_forgery": {
+      "problem": "POST /bff/runtimes allowed payload.params to overwrite authenticated tenant_id, actor_id, idempotency_key, and runtime_id.",
+      "remediation": "Stripped reserved identity keys from payload.params (tenant_id, actor_id, idempotency_key, runtime_id) and bound verified authentication/request identities explicitly after unpacking."
+    },
+    "defect_18_capital_atomic_concurrent_command_admission": {
+      "problem": "DefaultCapitalAuthority concurrent duplicate submissions produced multiple command records or distinct command IDs.",
+      "remediation": "Made CommandStore.submit_command atomic across concurrent callers using serialized_transaction, returning the existing command record on duplicate idempotency key so all concurrent callers share a single command_id."
+    },
+    "defect_19_runtime_service_owner_port_nameerror": {
+      "problem": "runtime/service.py _resolve_default_runtime_owner_port() referenced os.environ without importing os, causing NameError at runtime.",
+      "remediation": "Added import os to runtime/service.py."
+    },
+    "defect_20_capital_pool_replay_digest_and_id_preservation": {
+      "problem": "create_capital_pool generated a random pool_id before calculating request digest, preventing retry matching against the router's digest and generating a new pool_id on replay.",
+      "remediation": "Hashed original payload request digest before generating pool_id, passed request_digest to _execute_with_durability, and recovered admitted pool_id from CommandStore on idempotency replay."
+    },
+    "defect_21_runtime_router_deterministic_midnight_safe_runtime_id": {
+      "problem": "POST /bff/runtimes derived runtime_id using current UTC date string (snapshot_at[:10]), which broke deterministic recovery across UTC midnight.",
+      "remediation": "Derived deterministic runtime_id = f'runtime-{id_hash}' directly from stable request identity without date string, and recovered runtime_id from existing admitted command on retry."
     }
   },
   "mutation_caller_inventory": {
@@ -249,6 +273,24 @@
         "result": "6 passed, 1 warning in 3.42s",
         "executed": 6,
         "collected": 6
+      },
+      {
+        "command": "/tmp/venv-bff-test/bin/pytest -v /tmp/test_domain_review_0e3cb.py",
+        "result": "7 passed, 1 warning in 3.65s",
+        "executed": 7,
+        "collected": 7
+      },
+      {
+        "command": "/tmp/venv-bff-test/bin/pytest -v services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "21 passed, 1 warning in 10.16s",
+        "executed": 21,
+        "collected": 21
+      },
+      {
+        "command": "env PYTHONPATH=. /tmp/venv-bff-test/bin/pytest -q /tmp/test_domain_review_0e3cb.py services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "result": "101 passed, 4 warnings in 51.97s",
+        "executed": 101,
+        "collected": 101
       }
     ]
   },
@@ -272,7 +314,13 @@
     "defect_12_capital_idempotency_key_bound_to_target_and_operation_resolved": true,
     "defect_13_capital_atomic_nonterminal_admission_and_identity_preservation_resolved": true,
     "defect_14_runtime_router_durable_scoped_idempotency_and_owner_identity_resolved": true,
-    "defect_15_canonical_receipt_sd44_fields_resolved": true
+    "defect_15_canonical_receipt_sd44_fields_resolved": true,
+    "defect_16_runtime_router_durable_admission_and_fail_closed_resolved": true,
+    "defect_17_runtime_router_payload_params_anti_forgery_resolved": true,
+    "defect_18_capital_atomic_concurrent_command_admission_resolved": true,
+    "defect_19_runtime_service_owner_port_nameerror_resolved": true,
+    "defect_20_capital_pool_replay_digest_and_id_preservation_resolved": true,
+    "defect_21_runtime_router_deterministic_midnight_safe_runtime_id_resolved": true
   },
   "review": {
     "reviewer": "Codex",
