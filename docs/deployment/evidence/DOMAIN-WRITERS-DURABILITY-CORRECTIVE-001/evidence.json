@@ -224,6 +224,18 @@
     "defect_55_research_tickets_write_owner_unavailable_503": {
       "problem": "DefaultResearchKnowledgeSourcePort maintained a process-local self._tickets fallback writer that mutated in-memory state and returned HTTP 200 when ResearchWriteOwner was absent.",
       "remediation": "Retired process-local fallback mutation of self._tickets in DefaultResearchKnowledgeSourcePort; raises ResearchWriteOwnerUnavailableError (mapped to HTTP 503) with zero local mutation when research_owner is None."
+    },
+    "defect_56_research_ticket_patch_replay_before_lifecycle_check": {
+      "problem": "services/control-plane/bff/research/service.py:3154-3173 validated allowedActions.canEdit on ticket snapshot before evaluating durable idempotency replay; repeating an idempotent PATCH that closed a ticket returned 409 not-editable instead of replaying the original canonical receipt.",
+      "remediation": "Removed premature allowedActions checks from BFF research service patch_research_ticket, delegating lifecycle validation directly to ResearchWriteOwner after durable replay check so idempotent retries succeed with the original canonical receipt."
+    },
+    "defect_57_research_ticket_patch_cas_conflict_snapshot_revalidation": {
+      "problem": "services/research/write_owner.py:744-750,835-842 retried stale PATCH after CAS conflict without snapshot lifecycle and version revalidation, allowing concurrent close to be overwritten by a stale edit.",
+      "remediation": "Added ResearchTicketLifecycleConflictError and placed snapshot lifecycle revalidation (allowed_actions.canEdit for editable fields and status transition validation) immediately after durable replay check within write_owner.patch_research_ticket so every CAS retry revalidates invariants against the fresh snapshot."
+    },
+    "defect_58_research_wiring_explicit_typed_signatures": {
+      "problem": "Architecture test test_five_domain_routers_have_no_direct_store_access failed because ResearchPortWiring.create_research_ticket and patch_research_ticket used generic **kwargs forwarding, violating AST wiring rules in test_bff_test_architecture.py.",
+      "remediation": "Updated ResearchKnowledgeSourcePort, DefaultResearchKnowledgeSourcePort, and ResearchPortWiring create_research_ticket and patch_research_ticket with explicit typed signatures and parameter dispatch, eliminating generic **kwargs forwarding."
     }
   },
   "mutation_caller_inventory": {
@@ -647,6 +659,24 @@
         "result": "153 passed, 9 warnings in 83.01s",
         "executed": 153,
         "collected": 153
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "74 passed, 9 warnings in 42.13s",
+        "executed": 74,
+        "collected": 74
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "155 passed, 6 warnings in 95.25s",
+        "executed": 155,
+        "collected": 155
+      },
+      {
+        "command": "PATH=\".venv-pantheon/bin:$PATH\" PYTHON=\".venv-pantheon/bin/python3\" ./scripts/run-acceptance.sh smoke",
+        "result": "passed, mode='smoke' complete (stage0-validate, stage0-baseline, dev-paper-diagnostics-failure-path all passed)",
+        "executed": 161,
+        "collected": 161
       }
     ]
   },
@@ -710,7 +740,10 @@
     "defect_52_research_tickets_midnight_admission_race_resolved": true,
     "defect_53_research_ticket_patch_idempotency_preservation_resolved": true,
     "defect_54_research_ticket_patch_conflict_rejection_resolved": true,
-    "defect_55_research_tickets_write_owner_unavailable_503_resolved": true
+    "defect_55_research_tickets_write_owner_unavailable_503_resolved": true,
+    "defect_56_research_ticket_patch_replay_before_lifecycle_check_resolved": true,
+    "defect_57_research_ticket_patch_cas_conflict_snapshot_revalidation_resolved": true,
+    "defect_58_research_wiring_explicit_typed_signatures_resolved": true
   },
   "review": {
     "reviewer": "Codex",

@@ -27,6 +27,22 @@ class ResearchIdempotencyConflictError(ValueError):
     pass
 
 
+class ResearchTicketLifecycleConflictError(ValueError):
+    """Raised when an operation conflicts with the current lifecycle state of a research ticket."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: Optional[str] = None,
+        precondition_failed: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.reason = reason or message
+        self.precondition_failed = precondition_failed
+
+
 def _utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -740,6 +756,46 @@ class ResearchWriteOwner:
                         saved_hash = current.get("request_hash")
                         if clean_hash and saved_hash and saved_hash != clean_hash:
                             raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+
+            allowed_actions = self._ticket_allowed_actions(current.get("status"))
+            current_status = str(current.get("status") or "").strip().lower()
+
+            editable_fields = {"title", "description", "priority", "owner"}
+            attempting_edit = [f for f in editable_fields if f in patch]
+            if attempting_edit and not allowed_actions.get("canEdit"):
+                raise ResearchTicketLifecycleConflictError(
+                    "Research ticket is not editable in its current lifecycle state",
+                    reason=f"{attempting_edit[0]} cannot be modified while allowedActions.canEdit is false.",
+                    precondition_failed="allowedActions.canEdit",
+                )
+
+            if "status" in patch:
+                next_status = str(patch["status"] or "").strip().lower()
+                if next_status != current_status:
+                    if next_status == "closed" and not allowed_actions.get("canClose"):
+                        raise ResearchTicketLifecycleConflictError(
+                            "Research ticket cannot be closed in its current state",
+                            reason="allowedActions.canClose is false for this ticket.",
+                            precondition_failed="allowedActions.canClose",
+                        )
+                    if next_status == "archived" and not allowed_actions.get("canArchive"):
+                        raise ResearchTicketLifecycleConflictError(
+                            "Research ticket cannot be archived in its current state",
+                            reason="allowedActions.canArchive is false for this ticket.",
+                            precondition_failed="allowedActions.canArchive",
+                        )
+                    valid_transitions = {
+                        "open": {"in_progress", "closed"},
+                        "in_progress": {"closed"},
+                        "closed": {"archived"},
+                        "archived": set(),
+                    }
+                    if next_status not in valid_transitions.get(current_status, set()):
+                        raise ResearchTicketLifecycleConflictError(
+                            "Invalid research ticket lifecycle transition",
+                            reason=f"Cannot transition research ticket from {current_status} to {next_status}.",
+                            precondition_failed="status_transition",
+                        )
 
             updated = copy.deepcopy(current)
             timestamp = updated_at or _utc_now_rfc3339()

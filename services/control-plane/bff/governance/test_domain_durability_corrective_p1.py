@@ -1625,4 +1625,38 @@ def test_ticket_writer_absent_returns_503_without_local_mutation():
     assert port._tickets["seed"]["title"] == "seed"
 
 
+def test_restart_replay_after_ticket_close():
+    tickets = CASStore()
+    client = _research_ticket_client(tickets)
+    created = client.post('/api/v1/research/tickets', json=TICKET_BODY, headers={'Idempotency-Key': 'create'})
+    assert created.status_code == 200
+    path = '/api/v1/research/tickets/' + created.json()['ticket_id']
+    body = {'title': 'final title', 'status': 'closed'}
+    first = client.patch(path, json=body, headers={'Idempotency-Key': 'close'})
+    retry = _research_ticket_client(tickets).patch(path, json=body, headers={'Idempotency-Key': 'close'})
+    assert first.status_code == 200
+    assert retry.status_code == 200, {'first': first.status_code, 'retry': retry.status_code, 'body': retry.json()}
+    assert retry.json()['receipt'] == first.json()['receipt']
+
+
+def test_cas_conflict_rechecks_lifecycle():
+    class ConcurrentClose(CASStore):
+        armed = False
+        def compare_and_set(self, key, expected, value, *, conn=None):
+            if self.armed:
+                self.armed = False
+                response = _research_ticket_client(self).patch('/api/v1/research/tickets/' + key, json={'status': 'closed'}, headers={'Idempotency-Key': 'concurrent-close'})
+                assert response.status_code == 200, response.text
+            return super().compare_and_set(key, expected, value, conn=conn)
+    tickets = ConcurrentClose()
+    client = _research_ticket_client(tickets)
+    created = client.post('/api/v1/research/tickets', json=TICKET_BODY, headers={'Idempotency-Key': 'create'})
+    assert created.status_code == 200
+    tid = created.json()['ticket_id']
+    tickets.armed = True
+    result = client.patch('/api/v1/research/tickets/' + tid, json={'title': 'stale edit'}, headers={'Idempotency-Key': 'edit'})
+    canonical = tickets.get(tid)
+    assert result.status_code == 409 and canonical['title'] == TICKET_BODY['title'], {'http': result.status_code, 'title': canonical['title'], 'state': canonical['status'], 'version': canonical['aggregate_version']}
+
+
 

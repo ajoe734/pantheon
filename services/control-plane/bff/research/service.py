@@ -43,9 +43,15 @@ except (ImportError, ValueError):
     from ..ports.read_surface_ports import ReadSurfacePorts  # type: ignore[no-redef]
 
 try:
-    from services.research.write_owner import ResearchIdempotencyConflictError
+    from services.research.write_owner import (
+        ResearchIdempotencyConflictError,
+        ResearchTicketLifecycleConflictError,
+    )
 except (ImportError, ValueError):
     class ResearchIdempotencyConflictError(ValueError):  # type: ignore[no-redef]
+        pass
+
+    class ResearchTicketLifecycleConflictError(ValueError):  # type: ignore[no-redef]
         pass
 
 log = logging.getLogger(__name__)
@@ -478,28 +484,37 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         owner: str,
         actor_id: str,
         created_at: Optional[str] = None,
-        **kwargs: Any,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        command_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if self._read_surface is not None and hasattr(self._read_surface, "create_research_ticket"):
-            return self._read_surface.create_research_ticket(
-                title=title,
-                description=description,
-                priority=priority,
-                owner=owner,
-                actor_id=actor_id,
-                created_at=created_at,
-                **kwargs,
-            )
-        if self._ks is not None and hasattr(self._ks, "create_research_ticket"):
-            return self._ks.create_research_ticket(
-                title=title,
-                description=description,
-                priority=priority,
-                owner=owner,
-                actor_id=actor_id,
-                created_at=created_at,
-                **kwargs,
-            )
+        target = self._read_surface if (self._read_surface is not None and hasattr(self._read_surface, "create_research_ticket")) else self._ks
+        if target is not None and hasattr(target, "create_research_ticket"):
+            fn = target.create_research_ticket
+            sig = inspect.signature(fn)
+            params = sig.parameters
+            call_kw: Dict[str, Any] = {
+                "title": title,
+                "description": description,
+                "priority": priority,
+                "owner": owner,
+                "actor_id": actor_id,
+            }
+            if created_at is not None or "created_at" in params:
+                call_kw["created_at"] = created_at
+            if tenant_id is not None or "tenant_id" in params:
+                call_kw["tenant_id"] = tenant_id
+            if idempotency_key is not None or "idempotency_key" in params:
+                call_kw["idempotency_key"] = idempotency_key
+            if request_hash is not None or "request_hash" in params:
+                call_kw["request_hash"] = request_hash
+            if command_id is not None or "command_id" in params:
+                call_kw["command_id"] = command_id
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            if not has_var_keyword:
+                call_kw = {k: v for k, v in call_kw.items() if k in params}
+            return fn(**call_kw)
         raise AttributeError("Research port operation 'create_research_ticket' not implemented")
 
     def patch_research_ticket(
@@ -509,16 +524,34 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         patch: Dict[str, Any],
         actor_id: str,
         updated_at: Optional[str] = None,
-        **kwargs: Any,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        command_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        if self._read_surface is not None and hasattr(self._read_surface, "patch_research_ticket"):
-            return self._read_surface.patch_research_ticket(
-                ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at, **kwargs
-            )
-        if self._ks is not None and hasattr(self._ks, "patch_research_ticket"):
-            return self._ks.patch_research_ticket(
-                ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at, **kwargs
-            )
+        target = self._read_surface if (self._read_surface is not None and hasattr(self._read_surface, "patch_research_ticket")) else self._ks
+        if target is not None and hasattr(target, "patch_research_ticket"):
+            fn = target.patch_research_ticket
+            sig = inspect.signature(fn)
+            params = sig.parameters
+            call_kw: Dict[str, Any] = {
+                "patch": patch,
+                "actor_id": actor_id,
+            }
+            if updated_at is not None or "updated_at" in params:
+                call_kw["updated_at"] = updated_at
+            if tenant_id is not None or "tenant_id" in params:
+                call_kw["tenant_id"] = tenant_id
+            if idempotency_key is not None or "idempotency_key" in params:
+                call_kw["idempotency_key"] = idempotency_key
+            if request_hash is not None or "request_hash" in params:
+                call_kw["request_hash"] = request_hash
+            if command_id is not None or "command_id" in params:
+                call_kw["command_id"] = command_id
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            if not has_var_keyword:
+                call_kw = {k: v for k, v in call_kw.items() if k in params}
+            return fn(ticket_id, **call_kw)
         raise AttributeError("Research port operation 'patch_research_ticket' not implemented")
 
     # -------------------------------------------------------------------------
@@ -915,6 +948,14 @@ class ResearchRouterService:
                 str(exc),
                 precondition_failed="idempotency_conflict",
                 suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+        except ResearchTicketLifecycleConflictError as exc:
+            self._raise_error(
+                409,
+                ErrorCode.OPERATION_NOT_ALLOWED,
+                getattr(exc, "message", None) or "Research ticket is not editable in its current lifecycle state",
+                getattr(exc, "reason", None) or str(exc),
+                precondition_failed=getattr(exc, "precondition_failed", None) or "allowedActions.canEdit",
             )
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
@@ -3143,7 +3184,6 @@ class ResearchRouterService:
             )
 
         patch: Dict[str, Any] = {}
-        editable = bool((ticket.get("allowedActions") or {}).get("canEdit"))
         for field in ("title", "description", "owner"):
             if field not in payload:
                 continue
@@ -3156,25 +3196,9 @@ class ResearchRouterService:
                     f"{field} must be a non-empty string",
                     precondition_failed=field,
                 )
-            if not editable:
-                self._raise_error(
-                    409,
-                    ErrorCode.OPERATION_NOT_ALLOWED,
-                    "Research ticket is not editable in its current lifecycle state",
-                    f"{field} cannot be modified while allowedActions.canEdit is false.",
-                    precondition_failed="allowedActions.canEdit",
-                )
             patch[field] = value
 
         if "priority" in payload:
-            if not editable:
-                self._raise_error(
-                    409,
-                    ErrorCode.OPERATION_NOT_ALLOWED,
-                    "Research ticket is not editable in its current lifecycle state",
-                    "priority cannot be modified while allowedActions.canEdit is false.",
-                    precondition_failed="allowedActions.canEdit",
-                )
             p_val = str(payload["priority"] or "").strip().lower()
             if p_val not in {"low", "normal", "high", "critical"}:
                 self._raise_error(
@@ -3187,7 +3211,6 @@ class ResearchRouterService:
             patch["priority"] = p_val
 
         if "status" in payload:
-            current_status = str(ticket.get("status") or "").strip().lower()
             next_status = str(payload["status"] or "").strip().lower()
             if next_status not in {"open", "in_progress", "closed", "archived"}:
                 self._raise_error(
@@ -3197,38 +3220,6 @@ class ResearchRouterService:
                     "status must be one of: ['archived', 'closed', 'in_progress', 'open']",
                     precondition_failed="status",
                 )
-            if next_status != current_status:
-                actions = ticket.get("allowedActions") or {}
-                if next_status == "closed" and not actions.get("canClose"):
-                    self._raise_error(
-                        409,
-                        ErrorCode.OPERATION_NOT_ALLOWED,
-                        "Research ticket cannot be closed in its current state",
-                        "allowedActions.canClose is false for this ticket.",
-                        precondition_failed="allowedActions.canClose",
-                    )
-                if next_status == "archived" and not actions.get("canArchive"):
-                    self._raise_error(
-                        409,
-                        ErrorCode.OPERATION_NOT_ALLOWED,
-                        "Research ticket cannot be archived in its current state",
-                        "allowedActions.canArchive is false for this ticket.",
-                        precondition_failed="allowedActions.canArchive",
-                    )
-                transitions = {
-                    "open": {"in_progress", "closed"},
-                    "in_progress": {"closed"},
-                    "closed": {"archived"},
-                    "archived": set(),
-                }
-                if next_status not in transitions.get(current_status, set()):
-                    self._raise_error(
-                        409,
-                        ErrorCode.OPERATION_NOT_ALLOWED,
-                        "Invalid research ticket lifecycle transition",
-                        f"Cannot transition research ticket from {current_status} to {next_status}.",
-                        precondition_failed="status_transition",
-                    )
             patch["status"] = next_status
 
         if not patch:

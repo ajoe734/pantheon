@@ -215,6 +215,10 @@ class ResearchKnowledgeSourcePort:
         owner: str,
         actor_id: str,
         created_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        command_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -225,6 +229,10 @@ class ResearchKnowledgeSourcePort:
         patch: Dict[str, Any],
         actor_id: str,
         updated_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        command_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
@@ -1968,7 +1976,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         request_hash: Optional[str] = None,
         tenant_id: Optional[str] = None,
         command_id: Optional[str] = None,
-        **kwargs: Any,
     ) -> Dict[str, Any]:
         research_owner = self._get_research_write_owner()
         if research_owner is None:
@@ -1986,7 +1993,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "request_hash": request_hash,
             "tenant_id": tenant_id,
             "command_id": command_id,
-            **kwargs,
         }
         sig = inspect.signature(research_owner.create_research_ticket)
         has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
@@ -2005,7 +2011,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         request_hash: Optional[str] = None,
         tenant_id: Optional[str] = None,
         command_id: Optional[str] = None,
-        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         research_owner = self._get_research_write_owner()
         if research_owner is None:
@@ -2013,7 +2018,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 "Research write owner is not configured; cannot patch a research ticket."
             )
         call_kwargs = {
-            "ticket_id": ticket_id,
             "patch": patch,
             "actor_id": actor_id,
             "updated_at": updated_at,
@@ -2021,13 +2025,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "request_hash": request_hash,
             "tenant_id": tenant_id,
             "command_id": command_id,
-            **kwargs,
         }
         sig = inspect.signature(research_owner.patch_research_ticket)
         has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
         if not has_var_keyword:
             call_kwargs = {k: v for k, v in call_kwargs.items() if k in sig.parameters}
-        return research_owner.patch_research_ticket(**call_kwargs)
+        return research_owner.patch_research_ticket(ticket_id, **call_kwargs)
 
     # -------------------------------------------------------------------------
     # Research Analyses (RW-03)
