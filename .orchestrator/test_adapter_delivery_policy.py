@@ -414,6 +414,9 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         env = spawn.call_args.kwargs["env"]
+        # worker_commit.py derives the per-agent Git author from AI_NAME; without
+        # it Claude commits fall back to the shared checkout's user.name.
+        self.assertEqual(env["AI_NAME"], "Claude2")
         self.assertEqual(env["HOME"], str(root / ".claude2"))
         self.assertEqual(env["GH_CONFIG_DIR"], str(gh_config))
         self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
@@ -939,6 +942,43 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertFalse(result.manual_confirmation_required)
         self.assertEqual(result.mode, "copilot_local")
+
+    def test_copilot_local_sets_agent_identity_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "agents": {
+                    "copilot": {
+                        "id": "copilot",
+                        "display_name": "Copilot",
+                        "provider": "copilot",
+                        "adapter": "copilot_local",
+                    }
+                },
+                "providers": {"copilot": {"local": {"cli": "copilot"}}},
+            }
+            request = DeliveryRequest(
+                agent_id="copilot", provider="copilot", delivery_mode="copilot_local", message="wake", task_id="T-1"
+            )
+            adapter = CopilotLocalAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+            with (
+                mock.patch.dict(os.environ, {"GH_TOKEN": "test-token"}, clear=False),
+                mock.patch("adapters.copilot_local._configured_copilot_cli", return_value="copilot"),
+                mock.patch("adapters.copilot_local._copilot_auth_ready", return_value=True),
+                mock.patch(
+                    "adapters.copilot_local.spawn_background_process",
+                    return_value=(fake_process, Path("/tmp/copilot.log")),
+                ) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        env = spawn.call_args.kwargs["env"]
+        self.assertEqual(env["AI_NAME"], "Copilot")
+        self.assertEqual(env["ORCH_AGENT_ID"], "copilot")
+        self.assertEqual(env["ORCH_TASK_ID"], "T-1")
 
 
     def test_provider_alias_environments_enable_git_credential_helper_without_mutation(self) -> None:

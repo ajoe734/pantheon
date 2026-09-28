@@ -251,6 +251,12 @@ class ClaudeCLIAdapter(BaseAdapter):
         log_path = runtime_log_path(provider_id, request.agent_id, config=self.config)
         runtime_paths = worker_runtime_paths(self.config, run_id)
         env.update(delivery_runtime_env(self.config, request.metadata))
+        # worker_commit.py derives the per-agent Git author from AI_NAME, as the
+        # codex/antigravity/pi adapters already export it.
+        try:
+            env["AI_NAME"] = str(agent_config_for(self.config, request.agent_id).get("display_name") or request.agent_id)
+        except ValueError:
+            pass
         env.update(
             {
                 "ORCH_RUN_ID": run_id,
