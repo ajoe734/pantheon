@@ -406,7 +406,8 @@ def frontend_dist_digest(root: Path) -> str:
     """FE canonicalAssetManifestBytes v1; deployment.json has a separate hash.
 
     This verifies bytes, not browser-secret scanning or source admission. The
-    FE producer still owns those checks. No frontend source is copied here.
+    FE producer still owns those checks. Its prepared receipt is deployment
+    metadata, excluded from the asset digest. No frontend source is copied here.
     """
     root = _directory(root)
     files = []
@@ -417,7 +418,7 @@ def frontend_dist_digest(root: Path) -> str:
             path = Path(directory) / name
             digest, size = _file_digest(path)
             relative = path.relative_to(root).as_posix()
-            if relative == "deployment.json":
+            if relative in ("deployment.json", ".prepared-receipt.json"):
                 continue
             if size > 2**53 - 1:
                 raise ArtifactError("FE asset size exceeds canonical integer range")

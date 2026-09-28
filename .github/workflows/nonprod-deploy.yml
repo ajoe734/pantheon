@@ -1542,11 +1542,11 @@ jobs:
           echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
           echo "readback_artifact_path=${readback_evidence}" >> "$GITHUB_OUTPUT"
           set +e
-          .agora-gate-controller/scripts/dev_vm_ssh.sh exec \
+          "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
             "set -uo pipefail; cd ${worktree_q} || exit 1; scripts/run_loop_prod_tel_002_hosted_probe.sh --expected-sha ${deploy_sha_q} --container-output ${container_evidence_q} --remote-output ${remote_evidence_q} --timeout-seconds 420 --poll-seconds 5"
           probe_status=$?
           scp_status=0
-          .agora-gate-controller/scripts/dev_vm_ssh.sh copy-from \
+          "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" copy-from \
             "${remote_evidence}" "${local_evidence}" || scp_status=$?
           set -e
           if [[ "${scp_status}" -ne 0 || ! -s "${local_evidence}" ]]; then
@@ -1570,7 +1570,7 @@ jobs:
           exit "${readback_status}"
 
       - name: Upload canonical paper lifecycle hosted evidence
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe && env.TARGET_COMPONENT == 'root' }}
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe && env.TARGET_COMPONENT == 'root' && steps.loop-prod-tel-002-probe.outputs.artifact_path != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: loop-prod-tel-002-hosted-${{ github.run_id }}-${{ github.run_attempt }}
