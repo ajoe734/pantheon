@@ -860,7 +860,7 @@ def fail_closed_redacted_refs(
     redacted: list[dict[str, Any]] = []
     for ref in refs:
         if isinstance(ref, dict):
-            ref_id = str(ref.get("ref_id") or ref.get("id") or "")
+            ref_id = str(ref.get("ref_id") or ref.get("id") or ref.get("artifact_ref") or ref.get("entity_ref") or "")
         else:
             ref_id = str(ref)
         _, evidence_kind, required_capability = _resolve_evidence_kind_and_capability(
@@ -905,7 +905,11 @@ def redact_evidence_refs(
     redacted_count = 0
 
     for ref in evidence_refs:
-        ref_id = str(ref.get("ref_id") or ref.get("id") or "") if isinstance(ref, dict) else str(ref)
+        ref_id = (
+            str(ref.get("ref_id") or ref.get("id") or ref.get("artifact_ref") or ref.get("entity_ref") or "")
+            if isinstance(ref, dict)
+            else str(ref)
+        )
         _, evidence_kind, required_capability = _resolve_evidence_kind_and_capability(
             ref, default_kind=default_kind, kind_map=kind_map
         )
