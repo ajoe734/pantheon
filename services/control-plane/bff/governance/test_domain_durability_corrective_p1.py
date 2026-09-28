@@ -1728,3 +1728,63 @@ def test_restart_replay_preserves_canonical_identity_after_subsequent_mutation()
     assert replay_patch1['title'] == 'patch-1'
     assert replay_patch1['event_id'] == replay_patch1['receipt']['event_id']
     assert replay_patch1 == patch1
+
+
+def test_ticket_get_detail_and_list_rejects_foreign_tenant_read_disclosure():
+    tickets = CASStore()
+    identity_a = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["operator"])
+    client_a = _research_ticket_client(tickets, identity=identity_a)
+    created = client_a.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "create-a"})
+    assert created.status_code == 200, created.text
+    ticket_id = created.json()["ticket_id"]
+
+    # Same-tenant read detail and list succeed
+    detail_a = client_a.get(f"/api/v1/research/tickets/{ticket_id}")
+    assert detail_a.status_code == 200
+    assert detail_a.json()["ticket_id"] == ticket_id
+    listing_a = client_a.get("/api/v1/research/tickets")
+    assert listing_a.status_code == 200
+    assert ticket_id in [row.get("ticket_id") for row in listing_a.json().get("data", [])]
+
+    # Fresh client / router instance with foreign tenant B
+    identity_b = SimpleNamespace(operator_id="actor-b", tenant_id="tenant-b", roles=["operator"])
+    client_b = _research_ticket_client(tickets, identity=identity_b)
+    detail_b = client_b.get(f"/api/v1/research/tickets/{ticket_id}")
+    assert detail_b.status_code in (403, 404), {"status": detail_b.status_code, "body": detail_b.json()}
+
+    listing_b = client_b.get("/api/v1/research/tickets")
+    assert listing_b.status_code == 200
+    listed_b_ids = [row.get("ticket_id") for row in listing_b.json().get("data", [])]
+    assert ticket_id not in listed_b_ids
+    assert listing_b.json().get("page_info", {}).get("total") == 0
+
+
+def test_ticket_list_pagination_and_count_strictly_tenant_filtered():
+    tickets = CASStore()
+    identity_a = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["operator"])
+    client_a = _research_ticket_client(tickets, identity=identity_a)
+    for idx in range(3):
+        body = {**TICKET_BODY, "title": f"Ticket A-{idx}"}
+        res = client_a.post("/api/v1/research/tickets", json=body, headers={"Idempotency-Key": f"tkt-a-{idx}"})
+        assert res.status_code == 200
+
+    identity_b = SimpleNamespace(operator_id="actor-b", tenant_id="tenant-b", roles=["operator"])
+    client_b = _research_ticket_client(tickets, identity=identity_b)
+    res_b = client_b.post("/api/v1/research/tickets", json={**TICKET_BODY, "title": "Ticket B-0"}, headers={"Idempotency-Key": "tkt-b-0"})
+    assert res_b.status_code == 200
+    tkt_b_id = res_b.json()["ticket_id"]
+
+    fresh_b = _research_ticket_client(tickets, identity=identity_b)
+    listing = fresh_b.get("/api/v1/research/tickets?page_size=2")
+    assert listing.status_code == 200
+    payload = listing.json()
+    assert payload["page_info"]["total"] == 1
+    assert len(payload["data"]) == 1
+    assert payload["data"][0]["ticket_id"] == tkt_b_id
+
+    fresh_a = _research_ticket_client(tickets, identity=identity_a)
+    listing_a = fresh_a.get("/api/v1/research/tickets?page_size=2")
+    assert listing_a.status_code == 200
+    payload_a = listing_a.json()
+    assert payload_a["page_info"]["total"] == 3
+    assert len(payload_a["data"]) == 2

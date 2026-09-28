@@ -379,6 +379,7 @@ class ResearchWriteOwner:
             "created_at": ticket.get("created_at"),
             "updated_at": ticket.get("updated_at"),
             "allowedActions": cls._ticket_allowed_actions(ticket.get("status")),
+            "tenant_id": ticket.get("tenant_id"),
         }
 
     @classmethod
@@ -966,19 +967,41 @@ class ResearchWriteOwner:
 
         raise RuntimeError(f"Failed to update ticket {ticket_id!r} after {max_retries} attempts")
 
-    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_ticket(
+        self,
+        ticket_id: Optional[str],
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         if not ticket_id:
             return None
         ticket = self._tickets_store.get(str(ticket_id))
-        return self._project_ticket_detail(ticket) if isinstance(ticket, dict) else None
+        if not isinstance(ticket, dict):
+            return None
+        current_tenant = str(ticket.get("tenant_id") or "").strip() or None
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        if current_tenant and clean_tenant and clean_tenant != current_tenant:
+            raise ResearchTenantAuthorizationError(
+                f"Tenant {clean_tenant!r} is not authorized to access ticket belonging to tenant {current_tenant!r}",
+                tenant_id=clean_tenant,
+                expected_tenant=current_tenant,
+            )
+        return self._project_ticket_detail(ticket)
 
     def list_research_tickets(
         self,
         *,
         statuses: Optional[Sequence[str]] = None,
         owner: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         tickets = self._tickets_store.list_all()
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        if clean_tenant:
+            tickets = [
+                t for t in tickets
+                if isinstance(t, dict) and (str(t.get("tenant_id") or "").strip() == clean_tenant)
+            ]
         if statuses:
             req_statuses = {str(s).strip().lower() for s in statuses if str(s).strip()}
             tickets = [t for t in tickets if str(t.get("status") or "").strip().lower() in req_statuses]

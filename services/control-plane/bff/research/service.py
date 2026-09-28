@@ -460,23 +460,45 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         *,
         statuses: Optional[List[str]] = None,
         owner: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         include_fixture_pack: bool = False,
     ) -> List[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "list_research_tickets"):
-            return self._read_surface.list_research_tickets(
-                statuses=statuses, owner=owner, include_fixture_pack=include_fixture_pack
-            )
+            try:
+                return self._read_surface.list_research_tickets(
+                    statuses=statuses, owner=owner, tenant_id=tenant_id, include_fixture_pack=include_fixture_pack
+                )
+            except TypeError:
+                return self._read_surface.list_research_tickets(
+                    statuses=statuses, owner=owner, include_fixture_pack=include_fixture_pack
+                )
         if self._ks is not None and hasattr(self._ks, "list_research_tickets"):
-            return self._ks.list_research_tickets(
-                statuses=statuses, owner=owner, include_fixture_pack=include_fixture_pack
-            )
+            try:
+                return self._ks.list_research_tickets(
+                    statuses=statuses, owner=owner, tenant_id=tenant_id, include_fixture_pack=include_fixture_pack
+                )
+            except TypeError:
+                return self._ks.list_research_tickets(
+                    statuses=statuses, owner=owner, include_fixture_pack=include_fixture_pack
+                )
         raise AttributeError("Research port operation 'list_research_tickets' not implemented")
 
-    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_ticket(
+        self,
+        ticket_id: Optional[str],
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "get_research_ticket"):
-            return self._read_surface.get_research_ticket(ticket_id)
+            try:
+                return self._read_surface.get_research_ticket(ticket_id, tenant_id=tenant_id)
+            except TypeError:
+                return self._read_surface.get_research_ticket(ticket_id)
         if self._ks is not None and hasattr(self._ks, "get_research_ticket"):
-            return self._ks.get_research_ticket(ticket_id)
+            try:
+                return self._ks.get_research_ticket(ticket_id, tenant_id=tenant_id)
+            except TypeError:
+                return self._ks.get_research_ticket(ticket_id)
         raise AttributeError("Research port operation 'get_research_ticket' not implemented")
 
     def create_research_ticket(
@@ -3119,6 +3141,7 @@ class ResearchRouterService:
         *,
         statuses: Optional[List[str]] = None,
         owner: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
         snapshot_at: Optional[str] = None,
@@ -3127,10 +3150,20 @@ class ResearchRouterService:
         port = self._port()
         try:
             with self._map_port_errors("list_research_tickets"):
-                records = list(port.list_research_tickets(statuses=statuses, owner=owner, include_fixture_pack=False) or [])
+                records = list(port.list_research_tickets(statuses=statuses, owner=owner, tenant_id=tenant_id, include_fixture_pack=False) or [])
         except TypeError:
-            with self._map_port_errors("list_research_tickets"):
-                records = list(port.list_research_tickets() or [])
+            try:
+                with self._map_port_errors("list_research_tickets"):
+                    records = list(port.list_research_tickets(statuses=statuses, owner=owner, include_fixture_pack=False) or [])
+            except TypeError:
+                with self._map_port_errors("list_research_tickets"):
+                    records = list(port.list_research_tickets() or [])
+        clean_tenant = str(tenant_id or "").strip() or None
+        if clean_tenant:
+            records = [
+                r for r in records
+                if isinstance(r, dict) and str(r.get("tenant_id") or "").strip() == clean_tenant
+            ]
         surface_state = self._ticket_surface_state(snapshot_at=snap)
         if surface_state == "unavailable":
             items, next_token, total = [], None, 0
@@ -3141,7 +3174,13 @@ class ResearchRouterService:
         meta["surfaces"] = {"ticket_list": surface_state}
         return {"data": items, "page_info": {"next_page_token": next_token, "total": total}, "meta": meta}
 
-    def get_research_ticket(self, ticket_id: str, *, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def get_research_ticket(
+        self,
+        ticket_id: str,
+        *,
+        snapshot_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         source = self._get_dataset_source("research_tickets")
         port = self._port()
@@ -3149,9 +3188,22 @@ class ResearchRouterService:
             ticket = None
         else:
             with self._map_port_errors("get_research_ticket"):
-                ticket = port.get_research_ticket(ticket_id)
+                try:
+                    ticket = port.get_research_ticket(ticket_id, tenant_id=tenant_id)
+                except TypeError:
+                    ticket = port.get_research_ticket(ticket_id)
         if not ticket:
             self._not_found("Research ticket", ticket_id)
+        ticket_tenant = str(ticket.get("tenant_id") or "").strip() or None
+        clean_tenant = str(tenant_id or "").strip() or None
+        if ticket_tenant and clean_tenant and clean_tenant != ticket_tenant:
+            self._raise_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Cross-tenant access forbidden",
+                f"Tenant {clean_tenant!r} cannot access research ticket {ticket_id!r} belonging to tenant {ticket_tenant!r}",
+                precondition_failed="cross_tenant",
+            )
         payload = dict(ticket)
         payload["links"] = {
             "self": f"/api/v1/research/tickets/{ticket_id}",

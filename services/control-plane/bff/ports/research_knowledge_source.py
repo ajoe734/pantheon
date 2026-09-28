@@ -31,6 +31,17 @@ class ResearchWriteOwnerUnavailableError(RuntimeError):
     must surface a 500/503, never a silent empty/fake success.
     """
 
+
+try:
+    from services.research.write_owner import ResearchTenantAuthorizationError
+except ImportError:
+    class ResearchTenantAuthorizationError(PermissionError):  # type: ignore[no-redef]
+        def __init__(self, message: str = "Cross-tenant access forbidden", *, tenant_id: Optional[str] = None, expected_tenant: Optional[str] = None) -> None:
+            super().__init__(message)
+            self.message = message
+            self.tenant_id = tenant_id
+            self.expected_tenant = expected_tenant
+
 try:
     from services.knowledge.evidence.repository import (
         InMemoryEvidenceRepository,
@@ -199,11 +210,17 @@ class ResearchKnowledgeSourcePort:
         *,
         statuses: Optional[List[str]] = None,
         owner: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         include_fixture_pack: bool = False,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
-    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_ticket(
+        self,
+        ticket_id: Optional[str],
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     def create_research_ticket(
@@ -1910,6 +1927,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "created_at": ticket.get("created_at"),
             "updated_at": ticket.get("updated_at"),
             "allowedActions": cls._research_ticket_allowed_actions(ticket.get("status")),
+            "tenant_id": ticket.get("tenant_id"),
         }
 
     @classmethod
@@ -1929,6 +1947,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "linked_experiments": list(ticket.get("linked_experiments") or []),
             "linked_artifacts": list(ticket.get("linked_artifacts") or []),
             "allowedActions": cls._research_ticket_allowed_actions(ticket.get("status")),
+            "tenant_id": ticket.get("tenant_id"),
         }
 
     def list_research_tickets(
@@ -1936,12 +1955,22 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         *,
         statuses: Optional[List[str]] = None,
         owner: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         include_fixture_pack: bool = False,
     ) -> List[Dict[str, Any]]:
         research_owner = self._get_research_write_owner()
         if research_owner is not None:
-            return research_owner.list_research_tickets(statuses=statuses, owner=owner)
+            try:
+                return research_owner.list_research_tickets(statuses=statuses, owner=owner, tenant_id=tenant_id)
+            except TypeError:
+                return research_owner.list_research_tickets(statuses=statuses, owner=owner)
         tickets = list(self._tickets.values())
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        if clean_tenant:
+            tickets = [
+                t for t in tickets
+                if isinstance(t, dict) and str(t.get("tenant_id") or "").strip() == clean_tenant
+            ]
         if statuses:
             req_statuses = {str(s).strip().lower() for s in statuses if str(s).strip()}
             tickets = [t for t in tickets if str(t.get("status") or "").strip().lower() in req_statuses]
@@ -1954,14 +1983,32 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         )
         return [self._project_research_ticket_summary(t) for t in tickets if isinstance(t, dict)]
 
-    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_ticket(
+        self,
+        ticket_id: Optional[str],
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         if not ticket_id:
             return None
         research_owner = self._get_research_write_owner()
         if research_owner is not None:
-            return research_owner.get_research_ticket(ticket_id)
+            try:
+                return research_owner.get_research_ticket(ticket_id, tenant_id=tenant_id)
+            except TypeError:
+                return research_owner.get_research_ticket(ticket_id)
         ticket = self._tickets.get(str(ticket_id))
-        return self._project_research_ticket_detail(ticket) if isinstance(ticket, dict) else None
+        if not isinstance(ticket, dict):
+            return None
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        ticket_tenant = str(ticket.get("tenant_id") or "").strip() or None
+        if ticket_tenant and clean_tenant and clean_tenant != ticket_tenant:
+            raise ResearchTenantAuthorizationError(
+                f"Tenant {clean_tenant!r} is not authorized to access ticket belonging to tenant {ticket_tenant!r}",
+                tenant_id=clean_tenant,
+                expected_tenant=ticket_tenant,
+            )
+        return self._project_research_ticket_detail(ticket)
 
     def create_research_ticket(
         self,

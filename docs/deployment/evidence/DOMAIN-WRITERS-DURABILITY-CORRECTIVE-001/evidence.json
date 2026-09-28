@@ -244,6 +244,10 @@
     "defect_60_research_tickets_replay_canonical_identity_after_subsequent_mutation": {
       "problem": "write_owner.py:423-449 replayed create/patch commands by projecting current ticket state and overwriting only receipt/command_id/version; subsequent mutations contaminated replayed responses across restarts (replay of create returned version 1 with create receipt but patched title/event/correlation; replay of patch 1 returned version 2 with mismatched event_id).",
       "remediation": "Preserved original canonical projected detail in create_result and patch_command_entry['result']. Updated _replay_ticket_create and _replay_ticket_patch to replay the exact canonical admitted command result with full aggregate/event/correlation/status synchronization, guaranteeing idempotent replays preserve original command identity across arbitrary subsequent mutations and process restarts."
+    },
+    "defect_61_research_tickets_cross_tenant_read_disclosure": {
+      "problem": "services/control-plane/bff/research/routes/tickets.py:123-146 discarded authenticated identity for list/detail; service.py:3125-3176 and services/research/write_owner.py:969-992 read without tenant scope, permitting foreign authenticated tenants to read and list tickets created by other tenants.",
+      "remediation": "Propagated authenticated tenant_id through route handlers, application service, and ResearchKnowledgeSourcePort to ResearchWriteOwner. Enforced 403 Forbidden cross-tenant rejection on detail reads and strict tenant-scoped filtering before pagination and count calculation in list_research_tickets. Committed mounted-route regression tests covering fresh owner/router isolation and same-tenant access."
     }
   },
   "mutation_caller_inventory": {

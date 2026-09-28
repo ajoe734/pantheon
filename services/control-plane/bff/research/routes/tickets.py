@@ -121,7 +121,8 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
             ctx.raise_service_error(exc)
 
     async def endpoint_list_tickets(request: Request, **_kwargs: Any) -> Dict[str, Any]:
-        ctx.identity(request)
+        identity = ctx.identity(request)
+        tenant_id = getattr(identity, "tenant_id", None)
         statuses = [item.strip() for item in str(ctx.query(request, "status", "") or "").split(",") if item.strip()] or None
         if statuses:
             statuses = [_validate_ticket_status(status) for status in statuses]
@@ -133,6 +134,7 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
             return ctx.service.list_research_tickets(
                 statuses=statuses,
                 owner=ctx.query(request, "owner"),
+                tenant_id=str(tenant_id).strip() if tenant_id else None,
                 page_token=ctx.query(request, "page_token"),
                 page_size=page_size,
             )
@@ -140,10 +142,14 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
             ctx.raise_service_error(exc)
 
     async def endpoint_get_ticket(request: Request, **_kwargs: Any) -> Dict[str, Any]:
-        ctx.identity(request)
+        identity = ctx.identity(request)
+        tenant_id = getattr(identity, "tenant_id", None)
         ticket_id = str(request.path_params.get("ticket_id") or "")
         try:
-            return ctx.service.get_research_ticket(ticket_id)
+            return ctx.service.get_research_ticket(
+                ticket_id,
+                tenant_id=str(tenant_id).strip() if tenant_id else None,
+            )
         except Exception as exc:
             ctx.raise_service_error(exc)
 
