@@ -164,6 +164,18 @@
     "defect_40_research_ticket_link_cas_and_final_commit_recovery": {
       "problem": "services/research/write_owner.py committed reservation, ticket link, and final is_committed flag separately; failure during final experiments_store.put left linked experiments with is_committed=false, causing retries to return 409 forever. Additionally, ticket link updates overwrote original_ticket snapshots without CAS, causing concurrent requests on distinct keys for the same ticket to drop ticket links.",
       "remediation": "Implemented _atomic_update_ticket_links using compare_and_set with revalidated ticket state to serialize concurrent ticket updates and preserve all linked experiments. Implemented _recover_or_replay_experiment to detect uncommitted experiments matching identical request hashes, verify committed ticket links, finalize is_committed=True, and recover successfully on retry without 409 lockout."
+    },
+    "defect_41_research_uncommitted_admission_recovery_before_ticket_link": {
+      "problem": "After experiment admission committed but before ticket link committed (lost admission acknowledgement or process interruption), fresh owner rejected retries with 409 and permanently stranded the key with is_committed=false and no ticket link.",
+      "remediation": "Updated _recover_or_replay_experiment to complete ticket linking via _atomic_update_ticket_links and finalize is_committed=True rather than raising 409 when no active execution is in-flight."
+    },
+    "defect_42_research_delayed_final_commit_preserves_concurrent_cancellation": {
+      "problem": "Replay could finalize while original final put was delayed; mounted cancel then returned 200 canceled, but original stale delayed put restored queued with cancellation_fence=null.",
+      "remediation": "Implemented atomic conditional finalization and readback via ConcurrentPreservingRecord in _finalize_experiment_record, ensuring delayed final puts merge concurrent cancellation status and fences."
+    },
+    "defect_43_research_mounted_launch_scoped_idempotency_and_identity": {
+      "problem": "POST /api/v1/experiments/launch discarded authenticated identity and Idempotency-Key, creating distinct experiments across retries and restarts with null idempotency_key/tenant_id/actor_id.",
+      "remediation": "Extracted authenticated operator_id, tenant_id, and Idempotency-Key in endpoint_launch_experiment, forwarded them through launch_experiment to create_research_experiment, and verified scoped idempotency, conflicting payload 409, and tenant isolation."
     }
   },
   "mutation_caller_inventory": {
@@ -484,6 +496,18 @@
         "result": "135 passed, 6 warnings in 77.51s",
         "executed": 135,
         "collected": 135
+      },
+      {
+        "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python3 -m pytest -q -s /tmp/test_domain_review_2e942.py",
+        "result": "3 passed, 1 warning in 4.28s",
+        "executed": 3,
+        "collected": 3
+      },
+      {
+        "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "138 passed, 8 warnings in 73.04s",
+        "executed": 138,
+        "collected": 138
       }
     ]
   },
@@ -532,7 +556,10 @@
     "defect_37_research_experiment_ticket_link_atomic_rollback_resolved": true,
     "defect_38_research_independent_store_isolation_and_atomic_allocation_resolved": true,
     "defect_39_research_two_phase_admission_and_atomic_rollback_resolved": true,
-    "defect_40_research_ticket_link_cas_and_final_commit_recovery_resolved": true
+    "defect_40_research_ticket_link_cas_and_final_commit_recovery_resolved": true,
+    "defect_41_research_uncommitted_admission_recovery_before_ticket_link_resolved": true,
+    "defect_42_research_delayed_final_commit_preserves_concurrent_cancellation_resolved": true,
+    "defect_43_research_mounted_launch_scoped_idempotency_and_identity_resolved": true
   },
   "review": {
     "reviewer": "Codex",

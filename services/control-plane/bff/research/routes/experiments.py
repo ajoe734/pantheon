@@ -268,9 +268,22 @@ def build_experiments_router(ctx: ResearchRouteContext) -> APIRouter:
         }
 
     async def endpoint_launch_experiment(request: Request, **_kwargs: Any) -> Dict[str, Any]:
-        ctx.identity(request)
+        identity = ctx.identity(request)
+        idempotency_key = request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
+        actor_id = (
+            getattr(identity, "operator_id", None)
+            or getattr(identity, "user_id", None)
+            or getattr(identity, "actor_id", None)
+            or str(identity)
+        )
+        tenant_id = getattr(identity, "tenant_id", None)
         payload = _validate_experiment_launch(await ctx.body(request))
-        return ctx.service.launch_experiment(payload)
+        return ctx.service.launch_experiment(
+            payload,
+            actor_id=str(actor_id).strip() if actor_id else None,
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
+            idempotency_key=str(idempotency_key).strip() if idempotency_key else None,
+        )
 
     async def endpoint_list_experiments_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)

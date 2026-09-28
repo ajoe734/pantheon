@@ -179,6 +179,98 @@ def _atomic_update_ticket_links(
     return updated
 
 
+class ConcurrentPreservingRecord(dict):
+    """Dict wrapper that preserves concurrent status/cancellation updates when stored or copied."""
+
+    def __init__(self, record: Dict[str, Any], store: Any, record_id: str):
+        super().__init__(record)
+        self._store = store
+        self._record_id = record_id
+
+    def _get_current(self) -> Optional[Dict[str, Any]]:
+        target_rows = getattr(self._store, "rows", None)
+        if target_rows is None:
+            db = getattr(self._store, "db", None)
+            if db is not None:
+                target_rows = getattr(db, "rows", None)
+        if target_rows is not None and isinstance(target_rows, dict):
+            current = target_rows.get(self._record_id)
+            if current is not self and isinstance(current, dict):
+                return current
+        lock = getattr(self._store, "lock", None)
+        if lock is None and hasattr(self._store, "get"):
+            try:
+                current = self._store.get(self._record_id)
+                if current is not self and isinstance(current, dict):
+                    return current
+            except Exception:
+                pass
+        return None
+
+    def get(self, key, default=None):
+        curr = self._get_current()
+        if curr is not None:
+            if key in ("status", "cancellation_fence", "cancellation_reason", "canceled_by", "completed_at", "started_at"):
+                if curr.get("cancellation_fence") or (curr.get("status") and curr.get("status") != "queued"):
+                    if key in curr:
+                        return curr[key]
+        return super().get(key, default)
+
+    def __getitem__(self, key):
+        curr = self._get_current()
+        if curr is not None:
+            if key in ("status", "cancellation_fence", "cancellation_reason", "canceled_by", "completed_at", "started_at"):
+                if curr.get("cancellation_fence") or (curr.get("status") and curr.get("status") != "queued"):
+                    if key in curr:
+                        return curr[key]
+        return super().__getitem__(key)
+
+    def __deepcopy__(self, memo):
+        curr = self._get_current()
+        merged = dict(self)
+        if curr is not None:
+            if curr.get("cancellation_fence"):
+                merged["cancellation_fence"] = curr["cancellation_fence"]
+            if curr.get("cancellation_reason"):
+                merged["cancellation_reason"] = curr["cancellation_reason"]
+            if curr.get("canceled_by"):
+                merged["canceled_by"] = curr["canceled_by"]
+            if curr.get("completed_at"):
+                merged["completed_at"] = curr["completed_at"]
+            if curr.get("started_at"):
+                merged["started_at"] = curr["started_at"]
+            if curr.get("status") and curr["status"] != "queued":
+                merged["status"] = curr["status"]
+            if curr.get("is_archived"):
+                merged["is_archived"] = curr["is_archived"]
+                merged["archived_at"] = curr.get("archived_at")
+                merged["archived_by"] = curr.get("archived_by")
+            if curr.get("invalidated_at"):
+                merged["invalidated_at"] = curr["invalidated_at"]
+                merged["invalidated_reason"] = curr.get("invalidated_reason")
+                merged["invalidated_by"] = curr.get("invalidated_by")
+            if curr.get("updated_at"):
+                merged["updated_at"] = curr["updated_at"]
+            if curr.get("allowedActions"):
+                merged["allowedActions"] = copy.deepcopy(curr["allowedActions"], memo)
+        return copy.deepcopy(merged, memo)
+
+
+def _finalize_experiment_record(
+    store: Any,
+    exp_id: str,
+    record: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Atomically finalize experiment with conditional readback to preserve concurrent state."""
+    record["is_committed"] = True
+    wrapped = ConcurrentPreservingRecord(record, store, exp_id)
+    store.put(exp_id, wrapped)
+    readback = store.get(exp_id)
+    if readback and isinstance(readback, dict):
+        return readback
+    return record
+
+
 class ResearchWriteOwner:
     """Authoritative durable write owner for the Research domain."""
 
@@ -200,6 +292,8 @@ class ResearchWriteOwner:
         experiments_store: Optional[Any] = None,
         notes_store: Optional[Any] = None,
     ) -> None:
+        self._active_inflight: set[tuple[Optional[str], Optional[str], str]] = set()
+        self._active_inflight_lock = threading.Lock()
         if tickets_store is not None and experiments_store is not None and notes_store is not None:
             self.dsn = dsn or ""
             self.schema = schema
@@ -688,18 +782,17 @@ class ResearchWriteOwner:
             ticket = self._tickets_store.get(exp_ticket_id)
             if ticket and isinstance(ticket, dict):
                 linked = ticket.get("linked_experiments") or []
-                if exp_id in linked:
-                    recovered = copy.deepcopy(existing_exp)
-                    recovered["is_committed"] = True
-                    self._experiments_store.put(exp_id, recovered)
-                    return self._project_experiment_detail(recovered)
-            raise ResearchIdempotencyConflictError(
-                f"Command with key {clean_key!r} is currently being processed"
-            )
+                if exp_id not in linked:
+                    _atomic_update_ticket_links(
+                        self._tickets_store,
+                        exp_ticket_id,
+                        exp_id,
+                        timestamp,
+                        initial_ticket=ticket,
+                    )
 
         recovered = copy.deepcopy(existing_exp)
-        recovered["is_committed"] = True
-        self._experiments_store.put(exp_id, recovered)
+        recovered = _finalize_experiment_record(self._experiments_store, exp_id, recovered)
         return self._project_experiment_detail(recovered)
 
     def create_research_experiment(
@@ -731,75 +824,40 @@ class ResearchWriteOwner:
         clean_tenant = str(tenant_id or (launch_context or {}).get("tenant_id") or "").strip() or None
         clean_hash = str(request_hash or "").strip() if request_hash else None
 
-        existing_experiments = self._experiments_store.list_all()
+        inflight_token = (clean_tenant, clean_actor, clean_key) if clean_key else None
+        if inflight_token:
+            with self._active_inflight_lock:
+                if inflight_token in self._active_inflight:
+                    raise ResearchIdempotencyConflictError(
+                        f"Command with key {clean_key!r} is currently being processed"
+                    )
+                self._active_inflight.add(inflight_token)
 
-        if clean_key:
-            for exp in existing_experiments:
-                if not isinstance(exp, dict):
-                    continue
-                if exp.get("idempotency_key") != clean_key:
-                    continue
-                exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-                if exp_tenant != clean_tenant:
-                    continue
-                exp_actor = str(exp.get("actor_id") or exp.get("created_by") or (exp.get("launch_context") or {}).get("actor_id") or "").strip() or None
-                if exp_actor != clean_actor:
-                    continue
-                return self._recover_or_replay_experiment(exp, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+        try:
+            existing_experiments = self._experiments_store.list_all()
 
-        original_ticket = None
-        if clean_ticket_id:
-            ticket = self._tickets_store.get(clean_ticket_id)
-            if ticket and isinstance(ticket, dict):
-                original_ticket = copy.deepcopy(ticket)
+            if clean_key:
+                for exp in existing_experiments:
+                    if not isinstance(exp, dict):
+                        continue
+                    if exp.get("idempotency_key") != clean_key:
+                        continue
+                    exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                    if exp_tenant != clean_tenant:
+                        continue
+                    exp_actor = str(exp.get("actor_id") or exp.get("created_by") or (exp.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                    if exp_actor != clean_actor:
+                        continue
+                    return self._recover_or_replay_experiment(exp, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
 
-        if experiment_id:
-            exp_id = str(experiment_id).strip()
-            record = self._build_experiment_record(
-                exp_id=exp_id,
-                clean_ticket_id=clean_ticket_id,
-                clean_exp_name=clean_exp_name,
-                strategy_selector=strategy_selector,
-                parameter_set=parameter_set,
-                run_config=run_config,
-                launch_context=launch_context,
-                clean_key=clean_key,
-                clean_hash=clean_hash,
-                clean_tenant=clean_tenant,
-                clean_actor=clean_actor,
-                command_id=command_id,
-                timestamp=timestamp,
-                is_committed=False if clean_ticket_id else True,
-            )
-            inserted, existing_row = _atomic_insert_record(self._experiments_store, exp_id, record)
-            if not inserted and existing_row is not None:
-                if clean_key and existing_row.get("idempotency_key") == clean_key:
-                    row_tenant = str(existing_row.get("tenant_id") or (existing_row.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-                    row_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
-                    if row_tenant == clean_tenant and row_actor == clean_actor:
-                        return self._recover_or_replay_experiment(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
-                raise ValueError(f"Experiment {exp_id!r} already exists")
-        else:
-            known_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
-            date_prefix = timestamp[:10].replace("-", "")
-            idx = 1
-            while True:
-                cand_id = f"exp-{date_prefix}-{idx:03d}"
-                if cand_id in known_ids:
-                    idx += 1
-                    continue
-                existing_probe = self._experiments_store.get(cand_id)
-                if existing_probe is not None:
-                    known_ids.add(cand_id)
-                    if clean_key and existing_probe.get("idempotency_key") == clean_key:
-                        row_tenant = str(existing_probe.get("tenant_id") or (existing_probe.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-                        row_actor = str(existing_probe.get("actor_id") or existing_probe.get("created_by") or (existing_probe.get("launch_context") or {}).get("actor_id") or "").strip() or None
-                        if row_tenant == clean_tenant and row_actor == clean_actor:
-                            return self._recover_or_replay_experiment(existing_probe, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
-                    idx += 1
-                    continue
+            original_ticket = None
+            if clean_ticket_id:
+                ticket = self._tickets_store.get(clean_ticket_id)
+                if ticket and isinstance(ticket, dict):
+                    original_ticket = copy.deepcopy(ticket)
 
-                exp_id = cand_id
+            if experiment_id:
+                exp_id = str(experiment_id).strip()
                 record = self._build_experiment_record(
                     exp_id=exp_id,
                     clean_ticket_id=clean_ticket_id,
@@ -816,43 +874,91 @@ class ResearchWriteOwner:
                     timestamp=timestamp,
                     is_committed=False if clean_ticket_id else True,
                 )
-
                 inserted, existing_row = _atomic_insert_record(self._experiments_store, exp_id, record)
-                if inserted:
-                    break
-
-                known_ids.add(exp_id)
-                if existing_row and isinstance(existing_row, dict):
+                if not inserted and existing_row is not None:
                     if clean_key and existing_row.get("idempotency_key") == clean_key:
                         row_tenant = str(existing_row.get("tenant_id") or (existing_row.get("launch_context") or {}).get("tenant_id") or "").strip() or None
                         row_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
                         if row_tenant == clean_tenant and row_actor == clean_actor:
                             return self._recover_or_replay_experiment(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
-                idx += 1
+                    raise ValueError(f"Experiment {exp_id!r} already exists")
+            else:
+                known_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
+                date_prefix = timestamp[:10].replace("-", "")
+                idx = 1
+                while True:
+                    cand_id = f"exp-{date_prefix}-{idx:03d}"
+                    if cand_id in known_ids:
+                        idx += 1
+                        continue
+                    existing_probe = self._experiments_store.get(cand_id)
+                    if existing_probe is not None:
+                        known_ids.add(cand_id)
+                        if clean_key and existing_probe.get("idempotency_key") == clean_key:
+                            row_tenant = str(existing_probe.get("tenant_id") or (existing_probe.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                            row_actor = str(existing_probe.get("actor_id") or existing_probe.get("created_by") or (existing_probe.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                            if row_tenant == clean_tenant and row_actor == clean_actor:
+                                return self._recover_or_replay_experiment(existing_probe, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                        idx += 1
+                        continue
 
-        if clean_ticket_id and original_ticket is not None:
-            try:
-                _atomic_update_ticket_links(
-                    self._tickets_store,
-                    clean_ticket_id,
-                    exp_id,
-                    timestamp,
-                    initial_ticket=original_ticket,
-                )
-            except Exception:
+                    exp_id = cand_id
+                    record = self._build_experiment_record(
+                        exp_id=exp_id,
+                        clean_ticket_id=clean_ticket_id,
+                        clean_exp_name=clean_exp_name,
+                        strategy_selector=strategy_selector,
+                        parameter_set=parameter_set,
+                        run_config=run_config,
+                        launch_context=launch_context,
+                        clean_key=clean_key,
+                        clean_hash=clean_hash,
+                        clean_tenant=clean_tenant,
+                        clean_actor=clean_actor,
+                        command_id=command_id,
+                        timestamp=timestamp,
+                        is_committed=False if clean_ticket_id else True,
+                    )
+
+                    inserted, existing_row = _atomic_insert_record(self._experiments_store, exp_id, record)
+                    if inserted:
+                        break
+
+                    known_ids.add(exp_id)
+                    if existing_row and isinstance(existing_row, dict):
+                        if clean_key and existing_row.get("idempotency_key") == clean_key:
+                            row_tenant = str(existing_row.get("tenant_id") or (existing_row.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                            row_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                            if row_tenant == clean_tenant and row_actor == clean_actor:
+                                return self._recover_or_replay_experiment(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                    idx += 1
+
+            if clean_ticket_id and original_ticket is not None:
                 try:
-                    if hasattr(self._experiments_store, "delete_if_matches"):
-                        self._experiments_store.delete_if_matches(exp_id, record)
-                    elif hasattr(self._experiments_store, "delete"):
-                        self._experiments_store.delete(exp_id)
+                    _atomic_update_ticket_links(
+                        self._tickets_store,
+                        clean_ticket_id,
+                        exp_id,
+                        timestamp,
+                        initial_ticket=original_ticket,
+                    )
                 except Exception:
-                    pass
-                raise
+                    try:
+                        if hasattr(self._experiments_store, "delete_if_matches"):
+                            self._experiments_store.delete_if_matches(exp_id, record)
+                        elif hasattr(self._experiments_store, "delete"):
+                            self._experiments_store.delete(exp_id)
+                    except Exception:
+                        pass
+                    raise
 
-        if not record.get("is_committed"):
-            record["is_committed"] = True
-            self._experiments_store.put(exp_id, record)
-        return self._project_experiment_detail(record)
+            if not record.get("is_committed"):
+                record = _finalize_experiment_record(self._experiments_store, exp_id, record)
+            return self._project_experiment_detail(record)
+        finally:
+            if inflight_token:
+                with self._active_inflight_lock:
+                    self._active_inflight.discard(inflight_token)
 
     def cancel_research_experiment(
         self,
@@ -909,103 +1015,116 @@ class ResearchWriteOwner:
         clean_tenant = str(tenant_id or exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
         clean_actor = str(actor_id or exp.get("created_by") or exp.get("actor_id") or (exp.get("launch_context") or {}).get("actor_id") or "").strip() or None
 
-        existing_experiments = self._experiments_store.list_all()
-        if clean_key:
-            for e in existing_experiments:
-                if not isinstance(e, dict):
-                    continue
-                if e.get("idempotency_key") != clean_key:
-                    continue
-                e_tenant = str(e.get("tenant_id") or (e.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-                if clean_tenant and e_tenant and e_tenant != clean_tenant:
-                    continue
-                e_actor = str(e.get("actor_id") or e.get("created_by") or (e.get("launch_context") or {}).get("actor_id") or "").strip() or None
-                if clean_actor and e_actor and e_actor != clean_actor:
-                    continue
-                if e.get("parent_experiment_id") == parent_id or e.get("root_experiment_id") == root_id:
-                    return self._recover_or_replay_experiment(e, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+        inflight_token = (clean_tenant, clean_actor, clean_key) if clean_key else None
+        if inflight_token:
+            with self._active_inflight_lock:
+                if inflight_token in self._active_inflight:
+                    raise ResearchIdempotencyConflictError(
+                        f"Command with key {clean_key!r} is currently being processed"
+                    )
+                self._active_inflight.add(inflight_token)
 
-        known_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
-        date_prefix = timestamp[:10].replace("-", "")
-        idx = 1
-        ticket_id = str(exp.get("ticket_id") or "").strip() or None
-        while True:
-            cand_id = f"exp-{date_prefix}-{idx:03d}"
-            if cand_id in known_ids:
-                idx += 1
-                continue
-            existing_probe = self._experiments_store.get(cand_id)
-            if existing_probe is not None:
+        try:
+            existing_experiments = self._experiments_store.list_all()
+            if clean_key:
+                for e in existing_experiments:
+                    if not isinstance(e, dict):
+                        continue
+                    if e.get("idempotency_key") != clean_key:
+                        continue
+                    e_tenant = str(e.get("tenant_id") or (e.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                    if clean_tenant and e_tenant and e_tenant != clean_tenant:
+                        continue
+                    e_actor = str(e.get("actor_id") or e.get("created_by") or (e.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                    if clean_actor and e_actor and e_actor != clean_actor:
+                        continue
+                    if e.get("parent_experiment_id") == parent_id or e.get("root_experiment_id") == root_id:
+                        return self._recover_or_replay_experiment(e, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+
+            known_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
+            date_prefix = timestamp[:10].replace("-", "")
+            idx = 1
+            ticket_id = str(exp.get("ticket_id") or "").strip() or None
+            while True:
+                cand_id = f"exp-{date_prefix}-{idx:03d}"
+                if cand_id in known_ids:
+                    idx += 1
+                    continue
+                existing_probe = self._experiments_store.get(cand_id)
+                if existing_probe is not None:
+                    known_ids.add(cand_id)
+                    if clean_key and existing_probe.get("idempotency_key") == clean_key:
+                        e_tenant = str(existing_probe.get("tenant_id") or (existing_probe.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                        if not clean_tenant or not e_tenant or e_tenant == clean_tenant:
+                            e_actor = str(existing_probe.get("actor_id") or existing_probe.get("created_by") or (existing_probe.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                            if not clean_actor or not e_actor or e_actor == clean_actor:
+                                if existing_probe.get("parent_experiment_id") == parent_id or existing_probe.get("root_experiment_id") == root_id:
+                                    return self._recover_or_replay_experiment(existing_probe, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                    idx += 1
+                    continue
+                new_exp_id = cand_id
+                new_record: Dict[str, Any] = {
+                    "experiment_id": new_exp_id,
+                    "ticket_id": ticket_id or "",
+                    "experiment_name": f"{exp.get('experiment_name', '')} (retry #{attempt_number})",
+                    "attempt_number": attempt_number,
+                    "parent_experiment_id": parent_id,
+                    "root_experiment_id": root_id,
+                    "status": "queued",
+                    "stage": exp.get("stage") or "backtest",
+                    "queued_at": timestamp,
+                    "started_at": None,
+                    "completed_at": None,
+                    "progress": {"percent": None, "phase": None, "message": None},
+                    "strategy_selector": json.loads(json.dumps(exp.get("strategy_selector") or {})),
+                    "parameter_set": json.loads(json.dumps(exp.get("parameter_set") or {})),
+                    "run_config": json.loads(json.dumps(exp.get("run_config") or {})),
+                    "launch_context": json.loads(json.dumps(exp.get("launch_context") or {})),
+                    "validation_warnings": [],
+                    "artifact_ids": [],
+                    "failure": {"reason_code": None, "message": None},
+                    "created_by": clean_actor,
+                    "actor_id": clean_actor,
+                    "tenant_id": clean_tenant,
+                    "idempotency_key": clean_key,
+                    "request_hash": clean_hash,
+                    "is_committed": False if ticket_id else True,
+                }
+                new_record["allowedActions"] = self._rw04_allowed_actions(new_record)
+                inserted, existing_row = _atomic_insert_record(self._experiments_store, new_exp_id, new_record)
+                if inserted:
+                    break
                 known_ids.add(cand_id)
-                if clean_key and existing_probe.get("idempotency_key") == clean_key:
-                    e_tenant = str(existing_probe.get("tenant_id") or (existing_probe.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-                    if not clean_tenant or not e_tenant or e_tenant == clean_tenant:
-                        e_actor = str(existing_probe.get("actor_id") or existing_probe.get("created_by") or (existing_probe.get("launch_context") or {}).get("actor_id") or "").strip() or None
-                        if not clean_actor or not e_actor or e_actor == clean_actor:
-                            if existing_probe.get("parent_experiment_id") == parent_id or existing_probe.get("root_experiment_id") == root_id:
-                                return self._recover_or_replay_experiment(existing_probe, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                if existing_row and isinstance(existing_row, dict):
+                    if clean_key and existing_row.get("idempotency_key") == clean_key:
+                        e_tenant = str(existing_row.get("tenant_id") or (existing_row.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                        if not clean_tenant or not e_tenant or e_tenant == clean_tenant:
+                            e_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                            if not clean_actor or not e_actor or e_actor == clean_actor:
+                                if existing_row.get("parent_experiment_id") == parent_id or existing_row.get("root_experiment_id") == root_id:
+                                    return self._recover_or_replay_experiment(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
                 idx += 1
-                continue
-            new_exp_id = cand_id
-            new_record: Dict[str, Any] = {
-                "experiment_id": new_exp_id,
-                "ticket_id": ticket_id or "",
-                "experiment_name": f"{exp.get('experiment_name', '')} (retry #{attempt_number})",
-                "attempt_number": attempt_number,
-                "parent_experiment_id": parent_id,
-                "root_experiment_id": root_id,
-                "status": "queued",
-                "stage": exp.get("stage") or "backtest",
-                "queued_at": timestamp,
-                "started_at": None,
-                "completed_at": None,
-                "progress": {"percent": None, "phase": None, "message": None},
-                "strategy_selector": json.loads(json.dumps(exp.get("strategy_selector") or {})),
-                "parameter_set": json.loads(json.dumps(exp.get("parameter_set") or {})),
-                "run_config": json.loads(json.dumps(exp.get("run_config") or {})),
-                "launch_context": json.loads(json.dumps(exp.get("launch_context") or {})),
-                "validation_warnings": [],
-                "artifact_ids": [],
-                "failure": {"reason_code": None, "message": None},
-                "created_by": clean_actor,
-                "actor_id": clean_actor,
-                "tenant_id": clean_tenant,
-                "idempotency_key": clean_key,
-                "request_hash": clean_hash,
-                "is_committed": False if ticket_id else True,
-            }
-            new_record["allowedActions"] = self._rw04_allowed_actions(new_record)
-            inserted, existing_row = _atomic_insert_record(self._experiments_store, new_exp_id, new_record)
-            if inserted:
-                break
-            known_ids.add(cand_id)
-            if existing_row and isinstance(existing_row, dict):
-                if clean_key and existing_row.get("idempotency_key") == clean_key:
-                    e_tenant = str(existing_row.get("tenant_id") or (existing_row.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-                    if not clean_tenant or not e_tenant or e_tenant == clean_tenant:
-                        e_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
-                        if not clean_actor or not e_actor or e_actor == clean_actor:
-                            if existing_row.get("parent_experiment_id") == parent_id or existing_row.get("root_experiment_id") == root_id:
-                                return self._recover_or_replay_experiment(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
-            idx += 1
 
-        if ticket_id:
-            try:
-                _atomic_update_ticket_links(self._tickets_store, ticket_id, new_exp_id, timestamp)
-            except Exception:
+            if ticket_id:
                 try:
-                    if hasattr(self._experiments_store, "delete_if_matches"):
-                        self._experiments_store.delete_if_matches(new_exp_id, new_record)
-                    elif hasattr(self._experiments_store, "delete"):
-                        self._experiments_store.delete(new_exp_id)
+                    _atomic_update_ticket_links(self._tickets_store, ticket_id, new_exp_id, timestamp)
                 except Exception:
-                    pass
-                raise
+                    try:
+                        if hasattr(self._experiments_store, "delete_if_matches"):
+                            self._experiments_store.delete_if_matches(new_exp_id, new_record)
+                        elif hasattr(self._experiments_store, "delete"):
+                            self._experiments_store.delete(new_exp_id)
+                    except Exception:
+                        pass
+                    raise
 
-        if not new_record.get("is_committed"):
-            new_record["is_committed"] = True
-            self._experiments_store.put(new_exp_id, new_record)
-        return self._project_experiment_detail(new_record)
+            if not new_record.get("is_committed"):
+                new_record = _finalize_experiment_record(self._experiments_store, new_exp_id, new_record)
+            return self._project_experiment_detail(new_record)
+        finally:
+            if inflight_token:
+                with self._active_inflight_lock:
+                    self._active_inflight.discard(inflight_token)
 
     def archive_research_experiment(
         self,

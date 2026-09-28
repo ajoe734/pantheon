@@ -3517,16 +3517,46 @@ class ResearchRouterService:
             )
         return result
 
-    def launch_experiment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def launch_experiment(
+        self,
+        payload: Dict[str, Any],
+        *,
+        actor_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        req_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        launch_context = dict(payload.get("launch_context") or {})
+        clean_actor = str(actor_id or "").strip() or None
+        clean_tenant = str(tenant_id or "").strip() or None
+        clean_key = str(idempotency_key or "").strip() or None
+        if clean_actor and "actor_id" not in launch_context:
+            launch_context["actor_id"] = clean_actor
+        if clean_tenant and "tenant_id" not in launch_context:
+            launch_context["tenant_id"] = clean_tenant
+
         port = self._port()
-        with self._map_port_errors("create_research_experiment"):
-            experiment = port.create_research_experiment(
-                ticket_id=payload["ticket_id"],
-                experiment_name=payload["experiment_name"],
-                strategy_selector=payload["strategy_selector"],
-                parameter_set=payload["parameter_set"],
-                run_config=payload["run_config"],
-                launch_context=payload["launch_context"],
+        try:
+            with self._map_port_errors("create_research_experiment"):
+                experiment = port.create_research_experiment(
+                    ticket_id=payload["ticket_id"],
+                    experiment_name=payload["experiment_name"],
+                    strategy_selector=payload.get("strategy_selector") or {},
+                    parameter_set=payload.get("parameter_set") or {},
+                    run_config=payload.get("run_config") or {},
+                    launch_context=launch_context,
+                    queued_at=self.utc_now(),
+                    idempotency_key=clean_key,
+                    request_hash=req_hash,
+                    tenant_id=clean_tenant,
+                    actor_id=clean_actor,
+                )
+        except ResearchWriteOwnerUnavailableError as exc:
+            self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Research experiment write owner unavailable",
+                str(exc),
             )
         experiment_id = str(experiment.get("experiment_id") or "")
         return {

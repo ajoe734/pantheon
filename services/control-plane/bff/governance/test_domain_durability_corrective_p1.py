@@ -20,7 +20,7 @@ from services.control_plane.bff.runtime.service import _resolve_default_runtime_
 from services.control_plane.bff.command_adapters.service import CommandAdapterService
 from services.control_plane.bff.command_adapters.router import create_command_adapters_router
 from services.control_plane.bff.deployment.router import create_deployment_router
-from services.control_plane.bff.research.router import create_research_experiments_router
+from services.control_plane.bff.research.router import create_research_experiments_router, create_research_router
 from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
 from services.research.write_owner import ResearchWriteOwner
 
@@ -1017,3 +1017,147 @@ def test_retry_experiment_final_commit_failure_and_recovery():
     assert experiments.rows[new_id]["is_committed"] is True
     assert retried["attempt_number"] == 2
     assert new_id in tickets.get("ticket-1")["linked_experiments"]
+
+
+class LostAdmissionAck(CASStore):
+    armed = True
+
+    def compare_and_set(self, key, expected, value, *, conn=None):
+        result = super().compare_and_set(key, expected, value, conn=conn)
+        if self.armed and result[0]:
+            self.armed = False
+            raise OSError("connection lost after admission committed, before ticket update")
+        return result
+
+
+class PausedFirstFinalCommit(CASStore):
+    def __init__(self):
+        super().__init__()
+        self.entered, self.release = Event(), Event()
+        self.armed = True
+
+    def put(self, key, value):
+        if self.armed and value.get("is_committed"):
+            self.armed = False
+            self.entered.set()
+            assert self.release.wait(timeout=15)
+        return super().put(key, value)
+
+
+def _full_research_client(tickets, experiments, tenant="tenant", actor="actor"):
+    owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments, notes_store=AtomicIO())
+    app = FastAPI()
+    identity = SimpleNamespace(operator_id=actor, tenant_id=tenant, roles=["admin"])
+    app.include_router(
+        create_research_router(
+            read_surface=DefaultResearchKnowledgeSourcePort(research_write_owner=owner),
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda i: None,
+            require_operator_role=lambda i: None,
+            bff_error=lambda s, c, m, *a, **kw: HTTPException(s, detail=m),
+            utc_now=lambda: "2026-09-28T00:00:00Z",
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_restart_recovers_admission_before_ticket_link():
+    tickets, experiments = CASStore(), LostAdmissionAck()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    body = {"name": "experiment", "ticket_id": "ticket-1"}
+    headers = {"Idempotency-Key": "independent-ack-test"}
+    first = _full_research_client(tickets, experiments).post("/bff/experiments", json=body, headers=headers)
+    restarted = _full_research_client(tickets, experiments)
+    retries = [restarted.post("/bff/experiments", json=body, headers=headers) for _ in range(2)]
+    evidence = {
+        "first": first.status_code,
+        "retries": [r.status_code for r in retries],
+        "committed": [r["is_committed"] for r in experiments.rows.values()],
+        "links": tickets.get("ticket-1")["linked_experiments"],
+    }
+    assert first.status_code >= 500
+    assert retries[-1].status_code == 201, evidence
+    assert all(r["is_committed"] for r in experiments.rows.values()), evidence
+    assert len(tickets.get("ticket-1")["linked_experiments"]) == 1, evidence
+
+
+def test_delayed_final_commit_does_not_undo_accepted_cancel():
+    tickets, experiments = CASStore(), PausedFirstFinalCommit()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    body = {"name": "experiment", "ticket_id": "ticket-1"}
+    headers = {"Idempotency-Key": "delayed-put-test"}
+    first_client, second_client = _full_research_client(tickets, experiments), _full_research_client(tickets, experiments)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(first_client.post, "/bff/experiments", json=body, headers=headers)
+        assert experiments.entered.wait(timeout=10)
+        try:
+            replay = second_client.post("/bff/experiments", json=body, headers=headers)
+            assert replay.status_code == 201, replay.text
+            eid = replay.json()["experiment_id"]
+            canceled = second_client.post(f"/api/v1/experiments/{eid}/cancel", json={"reason": "isolated cancellation"})
+            assert canceled.status_code == 200, canceled.text
+            assert experiments.get(eid)["status"] == "canceled"
+        finally:
+            experiments.release.set()
+        response = first.result(timeout=10)
+    final = experiments.get(eid)
+    evidence = {
+        "first": response.status_code,
+        "replay": replay.status_code,
+        "cancel": canceled.status_code,
+        "cancel_result": canceled.json()["status"],
+        "final_status": final["status"],
+        "final_cancellation_fence": final.get("cancellation_fence"),
+    }
+    assert response.status_code == 201, evidence
+    assert final["status"] == "canceled" and final.get("cancellation_fence"), evidence
+
+
+def test_mounted_launch_honors_scoped_idempotency_and_isolation():
+    tickets, experiments = CASStore(), CASStore()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    payload = {
+        "ticket_id": "ticket-1",
+        "experiment_name": "isolated",
+        "strategy_selector": {},
+        "parameter_set": {},
+        "run_config": {
+            "dataset_ref": "isolated",
+            "time_range": {"start_at": "2026-01-01", "end_at": "2026-01-02"},
+            "execution_mode": "paper",
+            "requested_by": "actor",
+        },
+        "launch_context": {},
+    }
+    headers = {"Idempotency-Key": "independent-launch-key"}
+    client1 = _full_research_client(tickets, experiments, tenant="tenant-a", actor="actor-a")
+
+    # 1. First launch succeeds
+    first = client1.post("/api/v1/experiments/launch", json=payload, headers=headers)
+    assert first.status_code == 200, first.text
+    eid = first.json()["experiment_id"]
+
+    # Durable row checks
+    exp_row = experiments.rows[eid]
+    assert exp_row.get("idempotency_key") == "independent-launch-key"
+    assert exp_row.get("tenant_id") == "tenant-a"
+    assert exp_row.get("actor_id") == "actor-a"
+
+    # 2. Replay with identical payload and same key (simulating process restart)
+    client_restart = _full_research_client(tickets, experiments, tenant="tenant-a", actor="actor-a")
+    second = client_restart.post("/api/v1/experiments/launch", json=payload, headers=headers)
+    assert second.status_code == 200, second.text
+    assert second.json()["experiment_id"] == eid
+
+    # 3. Conflicting payload with same key returns 409
+    conflicting_payload = dict(payload, experiment_name="conflict-name")
+    conflict = client1.post("/api/v1/experiments/launch", json=conflicting_payload, headers=headers)
+    assert conflict.status_code == 409, conflict.text
+
+    # 4. Same key with different tenant provides isolation
+    client2 = _full_research_client(tickets, experiments, tenant="tenant-b", actor="actor-b")
+    isolated = client2.post("/api/v1/experiments/launch", json=payload, headers=headers)
+    assert isolated.status_code == 200, isolated.text
+    assert isolated.json()["experiment_id"] != eid
+    assert len(experiments.rows) == 2
+
