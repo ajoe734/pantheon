@@ -237,7 +237,7 @@ def capture_fe(case):
     return artifacts.capture_frontend(release_store=store, live_link=link, frontend_sha=FRONTEND, backend_sha=SOURCE)
 
 
-@pytest.mark.parametrize("change", ["assets", "manifest_bytes", "target", "source", "symlink_asset", "outside"])
+@pytest.mark.parametrize("change", ["assets", "manifest_bytes", "target", "source", "symlink_asset", "symlink_receipt", "outside"])
 def test_same_source_does_not_mask_frontend_artifact_drift(frontend_case, change):
     store, release, link = frontend_case
     before = capture_fe(frontend_case)
@@ -254,6 +254,7 @@ def test_same_source_does_not_mask_frontend_artifact_drift(frontend_case, change
         data = json.loads(manifest.read_text()); data["commit"] = "c" * 40
         manifest.write_text(json.dumps(data))
     elif change == "symlink_asset": (release / "escape.js").symlink_to(release / "index.html")
+    elif change == "symlink_receipt": (release / ".prepared-receipt.json").symlink_to(release / "index.html")
     elif change == "outside": link.unlink(); link.symlink_to(store.parent)
     with pytest.raises((artifacts.ArtifactError, OSError)):
         artifacts.verify_frontend(before, release_store=store, live_link=link)
@@ -261,6 +262,13 @@ def test_same_source_does_not_mask_frontend_artifact_drift(frontend_case, change
 
 def test_frontend_exact_readback(frontend_case):
     before = capture_fe(frontend_case)
+    artifacts.verify_frontend(before, release_store=frontend_case[0], live_link=frontend_case[2])
+
+
+def test_prepared_receipt_does_not_change_frontend_asset_identity(frontend_case):
+    before = capture_fe(frontend_case)
+    (frontend_case[1] / ".prepared-receipt.json").write_text('{"fixture": "prepared"}\n')
+    assert capture_fe(frontend_case) == before
     artifacts.verify_frontend(before, release_store=frontend_case[0], live_link=frontend_case[2])
 
 
@@ -322,6 +330,7 @@ def test_canonical_dist_matches_separate_frontend_helper(frontend_case):
     release = frontend_case[1]
     (release / "é.txt").write_text("utf8 fixture")
     (release / "😀.txt").write_text("astral fixture")
+    (release / ".prepared-receipt.json").write_text('{"fixture": "prepared"}\n')
     script = "const m=await import(process.argv[1]); console.log(m.digestReleaseDist({distDir:process.argv[2]}).artifactDigestSha256)"
     result = subprocess.run(["node", "--input-type=module", "-e", script,
                              Path(helper).resolve().as_uri(), str(release)], capture_output=True, text=True, check=True)
