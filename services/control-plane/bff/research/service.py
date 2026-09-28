@@ -1897,25 +1897,24 @@ class ResearchRouterService:
                 evidence_kind = SOURCE_TYPE_TO_EVIDENCE_KIND.get(
                     str(source_document.get("source_type") or "").strip(), "",
                 )
-        if evidence_kind:
-            [processed_self], _ = redact_evidence_refs(
-                identity,
-                [{"ref_id": ref_id, "evidence_type": evidence_kind}],
-                capabilities=capabilities,
-            )
-            if isinstance(processed_self, dict) and processed_self.get("redacted"):
-                return {
-                    **processed_self,
-                    "meta": {
-                        **self.snapshot_meta(snapshot_at),
-                        "surfaces": {
-                            "evidence_ref_detail": detail_surface,
-                            "resolved_link": detail_surface,
-                            "linked_decisions": detail_surface,
-                        },
-                        "redacted_evidence_count": 1,
+        [processed_self], _ = redact_evidence_refs(
+            identity,
+            [{"ref_id": ref_id, "evidence_type": evidence_kind}],
+            capabilities=capabilities,
+        )
+        if isinstance(processed_self, dict) and processed_self.get("redacted"):
+            return {
+                **processed_self,
+                "meta": {
+                    **self.snapshot_meta(snapshot_at),
+                    "surfaces": {
+                        "evidence_ref_detail": detail_surface,
+                        "resolved_link": detail_surface,
+                        "linked_decisions": detail_surface,
                     },
-                }
+                    "redacted_evidence_count": 1,
+                },
+            }
 
         raw_linked_decisions = json.loads(json.dumps(evidence_ref.get("linked_decisions") or []))
         annotated_decisions: List[Any] = []

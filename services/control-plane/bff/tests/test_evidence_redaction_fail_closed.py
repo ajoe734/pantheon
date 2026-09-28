@@ -353,6 +353,78 @@ def test_kw03_research_evidence_detail_fails_closed_when_capabilities_unresolvab
     assert "source_document" not in payload
 
 
+class _UnresolvedKindPort:
+    """Minimal read-surface stub exposing a single evidence ref whose kind
+    cannot be resolved (no ``evidence_type`` and a ``source_document.source_type``
+    absent from ``SOURCE_TYPE_TO_EVIDENCE_KIND``)."""
+
+    REF_ID = "evref-unresolved-kind-0001"
+
+    def get_evidence_ref_detail(self, ref_id: str) -> Optional[dict]:
+        if ref_id != self.REF_ID:
+            return None
+        return {
+            "ref_id": self.REF_ID,
+            "source_document": {"title": "Untyped internal note", "source_type": "internal"},
+            "link_type": "supporting_evidence",
+            "credibility": {"tier": "primary", "verified": True},
+            "resolved_link": {"href": "/knowledge/notes/note-x", "availability": "available"},
+            "linked_object_summary": {},
+            "linked_decisions": [],
+            "source_note_context": {"note_id": "note-x", "title": "Should not leak"},
+            "source_memory_context": {"entry_id": "mem-x", "headline": "Should not leak"},
+            "created_at": "2026-09-28T00:00:00Z",
+        }
+
+
+def test_kw03_research_evidence_detail_self_ref_unresolved_kind_fails_closed_low_and_full() -> None:
+    """Regression for the [P1] research/service.py:1893-1918 self-ref bypass:
+    ``_evidence_detail_payload`` used to only call ``redact_evidence_refs`` when
+    ``evidence_kind`` was already truthy (``if evidence_kind:``), so a ref whose
+    kind could not be resolved skipped redaction entirely and disclosed
+    ``source_document``/``source_note_context``/``source_memory_context``. The
+    base redactor is now called unconditionally, so an unresolved kind is
+    withheld with ``unresolved_evidence_kind`` for every identity -- including
+    a full-capability one, since an unverifiable ``required_capability`` can
+    never be proven safe to disclose either way."""
+    from services.control_plane.bff.research.router import create_research_router
+
+    port = _UnresolvedKindPort()
+    app = FastAPI()
+    app.include_router(
+        create_research_router(
+            read_surface=port,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=lambda: "2026-09-28T00:00:00Z",
+            get_capabilities=auth_policy.capabilities_for_identity,
+        )
+    )
+    with _stub_auth_env():
+        client = TestClient(app)
+        low = client.get(
+            f"/api/v1/knowledge/evidence/{port.REF_ID}",
+            headers={"Authorization": LOW_CAPABILITY_AUTH},
+        )
+        full = client.get(
+            f"/api/v1/knowledge/evidence/{port.REF_ID}",
+            headers={"Authorization": FULL_CAPABILITY_AUTH},
+        )
+
+    for label, response in (("low", low), ("full", full)):
+        assert response.status_code == 200, f"{label}: {response.text}"
+        payload = response.json()
+        assert payload.get("redacted") is True, f"{label}: {payload}"
+        assert payload.get("required_capability") == "unknown", f"{label}: {payload}"
+        assert payload.get("reason") == "unresolved_evidence_kind", f"{label}: {payload}"
+        assert "source_document" not in payload, f"{label}: {payload}"
+        assert "source_note_context" not in payload, f"{label}: {payload}"
+        assert "source_memory_context" not in payload, f"{label}: {payload}"
+        assert "linked_decisions" not in payload, f"{label}: {payload}"
+
+
 # ===========================================================================
 # 3. Caller 4: personas/service.py PM12 quarterly evidence via the real
 #    persona router.

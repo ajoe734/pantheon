@@ -1028,6 +1028,13 @@ def test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfac
     port = _Port()
     port.evidence_refs["evidence-detail"] = {
         "ref_id": "evidence-detail",
+        # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: explicit resolvable
+        # evidence_type so this ref's own detail projection is gated on a
+        # known capability (postmortem.read) rather than relying on the old
+        # fail-open bypass that disclosed source_document/linked_decisions/
+        # source_note_context/source_memory_context whenever the kind was
+        # unresolved (research/service.py's `if evidence_kind:` guard).
+        "evidence_type": "postmortem",
         "source_document": {"title": "Operator note", "source_type": "internal"},
         "link_type": "supporting_evidence",
         "credibility": {"tier": "primary", "verified": True, "reason": "reviewed"},
@@ -1083,7 +1090,12 @@ def test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfac
         "scope": {"type": "persona", "filter": "persona-1"},
     }
 
-    client = _client(port, capabilities=[])
+    # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: postmortem.read only, so the
+    # evidence-detail ref's own kind is authorized (proving a full-capability
+    # identity for its kind still sees the full projection) while the
+    # strategy_spec/research_note linked_decisions below remain gated on
+    # capabilities this identity does not hold.
+    client = _client(port, capabilities=["postmortem.read"])
 
     evidence = client.get("/api/v1/knowledge/evidence/evidence-detail")
     assert evidence.status_code == 200, evidence.text
