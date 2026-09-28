@@ -413,11 +413,9 @@ class CommandStore:
         if value:
             return value
 
-        params = command.get("params") if isinstance(command.get("params"), dict) else {}
-        for key in ("tenant_id", "tenant"):
-            val = str(params.get(key) or "").strip()
-            if val:
-                return val
+        # Deliberately no fallback to command["params"]: params originate
+        # from the caller-controlled request body/stored command and must
+        # never be treated as tenant authority for duplicate-key scoping.
         return None
 
     def get_command_by_idempotency_key(

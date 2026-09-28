@@ -894,7 +894,7 @@ class CapitalService:
                     parts = k.split(":")
                     if len(parts) >= 5:
                         s_tenant, s_actor, s_op, s_target, s_key = parts[0], parts[1], parts[2], parts[3], parts[4]
-                        if s_key == key and s_actor == actor_id and (not tenant_id or s_tenant == tenant_id):
+                        if s_key == key and s_actor == actor_id and s_tenant == (tenant_id or ""):
                             if target_id and s_target and s_target != target_id:
                                 raise CapitalValidationError("Idempotency key was already used with a different target")
                             if s_op != operation:

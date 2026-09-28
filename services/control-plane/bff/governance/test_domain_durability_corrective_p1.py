@@ -30,6 +30,11 @@ from services.research.write_owner import ResearchWriteOwner
 
 PAYLOAD = {"plan_id": "review-plan", "decision": "approve", "memo": "isolated reviewer check"}
 IDENTITY = SimpleNamespace(operator_id="reviewer-test", roles=["admin", "approver", "operator"])
+TENANT_SCOPED_IDENTITY = SimpleNamespace(
+    operator_id="reviewer-test",
+    roles=["admin", "approver", "operator"],
+    claims={"tenant_id": "reviewer-tenant"},
+)
 
 
 def governance_client(store, identity=IDENTITY):
@@ -82,7 +87,7 @@ def test_capital_approval_must_not_execute_apply():
     app = FastAPI()
     app.include_router(create_capital_router(
         get_read_store=lambda: read,
-        extract_identity=lambda authorization: IDENTITY,
+        extract_identity=lambda authorization: TENANT_SCOPED_IDENTITY,
         require_operator_role=lambda identity: None,
     ))
     client = TestClient(app, raise_server_exceptions=True)
@@ -98,7 +103,7 @@ def test_capital_sign_must_not_execute_apply():
     app = FastAPI()
     app.include_router(create_capital_router(
         get_read_store=lambda: read,
-        extract_identity=lambda authorization: IDENTITY,
+        extract_identity=lambda authorization: TENANT_SCOPED_IDENTITY,
         require_operator_role=lambda identity: None,
     ))
     client = TestClient(app, raise_server_exceptions=True)

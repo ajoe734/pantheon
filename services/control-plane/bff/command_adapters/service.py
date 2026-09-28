@@ -2288,6 +2288,18 @@ class CommandAdapterService:
 
         caller_tenant = resolve_identity_tenant(identity)
         clean_caller_tenant = str(caller_tenant or "").strip() or None
+        body_tenant_raw = cmd.params.get("tenant_id") or payload.get("tenant_id") or payload.get("tenantId")
+        body_tenant = str(body_tenant_raw).strip() if body_tenant_raw else None
+        if body_tenant and body_tenant != clean_caller_tenant:
+            raise foundation_bff_error(
+                self._raise_error(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Request tenant_id does not match the authenticated tenant scope",
+                    f"body tenant {body_tenant!r} does not match authenticated tenant {clean_caller_tenant!r}",
+                ),
+                foundation_context=foundation_context,
+            )
         token_id_param = str(x_confirm_token or payload.get("confirm_token") or payload.get("confirmToken") or "").strip()
         if token_id_param:
             try:
@@ -2358,8 +2370,10 @@ class CommandAdapterService:
         stored_params = stored_command_params(cmd, identity, payload)
         stored_params["idempotency_key"] = resolved_key
         stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
-        if clean_caller_tenant:
-            stored_params["tenant_id"] = clean_caller_tenant
+        # Canonicalize unconditionally, including a trusted None: a caller
+        # whose tenant cannot be resolved must never keep whatever
+        # caller-controlled tenant_id rode in on cmd.params/payload.
+        stored_params["tenant_id"] = clean_caller_tenant
         canonicalize_validated_precondition_evidence(
             stored_params,
             precondition_evidence,
@@ -2417,8 +2431,10 @@ class CommandAdapterService:
             "foundation": serialize_foundation_context(foundation_context),
             "receipt_dual_write": receipt_dual_write,
         }
-        if clean_caller_tenant:
-            audit_record["tenant_id"] = clean_caller_tenant
+        # Stamp unconditionally (including None) so the execution-side
+        # resolver always has an authoritative admission-time tenant key
+        # and never needs to fall back to caller-controlled stored params.
+        audit_record["tenant_id"] = clean_caller_tenant
         if resolved_key:
             audit_record["idempotency_key"] = resolved_key
         if precondition_evidence:
@@ -2712,9 +2728,12 @@ def _resolve_execution_params_for_record(
     foundation = record.get("foundation") or {}
     idempotency = foundation.get("idempotency_record") or {}
 
-    # Authoritative identities from record
-    tenant_id = audit.get("tenant_id") or idempotency.get("tenant_id") or params.get("tenant_id")
-    actor_id = audit.get("operator_id") or audit.get("actor") or idempotency.get("operator_id") or params.get("actor_id") or params.get("operator_id")
+    # Authoritative identities from record. These must come only from the
+    # admission-stamped audit trail; the caller-controlled stored params
+    # (or an outbox-serialized idempotency record placeholder) must never
+    # be treated as authority for tenant/actor scoping.
+    tenant_id = audit.get("tenant_id") if "tenant_id" in audit else idempotency.get("tenant_id")
+    actor_id = audit.get("operator_id") or audit.get("actor") or idempotency.get("operator_id")
     idempotency_key = audit.get("idempotency_key") or idempotency.get("idempotency_key") or params.get("idempotency_key")
     request_hash = audit.get("request_hash") or idempotency.get("request_hash") or params.get("request_hash")
     command_id = record.get("command_id")
@@ -2732,8 +2751,10 @@ def _resolve_execution_params_for_record(
         if target_type.lower() in ("experiment", "researchexperiment", "research-experiment") or command_type == CommandType.EXPERIMENT_ACTION or "experiment" in command_type.value.lower():
             params["experiment_id"] = target_id
 
-    if tenant_id:
-        params["tenant_id"] = tenant_id
+    # Always overwrite, including with None: a stored params dict must
+    # never retain a stale or caller-controlled tenant_id once the
+    # admission-stamped audit tenant is authoritative for this record.
+    params["tenant_id"] = tenant_id
     if actor_id:
         params["actor_id"] = actor_id
         params["operator_id"] = actor_id

@@ -1535,7 +1535,7 @@ class ResearchWriteOwner:
         timestamp = queued_at or _utc_now_rfc3339()
 
         clean_key = str(idempotency_key).strip() if idempotency_key else None
-        clean_actor = str(actor_id or (launch_context or {}).get("actor_id") or "").strip() or None
+        clean_actor = str(actor_id or "").strip() or None
         clean_tenant = str(tenant_id).strip() if tenant_id else None
         launch_tenant_raw = (launch_context or {}).get("tenant_id")
         launch_tenant = str(launch_tenant_raw).strip() if launch_tenant_raw else None
@@ -1873,7 +1873,7 @@ class ResearchWriteOwner:
         # clean_tenant already resolved above from the trusted tenant_id
         # only (validated against exp_tenant); do not re-derive it from
         # the stored record here.
-        clean_actor = str(actor_id or exp.get("created_by") or exp.get("actor_id") or (exp.get("launch_context") or {}).get("actor_id") or "").strip() or None
+        clean_actor = str(actor_id or "").strip() or None
         clean_cmd_id = str(command_id or kwargs.get("command_id") or "").strip() or None
 
         inflight_token = (clean_tenant, clean_actor, clean_key) if clean_key else None

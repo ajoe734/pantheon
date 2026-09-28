@@ -208,7 +208,10 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         actual_action = canonical_action if is_canonical_paper else ("PauseRuntime" if pause_action == "pause" else "ResumeRuntime")
 
         target_runtime_id = str(entity_id or "").strip()
-        expected_tenant = str(params.get("tenant_id") or (params.get("metadata") or {}).get("tenant_id") or "").strip()
+        # params["metadata"] is caller-controlled request body content and
+        # must never be treated as tenant authority; only the
+        # admission-stamped params tenant is trusted here.
+        expected_tenant = str(params.get("tenant_id") or "").strip()
 
         if is_canonical_paper:
             if any(str(params.get(key) or target_runtime_id).strip() != target_runtime_id for key in ("runtime_id", "runtimeId")):
@@ -291,11 +294,17 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
                     error_code="BINDING_MISMATCH",
                 )
 
+            # expected_tenant must come only from the admission-stamped
+            # command tenant; it must never be self-healed from the
+            # binding's own tenant before the comparison below, which
+            # would make the mismatch check trivially pass for an
+            # unresolved caller tenant against a genuinely tenant-owned
+            # binding. An unresolved caller tenant is only legitimate
+            # when the binding itself is also untenanted (documented
+            # single-tenant/stub-auth deployment mode).
             b_meta = binding.get("metadata") or {} if isinstance(binding, dict) else getattr(binding, "metadata", {}) or {}
-            if not expected_tenant:
-                expected_tenant = str(b_meta.get("tenant_id") or b_meta.get("tenantId") or binding.get("tenant_id") or binding.get("tenantId") or "").strip()
             binding_tenant = str(b_meta.get("tenant_id") or b_meta.get("tenantId") or binding.get("tenant_id") or binding.get("tenantId") or "").strip()
-            if not expected_tenant or binding_tenant != expected_tenant:
+            if binding_tenant != expected_tenant:
                 raise ActionUnavailableError("Runtime owner tenant changed before execution", error_code="TENANT_MISMATCH")
         else:
             effective_binding_id = entity_id or str(params.get("runtime_binding_id") or params.get("binding_id") or params.get("runtime_id") or "").strip()

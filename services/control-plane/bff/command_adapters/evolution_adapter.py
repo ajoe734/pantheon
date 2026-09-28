@@ -321,9 +321,12 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         if idempotency_key:
             payload["idempotency_key"] = idempotency_key
 
+        # sub_payload is the caller-controlled nested body and must never
+        # be treated as tenant authority; only the admission-stamped
+        # params tenant (or an explicit operator-configured default) may
+        # select the outbound tenant scope.
         tenant_id = (
             params.get("tenant_id")
-            or sub_payload.get("tenant_id")
             or os.getenv("EVOLUTION_DEFAULT_TENANT_ID")
             or os.getenv("PANTHEON_TENANT_ID")
             or "default"
