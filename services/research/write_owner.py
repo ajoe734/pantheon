@@ -1719,16 +1719,26 @@ class ResearchWriteOwner:
                 for e in existing_experiments:
                     if not isinstance(e, dict):
                         continue
-                    if e.get("idempotency_key") != clean_key:
-                        continue
-                    e_tenant = str(e.get("tenant_id") or (e.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-                    if clean_tenant and e_tenant and e_tenant != clean_tenant:
-                        continue
-                    e_actor = str(e.get("actor_id") or e.get("created_by") or (e.get("launch_context") or {}).get("actor_id") or "").strip() or None
-                    if clean_actor and e_actor and e_actor != clean_actor:
-                        continue
-                    if e.get("parent_experiment_id") == parent_id or e.get("root_experiment_id") == root_id:
-                        return self._recover_or_replay_experiment(e, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                    if e.get("idempotency_key") == clean_key:
+                        e_tenant = str(e.get("tenant_id") or (e.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                        if not clean_tenant or not e_tenant or e_tenant == clean_tenant:
+                            e_actor = str(e.get("actor_id") or e.get("created_by") or (e.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                            if not clean_actor or not e_actor or e_actor == clean_actor:
+                                if e.get("parent_experiment_id") == parent_id or e.get("root_experiment_id") == root_id:
+                                    return self._recover_or_replay_experiment(e, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                                raise ResearchIdempotencyConflictError(
+                                    f"Idempotency key {clean_key!r} already used for conflicting target {e.get('experiment_id')!r}"
+                                )
+                    for cmd in (e.get("command_history") or []):
+                        if isinstance(cmd, dict) and cmd.get("idempotency_key") == clean_key:
+                            c_tenant = str(cmd.get("tenant_id") or "").strip() or None
+                            c_actor = str(cmd.get("actor_id") or "").strip() or None
+                            if (not clean_tenant or not c_tenant or c_tenant == clean_tenant) and (not clean_actor or not c_actor or c_actor == clean_actor):
+                                if cmd.get("command") == "RetryResearchExperiment" and (e.get("parent_experiment_id") == parent_id or e.get("root_experiment_id") == root_id):
+                                    return self._recover_or_replay_experiment(e, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                                raise ResearchIdempotencyConflictError(
+                                    f"Idempotency key {clean_key!r} already used for command {cmd.get('command')!r} on experiment {e.get('experiment_id')!r}"
+                                )
 
             known_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
             date_prefix = timestamp[:10].replace("-", "")
@@ -1749,6 +1759,9 @@ class ResearchWriteOwner:
                             if not clean_actor or not e_actor or e_actor == clean_actor:
                                 if existing_probe.get("parent_experiment_id") == parent_id or existing_probe.get("root_experiment_id") == root_id:
                                     return self._recover_or_replay_experiment(existing_probe, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                                raise ResearchIdempotencyConflictError(
+                                    f"Idempotency key {clean_key!r} already used for conflicting target {existing_probe.get('experiment_id')!r}"
+                                )
                     idx += 1
                     continue
                 new_exp_id = cand_id
@@ -1831,6 +1844,9 @@ class ResearchWriteOwner:
                             if not clean_actor or not e_actor or e_actor == clean_actor:
                                 if existing_row.get("parent_experiment_id") == parent_id or existing_row.get("root_experiment_id") == root_id:
                                     return self._recover_or_replay_experiment(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                                raise ResearchIdempotencyConflictError(
+                                    f"Idempotency key {clean_key!r} already used for conflicting target {existing_row.get('experiment_id')!r}"
+                                )
                 idx += 1
 
             if ticket_id:

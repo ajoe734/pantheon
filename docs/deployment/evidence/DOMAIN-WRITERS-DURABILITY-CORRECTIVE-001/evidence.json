@@ -296,6 +296,14 @@
     "defect_73_experiment_adapter_dispatcher_command_id_fail_closed": {
       "problem": "services/control-plane/bff/command_adapters/experiment_adapter.py:102 accepted blank/whitespace dispatcher command_id by falling back to params.command_id or uuid.uuid4(), allowing experiment mutations without the trusted admitted command identity.",
       "remediation": "Enforced strict fail-closed validation on dispatcher command_id (rejecting empty or whitespace IDs with ValueError before any owner mutation) and completely removed body-ID and generated-ID fallbacks. Added negative regressions for cancel/retry/archive/invalidate across empty/whitespace/None dispatcher IDs both with and without body command_id in test_domain_durability_corrective_p1.py and test_research_jobs_action_receipts.py, asserting zero owner state or receipt changes."
+    },
+    "defect_74_experiment_retry_idempotency_collision_loop_termination": {
+      "problem": "services/research/write_owner.py:1822-1834: create experiment with key K, cancel with another key, then POST actions/retry with K was accepted 202 but owner looped forever allocating candidate IDs (exp-YYYYMMDD-002..006); insert_if_absent always returned the original create row on tenant/actor/key collision, and unmatched lineage merely incremented idx, treating permanent idempotency collisions as ID collisions.",
+      "remediation": "Updated retry_research_experiment pre-check, store-probe check, and atomic insert loop in services/research/write_owner.py to raise ResearchIdempotencyConflictError promptly whenever clean_key matches an existing row or command with non-matching lineage/target, terminating immediately instead of looping. Added exception translation in ExperimentCommandAdapter to return ActionUnavailableError (409 IDEMPOTENCY_CONFLICT). Added regression test_mounted_retry_key_collision_terminates_without_allocation_loop verifying immediate failure without unbounded ID allocation."
+    },
+    "defect_75_experiment_retry_canonical_aggregate_identity": {
+      "problem": "services/control-plane/bff/command_adapters/experiment_adapter.py:277-287: successful retry persisted top-level aggregate_id=old experiment 001 with version=1 from new experiment 002, while canonical owner domain_receipt.aggregate_id=002, violating SD4.4 canonical receipt consistency.",
+      "remediation": "Updated ExperimentCommandAdapter._execute_retry to preserve canonical owner aggregate_id and aggregate_version from the new experiment receipt in the top-level durable result, while preserving the previous target experiment ID separately in entity_id, previous_experiment_id, and target_experiment_id. Added mounted regression test_mounted_retry_canonical_aggregate_matches_owner in test_domain_durability_corrective_p1.py."
     }
   },
   "mutation_caller_inventory": {
@@ -1001,6 +1009,30 @@
         "result": "26 passed, 3 warnings in 17.30s",
         "executed": 26,
         "collected": 26
+      },
+      {
+        "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python -m pytest -q /tmp/test_domain_review_4082.py",
+        "result": "2 passed, 1 warning in 4.07s",
+        "executed": 2,
+        "collected": 2
+      },
+      {
+        "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "128 passed, 10 warnings in 75.04s",
+        "executed": 128,
+        "collected": 128
+      },
+      {
+        "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python -m pytest -q services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+        "result": "75 passed, 3 warnings in 34.88s",
+        "executed": 75,
+        "collected": 75
+      },
+      {
+        "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python services/control-plane/bff/smoke_test.py",
+        "result": "26 passed in 1.139s",
+        "executed": 26,
+        "collected": 26
       }
     ]
   },
@@ -1082,7 +1114,9 @@
     "defect_70_experiment_adapter_direct_implementation_and_processor_regressions_resolved": true,
     "defect_71_experiment_adapter_dispatcher_command_id_authority_resolved": true,
     "defect_72_commit_trailer_length_and_normative_plan_access_resolved": true,
-    "defect_73_experiment_adapter_dispatcher_command_id_fail_closed_resolved": true
+    "defect_73_experiment_adapter_dispatcher_command_id_fail_closed_resolved": true,
+    "defect_74_experiment_retry_idempotency_collision_loop_termination_resolved": true,
+    "defect_75_experiment_retry_canonical_aggregate_identity_resolved": true
   },
   "review": {
     "reviewer": "Codex",

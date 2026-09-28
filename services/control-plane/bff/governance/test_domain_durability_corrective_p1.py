@@ -2807,6 +2807,77 @@ def test_experiment_adapter_rejects_empty_whitespace_dispatcher_command_id(
         assert "invalidate_receipt" not in current_exp
 
 
+def test_mounted_retry_canonical_aggregate_matches_owner(tmp_path, monkeypatch):
+    import asyncio
+    from services.control_plane.bff.command_adapters.registry import find_adapter
+    from services.control_plane.bff.command_adapters.service import process_command
+    from services.control_plane.bff.models import CommandType
+
+    client, holder, identity, owner, store = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    adapter = find_adapter(CommandType.EXPERIMENT_ACTION)
+    monkeypatch.setattr(adapter, "_research_write_owner", owner)
+    created = client.post("/bff/experiments", json={"name": "review retry"}, headers={"Idempotency-Key": "create-key"})
+    assert created.status_code == 201, created.text
+    eid = created.json()["experiment_id"]
+    cancel = client.post(f"/bff/experiments/{eid}/actions/cancel", json={}, headers={"Idempotency-Key": "cancel-key"})
+    assert cancel.status_code == 202, cancel.text
+    asyncio.run(process_command(cancel.json()["data"]["command_id"], command_store=store))
+    assert owner._experiments_store.get(eid)["status"] == "canceled"
+
+    response = client.post(f"/bff/experiments/{eid}/actions/retry", json={}, headers={"Idempotency-Key": "retry-key"})
+    assert response.status_code == 202, response.text
+    cid = response.json()["data"]["command_id"]
+    asyncio.run(process_command(cid, command_store=store))
+    record = store.get_command(cid)
+    assert record["status"] == "executed", record
+    result = record["result"]
+    child = owner._experiments_store.get(result["new_experiment_id"])
+    assert result["aggregate_id"] == child["retry_receipt"]["aggregate_id"], result
+    assert result["aggregate_id"] == result["new_experiment_id"]
+    assert result["previous_experiment_id"] == eid
+    assert result["target_experiment_id"] == eid
+
+
+def test_mounted_retry_key_collision_terminates_without_allocation_loop(tmp_path, monkeypatch):
+    import asyncio
+    from services.control_plane.bff.command_adapters.registry import find_adapter
+    from services.control_plane.bff.command_adapters.service import process_command
+    from services.control_plane.bff.models import CommandType
+    import services.research.write_owner as rwo
+
+    client, holder, identity, owner, store = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    adapter = find_adapter(CommandType.EXPERIMENT_ACTION)
+    monkeypatch.setattr(adapter, "_research_write_owner", owner)
+    created = client.post("/bff/experiments", json={"name": "review retry"}, headers={"Idempotency-Key": "shared-create-retry-key"})
+    assert created.status_code == 201, created.text
+    eid = created.json()["experiment_id"]
+    cancel = client.post(f"/bff/experiments/{eid}/actions/cancel", json={}, headers={"Idempotency-Key": "cancel-key"})
+    assert cancel.status_code == 202, cancel.text
+    asyncio.run(process_command(cancel.json()["data"]["command_id"], command_store=store))
+    assert owner._experiments_store.get(eid)["status"] == "canceled"
+
+    response = client.post(f"/bff/experiments/{eid}/actions/retry", json={}, headers={"Idempotency-Key": "shared-create-retry-key"})
+    assert response.status_code == 202, response.text
+    cid = response.json()["data"]["command_id"]
+    original = rwo._atomic_insert_record
+    collisions = []
+
+    def bounded_insert(*args, **kwargs):
+        if len(collisions) >= 5:
+            raise RuntimeError("review guard stopped unbounded idempotency allocation loop")
+        result = original(*args, **kwargs)
+        collisions.append((args[1], result[0], (result[1] or {}).get("experiment_id")))
+        return result
+
+    monkeypatch.setattr(rwo, "_atomic_insert_record", bounded_insert)
+    asyncio.run(process_command(cid, command_store=store))
+    assert len(collisions) < 5, {"collisions": collisions, "command": store.get_command(cid)}
+    cmd_record = store.get_command(cid)
+    assert cmd_record["status"] == "failed"
+    assert cmd_record["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+
+
 
 
 

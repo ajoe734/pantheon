@@ -31,6 +31,12 @@ from .base import (
     utc_now,
 )
 
+try:
+    from services.research.write_owner import ResearchIdempotencyConflictError
+except ImportError:
+    class ResearchIdempotencyConflictError(ValueError):  # type: ignore[no-redef]
+        pass
+
 log = logging.getLogger(__name__)
 
 
@@ -101,14 +107,25 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
                 downstream_status=503,
             )
 
-        if normalized_action == "cancel":
-            return self._execute_cancel(trusted_command_id, experiment_id, action_id, params, owner)
-        if normalized_action == "retry":
-            return self._execute_retry(trusted_command_id, experiment_id, action_id, params, owner)
-        if normalized_action in {"archive", "archived"}:
-            return self._execute_archive(trusted_command_id, experiment_id, action_id, params, owner)
-        if normalized_action in {"invalidate", "invalidated"}:
-            return self._execute_invalidate(trusted_command_id, experiment_id, action_id, params, owner)
+        try:
+            if normalized_action == "cancel":
+                return self._execute_cancel(trusted_command_id, experiment_id, action_id, params, owner)
+            if normalized_action == "retry":
+                return self._execute_retry(trusted_command_id, experiment_id, action_id, params, owner)
+            if normalized_action in {"archive", "archived"}:
+                return self._execute_archive(trusted_command_id, experiment_id, action_id, params, owner)
+            if normalized_action in {"invalidate", "invalidated"}:
+                return self._execute_invalidate(trusted_command_id, experiment_id, action_id, params, owner)
+        except ResearchIdempotencyConflictError as exc:
+            raise ActionUnavailableError(
+                f"Idempotency conflict for experiment {experiment_id!r} action {action_id!r}: {exc}",
+                action_id=action_id,
+                entity_type="Experiment",
+                error_code="IDEMPOTENCY_CONFLICT",
+                suggestion="Use a unique Idempotency-Key or resubmit with the original parameters.",
+                retryable=False,
+                downstream_status=409,
+            )
         if normalized_action == "promote":
             raise ActionUnavailableError(
                 f"Experiment {experiment_id!r} promotion requires Governance review tokens and target registry verification "
@@ -268,8 +285,18 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             )
 
         new_exp_id = result.get("experiment_id") or result.get("id")
-        receipt_dict = result.get("receipt") or {}
-        agg_version = receipt_dict.get("aggregate_version") or result.get("aggregate_version") or 1
+        receipt_dict = result.get("receipt") or result.get("retry_receipt") or {}
+        owner_aggregate_id = (
+            receipt_dict.get("aggregate_id")
+            or result.get("aggregate_id")
+            or new_exp_id
+            or experiment_id
+        )
+        owner_aggregate_version = (
+            receipt_dict.get("aggregate_version")
+            or result.get("aggregate_version")
+            or 1
+        )
         event_id = receipt_dict.get("event_id") or result.get("event_id") or f"evt-{command_id}"
         correlation_id = receipt_dict.get("correlation_id") or idempotency_key or command_id
         committed_at = receipt_dict.get("committed_at") or requested_at
@@ -283,8 +310,8 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             dispatch_path="research_write_owner.retry_research_experiment",
             domain_receipt=receipt_dict or result,
             aggregate_type="ResearchExperiment",
-            aggregate_id=experiment_id,
-            aggregate_version=agg_version,
+            aggregate_id=owner_aggregate_id,
+            aggregate_version=owner_aggregate_version,
             event_id=event_id,
             correlation_id=correlation_id,
             owner="ResearchWriteOwner",
@@ -297,6 +324,7 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             },
             extra={
                 "previous_experiment_id": experiment_id,
+                "target_experiment_id": experiment_id,
                 "new_experiment_id": new_exp_id,
                 "attempt_number": result.get("attempt_number"),
                 "parent_experiment_id": result.get("parent_experiment_id"),
