@@ -144,6 +144,14 @@
     "defect_35_confirm_token_tenant_scoped_replay": {
       "problem": "command_adapters/service.py:1334-1345 create_confirm_token secondary replay lookup was unscoped by tenant, returning tenant A token ID on tenant B replay with identical actor/key/body.",
       "remediation": "Reused admitted tenant-bound target from content, and scoped fallback store lookup by both operator_id and tenant_id across restart."
+    },
+    "defect_36_research_experiment_atomic_admission_and_id_collision": {
+      "problem": "services/research/write_owner.py performed idempotency lookup, count-based ID allocation, and unconditional UPSERT separately. Mounted POST /bff/experiments concurrent same-tenant same-key different-body requests both returned 201 with exp-YYYYMMDD-001 instead of 201/409; different tenants also received that same ID and overwrote one durable row.",
+      "remediation": "Synchronized owner admission with store-scoped admission lock, validated in-flight and committed idempotency keys against request hashes returning 409 Conflict on mismatch, and allocated collision-safe experiment IDs probing store keys before persistence so separate tenants receive distinct aggregate IDs."
+    },
+    "defect_37_research_experiment_ticket_link_atomic_rollback": {
+      "problem": "services/research/write_owner.py committed ticket linked_experiments before experiment persistence; injected experiment put OSError returned 503 but left a dangling ticket link and no experiment/receipt.",
+      "remediation": "Committed experiment persistence before ticket link update, and added rollback cleanup ensuring ticket linked_experiments remains unmodified if experiment storage fails."
     }
   },
   "mutation_caller_inventory": {
@@ -422,6 +430,18 @@
         "result": "117 passed, 6 warnings in 66.88s",
         "executed": 117,
         "collected": 117
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q -s /tmp/test_domain_review_e486.py",
+        "result": "3 passed, 1 warning in 2.56s",
+        "executed": 3,
+        "collected": 3
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "128 passed, 5 warnings in 75.91s",
+        "executed": 128,
+        "collected": 128
       }
     ]
   },
@@ -465,7 +485,9 @@
     "defect_32_canonical_receipt_sd44_coverage_resolved": true,
     "defect_33_admission_receipt_cas_and_non_regression_resolved": true,
     "defect_34_research_mounted_durability_and_idempotency_scope_resolved": true,
-    "defect_35_confirm_token_tenant_scoped_replay_resolved": true
+    "defect_35_confirm_token_tenant_scoped_replay_resolved": true,
+    "defect_36_research_experiment_atomic_admission_and_id_collision_resolved": true,
+    "defect_37_research_experiment_ticket_link_atomic_rollback_resolved": true
   },
   "review": {
     "reviewer": "Codex",

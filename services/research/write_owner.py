@@ -11,8 +11,10 @@ JSON fallbacks, or abstract repositories.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -172,12 +174,19 @@ class ResearchWriteOwner:
         else:
             existing_tickets = self._tickets_store.list_all()
             date_prefix = timestamp[:10].replace("-", "")
-            idx = len(existing_tickets) + 1
-            tid = f"rt-{date_prefix}-{idx:03d}"
-            existing_ids = {str(t.get("ticket_id") or "") for t in existing_tickets}
-            while tid in existing_ids:
+            known_ids = {str(t.get("ticket_id") or "") for t in existing_tickets if isinstance(t, dict)}
+            idx = 1
+            while True:
+                cand_id = f"rt-{date_prefix}-{idx:03d}"
+                if cand_id in known_ids:
+                    idx += 1
+                    continue
+                existing_row = self._tickets_store.get(cand_id)
+                if existing_row is None:
+                    tid = cand_id
+                    break
+                known_ids.add(cand_id)
                 idx += 1
-                tid = f"rt-{date_prefix}-{idx:03d}"
 
         record: Dict[str, Any] = {
             "ticket_id": tid,
@@ -482,8 +491,9 @@ class ResearchWriteOwner:
         clean_tenant = str(tenant_id or (launch_context or {}).get("tenant_id") or "").strip() or None
         clean_hash = str(request_hash or "").strip() if request_hash else None
 
+        existing_experiments = self._experiments_store.list_all()
+
         if clean_key:
-            existing_experiments = self._experiments_store.list_all()
             for exp in existing_experiments:
                 if not isinstance(exp, dict):
                     continue
@@ -502,84 +512,167 @@ class ResearchWriteOwner:
                     )
                 return self._project_experiment_detail(exp)
 
-        if experiment_id:
-            exp_id = str(experiment_id).strip()
-        else:
-            existing_experiments = self._experiments_store.list_all()
+        admission_lock = getattr(self._experiments_store, "_admission_lock", None)
+        if admission_lock is None:
+            admission_lock = threading.RLock()
+            try:
+                self._experiments_store._admission_lock = admission_lock
+            except Exception:
+                pass
+
+        admitted_keys = getattr(self._experiments_store, "_admitted_keys", None)
+        if admitted_keys is None:
+            admitted_keys = {}
+            try:
+                self._experiments_store._admitted_keys = admitted_keys
+            except Exception:
+                pass
+
+        with admission_lock:
+            if clean_key:
+                key_tuple = (clean_tenant, clean_actor, clean_key)
+                if key_tuple in admitted_keys:
+                    admitted_info = admitted_keys[key_tuple]
+                    saved_hash = admitted_info.get("request_hash")
+                    if saved_hash and clean_hash and saved_hash != clean_hash:
+                        raise ResearchIdempotencyConflictError(
+                            f"Key {clean_key!r} is bound to a different request hash"
+                        )
+                    admitted_id = admitted_info.get("experiment_id")
+                    existing_exp = self._experiments_store.get(admitted_id) if admitted_id else None
+                    if existing_exp and isinstance(existing_exp, dict):
+                        return self._project_experiment_detail(existing_exp)
+
+            known_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
             date_prefix = timestamp[:10].replace("-", "")
-            idx = len(existing_experiments) + 1
-            exp_id = f"exp-{date_prefix}-{idx:03d}"
-            existing_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
-            while exp_id in existing_ids:
-                idx += 1
-                exp_id = f"exp-{date_prefix}-{idx:03d}"
 
-        cmd_id = command_id or f"cmd-{exp_id}"
-        canonical_receipt = {
-            "receipt_id": f"rcpt-{exp_id}",
-            "command_id": cmd_id,
-            "commandId": cmd_id,
-            "aggregate_type": "research_experiment",
-            "aggregate_id": exp_id,
-            "aggregate_version": 1,
-            "status": "queued",
-            "event_id": f"evt-{exp_id}",
-            "correlation_id": clean_key or exp_id,
-            "owner": "research",
-            "committed_at": timestamp,
-            "command": "CreateResearchExperiment",
-            "target": {"type": "research_experiment", "id": exp_id},
-            "submitted_at": timestamp,
-            "accepted_at": timestamp,
-        }
+            if experiment_id:
+                exp_id = str(experiment_id).strip()
+                existing_row = self._experiments_store.get(exp_id)
+                if existing_row and isinstance(existing_row, dict):
+                    if clean_key and existing_row.get("idempotency_key") == clean_key:
+                        row_tenant = str(existing_row.get("tenant_id") or (existing_row.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                        row_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                        if row_tenant == clean_tenant and row_actor == clean_actor:
+                            saved_hash = existing_row.get("request_hash")
+                            if saved_hash and clean_hash and saved_hash != clean_hash:
+                                raise ResearchIdempotencyConflictError(
+                                    f"Key {clean_key!r} is bound to a different request hash"
+                                )
+                            return self._project_experiment_detail(existing_row)
+                    raise ValueError(f"Experiment {exp_id!r} already exists")
+            else:
+                idx = 1
+                while True:
+                    cand_id = f"exp-{date_prefix}-{idx:03d}"
+                    if cand_id in known_ids:
+                        idx += 1
+                        continue
+                    existing_row = self._experiments_store.get(cand_id)
+                    if existing_row is None:
+                        exp_id = cand_id
+                        break
+                    if isinstance(existing_row, dict):
+                        known_ids.add(cand_id)
+                        if clean_key and existing_row.get("idempotency_key") == clean_key:
+                            row_tenant = str(existing_row.get("tenant_id") or (existing_row.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                            row_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                            if row_tenant == clean_tenant and row_actor == clean_actor:
+                                saved_hash = existing_row.get("request_hash")
+                                if saved_hash and clean_hash and saved_hash != clean_hash:
+                                    raise ResearchIdempotencyConflictError(
+                                        f"Key {clean_key!r} is bound to a different request hash"
+                                    )
+                                return self._project_experiment_detail(existing_row)
+                    idx += 1
 
-        record: Dict[str, Any] = {
-            "experiment_id": exp_id,
-            "ticket_id": clean_ticket_id,
-            "experiment_name": clean_exp_name,
-            "status": "queued",
-            "stage": run_config.get("stage") or "backtest",
-            "queued_at": timestamp,
-            "started_at": None,
-            "completed_at": None,
-            "progress": {"percent": None, "phase": None, "message": None},
-            "strategy_selector": json.loads(json.dumps(strategy_selector or {})),
-            "parameter_set": json.loads(json.dumps(parameter_set or {})),
-            "run_config": json.loads(json.dumps(run_config or {})),
-            "launch_context": json.loads(json.dumps(launch_context or {})),
-            "validation_warnings": [],
-            "artifact_ids": [],
-            "failure": {"reason_code": None, "message": None},
-            "allowedActions": {"canCancel": True, "canRetry": False, "canArchive": False, "canInvalidate": False},
-            "idempotency_key": clean_key,
-            "request_hash": clean_hash,
-            "tenant_id": clean_tenant,
-            "actor_id": clean_actor,
-            "created_by": clean_actor,
-            "command_id": cmd_id,
-            "aggregate_type": "research_experiment",
-            "aggregate_id": exp_id,
-            "aggregate_version": 1,
-            "event_id": canonical_receipt["event_id"],
-            "correlation_id": canonical_receipt["correlation_id"],
-            "owner": "research",
-            "committed_at": timestamp,
-            "receipt": canonical_receipt,
-        }
+            cmd_id = command_id or f"cmd-{exp_id}"
+            canonical_receipt = {
+                "receipt_id": f"rcpt-{exp_id}",
+                "command_id": cmd_id,
+                "commandId": cmd_id,
+                "aggregate_type": "research_experiment",
+                "aggregate_id": exp_id,
+                "aggregate_version": 1,
+                "status": "queued",
+                "event_id": f"evt-{exp_id}",
+                "correlation_id": clean_key or exp_id,
+                "owner": "research",
+                "committed_at": timestamp,
+                "command": "CreateResearchExperiment",
+                "target": {"type": "research_experiment", "id": exp_id},
+                "submitted_at": timestamp,
+                "accepted_at": timestamp,
+            }
 
-        if clean_ticket_id:
-            ticket = self._tickets_store.get(clean_ticket_id)
-            if ticket and isinstance(ticket, dict):
-                linked = list(ticket.get("linked_experiments") or [])
-                if exp_id not in linked:
-                    linked.append(exp_id)
-                    ticket["linked_experiments"] = linked
-                    ticket["updated_at"] = timestamp
-                    self._tickets_store.put(clean_ticket_id, ticket)
+            record: Dict[str, Any] = {
+                "experiment_id": exp_id,
+                "ticket_id": clean_ticket_id,
+                "experiment_name": clean_exp_name,
+                "status": "queued",
+                "stage": run_config.get("stage") or "backtest",
+                "queued_at": timestamp,
+                "started_at": None,
+                "completed_at": None,
+                "progress": {"percent": None, "phase": None, "message": None},
+                "strategy_selector": json.loads(json.dumps(strategy_selector or {})),
+                "parameter_set": json.loads(json.dumps(parameter_set or {})),
+                "run_config": json.loads(json.dumps(run_config or {})),
+                "launch_context": json.loads(json.dumps(launch_context or {})),
+                "validation_warnings": [],
+                "artifact_ids": [],
+                "failure": {"reason_code": None, "message": None},
+                "allowedActions": {"canCancel": True, "canRetry": False, "canArchive": False, "canInvalidate": False},
+                "idempotency_key": clean_key,
+                "request_hash": clean_hash,
+                "tenant_id": clean_tenant,
+                "actor_id": clean_actor,
+                "created_by": clean_actor,
+                "command_id": cmd_id,
+                "aggregate_type": "research_experiment",
+                "aggregate_id": exp_id,
+                "aggregate_version": 1,
+                "event_id": canonical_receipt["event_id"],
+                "correlation_id": canonical_receipt["correlation_id"],
+                "owner": "research",
+                "committed_at": timestamp,
+                "receipt": canonical_receipt,
+            }
+            record["allowedActions"] = self._rw04_allowed_actions(record)
 
-        record["allowedActions"] = self._rw04_allowed_actions(record)
-        self._experiments_store.put(exp_id, record)
-        return self._project_experiment_detail(record)
+            ticket_to_update = None
+            if clean_ticket_id:
+                ticket = self._tickets_store.get(clean_ticket_id)
+                if ticket and isinstance(ticket, dict):
+                    linked = list(ticket.get("linked_experiments") or [])
+                    if exp_id not in linked:
+                        linked.append(exp_id)
+                        ticket["linked_experiments"] = linked
+                        ticket["updated_at"] = timestamp
+                        ticket_to_update = ticket
+
+            self._experiments_store.put(exp_id, record)
+
+            if ticket_to_update is not None:
+                try:
+                    self._tickets_store.put(clean_ticket_id, ticket_to_update)
+                except Exception:
+                    try:
+                        if hasattr(self._experiments_store, "delete_if_matches"):
+                            self._experiments_store.delete_if_matches(exp_id, record)
+                        elif hasattr(self._experiments_store, "delete"):
+                            self._experiments_store.delete(exp_id)
+                    except Exception:
+                        pass
+                    raise
+
+            if clean_key:
+                admitted_keys[(clean_tenant, clean_actor, clean_key)] = {
+                    "request_hash": clean_hash,
+                    "experiment_id": exp_id,
+                }
+
+            return self._project_experiment_detail(record)
 
     def cancel_research_experiment(
         self,
@@ -629,53 +722,84 @@ class ResearchWriteOwner:
         parent_id = exp["experiment_id"]
         root_id = exp.get("root_experiment_id") or parent_id
 
-        existing_experiments = self._experiments_store.list_all()
-        date_prefix = timestamp[:10].replace("-", "")
-        idx = len(existing_experiments) + 1
-        new_exp_id = f"exp-{date_prefix}-{idx:03d}"
-        existing_ids = {str(e.get("experiment_id") or "") for e in existing_experiments}
-        while new_exp_id in existing_ids:
-            idx += 1
-            new_exp_id = f"exp-{date_prefix}-{idx:03d}"
+        admission_lock = getattr(self._experiments_store, "_admission_lock", None)
+        if admission_lock is None:
+            admission_lock = threading.RLock()
+            try:
+                self._experiments_store._admission_lock = admission_lock
+            except Exception:
+                pass
 
-        new_record: Dict[str, Any] = {
-            "experiment_id": new_exp_id,
-            "ticket_id": exp.get("ticket_id", ""),
-            "experiment_name": f"{exp.get('experiment_name', '')} (retry #{attempt_number})",
-            "attempt_number": attempt_number,
-            "parent_experiment_id": parent_id,
-            "root_experiment_id": root_id,
-            "status": "queued",
-            "stage": exp.get("stage") or "backtest",
-            "queued_at": timestamp,
-            "started_at": None,
-            "completed_at": None,
-            "progress": {"percent": None, "phase": None, "message": None},
-            "strategy_selector": json.loads(json.dumps(exp.get("strategy_selector") or {})),
-            "parameter_set": json.loads(json.dumps(exp.get("parameter_set") or {})),
-            "run_config": json.loads(json.dumps(exp.get("run_config") or {})),
-            "launch_context": json.loads(json.dumps(exp.get("launch_context") or {})),
-            "validation_warnings": [],
-            "artifact_ids": [],
-            "failure": {"reason_code": None, "message": None},
-            "created_by": actor_id or exp.get("created_by"),
-            "idempotency_key": idempotency_key,
-        }
-        new_record["allowedActions"] = self._rw04_allowed_actions(new_record)
+        with admission_lock:
+            existing_experiments = self._experiments_store.list_all()
+            known_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
+            date_prefix = timestamp[:10].replace("-", "")
+            idx = 1
+            while True:
+                cand_id = f"exp-{date_prefix}-{idx:03d}"
+                if cand_id in known_ids:
+                    idx += 1
+                    continue
+                existing_row = self._experiments_store.get(cand_id)
+                if existing_row is None:
+                    new_exp_id = cand_id
+                    break
+                known_ids.add(cand_id)
+                idx += 1
 
-        ticket_id = exp.get("ticket_id")
-        if ticket_id:
-            ticket = self._tickets_store.get(ticket_id)
-            if ticket and isinstance(ticket, dict):
-                linked = list(ticket.get("linked_experiments") or [])
-                if new_exp_id not in linked:
-                    linked.append(new_exp_id)
-                    ticket["linked_experiments"] = linked
-                    ticket["updated_at"] = timestamp
-                    self._tickets_store.put(ticket_id, ticket)
+            new_record: Dict[str, Any] = {
+                "experiment_id": new_exp_id,
+                "ticket_id": exp.get("ticket_id", ""),
+                "experiment_name": f"{exp.get('experiment_name', '')} (retry #{attempt_number})",
+                "attempt_number": attempt_number,
+                "parent_experiment_id": parent_id,
+                "root_experiment_id": root_id,
+                "status": "queued",
+                "stage": exp.get("stage") or "backtest",
+                "queued_at": timestamp,
+                "started_at": None,
+                "completed_at": None,
+                "progress": {"percent": None, "phase": None, "message": None},
+                "strategy_selector": json.loads(json.dumps(exp.get("strategy_selector") or {})),
+                "parameter_set": json.loads(json.dumps(exp.get("parameter_set") or {})),
+                "run_config": json.loads(json.dumps(exp.get("run_config") or {})),
+                "launch_context": json.loads(json.dumps(exp.get("launch_context") or {})),
+                "validation_warnings": [],
+                "artifact_ids": [],
+                "failure": {"reason_code": None, "message": None},
+                "created_by": actor_id or exp.get("created_by"),
+                "idempotency_key": idempotency_key,
+            }
+            new_record["allowedActions"] = self._rw04_allowed_actions(new_record)
 
-        self._experiments_store.put(new_exp_id, new_record)
-        return self._project_experiment_detail(new_record)
+            ticket_id = exp.get("ticket_id")
+            ticket_to_update = None
+            if ticket_id:
+                ticket = self._tickets_store.get(ticket_id)
+                if ticket and isinstance(ticket, dict):
+                    linked = list(ticket.get("linked_experiments") or [])
+                    if new_exp_id not in linked:
+                        linked.append(new_exp_id)
+                        ticket["linked_experiments"] = linked
+                        ticket["updated_at"] = timestamp
+                        ticket_to_update = ticket
+
+            self._experiments_store.put(new_exp_id, new_record)
+
+            if ticket_to_update is not None:
+                try:
+                    self._tickets_store.put(ticket_id, ticket_to_update)
+                except Exception:
+                    try:
+                        if hasattr(self._experiments_store, "delete_if_matches"):
+                            self._experiments_store.delete_if_matches(new_exp_id, new_record)
+                        elif hasattr(self._experiments_store, "delete"):
+                            self._experiments_store.delete(new_exp_id)
+                    except Exception:
+                        pass
+                    raise
+
+            return self._project_experiment_detail(new_record)
 
     def archive_research_experiment(
         self,
@@ -763,8 +887,19 @@ class ResearchWriteOwner:
             existing_notes = self._notes_store.list_all()
             now_iso = _utc_now_rfc3339()
             date_prefix = now_iso[:10].replace("-", "")
-            idx = len(existing_notes) + 1
-            note_id = f"note-{date_prefix}-{idx:03d}"
+            known_ids = {str(n.get("note_id") or n.get("id") or "") for n in existing_notes if isinstance(n, dict)}
+            idx = 1
+            while True:
+                cand_id = f"note-{date_prefix}-{idx:03d}"
+                if cand_id in known_ids:
+                    idx += 1
+                    continue
+                existing_row = self._notes_store.get(cand_id)
+                if existing_row is None:
+                    note_id = cand_id
+                    break
+                known_ids.add(cand_id)
+                idx += 1
             payload["note_id"] = note_id
             payload["id"] = note_id
 

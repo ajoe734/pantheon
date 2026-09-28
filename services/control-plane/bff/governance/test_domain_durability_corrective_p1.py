@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from copy import deepcopy
+from threading import Barrier, Lock
 from types import SimpleNamespace
 from unittest.mock import patch
 import inspect
@@ -680,5 +681,86 @@ def test_confirm_token_replay_keeps_tenant_target(tmp_path):
     assert first.status_code == second.status_code == replay.status_code == 201, [r.text for r in (first, second, replay)]
     ids = [r.json()["data"]["tokenId"] for r in (first, second, replay)]
     assert ids[1] == ids[2] and ids[0] != ids[2], {"token_ids": ids, "replay_target": replay.json()["data"]["target"]}
+
+
+class AtomicIO:
+    # Mirrors independent DB read snapshots and atomic UPSERTs; no product I/O.
+    def __init__(self, barrier=None):
+        self.rows = {}
+        self.lock = Lock()
+        self.barrier = barrier
+        self.fail = False
+
+    def list_all(self):
+        with self.lock:
+            snapshot = deepcopy(list(self.rows.values()))
+        if self.barrier:
+            self.barrier.wait(timeout=5)
+        return snapshot
+
+    def get(self, key):
+        with self.lock:
+            return deepcopy(self.rows.get(key))
+
+    def put(self, key, value):
+        if self.fail:
+            raise OSError("injected experiment commit failure")
+        with self.lock:
+            self.rows[key] = deepcopy(value)
+
+
+def _atomic_research_client(tickets, experiments, tenant):
+    owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments, notes_store=AtomicIO())
+    app = FastAPI()
+    identity = SimpleNamespace(operator_id="actor", tenant_id=tenant, roles=["admin"])
+    app.include_router(
+        create_research_experiments_router(
+            read_surface=DefaultResearchKnowledgeSourcePort(research_write_owner=owner),
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda i: None,
+            require_operator_role=lambda i: None,
+            bff_error=lambda s, c, m, *a, **kw: HTTPException(s, detail=m),
+            utc_now=lambda: "2026-09-28T00:00:00Z",
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.mark.parametrize("separate_tenants", [False, True])
+def test_concurrent_experiment_admission(separate_tenants):
+    tickets, experiments = AtomicIO(), AtomicIO(Barrier(2))
+    clients = [_atomic_research_client(tickets, experiments, "tenant-" + str(i if separate_tenants else 0)) for i in range(2)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(
+            pool.map(
+                lambda i: clients[i].post(
+                    "/bff/experiments",
+                    json={"name": "experiment-" + str(i)},
+                    headers={"Idempotency-Key": "same-key"},
+                ),
+                range(2),
+            )
+        )
+    statuses = [r.status_code for r in responses]
+    evidence = {"statuses": statuses, "ids": [r.json().get("experiment_id") for r in responses], "durable_rows": experiments.rows}
+    if separate_tenants:
+        assert statuses == [201, 201] and len(experiments.rows) == 2, evidence
+    else:
+        assert sorted(statuses) == [201, 409], evidence
+
+
+def test_experiment_failure_rolls_back_ticket_link():
+    tickets, experiments = AtomicIO(), AtomicIO()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    experiments.fail = True
+    response = _atomic_research_client(tickets, experiments, "tenant").post(
+        "/bff/experiments",
+        json={"name": "experiment", "ticket_id": "ticket-1"},
+        headers={"Idempotency-Key": "key"},
+    )
+    evidence = {"status": response.status_code, "ticket": tickets.rows, "experiments": experiments.rows}
+    assert response.status_code >= 500
+    assert tickets.get("ticket-1")["linked_experiments"] == [], evidence
+
 
 
