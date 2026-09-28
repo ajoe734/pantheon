@@ -2,7 +2,7 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001",
   "base_ref": "dev@c17eddae2e064d88588160c6d8601942d48dd924",
-  "head_ref": "task/BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001, parent 83d1ee86065d7d681dddf15d6e477d6e11e83926 (content as of this delivery, which fixes the P1 research/service.py self-ref bypass named by contract_revision; the exact PR head bound at handoff will be one further commit ahead once this evidence.json edit itself lands -- the owner must re-verify head_ref against `git rev-parse HEAD` immediately before handoff rather than trusting this stale-by-one-commit value)",
+  "head_ref": "task/BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001, parent f2ea8d345623f146468404593da5d8a96eb8f2a1 (the exact reviewer-cited PR #6004 head, which fixed the P1 research/service.py self-ref bypass; this evidence.json correction lands one further commit ahead to address the independent-review REJECT's required changes -- the owner must re-verify head_ref against `git rev-parse HEAD` immediately before handoff rather than trusting this stale-by-one-commit value)",
   "depends_on": "(none declared); DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 running concurrently on overlapping files (models.py, governance/service.py, governance/router.py); rebased cleanly onto origin/dev tip immediately before handoff with no conflicts",
   "normative_plan": "Operator-opened hardening task: make services/control-plane/bff/models.py::redact_evidence_refs fail closed for missing capabilities and unresolvable evidence kinds",
   "demonstration_of_fail_open_bugs_before_any_change": {
@@ -59,7 +59,7 @@
     }
   },
   "per_caller_audit": {
-    "note": "8 direct callers of the base redact_evidence_refs function (not the safe_redact_evidence_refs / governance router _safe_redact wrappers, which already converted None to [] before this task and remain thin delegates to the now-fail-closed base function).",
+    "note": "9 direct callers of the base redact_evidence_refs function, plus (below, wrapper_caller_surfaces) the governance/router.py and control_loops/router.py wrapper-layer call sites the reviewer flagged as missing from the table -- both wrap the same now-fail-closed base function via safe_redact_evidence_refs and were audited separately because they reshape refs (nested/flat/list-of-lists) before delegating, so a shape bug at the wrapper layer would not show up in a base-function-only audit.",
     "callers": [
       {
         "file": "personas/service.py:4761",
@@ -83,10 +83,10 @@
         "file": "research/service.py:1920-1962 (linked_decisions)",
         "function": "_evidence_detail_payload",
         "ref_shape": "decisions annotated with evidence_type from _ENTITY_TYPE_EVIDENCE_KIND.get(decision.entity_type); entity_type values seen in production-shaped fixtures include 'memory_entry' and 'research_note'; 'research_note' is mapped in research/service.py's local _ENTITY_TYPE_EVIDENCE_KIND, 'memory_entry' and 'experiment' are not",
-        "gap_found": "an unmapped entity_type (e.g. 'memory_entry') leaves the decision dict without an evidence_type/ref_id override, so redact_evidence_refs correctly treats it as unresolved and withholds it (fail-closed, no disclosure) -- but this currently over-redacts a full-capability identity that should be able to see a resolvable-kind linked decision.",
-        "fix": "NOT YET APPLIED -- adding 'memory_entry': 'artifact' / 'experiment': 'artifact' to research/service.py's _ENTITY_TYPE_EVIDENCE_KIND requires the same out-of-scope edit as the self-ref detail gap above. No disclosure risk exists today (fail-closed is safe-by-default over-redaction, not a security gap), so this is an over-redaction defect tracked alongside the self-ref P1 defect for the same governed scope-expansion request rather than worked around with an ad hoc mapping change outside the declared contract.",
-        "before_after": "full-capability (admin) identity: a memory_entry-typed linked decision is currently redacted (over-redaction, not disclosure) both before and after this delivery's changes, since research/service.py is unmodified",
-        "test": "services/control-plane/bff/tests/test_research_router.py::test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfaces already exercises this path against the unmodified mapping; no test edit was made here"
+        "gap_found": "CORRECTED (previous evidence.json revision incorrectly claimed this was 'NOT YET APPLIED' and required an out-of-scope research/service.py edit). An unmapped entity_type in research/service.py's local _ENTITY_TYPE_EVIDENCE_KIND (e.g. 'memory_entry') leaves the decision dict without an evidence_type override, but the raw decision dict retains its own 'entity_type' field, and models.py::_resolve_evidence_kind_and_capability already falls back to ref.get('entity_type') against the same SOURCE_TYPE_TO_EVIDENCE_KIND table (models.py:761-767) when evidence_type/type/ref_type/link_type/source_document.source_type all fail to resolve. SOURCE_TYPE_TO_EVIDENCE_KIND already maps 'memory_entry': 'artifact' (models.py:655, added by an earlier commit on this task's branch). So no research/service.py edit is required: the base function's own entity_type fallback resolves 'memory_entry' decisions to kind='artifact' without research/service.py annotating them first.",
+        "fix": "none required at this caller beyond the base function's existing entity_type fallback (models.py:761-767, SOURCE_TYPE_TO_EVIDENCE_KIND['memory_entry']). Verified directly: redact_evidence_refs(admin_identity, [{'entity_type': 'memory_entry', 'entity_ref': 'mem-123', 'id': 'mem-123'}], capabilities=['artifact.read']) returns the ref unchanged with redacted_count=0; the same call with capabilities=[] withholds it with required_capability='artifact.read', reason='insufficient_capability'.",
+        "before_after": "full-capability (admin) identity: a memory_entry-typed linked decision is visible unchanged (redacted_count=0, no over-redaction) both before and after this delivery, via models.py's entity_type fallback; a low-capability (viewer) identity has it withheld with reason='insufficient_capability'.",
+        "test": "services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py::test_kw03_research_evidence_detail_self_and_linked_decisions_low_vs_full_capability (line ~281-309) asserts full_payload['linked_decisions'][0]['entity_type'] == 'memory_entry' is present unredacted for the admin identity while the self-ref detail is gated for the viewer identity, exercising exactly this entity_type-fallback path end to end through the real research router."
       },
       {
         "file": "research/service.py:2010 (list_evidence_refs)",
@@ -144,7 +144,44 @@
         "before_after": "full-capability identity: 0 redacted before and after (GET /api/v1/committees/{id})",
         "test": "services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py::test_committee_projection_wrapper_redacts_for_low_capability_and_passes_for_full, test_committee_projection_wrapper_fails_closed_when_capabilities_unresolvable"
       }
-    ]
+    ],
+    "wrapper_caller_surfaces": {
+      "note": "governance/router.py:164-244 defines three shared helpers that all delegate to safe_redact_evidence_refs via the router's own _safe_redact closure, and control_loops/router.py:605-660 calls safe_redact_evidence_refs directly (four call sites) inside the downstream-health handler. All are audited here as wrapper-layer callers distinct from the 9 direct base-function callers above, per the reviewer's request; each is already covered end to end by an existing sweep test file, mapped explicitly below instead of only 'discussed generally'.",
+      "entries": [
+        {
+          "file": "governance/router.py:169-187 (_redact_review_queue_items)",
+          "function": "operator governance review queue / bff reviews-compat surface",
+          "ref_shape": "review_summary.evidence_refs nested under each queue item, e.g. {'review_id': ..., 'review_summary': {'evidence_refs': [{'ref_id': ..., 'evidence_type': 'postmortem'}, ...]}}",
+          "gap_found": "none -- delegates through _safe_redact to the same fail-closed base function per item; no separate kind-resolution logic",
+          "before_after": "full-capability identity: 0 redacted before and after (GET /api/v1/governance/reviews, GET /bff/reviews compat alias)",
+          "test": "services/control-plane/bff/tests/test_review_queue_evidence_redaction.py::test_operator_governance_review_queue_redacts_for_low_capability_identity, test_operator_governance_review_queue_passes_through_for_full_capability_identity, test_bff_reviews_compat_surface_redacts_for_low_capability_identity, test_bff_reviews_compat_surface_passes_through_for_full_capability_identity, test_bff_review_detail_redacts_for_low_capability_identity, test_review_queue_redaction_fails_closed_when_capabilities_unresolvable, test_operator_governance_review_queue_redacted_count_scoped_to_returned_page, test_bff_reviews_redacted_count_scoped_to_returned_page, test_operator_governance_review_queue_empty_result_has_zero_redacted_count, test_operator_governance_review_queue_unavailable_surface_has_zero_redacted_count"
+        },
+        {
+          "file": "governance/router.py:189-212 (_redact_evidence_field_items)",
+          "function": "approval decisions list/detail, governance audit trail, bff review audit, bff approvals list, governance ledger (4 evidence sources)",
+          "ref_shape": "a flat top-level 'evidence_refs' list field on each item, e.g. approval decision {'decision_id': ..., 'evidence_refs': [{'ref_id': ..., 'evidence_type': 'policy'}]}, audit event, or ledger entry (which merges approval/intervention/override/decision-only sources)",
+          "gap_found": "none -- one shared helper for all five surfaces, delegates through _safe_redact per item",
+          "before_after": "full-capability identity: 0 redacted before and after across all five surfaces",
+          "test": "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py::test_approval_decisions_list_redacts_for_low_capability_identity, test_approval_decisions_list_passes_through_for_full_capability_identity, test_approval_decision_detail_redacts_for_low_capability_identity, test_approval_decision_detail_passes_through_for_full_capability_identity, test_approval_decision_detail_fails_closed_when_capabilities_unresolvable, test_bff_approval_detail_alias_redacts_for_low_capability_identity, test_bff_approval_detail_alias_passes_through_for_full_capability_identity, test_governance_approval_queue_redacted_count_scoped_to_returned_page, test_governance_approval_queue_passes_through_for_full_capability_identity, test_governance_audit_trail_redacts_for_low_capability_identity, test_governance_audit_trail_passes_through_for_full_capability_identity, test_bff_review_audit_redacts_for_low_capability_identity, test_bff_review_audit_passes_through_for_full_capability_identity, test_bff_approvals_list_redacts_for_low_capability_identity, test_bff_approvals_list_passes_through_for_full_capability_identity, test_governance_ledger_redacts_all_four_evidence_sources_for_low_capability_identity, test_governance_ledger_includes_decision_only_approval_entry, test_governance_ledger_passes_through_for_full_capability_identity, test_governance_ledger_fails_closed_when_capabilities_unresolvable"
+        },
+        {
+          "file": "governance/router.py:214-244 (_redact_consultation_metadata_evidence)",
+          "function": "consultation list/get/participants/outcome/transcript, plus governance/router.py's separate consult-request context-ref path",
+          "ref_shape": "metadata.consultation.evidence_refs nested under each session-shaped item, e.g. {'session_id': ..., 'metadata': {'consultation': {'evidence_refs': [{'ref_id': ..., 'evidence_type': 'telemetry'}]}}}; the consult-request path separately redacts a top-level context_refs list via the same _safe_redact closure",
+          "gap_found": "none -- shared helper, same fail-closed base function per item",
+          "before_after": "full-capability identity: 0 redacted before and after across list_consultations, get_consultation, get_consultation_participants, get_consultation_outcome, get_consultation_transcript, and get_consult_request",
+          "test": "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py::test_list_consultations_redacts_for_low_capability_identity, test_list_consultations_passes_through_for_full_capability_identity, test_get_consultation_redacts_for_low_capability_identity, test_get_consultation_passes_through_for_full_capability_identity, test_get_consultation_participants_redacts_for_low_capability_identity, test_get_consultation_participants_passes_through_for_full_capability_identity, test_get_consultation_outcome_redacts_for_low_capability_identity, test_get_consultation_outcome_passes_through_for_full_capability_identity, test_get_consultation_transcript_redacts_for_low_capability_identity, test_get_consultation_transcript_passes_through_for_full_capability_identity, test_consultation_participants_fail_closed_when_capabilities_unresolvable, test_get_consult_request_redacts_context_refs_for_low_capability_identity, test_get_consult_request_passes_through_for_full_capability_identity, test_get_consult_request_fails_closed_when_capabilities_unresolvable"
+        },
+        {
+          "file": "control_loops/router.py:605-660 (bff_v5_downstream_health, four safe_redact_evidence_refs call sites)",
+          "function": "downstream-health delivery-replay approval_ref (default_kind='approval'), delivery-replay evidence_refs, per-incident evidence_refs, and top-level evidence_refs/linked_evidence",
+          "ref_shape": "raw_result['data']['delivery_replays'][i]['approval_ref'] (scalar), ...['evidence_refs'] (list), ['incidents'][key]['evidence_refs'] (list), and top-level data['evidence_refs']/data['linked_evidence'] (lists)",
+          "gap_found": "none -- all four call sites delegate through safe_redact_evidence_refs to the same fail-closed base function; the approval_ref call site's explicit default_kind='approval' was already present and continues to resolve correctly",
+          "before_after": "full-capability identity: 0 redacted before and after for all four ref locations",
+          "test": "services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py::test_downstream_health_redacts_replay_approval_ref_for_low_capability_identity, test_downstream_health_passes_through_for_full_capability_identity, test_downstream_health_fails_closed_when_capabilities_unresolvable, test_downstream_health_fails_closed_when_capabilities_return_none"
+        }
+      ]
+    }
   },
   "wrapper_audit": {
     "safe_redact_evidence_refs": "consolidated onto a single loop in this delivery: models.py::redact_evidence_refs now takes an internal unavailable_reason override, and models.py::fail_closed_redacted_refs (called by safe_redact_evidence_refs when capabilities_fn(identity) raises or returns None) is now a one-line delegate -- redact_evidence_refs(None, refs, capabilities=None, unavailable_reason='redaction_policy_unavailable', ...) -- instead of a second independent kind-resolution/redaction loop. The distinct reason strings ('redaction_policy_unavailable' for an unresolvable capability lookup vs 'insufficient_capability' for an identity known to have zero capabilities) are preserved via that parameter, not via a second implementation. Verified: test_committee_projection_wrapper_fails_closed_when_capabilities_unresolvable asserts reason='redaction_policy_unavailable' end to end through the real wrapper/router; the full sweep (see terminal_commands_and_results) shows 0 regressions in the reason-string assertions this consolidation touches.",
@@ -218,6 +255,10 @@
     {
       "command": "timeout 280 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py services/control-plane/bff/tests/test_research_router.py",
       "result": "221 passed, 0 failed, ~152s (same command as above minus test_read_store_final_deletion.py, which is the only file in the reviewer's bounded validation set carrying a known, out-of-scope-pending failure)"
+    },
+    {
+      "command": "(fresh re-run on this delivery's current head, requeue after independent-review REJECT for PR #6004) .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py services/control-plane/bff/tests/test_research_router.py",
+      "result": "222 passed, 0 failed, 157.32s -- no source changes since the P1 fix commit, only this evidence.json correction; confirms no regression from the caller-table/known-gaps documentation update. origin/dev tip is still c17eddae2e064d88588160c6d8601942d48dd924 (== frozen base), so no rebase was required before this requeue."
     },
     {
       "command": "git diff --stat c17eddae2e064d88588160c6d8601942d48dd924..HEAD (frozen base from PR #6004)",
