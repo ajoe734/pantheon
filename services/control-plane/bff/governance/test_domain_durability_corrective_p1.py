@@ -3249,3 +3249,144 @@ def test_mounted_cross_tenant_token_collision_and_restart_isolation(tmp_path):
             assert own_race.json()["data"]["tenant_id"] == tenant
         else:
             assert own_race.status_code in (403, 404), (results, tenant, own_race.text)
+
+
+def test_mounted_cross_tenant_guarded_command_token_authorization(tmp_path):
+    """Mounted regression: Tenant A creates a PauseRuntime confirm token; Tenant B with
+    the same operator_id cannot submit POST /bff/v1/commands using that token.
+
+    Verifies:
+    1. Tenant B receives 403/428 when using Tenant A's confirm token.
+    2. No PauseRuntime or RedeemConfirmToken rows are created on denial, and original
+       token is not consumed.
+    3. Switching back to Tenant A submits successfully (202 Accepted) and consumes token.
+    """
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+    from services.control_plane.bff.command_adapters.service import CommandAdapterService
+    from services.control_plane.bff.command_queue import CommandStore
+
+    path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(path)
+    identity = SimpleNamespace(
+        operator_id="shared-actor", tenant_id="tenant-a", roles=["operator"],
+        mfa_verified=False, claims={}, token_kind="stub",
+    )
+    service = CommandAdapterService(
+        command_store=store,
+        extract_identity=lambda authorization, **kwargs: identity,
+        check_read_surface_state=lambda: None,
+        process_command_task=lambda command_id: None,
+    )
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=service))
+    client = TestClient(app)
+
+    # 1. Tenant A issues PauseRuntime confirmation token
+    issue = client.post(
+        "/bff/confirm-tokens",
+        json={
+            "tokenId": "tenant-a-only", "ttlSeconds": 300,
+            "command": "PauseRuntime", "target_type": "Runtime",
+            "target_id": "runtime-1", "operator_id": "shared-actor",
+        },
+        headers={"Idempotency-Key": "issue-a"},
+    )
+    assert issue.status_code == 201, issue.text
+
+    # 2. Tenant B with same operator_id submits POST /bff/v1/commands with Tenant A's token
+    identity.tenant_id = "tenant-b"
+    command_payload = {
+        "command": "PauseRuntime",
+        "target": {"type": "Runtime", "id": "runtime-1"},
+        "params": {"runtime_binding_id": "rb-1", "pause_action": "pause"},
+        "audit_context": {"reason": "test cross-tenant token"},
+    }
+    submit = client.post(
+        "/bff/v1/commands",
+        json=command_payload,
+        headers={"Idempotency-Key": "submit-b", "X-Confirm-Token": "tenant-a-only"},
+    )
+    assert submit.status_code in (403, 428), (submit.status_code, submit.text)
+    assert not any(record.get("type") in ("PauseRuntime", "RedeemConfirmToken") for record in store._get_all_commands())
+
+    # 3. Switch back to issuing Tenant A -> same token succeeds
+    identity.tenant_id = "tenant-a"
+    own = client.post(
+        "/bff/v1/commands",
+        json=command_payload,
+        headers={"Idempotency-Key": "submit-a", "X-Confirm-Token": "tenant-a-only"},
+    )
+    assert own.status_code == 202, (own.status_code, own.text)
+    records = store._get_all_commands()
+    assert any(record.get("type") == "PauseRuntime" for record in records)
+    assert any(record.get("type") == "RedeemConfirmToken" for record in records)
+
+
+def test_mounted_cross_tenant_guarded_command_replay_isolation_and_restart(tmp_path):
+    """Mounted regression: Tenant A submits guarded command with Idempotency-Key;
+    Tenant B with same operator_id and key cannot replay it, and isolation persists after restart.
+    """
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+    from services.control_plane.bff.command_adapters.service import CommandAdapterService
+    from services.control_plane.bff.command_queue import CommandStore
+
+    path = str(tmp_path / "commands.jsonl")
+
+    def make_client(tenant):
+        t_store = CommandStore(path)
+        t_identity = SimpleNamespace(
+            operator_id="shared-actor", tenant_id=tenant, roles=["operator"],
+            mfa_verified=False, claims={}, token_kind="stub",
+        )
+        t_service = CommandAdapterService(
+            command_store=t_store,
+            extract_identity=lambda authorization, **kwargs: t_identity,
+            check_read_surface_state=lambda: None,
+            process_command_task=lambda command_id: None,
+        )
+        t_app = FastAPI()
+        t_app.include_router(create_command_adapters_router(service=t_service))
+        return TestClient(t_app), t_store
+
+    client_a, store_a = make_client("tenant-a")
+    issue = client_a.post(
+        "/bff/confirm-tokens",
+        json={
+            "tokenId": "tenant-a-replay-token", "ttlSeconds": 300,
+            "command": "PauseRuntime", "target_type": "Runtime",
+            "target_id": "runtime-replay-1", "operator_id": "shared-actor",
+        },
+        headers={"Idempotency-Key": "issue-replay-a"},
+    )
+    assert issue.status_code == 201, issue.text
+
+    command_payload = {
+        "command": "PauseRuntime",
+        "target": {"type": "Runtime", "id": "runtime-replay-1"},
+        "params": {"runtime_binding_id": "rb-replay-1", "pause_action": "pause"},
+        "audit_context": {"reason": "test replay isolation"},
+    }
+    headers = {"Idempotency-Key": "shared-replay-key", "X-Confirm-Token": "tenant-a-replay-token"}
+    first = client_a.post("/bff/v1/commands", json=command_payload, headers=headers)
+    assert first.status_code == 202, first.text
+
+    client_b, store_b = make_client("tenant-b")
+    foreign = client_b.post("/bff/v1/commands", json=command_payload, headers=headers)
+    assert foreign.status_code in (403, 428), (foreign.status_code, foreign.text)
+    assert sum(record.get("type") == "PauseRuntime" for record in store_b._get_all_commands()) == 1
+
+    # Simulate restart with fresh clients
+    restarted_a, _ = make_client("tenant-a")
+    replayed = restarted_a.post("/bff/v1/commands", json=command_payload, headers=headers)
+    assert replayed.status_code == 202, replayed.text
+    assert replayed.json()["meta"]["idempotency"]["replayed"] is True
+
+    restarted_b, _ = make_client("tenant-b")
+    foreign_after_restart = restarted_b.post("/bff/v1/commands", json=command_payload, headers=headers)
+    assert foreign_after_restart.status_code in (403, 428), (foreign_after_restart.status_code, foreign_after_restart.text)

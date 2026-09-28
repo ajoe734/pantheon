@@ -551,7 +551,7 @@ class CommandAdapterService:
                 continue
             if clean_tenant is not None:
                 rec_tenant = _extract_record_tenant(record)
-                if rec_tenant and rec_tenant != clean_tenant:
+                if rec_tenant != clean_tenant:
                     continue
             results.append(record)
         return results
@@ -601,6 +601,8 @@ class CommandAdapterService:
         store = self.command_store
         commands = getattr(store, "_get_all_commands", lambda: [])() if store is not None else []
 
+        clean_tenant = str(tenant_id or "").strip() or None
+
         for record in commands:
             target = record.get("target") if isinstance(record.get("target"), dict) else {}
             t_type = target.get("type")
@@ -610,6 +612,8 @@ class CommandAdapterService:
                 and str(target.get("id") or "") == token_id
             ):
                 rec_tenant = _extract_record_tenant(record)
+                if clean_tenant is not None and rec_tenant != clean_tenant:
+                    continue
                 record_type = record.get("type")
                 record_type_val = record_type.value if hasattr(record_type, "value") else str(record_type or "")
 
@@ -640,6 +644,8 @@ class CommandAdapterService:
                 and self._guarded_command_confirm_token_id(record) == token_id
             ):
                 rec_tenant = _extract_record_tenant(record)
+                if clean_tenant is not None and rec_tenant != clean_tenant:
+                    continue
                 if token_tenant is not None and rec_tenant and rec_tenant != token_tenant:
                     continue
                 if rec_tenant and token_tenant is None:
@@ -679,21 +685,43 @@ class CommandAdapterService:
     ) -> None:
         if token_state is None:
             token_state = self.confirm_token_lifecycle_payload(token_id)
-        token_tenant = token_state.get("tenant_id")
-        if not token_tenant:
+        if token_state.get("status") == "available":
             return
+        token_tenant = token_state.get("tenant_id")
         caller_tenant = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
         clean_caller_tenant = str(caller_tenant or "").strip() or None
-        if clean_caller_tenant != token_tenant:
-            raise self._raise_error(
-                403,
-                ErrorCode.FORBIDDEN,
-                "Confirm token tenant mismatch",
-                f"Confirm token {token_id!r} is bound to tenant {token_tenant!r} and cannot be confirmed or redeemed by {clean_caller_tenant!r}",
-                precondition_failed="tenant_mismatch",
-                suggestion="Use a confirm token issued within the caller's tenant scope",
-                correlation_id=correlation_id,
-            )
+
+        if token_tenant or clean_caller_tenant:
+            if not clean_caller_tenant:
+                raise self._raise_error(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Confirm token tenant missing",
+                    f"Authenticated caller has no tenant bound and cannot confirm or redeem token {token_id!r}",
+                    precondition_failed="tenant_missing",
+                    suggestion="Authenticate with a valid tenant identity",
+                    correlation_id=correlation_id,
+                )
+            if not token_tenant:
+                raise self._raise_error(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Confirm token tenant unavailable",
+                    f"Confirm token {token_id!r} has no bound tenant and cannot be confirmed or redeemed",
+                    precondition_failed="tenant_missing",
+                    suggestion="Use a confirm token issued within the caller's tenant scope",
+                    correlation_id=correlation_id,
+                )
+            if clean_caller_tenant != token_tenant:
+                raise self._raise_error(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Confirm token tenant mismatch",
+                    f"Confirm token {token_id!r} is bound to tenant {token_tenant!r} and cannot be confirmed or redeemed by {clean_caller_tenant!r}",
+                    precondition_failed="tenant_mismatch",
+                    suggestion="Use a confirm token issued within the caller's tenant scope",
+                    correlation_id=correlation_id,
+                )
 
     def _project_command_confirmation_flat_response(
         self,
@@ -2194,9 +2222,19 @@ class CommandAdapterService:
                 precondition_failed="command_store_unconfigured",
             )
 
+        caller_tenant = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+        clean_caller_tenant = str(caller_tenant or "").strip() or None
+        token_id_param = str(x_confirm_token or payload.get("confirm_token") or payload.get("confirmToken") or "").strip()
+        if token_id_param:
+            try:
+                self.check_confirm_token_tenant_authorization(token_id_param, identity)
+            except HTTPException as exc:
+                raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
+
         duplicate = store.get_command_by_idempotency_key(
             foundation_context["idempotency_record"].idempotency_key,
             operator_id=identity.operator_id,
+            tenant_id=clean_caller_tenant,
         )
         if duplicate:
             duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
@@ -2245,8 +2283,8 @@ class CommandAdapterService:
                 confirm_token=x_confirm_token,
                 identity=identity,
                 correlation_id=foundation_context["trace_context"].correlation_id,
-                confirm_token_records_fn=self.confirm_token_records,
-                confirm_token_lifecycle_fn=self.confirm_token_lifecycle_payload,
+                confirm_token_records_fn=lambda tid: self.confirm_token_records(tid, tenant_id=clean_caller_tenant),
+                confirm_token_lifecycle_fn=lambda tid: self.confirm_token_lifecycle_payload(tid, tenant_id=clean_caller_tenant),
                 read_store=self.read_store,
                 command_store=store,
             )
@@ -2256,6 +2294,8 @@ class CommandAdapterService:
         stored_params = stored_command_params(cmd, identity, payload)
         stored_params["idempotency_key"] = resolved_key
         stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
+        if clean_caller_tenant:
+            stored_params["tenant_id"] = clean_caller_tenant
         canonicalize_validated_precondition_evidence(
             stored_params,
             precondition_evidence,
@@ -2313,6 +2353,10 @@ class CommandAdapterService:
             "foundation": serialize_foundation_context(foundation_context),
             "receipt_dual_write": receipt_dual_write,
         }
+        if clean_caller_tenant:
+            audit_record["tenant_id"] = clean_caller_tenant
+        if resolved_key:
+            audit_record["idempotency_key"] = resolved_key
         if precondition_evidence:
             audit_record["precondition_evidence"] = precondition_evidence
         if audit_extra:
@@ -2323,6 +2367,7 @@ class CommandAdapterService:
             duplicate_after_precheck = store.get_command_by_idempotency_key(
                 resolved_key,
                 operator_id=identity.operator_id,
+                tenant_id=clean_caller_tenant,
             )
             if duplicate_after_precheck:
                 duplicate_record = (
@@ -2360,6 +2405,10 @@ class CommandAdapterService:
             token_id = str(precondition_evidence.get("confirm_token_id") or "").strip()
             if token_id:
                 token_state = self.confirm_token_lifecycle_payload(token_id)
+                try:
+                    self.check_confirm_token_tenant_authorization(token_id, identity, token_state=token_state)
+                except HTTPException as exc:
+                    raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
                 if token_state.get("status") != "created":
                     error = self._raise_error(
                         428,

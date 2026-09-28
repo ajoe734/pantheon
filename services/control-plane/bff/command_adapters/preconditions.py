@@ -655,6 +655,32 @@ def _record_bound_to_command_and_target(record: Dict[str, Any], cmd: OperatorCom
     )
 
 
+def _extract_record_tenant(command: Dict[str, Any]) -> Optional[str]:
+    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    for key in ("tenant_id", "tenantId", "tenant"):
+        value = str(audit.get(key) or "").strip()
+        if value:
+            return value
+
+    foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
+    record = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
+    if record.get("tenant_id"):
+        return str(record.get("tenant_id")).strip()
+
+    trace = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
+    tenant_ref = trace.get("tenant_ref") if isinstance(trace.get("tenant_ref"), dict) else {}
+    value = str(tenant_ref.get("tenant_id") or trace.get("tenant_id") or "").strip()
+    if value:
+        return value
+
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    for key in ("tenant_id", "tenantId", "tenant"):
+        val = str(params.get(key) or "").strip()
+        if val:
+            return val
+    return None
+
+
 def _record_bound_to_caller(record: Dict[str, Any], identity: OperatorIdentity) -> bool:
     bound_values: List[str] = []
     for source in _binding_sources(record):
@@ -662,8 +688,20 @@ def _record_bound_to_caller(record: Dict[str, Any], identity: OperatorIdentity) 
         if value is not None:
             bound_values.append(str(value).strip())
     if bound_values:
-        return any(value == identity.operator_id for value in bound_values)
-    return _record_actor_id(record) == identity.operator_id
+        op_match = any(value == identity.operator_id for value in bound_values)
+    else:
+        op_match = _record_actor_id(record) == identity.operator_id
+    if not op_match:
+        return False
+
+    caller_tenant = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+    clean_caller_tenant = str(caller_tenant or "").strip() or None
+    rec_tenant = _extract_record_tenant(record)
+    if clean_caller_tenant or rec_tenant:
+        if not clean_caller_tenant or not rec_tenant or clean_caller_tenant != rec_tenant:
+            return False
+
+    return True
 
 
 def assert_duplicate_confirm_token_matches(
@@ -799,6 +837,46 @@ def require_final_command_confirm_token(
             suggestion="Issue a confirm token for the exact command and target being submitted",
             details_extra={"confirmToken": token_id},
         )
+    rec_tenant = _extract_record_tenant(create_record) or (token_state.get("tenant_id") if isinstance(token_state, dict) else None)
+    caller_tenant = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+    clean_caller_tenant = str(caller_tenant or "").strip() or None
+    if rec_tenant or clean_caller_tenant:
+        if not clean_caller_tenant:
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=403,
+                code=ErrorCode.FORBIDDEN,
+                message="Authenticated caller has no tenant bound",
+                reason="CONFIRM_TOKEN_TENANT_MISSING",
+                kind="confirm_token",
+                correlation_id=correlation_id,
+                suggestion="Authenticate with a valid tenant identity",
+                details_extra={"confirmToken": token_id},
+            )
+        if not rec_tenant:
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=403,
+                code=ErrorCode.FORBIDDEN,
+                message="Confirm token tenant unavailable",
+                reason="CONFIRM_TOKEN_TENANT_MISSING",
+                kind="confirm_token",
+                correlation_id=correlation_id,
+                suggestion="Use a confirm token issued within the caller's tenant scope",
+                details_extra={"confirmToken": token_id},
+            )
+        if clean_caller_tenant != rec_tenant:
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=403,
+                code=ErrorCode.FORBIDDEN,
+                message="Confirm token tenant mismatch",
+                reason="CONFIRM_TOKEN_TENANT_MISMATCH",
+                kind="confirm_token",
+                correlation_id=correlation_id,
+                suggestion="Use a confirm token issued within the caller's tenant scope",
+                details_extra={"confirmToken": token_id, "tokenTenant": rec_tenant, "callerTenant": clean_caller_tenant},
+            )
     if not _record_bound_to_caller(create_record, identity):
         raise _final_precondition_error(
             cmd=cmd,

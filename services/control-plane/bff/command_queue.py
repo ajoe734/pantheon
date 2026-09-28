@@ -342,6 +342,9 @@ class CommandStore:
                 "confirmed_at": submitted_at,
                 "confirmed_by": operator_id,
             }
+            ten_id = self._tenant_id_from_command({"audit": audit_context, "foundation": foundation_context, "params": params})
+            if ten_id:
+                confirmation_params["tenant_id"] = ten_id
             confirmation_record = {
                 "command_id": confirmation_command_id,
                 "type": CommandType.CONFIRM_TOKEN_REDEEM.value,
@@ -432,7 +435,9 @@ class CommandStore:
             if record.get("idempotency_key") != idempotency_key:
                 audit = cmd.get("audit") if isinstance(cmd.get("audit"), dict) else {}
                 if audit.get("idempotency_key") != idempotency_key:
-                    continue
+                    params = cmd.get("params") if isinstance(cmd.get("params"), dict) else {}
+                    if params.get("idempotency_key") != idempotency_key:
+                        continue
             if clean_operator_id and self._operator_id_from_command(cmd) != clean_operator_id:
                 continue
             if clean_tenant_id:
