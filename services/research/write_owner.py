@@ -211,89 +211,6 @@ def _atomic_update_ticket_links(
     return updated
 
 
-class ConcurrentPreservingRecord(dict):
-    """Dict wrapper that preserves concurrent status/cancellation updates when stored or copied."""
-
-    def __init__(self, record: Dict[str, Any], store: Any, record_id: str):
-        super().__init__(record)
-        self._store = store
-        self._record_id = record_id
-
-    def _get_current(self) -> Optional[Dict[str, Any]]:
-        target_rows = getattr(self._store, "rows", None)
-        if target_rows is None:
-            db = getattr(self._store, "db", None)
-            if db is not None:
-                target_rows = getattr(db, "rows", None)
-        if target_rows is not None and isinstance(target_rows, dict):
-            current = target_rows.get(self._record_id)
-            if current is not self and isinstance(current, dict):
-                return current
-        backend = getattr(self._store, "backend", None)
-        if backend is not None:
-            b_rows = getattr(backend, "rows", None)
-            if b_rows is not None and isinstance(b_rows, dict):
-                current = b_rows.get(self._record_id)
-                if current is not self and isinstance(current, dict):
-                    return current
-        if hasattr(self._store, "get"):
-            try:
-                current = self._store.get(self._record_id)
-                if current is not self and isinstance(current, dict):
-                    return current
-            except Exception:
-                pass
-        return None
-
-    def get(self, key, default=None):
-        curr = self._get_current()
-        if curr is not None:
-            if key in ("status", "cancellation_fence", "cancellation_reason", "canceled_by", "completed_at", "started_at"):
-                if curr.get("cancellation_fence") or (curr.get("status") and curr.get("status") != "queued"):
-                    if key in curr:
-                        return curr[key]
-        return super().get(key, default)
-
-    def __getitem__(self, key):
-        curr = self._get_current()
-        if curr is not None:
-            if key in ("status", "cancellation_fence", "cancellation_reason", "canceled_by", "completed_at", "started_at"):
-                if curr.get("cancellation_fence") or (curr.get("status") and curr.get("status") != "queued"):
-                    if key in curr:
-                        return curr[key]
-        return super().__getitem__(key)
-
-    def __deepcopy__(self, memo):
-        curr = self._get_current()
-        merged = dict(self)
-        if curr is not None:
-            if curr.get("cancellation_fence"):
-                merged["cancellation_fence"] = curr["cancellation_fence"]
-            if curr.get("cancellation_reason"):
-                merged["cancellation_reason"] = curr["cancellation_reason"]
-            if curr.get("canceled_by"):
-                merged["canceled_by"] = curr["canceled_by"]
-            if curr.get("completed_at"):
-                merged["completed_at"] = curr["completed_at"]
-            if curr.get("started_at"):
-                merged["started_at"] = curr["started_at"]
-            if curr.get("status") and curr["status"] != "queued":
-                merged["status"] = curr["status"]
-            if curr.get("is_archived"):
-                merged["is_archived"] = curr["is_archived"]
-                merged["archived_at"] = curr.get("archived_at")
-                merged["archived_by"] = curr.get("archived_by")
-            if curr.get("invalidated_at"):
-                merged["invalidated_at"] = curr["invalidated_at"]
-                merged["invalidated_reason"] = curr.get("invalidated_reason")
-                merged["invalidated_by"] = curr.get("invalidated_by")
-            if curr.get("updated_at"):
-                merged["updated_at"] = curr["updated_at"]
-            if curr.get("allowedActions"):
-                merged["allowedActions"] = copy.deepcopy(curr["allowedActions"], memo)
-        return copy.deepcopy(merged, memo)
-
-
 def _finalize_experiment_record(
     store: Any,
     exp_id: str,
@@ -314,7 +231,7 @@ def _finalize_experiment_record(
         if current and isinstance(current, dict):
             if current.get("is_committed"):
                 return current
-            for _ in range(5):
+            for _ in range(15):
                 exp_snap = copy.deepcopy(current)
                 cand_snap = copy.deepcopy(current)
                 cand_snap["is_committed"] = True
@@ -326,9 +243,16 @@ def _finalize_experiment_record(
                     raise RuntimeError(f"Experiment {exp_id!r} disappeared during finalization CAS")
                 if current.get("is_committed"):
                     return current
+        raise RuntimeError(f"Experiment {exp_id!r} finalization CAS exhausted")
 
     target_lock = getattr(store, "lock", None)
     target_rows = getattr(store, "rows", None)
+    if target_lock is None or target_rows is None:
+        db = getattr(store, "db", None)
+        if db is not None:
+            target_lock = getattr(db, "lock", None)
+            target_rows = getattr(db, "rows", None)
+
     if target_lock is not None and isinstance(target_rows, dict):
         with target_lock:
             current = target_rows.get(exp_id)
@@ -341,18 +265,7 @@ def _finalize_experiment_record(
                 return copy.deepcopy(merged)
             raise RuntimeError(f"Experiment {exp_id!r} not found for finalization")
 
-    current = store.get(exp_id) if hasattr(store, "get") else None
-    if isinstance(current, dict):
-        if current.get("is_committed"):
-            return current
-        candidate = copy.deepcopy(current)
-        candidate["is_committed"] = True
-        wrapped = ConcurrentPreservingRecord(candidate, store, exp_id)
-        store.put(exp_id, wrapped)
-        readback = store.get(exp_id)
-        return readback if readback and isinstance(readback, dict) else candidate
-
-    raise RuntimeError(f"Experiment {exp_id!r} not found for finalization")
+    raise RuntimeError(f"Experiment {exp_id!r} store does not support conditional finalization")
 
 
 class ResearchWriteOwner:

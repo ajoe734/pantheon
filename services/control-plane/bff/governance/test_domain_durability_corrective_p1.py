@@ -1316,26 +1316,38 @@ class ContendedConnection:
         self.conflicts = 0
         self.before_put = None
 
+    def _serialize(self, value):
+        if value is None:
+            return None
+        return json.loads(json.dumps(value))
+
     def get(self, key):
-        return self.backend.get(key)
+        return self._serialize(self.backend.get(key))
 
     def list_all(self):
-        return self.backend.list_all()
+        return [self._serialize(r) for r in self.backend.list_all()]
 
     def compare_and_set(self, key, expected, candidate, *, conn=None):
+        if expected is not None and self.before_put:
+            cb, self.before_put = self.before_put, None
+            cb(key)
         if expected is not None and self.conflicts < 6:
             self.conflicts += 1
             current = self.backend.get(key)
             current["updated_at"] = f"concurrent-update-{self.conflicts}"
-            self.backend.put(key, current)
-            return False, current
-        return self.backend.compare_and_set(key, expected, candidate)
+            self.backend.put(key, self._serialize(current))
+            return False, self._serialize(current)
+        return self.backend.compare_and_set(
+            key,
+            self._serialize(expected),
+            self._serialize(candidate),
+        )
 
     def put(self, key, value):
         callback, self.before_put = self.before_put, None
         if callback:
             callback(key)
-        self.backend.put(key, value)
+        self.backend.put(key, self._serialize(value))
 
 
 def test_cas_exhaustion_preserves_concurrent_cancellation():
@@ -1356,6 +1368,24 @@ def test_cas_exhaustion_preserves_concurrent_cancellation():
     row = store.get(eid)
     result.update(first=response.status_code, conflicts=store.conflicts, final_status=row["status"], final_fence=row.get("cancellation_fence"))
     assert row["status"] == "canceled" and row.get("cancellation_fence"), result
+
+
+def test_cas_exhaustion_fails_closed():
+    # If CAS continuously conflicts beyond retry limit, fail closed rather than falling back to unconditional put.
+    class EndlessConflictStore(CASStore):
+        def compare_and_set(self, key, expected, value, *, conn=None):
+            if expected is not None:
+                current = self.rows.get(key, {})
+                current["updated_at"] = "conflict"
+                return False, deepcopy(current)
+            return super().compare_and_set(key, expected, value, conn=conn)
+
+    tickets, store = CASStore(), EndlessConflictStore()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    client = _full_research_client(tickets, store)
+    body, headers = {"name": "fail_closed", "ticket_id": "ticket-1"}, {"Idempotency-Key": "fail-closed-key"}
+    response = client.post("/bff/experiments", json=body, headers=headers)
+    assert response.status_code >= 500, response.text
 
 
 def test_midnight_scoped_idempotency_independent_of_date_prefix():

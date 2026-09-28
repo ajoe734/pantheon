@@ -190,8 +190,8 @@
       "remediation": "Scoped terminal transition protection to completed terminal states (CommandStatus.EXECUTED), allowing failed command retry/re-queue while maintaining strict CAS against completed state regressions."
     },
     "defect_47_research_cas_exhaustion_preserves_concurrent_cancellation": {
-      "problem": "services/research/write_owner.py _finalize_experiment_record: after CAS retry loop exhausted, fallback unconditional get/put overwrote concurrent cancellations (status=canceled and cancellation_fence) to queued, and did not fail closed if the record disappeared.",
-      "remediation": "Wrapped fallback store.put with ConcurrentPreservingRecord to preserve store-side cancellation status and fence if cancellation occurred, and enforced fail-closed RuntimeError if record disappears before final write."
+      "problem": "services/research/write_owner.py _finalize_experiment_record fell through after 6 failed CAS attempts to an unconditional store.put. ConcurrentPreservingRecord could not preserve concurrent status/cancellation through JSON serialization (PostgresJsonOwnerStore.put at postgres_json_store.py:180).",
+      "remediation": "Removed unconditional finalization fallback and ConcurrentPreservingRecord dictionary-wrapper workaround. Enforced conditional CAS retries with compare_and_set, preserving concurrent status and cancellation fences across JSON serialization, and failed closed with RuntimeError on CAS exhaustion. Updated ContendedConnection with JSON-serializing persistence and added test_cas_exhaustion_fails_closed."
     },
     "defect_48_research_atomic_scoped_idempotency_across_midnight": {
       "problem": "services/research/write_owner.py _atomic_insert_record bound only date-derived experiment_id in store check. Concurrent or synchronized clients across UTC midnight (23:59:59Z and 00:00:00Z) created two durable rows with different date prefixes (exp-YYYYMMDD-001) under the same idempotency key.",
@@ -548,28 +548,28 @@
         "collected": 140
       },
       {
-        "command": "env PYTHONPATH=. timeout 90 .venv-pantheon/bin/python3 /tmp/domain_review_repro.py",
-        "result": "CAS_EXHAUSTION passed, MIDNIGHT_IDEMPOTENCY passed, exit 0",
-        "executed": 2,
-        "collected": 2
+        "command": "env PYTHONPATH=. timeout 90 .venv-pantheon/bin/python3 /tmp/domain_review_serializing_repro.py",
+        "result": "Serialized CAS exhaustion regression passed, exit 0",
+        "executed": 1,
+        "collected": 1
       },
       {
         "command": ".venv-pantheon/bin/python3 -m unittest services/control-plane/bff/smoke_test.py",
-        "result": "Ran 26 tests in 1.228s OK",
+        "result": "Ran 26 tests in 1.298s OK",
         "executed": 26,
         "collected": 26
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
-        "result": "61 passed, 10 warnings in 35.23s",
-        "executed": 61,
-        "collected": 61
+        "result": "62 passed, 9 warnings in 34.86s",
+        "executed": 62,
+        "collected": 62
       },
       {
         "command": "env PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
-        "result": "142 passed, 9 warnings in 79.89s",
-        "executed": 142,
-        "collected": 142
+        "result": "143 passed, 9 warnings in 90.30s",
+        "executed": 143,
+        "collected": 143
       }
     ]
   },
