@@ -304,6 +304,10 @@
     "defect_75_experiment_retry_canonical_aggregate_identity": {
       "problem": "services/control-plane/bff/command_adapters/experiment_adapter.py:277-287: successful retry persisted top-level aggregate_id=old experiment 001 with version=1 from new experiment 002, while canonical owner domain_receipt.aggregate_id=002, violating SD4.4 canonical receipt consistency.",
       "remediation": "Updated ExperimentCommandAdapter._execute_retry to preserve canonical owner aggregate_id and aggregate_version from the new experiment receipt in the top-level durable result, while preserving the previous target experiment ID separately in entity_id, previous_experiment_id, and target_experiment_id. Added mounted regression test_mounted_retry_canonical_aggregate_matches_owner in test_domain_durability_corrective_p1.py."
+    },
+    "defect_76_experiment_retry_crash_recovery_canonical_receipt": {
+      "problem": "Retry crash recovery corrupted canonical owner receipts upon restart replay (violating Acceptance 3 restart parity and Section E): services/research/write_owner.py recovered retry experiments via _replay_experiment_create, manufacturing a synthetic CreateResearchExperiment receipt with owner 'research' and aggregate_type 'research_experiment'. Additionally, if the retried child experiment was mutated (e.g. canceled) before recovery, subsequent recovery replayed current-state projection where cancel_receipt substituted evt-cmd-cancel-child and aggregate version 2 for the original retry event_id and version 1 in both domain_receipt and outer adapter result.",
+      "remediation": "Updated services/research/write_owner.py to store and project retry_receipt and cached retry_result, and implemented _replay_experiment_retry and _recover_or_replay_retry to recover and replay the canonical RetryResearchExperiment receipt preserving aggregate_type ('ResearchExperiment'), aggregate_id, aggregate_version (1), owner ('ResearchWriteOwner'), committed_at, and original retry event_id even after subsequent child experiment mutations. Hardened ExperimentCommandAdapter._execute_retry to bind canonical aggregate_type, owner, and event_id from retry_receipt. Added parameterized regression test_mounted_retry_crash_recovery_preserves_canonical_owner_receipt covering mounted crash recovery with and without child mutation in test_domain_durability_corrective_p1.py."
     }
   },
   "mutation_caller_inventory": {
@@ -1017,20 +1021,26 @@
         "collected": 2
       },
       {
+        "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python -m pytest -q /tmp/test_domain_979654_review.py",
+        "result": "2 passed, 1 warning in 2.82s",
+        "executed": 2,
+        "collected": 2
+      },
+      {
         "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
-        "result": "128 passed, 10 warnings in 75.04s",
-        "executed": 128,
-        "collected": 128
+        "result": "130 passed, 5 warnings in 71.29s",
+        "executed": 130,
+        "collected": 130
       },
       {
         "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python -m pytest -q services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/control-plane/bff/tests/test_read_surface_caller_migration.py",
-        "result": "75 passed, 3 warnings in 34.88s",
+        "result": "75 passed, 3 warnings in 34.12s",
         "executed": 75,
         "collected": 75
       },
       {
         "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python services/control-plane/bff/smoke_test.py",
-        "result": "26 passed in 1.139s",
+        "result": "26 passed in 1.179s",
         "executed": 26,
         "collected": 26
       }
@@ -1116,7 +1126,8 @@
     "defect_72_commit_trailer_length_and_normative_plan_access_resolved": true,
     "defect_73_experiment_adapter_dispatcher_command_id_fail_closed_resolved": true,
     "defect_74_experiment_retry_idempotency_collision_loop_termination_resolved": true,
-    "defect_75_experiment_retry_canonical_aggregate_identity_resolved": true
+    "defect_75_experiment_retry_canonical_aggregate_identity_resolved": true,
+    "defect_76_experiment_retry_crash_recovery_canonical_receipt_resolved": true
   },
   "review": {
     "reviewer": "Codex",

@@ -2877,6 +2877,63 @@ def test_mounted_retry_key_collision_terminates_without_allocation_loop(tmp_path
     assert cmd_record["error"]["code"] == "IDEMPOTENCY_CONFLICT"
 
 
+@pytest.mark.parametrize("mutate_child", [False, True])
+def test_mounted_retry_crash_recovery_preserves_canonical_owner_receipt(tmp_path, monkeypatch, mutate_child):
+    import asyncio
+    from services.control_plane.bff.command_adapters.registry import find_adapter
+    from services.control_plane.bff.command_adapters.service import process_command
+    from services.control_plane.bff.models import CommandType, CommandStatus
+    from services.research.write_owner import ResearchWriteOwner
+
+    client, holder, identity, owner, store = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    adapter = find_adapter(CommandType.EXPERIMENT_ACTION)
+    monkeypatch.setattr(adapter, "_research_write_owner", owner)
+    created = client.post("/bff/experiments", json={"name": "review recovery"}, headers={"Idempotency-Key": "create"})
+    assert created.status_code == 201, created.text
+    parent = created.json()["experiment_id"]
+    cancel = client.post(f"/bff/experiments/{parent}/actions/cancel", json={}, headers={"Idempotency-Key": "cancel-parent"})
+    assert cancel.status_code == 202, cancel.text
+    asyncio.run(process_command(cancel.json()["data"]["command_id"], command_store=store))
+    response = client.post(f"/bff/experiments/{parent}/actions/retry", json={}, headers={"Idempotency-Key": "retry-parent"})
+    assert response.status_code == 202, response.text
+    cid = response.json()["data"]["command_id"]
+    original_update = store.update_status
+    captured = {}
+
+    def fail_terminal(command_id, status, **kwargs):
+        if command_id == cid and status == CommandStatus.EXECUTED:
+            captured.update(deepcopy(kwargs["result"]))
+            raise OSError("review injected terminal receipt persistence failure")
+        return original_update(command_id, status, **kwargs)
+
+    monkeypatch.setattr(store, "update_status", fail_terminal)
+    with pytest.raises(OSError, match="review injected"):
+        asyncio.run(process_command(cid, command_store=store))
+    child = captured["new_experiment_id"]
+    receipt = deepcopy(owner._experiments_store.get(child)["retry_receipt"])
+    restarted_owner = ResearchWriteOwner(tickets_store=owner._tickets_store, experiments_store=owner._experiments_store, notes_store=owner._notes_store)
+    monkeypatch.setattr(adapter, "_research_write_owner", restarted_owner)
+    if mutate_child:
+        restarted_owner.cancel_research_experiment(child, actor_id=identity.operator_id, tenant_id=identity.tenant_id,
+            idempotency_key="cancel-child", request_hash="cancel-child-hash", command_id="cmd-cancel-child")
+    restarted_store = CommandStore(str(tmp_path / "commands.jsonl"))
+    asyncio.run(process_command(cid, command_store=restarted_store))
+    record = restarted_store.get_command(cid)
+    assert record["status"] == CommandStatus.EXECUTED, record
+    result = record["result"]
+    keys = ("command_id", "aggregate_type", "aggregate_id", "aggregate_version", "event_id", "correlation_id", "owner", "committed_at", "command")
+    expected = {k: receipt.get(k) for k in keys}
+    actual = {k: result["domain_receipt"].get(k) for k in keys}
+    assert actual == expected
+    assert result["event_id"] == receipt["event_id"]
+    assert result["aggregate_type"] == "ResearchExperiment"
+    assert result["owner"] == "ResearchWriteOwner"
+    assert result["aggregate_version"] == 1
+    assert result["aggregate_id"] == child
+    assert result["domain_receipt"]["command"] == "RetryResearchExperiment"
+
+
+
 
 
 

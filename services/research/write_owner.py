@@ -1182,6 +1182,7 @@ class ResearchWriteOwner:
             "owner": exp.get("owner") or "research",
             "committed_at": exp.get("committed_at") or exp.get("queued_at") or _utc_now_rfc3339(),
             "receipt": receipt,
+            "retry_receipt": exp.get("retry_receipt"),
             "cancel_receipt": exp.get("cancel_receipt"),
             "archive_receipt": exp.get("archive_receipt"),
             "invalidate_receipt": exp.get("invalidate_receipt"),
@@ -1270,6 +1271,8 @@ class ResearchWriteOwner:
 
     @classmethod
     def _replay_experiment_create(cls, exp: Dict[str, Any]) -> Dict[str, Any]:
+        if exp.get("retry_receipt") or (isinstance(exp.get("receipt"), dict) and exp["receipt"].get("command") == "RetryResearchExperiment"):
+            return cls._replay_experiment_retry(exp)
         if exp.get("create_result") and isinstance(exp["create_result"], dict):
             return copy.deepcopy(exp["create_result"])
         for c in (exp.get("command_history") or []):
@@ -1296,7 +1299,7 @@ class ResearchWriteOwner:
                 "aggregate_id": exp_id,
                 "aggregate_version": 1,
                 "status": "queued",
-                "event_id": exp.get("event_id") or f"evt-{exp_id}",
+                "event_id": (exp.get("create_command_id") and f"evt-{exp.get('create_command_id')}") or f"evt-{exp_id}",
                 "correlation_id": exp.get("idempotency_key") or exp_id,
                 "owner": "research",
                 "committed_at": exp.get("queued_at") or exp.get("committed_at") or _utc_now_rfc3339(),
@@ -1309,12 +1312,148 @@ class ResearchWriteOwner:
         result["receipt"] = copy.deepcopy(create_receipt)
         result["command_id"] = create_receipt.get("command_id") or result.get("command_id")
         result["commandId"] = result["command_id"]
+        result["aggregate_type"] = create_receipt.get("aggregate_type") or "research_experiment"
+        result["aggregate_id"] = create_receipt.get("aggregate_id") or result.get("experiment_id")
         result["aggregate_version"] = create_receipt.get("aggregate_version", 1)
         result["event_id"] = create_receipt.get("event_id") or f"evt-{result.get('experiment_id')}"
         result["correlation_id"] = create_receipt.get("correlation_id") or result.get("correlation_id")
+        result["owner"] = create_receipt.get("owner") or "research"
+        result["committed_at"] = create_receipt.get("committed_at") or result.get("committed_at")
+        result["command"] = create_receipt.get("command") or "CreateResearchExperiment"
         result["status"] = create_receipt.get("status") or "queued"
         result["allowedActions"] = {"canCancel": True, "canRetry": False, "canArchive": False, "canInvalidate": False}
         return result
+
+    @classmethod
+    def _replay_experiment_retry(
+        cls,
+        exp: Dict[str, Any],
+        *,
+        cmd: Optional[Dict[str, Any]] = None,
+        command_id: Optional[str] = None,
+        clean_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        matching_cmd = cmd
+        if not matching_cmd and exp.get("command_history"):
+            for c in exp["command_history"]:
+                if not isinstance(c, dict) or c.get("command") != "RetryResearchExperiment":
+                    continue
+                if command_id and c.get("command_id") == command_id:
+                    matching_cmd = c
+                    break
+                if clean_key and c.get("idempotency_key") == clean_key:
+                    matching_cmd = c
+                    break
+            if not matching_cmd:
+                for c in exp["command_history"]:
+                    if isinstance(c, dict) and c.get("command") == "RetryResearchExperiment":
+                        matching_cmd = c
+                        break
+
+        if matching_cmd and isinstance(matching_cmd, dict) and matching_cmd.get("result") and isinstance(matching_cmd["result"], dict):
+            return copy.deepcopy(matching_cmd["result"])
+
+        if exp.get("retry_result") and isinstance(exp["retry_result"], dict):
+            return copy.deepcopy(exp["retry_result"])
+
+        retry_receipt = None
+        if matching_cmd and isinstance(matching_cmd, dict) and matching_cmd.get("receipt") and isinstance(matching_cmd["receipt"], dict):
+            retry_receipt = matching_cmd["receipt"]
+        if not retry_receipt and exp.get("retry_receipt") and isinstance(exp["retry_receipt"], dict):
+            retry_receipt = exp["retry_receipt"]
+        if not retry_receipt and exp.get("command_history"):
+            for c in exp["command_history"]:
+                if isinstance(c, dict) and c.get("command") == "RetryResearchExperiment" and c.get("receipt"):
+                    retry_receipt = c["receipt"]
+                    break
+        if not retry_receipt:
+            cand = exp.get("receipt")
+            if isinstance(cand, dict) and cand.get("command") == "RetryResearchExperiment":
+                retry_receipt = cand
+        if not retry_receipt:
+            exp_id = exp.get("experiment_id")
+            cmd_id = command_id or exp.get("create_command_id") or exp.get("command_id") or f"cmd-{exp_id}"
+            retry_receipt = {
+                "receipt_id": f"rcpt-{cmd_id}",
+                "command_id": cmd_id,
+                "commandId": cmd_id,
+                "aggregate_type": exp.get("aggregate_type") or "ResearchExperiment",
+                "aggregate_id": exp_id,
+                "aggregate_version": 1,
+                "status": "queued",
+                "event_id": (exp.get("create_command_id") and f"evt-{exp.get('create_command_id')}") or f"evt-{cmd_id}",
+                "correlation_id": clean_key or exp.get("correlation_id") or exp.get("idempotency_key") or f"corr-{cmd_id}",
+                "owner": exp.get("owner") or "ResearchWriteOwner",
+                "actor_id": exp.get("actor_id") or exp.get("created_by"),
+                "tenant_id": exp.get("tenant_id"),
+                "idempotency_key": clean_key or exp.get("idempotency_key"),
+                "committed_at": exp.get("queued_at") or exp.get("committed_at") or _utc_now_rfc3339(),
+                "command": "RetryResearchExperiment",
+            }
+
+        result = cls._project_experiment_detail(exp)
+        result["receipt"] = copy.deepcopy(retry_receipt)
+        result["retry_receipt"] = copy.deepcopy(retry_receipt)
+        result["command_id"] = retry_receipt.get("command_id") or command_id or result.get("command_id")
+        result["commandId"] = result["command_id"]
+        result["aggregate_type"] = retry_receipt.get("aggregate_type") or "ResearchExperiment"
+        result["aggregate_id"] = retry_receipt.get("aggregate_id") or result.get("experiment_id")
+        result["aggregate_version"] = retry_receipt.get("aggregate_version", 1)
+        result["event_id"] = retry_receipt.get("event_id") or f"evt-{result['command_id']}"
+        result["correlation_id"] = retry_receipt.get("correlation_id") or clean_key or result.get("correlation_id")
+        result["owner"] = retry_receipt.get("owner") or "ResearchWriteOwner"
+        result["committed_at"] = retry_receipt.get("committed_at") or result.get("committed_at")
+        result["command"] = retry_receipt.get("command") or "RetryResearchExperiment"
+        result["status"] = retry_receipt.get("status") or "queued"
+        result["allowedActions"] = {"canCancel": True, "canRetry": False, "canArchive": False, "canInvalidate": False}
+        return result
+
+    def _recover_or_replay_retry(
+        self,
+        existing_exp: Dict[str, Any],
+        *,
+        clean_key: str,
+        clean_hash: Optional[str],
+        timestamp: str,
+        command_id: Optional[str] = None,
+        cmd: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        saved_hash = existing_exp.get("request_hash")
+        if not saved_hash and cmd:
+            saved_hash = cmd.get("request_hash")
+        if not saved_hash and existing_exp.get("command_history"):
+            for c in existing_exp["command_history"]:
+                if isinstance(c, dict) and c.get("command") == "RetryResearchExperiment":
+                    if c.get("idempotency_key") == clean_key or (command_id and c.get("command_id") == command_id):
+                        saved_hash = c.get("request_hash")
+                        break
+        if saved_hash and clean_hash and saved_hash != clean_hash:
+            raise ResearchIdempotencyConflictError(
+                f"Key {clean_key!r} is bound to a different request hash"
+            )
+
+        exp_id = str(existing_exp.get("experiment_id") or "").strip()
+
+        if existing_exp.get("is_committed", True):
+            return self._replay_experiment_retry(existing_exp, cmd=cmd, command_id=command_id, clean_key=clean_key)
+
+        exp_ticket_id = str(existing_exp.get("ticket_id") or "").strip() or None
+        if exp_ticket_id:
+            ticket = self._tickets_store.get(exp_ticket_id)
+            if ticket and isinstance(ticket, dict):
+                linked = ticket.get("linked_experiments") or []
+                if exp_id not in linked:
+                    _atomic_update_ticket_links(
+                        self._tickets_store,
+                        exp_ticket_id,
+                        exp_id,
+                        timestamp,
+                        initial_ticket=ticket,
+                    )
+
+        recovered = copy.deepcopy(existing_exp)
+        recovered = _finalize_experiment_record(self._experiments_store, exp_id, recovered)
+        return self._replay_experiment_retry(recovered, cmd=cmd, command_id=command_id, clean_key=clean_key)
 
     def _recover_or_replay_experiment(
         self,
@@ -1331,6 +1470,9 @@ class ResearchWriteOwner:
             )
 
         exp_id = str(existing_exp.get("experiment_id") or "").strip()
+
+        if existing_exp.get("retry_receipt") or (isinstance(existing_exp.get("receipt"), dict) and existing_exp["receipt"].get("command") == "RetryResearchExperiment"):
+            return self._recover_or_replay_retry(existing_exp, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
 
         if existing_exp.get("is_committed", True):
             return self._replay_experiment_create(existing_exp)
@@ -1351,6 +1493,8 @@ class ResearchWriteOwner:
 
         recovered = copy.deepcopy(existing_exp)
         recovered = _finalize_experiment_record(self._experiments_store, exp_id, recovered)
+        if recovered.get("retry_receipt") or (isinstance(recovered.get("receipt"), dict) and recovered["receipt"].get("command") == "RetryResearchExperiment"):
+            return self._replay_experiment_retry(recovered, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
         return self._replay_experiment_create(recovered)
 
     def create_research_experiment(
@@ -1725,7 +1869,7 @@ class ResearchWriteOwner:
                             e_actor = str(e.get("actor_id") or e.get("created_by") or (e.get("launch_context") or {}).get("actor_id") or "").strip() or None
                             if not clean_actor or not e_actor or e_actor == clean_actor:
                                 if e.get("parent_experiment_id") == parent_id or e.get("root_experiment_id") == root_id:
-                                    return self._recover_or_replay_experiment(e, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                                    return self._recover_or_replay_retry(e, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp, command_id=clean_cmd_id)
                                 raise ResearchIdempotencyConflictError(
                                     f"Idempotency key {clean_key!r} already used for conflicting target {e.get('experiment_id')!r}"
                                 )
@@ -1735,7 +1879,7 @@ class ResearchWriteOwner:
                             c_actor = str(cmd.get("actor_id") or "").strip() or None
                             if (not clean_tenant or not c_tenant or c_tenant == clean_tenant) and (not clean_actor or not c_actor or c_actor == clean_actor):
                                 if cmd.get("command") == "RetryResearchExperiment" and (e.get("parent_experiment_id") == parent_id or e.get("root_experiment_id") == root_id):
-                                    return self._recover_or_replay_experiment(e, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                                    return self._recover_or_replay_retry(e, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp, command_id=clean_cmd_id, cmd=cmd)
                                 raise ResearchIdempotencyConflictError(
                                     f"Idempotency key {clean_key!r} already used for command {cmd.get('command')!r} on experiment {e.get('experiment_id')!r}"
                                 )
@@ -1758,7 +1902,7 @@ class ResearchWriteOwner:
                             e_actor = str(existing_probe.get("actor_id") or existing_probe.get("created_by") or (existing_probe.get("launch_context") or {}).get("actor_id") or "").strip() or None
                             if not clean_actor or not e_actor or e_actor == clean_actor:
                                 if existing_probe.get("parent_experiment_id") == parent_id or existing_probe.get("root_experiment_id") == root_id:
-                                    return self._recover_or_replay_experiment(existing_probe, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                                    return self._recover_or_replay_retry(existing_probe, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp, command_id=clean_cmd_id)
                                 raise ResearchIdempotencyConflictError(
                                     f"Idempotency key {clean_key!r} already used for conflicting target {existing_probe.get('experiment_id')!r}"
                                 )
@@ -1792,6 +1936,12 @@ class ResearchWriteOwner:
                     "create_command_id": cmd_id,
                     "event_id": event_id,
                     "correlation_id": correlation_id,
+                    "aggregate_type": "ResearchExperiment",
+                    "aggregate_id": new_exp_id,
+                    "aggregate_version": 1,
+                    "owner": "ResearchWriteOwner",
+                    "committed_at": timestamp,
+                    "command": "RetryResearchExperiment",
                     "receipt": retry_receipt,
                     "retry_receipt": retry_receipt,
                     "ticket_id": ticket_id or "",
@@ -1832,6 +1982,23 @@ class ResearchWriteOwner:
                     }],
                 }
                 new_record["allowedActions"] = self._rw04_allowed_actions(new_record)
+                projected_retry = self._project_experiment_detail(new_record)
+                projected_retry["receipt"] = copy.deepcopy(retry_receipt)
+                projected_retry["retry_receipt"] = copy.deepcopy(retry_receipt)
+                projected_retry["command_id"] = cmd_id
+                projected_retry["commandId"] = cmd_id
+                projected_retry["aggregate_type"] = "ResearchExperiment"
+                projected_retry["aggregate_id"] = new_exp_id
+                projected_retry["aggregate_version"] = 1
+                projected_retry["event_id"] = event_id
+                projected_retry["correlation_id"] = correlation_id
+                projected_retry["owner"] = "ResearchWriteOwner"
+                projected_retry["committed_at"] = timestamp
+                projected_retry["command"] = "RetryResearchExperiment"
+                projected_retry["status"] = "queued"
+                projected_retry["allowedActions"] = {"canCancel": True, "canRetry": False, "canArchive": False, "canInvalidate": False}
+                new_record["retry_result"] = copy.deepcopy(projected_retry)
+                new_record["command_history"][0]["result"] = copy.deepcopy(projected_retry)
                 inserted, existing_row = _atomic_insert_record(self._experiments_store, new_exp_id, new_record)
                 if inserted:
                     break
@@ -1843,7 +2010,7 @@ class ResearchWriteOwner:
                             e_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
                             if not clean_actor or not e_actor or e_actor == clean_actor:
                                 if existing_row.get("parent_experiment_id") == parent_id or existing_row.get("root_experiment_id") == root_id:
-                                    return self._recover_or_replay_experiment(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+                                    return self._recover_or_replay_retry(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp, command_id=clean_cmd_id)
                                 raise ResearchIdempotencyConflictError(
                                     f"Idempotency key {clean_key!r} already used for conflicting target {existing_row.get('experiment_id')!r}"
                                 )
@@ -1864,7 +2031,7 @@ class ResearchWriteOwner:
 
             if not new_record.get("is_committed"):
                 new_record = _finalize_experiment_record(self._experiments_store, new_exp_id, new_record)
-            return self._project_experiment_detail(new_record)
+            return copy.deepcopy(new_record.get("retry_result") or self._project_experiment_detail(new_record))
         finally:
             if inflight_token:
                 with self._active_inflight_lock:

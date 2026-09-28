@@ -285,7 +285,9 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             )
 
         new_exp_id = result.get("experiment_id") or result.get("id")
-        receipt_dict = result.get("receipt") or result.get("retry_receipt") or {}
+        receipt_dict = result.get("retry_receipt") or (
+            result["receipt"] if isinstance(result.get("receipt"), dict) and result["receipt"].get("command") == "RetryResearchExperiment" else None
+        ) or result.get("receipt") or {}
         owner_aggregate_id = (
             receipt_dict.get("aggregate_id")
             or result.get("aggregate_id")
@@ -306,19 +308,19 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             entity_type="Experiment",
             entity_id=experiment_id,
             action_id=action_id,
-            status=result.get("status") or "queued",
+            status=receipt_dict.get("status") or result.get("status") or "queued",
             dispatch_path="research_write_owner.retry_research_experiment",
             domain_receipt=receipt_dict or result,
-            aggregate_type="ResearchExperiment",
+            aggregate_type=receipt_dict.get("aggregate_type") or "ResearchExperiment",
             aggregate_id=owner_aggregate_id,
             aggregate_version=owner_aggregate_version,
             event_id=event_id,
             correlation_id=correlation_id,
-            owner="ResearchWriteOwner",
+            owner=receipt_dict.get("owner") or "ResearchWriteOwner",
             committed_at=committed_at,
             authoritative_readback={
                 "experiment_id": new_exp_id,
-                "status": result.get("status"),
+                "status": receipt_dict.get("status") or result.get("status"),
                 "attempt_number": result.get("attempt_number"),
                 "parent_experiment_id": result.get("parent_experiment_id"),
             },
