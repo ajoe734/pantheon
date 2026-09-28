@@ -1,0 +1,208 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001",
+  "base_ref": "dev@c17eddae2e064d88588160c6d8601942d48dd924",
+  "head_ref": "task/BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001@4ba5ff9cad348c47322b8848c1ecdff2207c0474",
+  "depends_on": "(none declared); DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 running concurrently on overlapping files (models.py, governance/service.py, governance/router.py); rebased cleanly onto origin/dev tip immediately before handoff with no conflicts",
+  "normative_plan": "Operator-opened hardening task: make services/control-plane/bff/models.py::redact_evidence_refs fail closed for missing capabilities and unresolvable evidence kinds",
+  "demonstration_of_fail_open_bugs_before_any_change": {
+    "method": "Called the real (unmodified base) redact_evidence_refs directly via .venv-pantheon/bin/python3, no mocking",
+    "path_1_capabilities_none": {
+      "input": {
+        "identity": "OperatorIdentity(operator_id='op-1', roles=['viewer'])",
+        "evidence_refs": [{"ref_id": "audit-123", "evidence_type": "audit"}],
+        "capabilities": null
+      },
+      "output_on_base": {
+        "processed": [{"ref_id": "audit-123", "evidence_type": "audit"}],
+        "redacted_count": 0
+      },
+      "defect": "capabilities=None returned every ref unredacted instead of failing closed"
+    },
+    "path_2_unresolvable_kind": {
+      "input": {
+        "identity": "OperatorIdentity(operator_id='op-1', roles=['viewer'])",
+        "evidence_refs": [{"ref_id": "mystery-object-9f31", "payload": {"note": "no kind hint anywhere"}}],
+        "capabilities": []
+      },
+      "output_on_base": {
+        "processed": [{"ref_id": "mystery-object-9f31", "payload": {"note": "no kind hint anywhere"}}],
+        "redacted_count": 0
+      },
+      "defect": "a ref whose kind cannot be resolved (required_capability falsy) was appended unchanged instead of withheld"
+    }
+  },
+  "fix": {
+    "file": "services/control-plane/bff/models.py",
+    "function": "redact_evidence_refs",
+    "change": "capabilities=None now treated as an identity with no capabilities (empty set) instead of full visibility. A ref whose kind cannot be resolved is now withheld with reason='unresolved_evidence_kind', required_capability='unknown', keeping the RedactedEvidenceRef shape (redacted=true + required_capability + reason).",
+    "demonstration_after_fix": {
+      "path_1_capabilities_none": {
+        "output_on_head": {
+          "processed": [{"ref_id": "audit-123", "kind": "audit", "required_capability": "audit.read", "reason": "insufficient_capability", "redacted": true}],
+          "redacted_count": 1
+        }
+      },
+      "path_2_unresolvable_kind": {
+        "output_on_head": {
+          "processed": [{"ref_id": "mystery-object-9f31", "kind": null, "required_capability": "unknown", "reason": "unresolved_evidence_kind", "redacted": true}],
+          "redacted_count": 1
+        }
+      },
+      "full_capability_identity_still_sees_known_kind_ref": {
+        "input_capabilities": ["audit.read"],
+        "output_on_head": {
+          "processed": [{"ref_id": "audit-123", "evidence_type": "audit"}],
+          "redacted_count": 0
+        }
+      }
+    }
+  },
+  "per_caller_audit": {
+    "note": "8 direct callers of the base redact_evidence_refs function (not the safe_redact_evidence_refs / governance router _safe_redact wrappers, which already converted None to [] before this task and remain thin delegates to the now-fail-closed base function).",
+    "callers": [
+      {
+        "file": "personas/service.py:4761",
+        "function": "_pm12_public_quarter_evidence_refs",
+        "ref_shape": "production-shaped PM12 quarterly evidence records, e.g. {'id': 'ev-q1-001', 'ref_id': 'ev-q1-001', 'persona_id': 'persona-alpha', 'source_document': {'captured_at': ...}, 'source': 'paper_monitoring'} -- no evidence_type/type/ref_type/link_type field",
+        "gap_found": "no default_kind was passed; a genuinely production-shaped fixture ref (no kind hint anywhere) resolved to unresolved_evidence_kind under the new fail-closed base function, over-redacting even for a full-capability (admin) identity",
+        "fix": "added default_kind='artifact' to the redact_evidence_refs call",
+        "before_after": "full-capability (admin) identity: before fix on head (no default_kind) redacted_count=1 of 1 refs; after adding default_kind='artifact' redacted_count=0 of 1 refs, matching pre-task (fail-open bug) visibility with no over-redaction",
+        "test": "services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py::test_pm12_quarterly_evidence_passes_through_for_full_capability, test_pm12_quarterly_evidence_redacts_for_low_capability, test_pm12_quarterly_evidence_fails_closed_when_capabilities_unresolvable"
+      },
+      {
+        "file": "research/service.py:1901 (self-ref detail)",
+        "function": "_evidence_detail_payload",
+        "ref_shape": "{'ref_id': ref_id, 'evidence_type': evidence_kind} where evidence_kind is computed from evidence_ref.evidence_type or source_document.source_type",
+        "gap_found": "source_document.source_type values 'external_paper' and 'research_note' (KW03 seeded/service-backed fixtures) were not in SOURCE_TYPE_TO_EVIDENCE_KIND, so those detail refs resolved unresolved and over-redacted for identities that already had artifact.read",
+        "fix": "added 'external_paper': 'artifact' and 'research_note': 'artifact' to SOURCE_TYPE_TO_EVIDENCE_KIND in models.py",
+        "before_after": "full-capability (admin) identity sees the self-ref detail unredacted before and after (0 redacted); with the new mappings a zero-capability identity still correctly redacts these refs under artifact.read instead of passing through unresolved",
+        "test": "services/control-plane/bff/test_kw03_evidence_refs_contract.py::test_kw03_list_and_detail_return_contract_shape_with_degraded_fallback, test_kw03_service_backed_filters_and_detail_preserve_contract_semantics; services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py::test_kw03_research_evidence_detail_self_and_linked_decisions_low_vs_full_capability"
+      },
+      {
+        "file": "research/service.py:1935 (linked_decisions)",
+        "function": "_evidence_detail_payload",
+        "ref_shape": "decisions annotated with evidence_type from _ENTITY_TYPE_EVIDENCE_KIND.get(decision.entity_type); entity_type values seen in production-shaped fixtures include 'memory_entry' and 'research_note', neither mapped",
+        "gap_found": "an unmapped entity_type left the decision dict unmodified (no evidence_type, no ref_id), which used to pass through unredacted for any identity; now correctly resolves to unresolved_evidence_kind and over-redacts a zero-capability identity that could see nothing else either way, but more importantly would over-redact once a real capability is granted",
+        "fix": "added 'memory_entry': 'artifact' and 'experiment': 'artifact' to research/service.py's _ENTITY_TYPE_EVIDENCE_KIND (and its unused duplicate in research/routes/common.py for consistency)",
+        "before_after": "full-capability (admin) identity: before mapping fix, a memory_entry-typed linked decision was redacted (over-redaction); after the fix it is visible with kind='artifact', matching pre-task fail-open visibility for admin while a zero-capability identity is now correctly gated on artifact.read instead of passed through",
+        "test": "services/control-plane/bff/tests/test_research_router.py::test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfaces (linked_decisions[1] assertion updated and cited below); test_evidence_redaction_fail_closed.py::test_kw03_research_evidence_detail_self_and_linked_decisions_low_vs_full_capability"
+      },
+      {
+        "file": "research/service.py:2010 (list_evidence_refs)",
+        "function": "ResearchRouterService.list_evidence_refs",
+        "ref_shape": "raw port records with source_document.source_type, link_type, linked_object_summary.entity_type",
+        "gap_found": "same missing source_type/entity_type mappings as above surfaced here too for the list route",
+        "fix": "covered by the same SOURCE_TYPE_TO_EVIDENCE_KIND / _ENTITY_TYPE_EVIDENCE_KIND additions",
+        "before_after": "full-capability identity: 0 redacted before and after; verified against the seeded KW03 fixture list",
+        "test": "services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py::test_kw03_research_evidence_list_and_detail_pass_through_for_full_capability, test_kw03_research_evidence_list_fails_closed_when_capabilities_unresolvable"
+      },
+      {
+        "file": "assistant/management_service.py:6242",
+        "function": "management NL-ask evidence grounding",
+        "ref_shape": "evidence refs served from PANTHEON_BFF_EVIDENCE_REF_STORE, e.g. {'ref_id': ..., 'evidence_type': 'alert', 'source_document': {'source_type': 'alert', ...}}",
+        "gap_found": "no gap: evidence_type='alert' already resolves via EVIDENCE_CAPABILITY_MAP; verified no over-redaction regression",
+        "fix": "none required at this caller beyond the base function fix",
+        "before_after": "full-capability identity: 0 redacted before and after (existing tests test_nl_ask_response_includes_evidence_refs_with_api_href, test_nl_ask_response_includes_redacted_evidence_count already passed unmodified)",
+        "test": "services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py::test_nl_ask_evidence_passes_through_for_full_capability, test_nl_ask_evidence_redacts_for_low_capability, test_nl_ask_evidence_fails_closed_when_capabilities_unresolvable"
+      },
+      {
+        "file": "management_read_models/service.py:5650",
+        "function": "management evidence list (get_evidence)",
+        "ref_shape": "mixed shapes including current-run live-evidence-verifier records ({'evidence_type': 'workflow_artifact', ...}) and management evidence records with a flat 'linked_entity_type' field instead of nested linked_object_summary.entity_type",
+        "gap_found_1": "'workflow_artifact' evidence_type was unmapped, over-redacting the BFF live evidence artifact verifier record even for an admin identity",
+        "gap_found_2": "this caller's own exception handler on redact_evidence_refs raising fell back to returning the raw unredacted page (a third, caller-level fail-open path outside models.py, forbidden by this task's 'do not add a fallback path that can disclose a ref' requirement); its 'redact_evidence_refs is None' branch had the same disclosure bug",
+        "gap_found_3": "capabilities_for_identity(identity) was called with no try/except at all, so a raised capability lookup crashed the request (500) instead of failing closed",
+        "fix": "added 'workflow_artifact': 'artifact' to SOURCE_TYPE_TO_EVIDENCE_KIND; passed default_kind='artifact' to this caller's redact_evidence_refs call (covers the flat linked_entity_type shape via the keyword/URI-scheme fallback chain, verified against the seeded fixtures); replaced both disclosing fallback branches with fail_closed_redacted_refs(..., default_kind='artifact'); wrapped the capabilities_for_identity call in try/except",
+        "before_after": "admin identity: by_source_type summary for the live-evidence-verifier record was {} (item redacted, over-redaction) before the mapping fix, {'workflow_artifact': 1} after; verified_count for a strategy-linked management evidence record was 0 (over-redacted via the now-legitimate artifact default) before, 1 after, matching pre-task fail-open visibility for this specific record shape while a raised capability lookup now fails closed instead of 500ing",
+        "test": "services/control-plane/bff/tests/test_bff_b3_management_evidence.py::test_management_evidence_projects_current_run_verifier_when_store_missing; services/control-plane/bff/tests/test_management_read_models_router.py::test_intervention_stream_and_evidence, test_management_evidence_current_run_verifier_projection; services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py::test_management_evidence_list_redacts_for_low_capability_and_passes_for_full, test_management_evidence_list_fails_closed_when_capabilities_unresolvable"
+      },
+      {
+        "file": "governance/service.py:997",
+        "function": "consult_memo_projection",
+        "ref_shape": "memo.evidence_refs, e.g. [{'id': 'telemetry-vol-spike-...', 'evidence_type': 'telemetry', ...}, {'id': 'dp-...', 'evidence_type': 'deployment_plan', ...}]",
+        "gap_found": "'deployment_plan' evidence_type (distinct from the already-mapped 'deployment_log') was unmapped, over-redacting for an admin identity",
+        "fix": "added 'deployment_plan': 'deployment' to SOURCE_TYPE_TO_EVIDENCE_KIND",
+        "before_after": "full-capability identity: consult memo evidence_refs count with 1+ items redacted before the mapping fix; 0 redacted after, matching pre-task fail-open visibility while a zero-capability identity is correctly gated",
+        "test": "services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py::test_consult_memo_evidence_redacts_for_low_capability_and_passes_for_full, test_consult_memo_evidence_fails_closed_when_capabilities_unresolvable"
+      },
+      {
+        "file": "governance/service.py:1344",
+        "function": "mutation_review_projection",
+        "ref_shape": "decision.evidence_refs plus synthesized {'ref_type': 'incident'|'postmortem', 'ref_id': ..., 'summary': ...} entries for linked incidents/postmortems",
+        "gap_found": "no gap: 'incident' and 'postmortem' ref_type values already resolve directly via EVIDENCE_CAPABILITY_MAP; verified with a dedicated fixture carrying a policy-typed evidence ref",
+        "fix": "none required at this caller beyond the base function fix",
+        "before_after": "full-capability identity: 0 redacted before and after",
+        "test": "services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py::test_mutation_review_evidence_redacts_for_low_capability_and_passes_for_full, test_mutation_review_evidence_fails_closed_when_capabilities_unresolvable"
+      }
+    ]
+  },
+  "wrapper_audit": {
+    "safe_redact_evidence_refs": "not duplicated: its capabilities=None/exception short-circuit to fail_closed_redacted_refs produces reason='redaction_policy_unavailable' (capability lookup itself unknown), distinct from the base function's own capabilities=None handling (reason='insufficient_capability', identity known to have zero capabilities). Confirmed load-bearing: removing this branch broke 8 pre-existing test_control_loops_evidence_redaction_sweep.py assertions on the exact reason string. Reverted that simplification and instead documented the distinction in the docstring.",
+    "governance_router__safe_redact": "already a thin delegate to safe_redact_evidence_refs; no change needed.",
+    "governance_service__fail_closed_redact_evidence_refs": "distinct fallback used only when no canonical redaction policy is wired at all (redact_fn missing), not duplicate capabilities=None handling; left unchanged."
+  },
+  "test_edits_citing_old_fail_open_expectations": [
+    {
+      "file": "services/control-plane/bff/test_kw03_evidence_refs_contract.py",
+      "test": "test_bff_final_007_redact_evidence_refs_none_capabilities_is_noop -> renamed test_bff_final_007_redact_evidence_refs_none_capabilities_fails_closed",
+      "citation": "previously asserted redacted_count==0 and processed==refs for capabilities=None, i.e. literally encoded fail-open path 1; now asserts both refs are withheld with reason=insufficient_capability"
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py",
+      "tests": [
+        "test_ooda_real_producer_list_redacts_for_low_capability_identity",
+        "test_ooda_real_producer_detail_redacts_for_low_capability_identity",
+        "test_ooda_persona_producer_list_redacts_for_low_capability_identity",
+        "test_ooda_persona_producer_detail_redacts_for_low_capability_identity"
+      ],
+      "citation": "redacted_evidence_count assertions (11->12, 15->19) previously undercounted because act.command_receipt_refs / act.rollback_refs / act.safe_mode_refs had default_kind=None in redact_ooda_packet, so those refs silently passed through unredacted (fail-open path 2) instead of being gated like their broker_evidence_refs sibling. Fixed by giving these ActBundle fields default_kind='audit' (and observe.source_refs/market_refs/human_feedback_refs default_kind='artifact', observe/learn.telemetry_refs default_kind='runtime', decide.decision_rationale_ref default_kind='artifact' to avoid a kind_map collision with a shared postmortem ref_id) in models.py::redact_ooda_packet; verified 0 regressions for the full-capability pass-through tests in the same file"
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_research_router.py",
+      "test": "test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfaces",
+      "citation": "previously asserted linked_decisions[1] (entity_type=research_note) passed through unchanged even with capabilities=[] (zero capabilities) -- literally fail-open path 2 for an unmapped entity_type. Added 'research_note': 'artifact' to _ENTITY_TYPE_EVIDENCE_KIND and updated the assertion to expect the now-correctly-redacted RedactedEvidenceRef shape (kind=artifact, required_capability=artifact.read); redacted_evidence_count 1->2"
+    }
+  ],
+  "changed_files": [
+    "services/control-plane/bff/models.py",
+    "services/control-plane/bff/management_read_models/service.py",
+    "services/control-plane/bff/personas/service.py",
+    "services/control-plane/bff/research/service.py",
+    "services/control-plane/bff/research/routes/common.py",
+    "services/control-plane/bff/test_kw03_evidence_refs_contract.py",
+    "services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py",
+    "services/control-plane/bff/tests/test_research_router.py",
+    "services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "docs/deployment/evidence/BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001/evidence.json"
+  ],
+  "terminal_commands_and_results": [
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=<venv> python3 scripts/dev/provision_python_distribution.py",
+      "result": "provisioned .venv-pantheon interpreter successfully"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py services/control-plane/bff/tests/test_research_router.py",
+      "result": "218 passed, 3 warnings in 152.32s (run after rebase onto origin/dev)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_management_read_models_router.py services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/test_pkt001_governance_review_queue_contract.py",
+      "result": "89 passed, 3 failed (run after rebase). The 3 failures (test_consultation_session_and_policy_read_routes, test_bff_approval_review_and_governance_ledger_compatibility, test_single_and_batch_approval_decisions_validate_and_report_partial_results, all in test_governance_router.py) are confirmed pre-existing on the unmodified base checkout (git stash verified: 3 failed, 4 passed for the same 3 tests plus one control run on base before any change) and unrelated to this task -- 2 are a 503 on an idempotency/dry-run path, 1 is an unrelated redacted_evidence_count assertion in a route that never wires the real redact_evidence_refs/capabilities_for_identity (uses the always-fail-closed GovernanceService._fail_closed_redact_evidence_refs default)."
+    },
+    {
+      "command": "git rebase origin/dev",
+      "result": "Successfully rebased and updated refs/heads/task/BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001 (fast-forward of a single commit onto c17eddae2..HEAD, no conflicts)"
+    }
+  ],
+  "test_registration": {
+    "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "new_entry": "tests/test_evidence_redaction_fail_closed.py",
+    "layer": "router",
+    "imports_main": false,
+    "disposition": "DECOUPLED",
+    "composition_allowlist_grown": false,
+    "verified_by": "services/control-plane/bff/tests/test_bff_test_architecture.py (39 passed)"
+  },
+  "assertions_not_weakened_or_removed": "No existing assertion was deleted or loosened; every edited test either had its expectation corrected (cited above) or is unrelated to this change. No class-level monkeypatching of domain services was added (only function-level pytest.monkeypatch.setattr of module-level _capabilities_for_identity callables to simulate a capability-lookup outage, matching the existing pattern already used by test_control_loops_evidence_redaction_sweep.py and test_bff_pm12_persona_league.py). No fallback path that can disclose a ref was added; one was found and removed (management_read_models/service.py's two disclosing fallback branches)."
+}
