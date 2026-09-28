@@ -860,11 +860,17 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
     # -------------------------------------------------------------------------
     # Optional Surface & Host Bindings
     # -------------------------------------------------------------------------
-    def get_experiment_bff(self, exp_id: str) -> Optional[Dict[str, Any]]:
+    def get_experiment_bff(self, exp_id: str, *, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "get_experiment_bff"):
-            return self._read_surface.get_experiment_bff(exp_id)
+            try:
+                return self._read_surface.get_experiment_bff(exp_id, tenant_id=tenant_id)
+            except TypeError:
+                return self._read_surface.get_experiment_bff(exp_id)
         if self._ks is not None and hasattr(self._ks, "get_research_experiment"):
-            return self._ks.get_research_experiment(exp_id)
+            try:
+                return self._ks.get_research_experiment(exp_id, tenant_id=tenant_id)
+            except TypeError:
+                return self._ks.get_research_experiment(exp_id)
         raise AttributeError("Research port operation 'get_experiment_bff' not implemented")
 
     def list_experiments_bff(self, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -983,6 +989,18 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             return self._read_surface.get_persona(persona_id)
         return None
 
+
+def _tenant_scope_allows(record_tenant: Optional[str], caller_tenant: Optional[str]) -> bool:
+    """True when a tenant-scoped listing may surface this record for this caller.
+
+    An untenanted record (``record_tenant`` falsy) is always visible. A
+    tenant-bound record is only visible to the matching caller tenant --
+    including when ``caller_tenant`` is ``None`` because the identity's
+    tenant claim was absent or ambiguous, which must count as a mismatch
+    rather than as "no filter" or every tenant's records would be disclosed
+    to an unresolved caller.
+    """
+    return (not record_tenant) or record_tenant == caller_tenant
 
 
 @dataclass
@@ -3210,11 +3228,11 @@ class ResearchRouterService:
                 with self._map_port_errors("list_research_tickets"):
                     records = list(port.list_research_tickets() or [])
         clean_tenant = str(tenant_id or "").strip() or None
-        if clean_tenant:
-            records = [
-                r for r in records
-                if isinstance(r, dict) and str(r.get("tenant_id") or "").strip() == clean_tenant
-            ]
+        records = [
+            r for r in records
+            if isinstance(r, dict)
+            and _tenant_scope_allows(str(r.get("tenant_id") or "").strip() or None, clean_tenant)
+        ]
         surface_state = self._ticket_surface_state(snapshot_at=snap)
         if surface_state == "unavailable":
             items, next_token, total = [], None, 0
@@ -3247,7 +3265,7 @@ class ResearchRouterService:
             self._not_found("Research ticket", ticket_id)
         ticket_tenant = str(ticket.get("tenant_id") or "").strip() or None
         clean_tenant = str(tenant_id or "").strip() or None
-        if ticket_tenant and clean_tenant and clean_tenant != ticket_tenant:
+        if ticket_tenant and clean_tenant != ticket_tenant:
             self._raise_error(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -3281,14 +3299,17 @@ class ResearchRouterService:
         idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
+        clean_tenant = str(tenant_id or "").strip() or None
         port = self._port()
         with self._map_port_errors("get_research_ticket"):
-            ticket = port.get_research_ticket(ticket_id)
+            try:
+                ticket = port.get_research_ticket(ticket_id, tenant_id=clean_tenant)
+            except TypeError:
+                ticket = port.get_research_ticket(ticket_id)
         if not ticket:
             self._not_found("Research ticket", ticket_id)
 
         ticket_tenant = str(ticket.get("tenant_id") or "").strip() or None
-        clean_tenant = str(tenant_id or "").strip() or None
         if ticket_tenant and clean_tenant != ticket_tenant:
             self._raise_error(
                 403,
@@ -3526,7 +3547,7 @@ class ResearchRouterService:
                 f"No experiment exists with id '{clean_id}'",
             )
         exp_tenant = str(item.get("tenant_id") or (item.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-        if clean_tenant and exp_tenant and clean_tenant != exp_tenant:
+        if exp_tenant and clean_tenant != exp_tenant:
             self._raise_error(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -3562,11 +3583,14 @@ class ResearchRouterService:
                 except TypeError:
                     raw = port.list_research_experiments() or []
             items = _filter_by_status_csv(raw, status)
-        if clean_tenant:
-            items = [
-                i for i in items
-                if isinstance(i, dict) and str(i.get("tenant_id") or (i.get("launch_context") or {}).get("tenant_id") or "").strip() == clean_tenant
-            ]
+        items = [
+            i for i in items
+            if isinstance(i, dict)
+            and _tenant_scope_allows(
+                str(i.get("tenant_id") or (i.get("launch_context") or {}).get("tenant_id") or "").strip() or None,
+                clean_tenant,
+            )
+        ]
         surface = self._surface("research_experiments", snapshot_at=snap, has_data=bool(items) or None)
         if surface.get("status") == "unavailable" and not items:
             page_items, next_page_token = [], None
@@ -3657,11 +3681,14 @@ class ResearchRouterService:
             all_items = list(raw)
         else:
             all_items = []
-        if clean_tenant:
-            all_items = [
-                i for i in all_items
-                if isinstance(i, dict) and str(i.get("tenant_id") or (i.get("launch_context") or {}).get("tenant_id") or "").strip() == clean_tenant
-            ]
+        all_items = [
+            i for i in all_items
+            if isinstance(i, dict)
+            and _tenant_scope_allows(
+                str(i.get("tenant_id") or (i.get("launch_context") or {}).get("tenant_id") or "").strip() or None,
+                clean_tenant,
+            )
+        ]
         surface = self._surface("research_experiments", snapshot_at=snap, has_data=bool(all_items) or None)
         page_items, next_page_token = self.page_slice(all_items, page_token, page_size)
         meta = self.snapshot_meta(snap)
@@ -3700,7 +3727,7 @@ class ResearchRouterService:
                 f"No experiment exists with id '{clean_id}'",
             )
         exp_tenant = str(experiment.get("tenant_id") or (experiment.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-        if clean_tenant and exp_tenant and clean_tenant != exp_tenant:
+        if exp_tenant and clean_tenant != exp_tenant:
             self._raise_error(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -3832,11 +3859,14 @@ class ResearchRouterService:
                 except TypeError:
                     raw_records = port.list_research_experiments()
             records = list(raw_records or [])
-        if clean_tenant:
-            records = [
-                r for r in records
-                if isinstance(r, dict) and str(r.get("tenant_id") or (r.get("launch_context") or {}).get("tenant_id") or "").strip() == clean_tenant
-            ]
+        records = [
+            r for r in records
+            if isinstance(r, dict)
+            and _tenant_scope_allows(
+                str(r.get("tenant_id") or (r.get("launch_context") or {}).get("tenant_id") or "").strip() or None,
+                clean_tenant,
+            )
+        ]
         surface_state = self.legacy_experiment_surface_state(snapshot_at=snap, has_data=bool(records))
         if surface_state == "unavailable":
             items, next_token, total = [], None, 0
@@ -3878,7 +3908,7 @@ class ResearchRouterService:
         if not experiment:
             self._not_found("Experiment", clean_id)
         exp_tenant = str(experiment.get("tenant_id") or (experiment.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-        if clean_tenant and exp_tenant and clean_tenant != exp_tenant:
+        if exp_tenant and clean_tenant != exp_tenant:
             self._raise_error(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -3925,7 +3955,7 @@ class ResearchRouterService:
         if not experiment:
             self._not_found("Experiment", clean_id)
         exp_tenant = str(experiment.get("tenant_id") or (experiment.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-        if clean_tenant and exp_tenant and clean_tenant != exp_tenant:
+        if exp_tenant and clean_tenant != exp_tenant:
             self._raise_error(
                 403,
                 ErrorCode.FORBIDDEN,

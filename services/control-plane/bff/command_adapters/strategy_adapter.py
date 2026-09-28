@@ -309,16 +309,15 @@ def _validate_scoped_receipt(
             error_code="REPLAY_ACTOR_MISMATCH",
         )
 
-    if caller_tenant and caller_tenant != "unscoped":
-        entry_tenant = committed_entry.get("owner_tenant")
-        if entry_tenant and entry_tenant != caller_tenant:
-            raise ActionUnavailableError(
-                f"Registry command receipt committed entry reports tenant {entry_tenant!r}, "
-                f"not the verified caller tenant {caller_tenant!r}.",
-                action_id=action_id,
-                entity_type="Strategy",
-                error_code="READBACK_MISMATCH",
-            )
+    entry_tenant = committed_entry.get("owner_tenant")
+    if entry_tenant and entry_tenant != "unscoped" and caller_tenant != entry_tenant:
+        raise ActionUnavailableError(
+            f"Registry command receipt committed entry reports tenant {entry_tenant!r}, "
+            f"not the verified caller tenant {caller_tenant!r}.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="READBACK_MISMATCH",
+        )
 
     if expected_entry is not None:
         if (

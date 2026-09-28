@@ -84,6 +84,19 @@ def _naive_utc(dt: Optional[datetime]) -> datetime:
     return dt
 
 
+def _tenant_scope_allows(record_tenant: Optional[str], caller_tenant: Optional[str]) -> bool:
+    """True when a tenant-scoped listing may surface this record for this caller.
+
+    An untenanted record (``record_tenant`` falsy) is always visible. A
+    tenant-bound record is only visible to the matching caller tenant --
+    including when ``caller_tenant`` is ``None`` because the identity's
+    tenant claim was absent or ambiguous, which must count as a mismatch
+    rather than as "no filter" or every tenant's records would be disclosed
+    to an unresolved caller.
+    """
+    return (not record_tenant) or record_tenant == caller_tenant
+
+
 def _atomic_insert_record(
     store: Any,
     record_id: str,
@@ -980,7 +993,7 @@ class ResearchWriteOwner:
             return None
         current_tenant = str(ticket.get("tenant_id") or "").strip() or None
         clean_tenant = str(tenant_id).strip() if tenant_id else None
-        if current_tenant and clean_tenant and clean_tenant != current_tenant:
+        if current_tenant and clean_tenant != current_tenant:
             raise ResearchTenantAuthorizationError(
                 f"Tenant {clean_tenant!r} is not authorized to access ticket belonging to tenant {current_tenant!r}",
                 tenant_id=clean_tenant,
@@ -997,11 +1010,11 @@ class ResearchWriteOwner:
     ) -> List[Dict[str, Any]]:
         tickets = self._tickets_store.list_all()
         clean_tenant = str(tenant_id).strip() if tenant_id else None
-        if clean_tenant:
-            tickets = [
-                t for t in tickets
-                if isinstance(t, dict) and (str(t.get("tenant_id") or "").strip() == clean_tenant)
-            ]
+        tickets = [
+            t for t in tickets
+            if isinstance(t, dict)
+            and _tenant_scope_allows(str(t.get("tenant_id") or "").strip() or None, clean_tenant)
+        ]
         if statuses:
             req_statuses = {str(s).strip().lower() for s in statuses if str(s).strip()}
             tickets = [t for t in tickets if str(t.get("status") or "").strip().lower() in req_statuses]
@@ -1557,7 +1570,7 @@ class ResearchWriteOwner:
                 ticket = self._tickets_store.get(clean_ticket_id)
                 if ticket and isinstance(ticket, dict):
                     ticket_tenant = str(ticket.get("tenant_id") or "").strip() or None
-                    if ticket_tenant and clean_tenant and clean_tenant != ticket_tenant:
+                    if ticket_tenant and clean_tenant != ticket_tenant:
                         raise ResearchTenantAuthorizationError(
                             f"Tenant {clean_tenant!r} is not authorized to access ticket belonging to tenant {ticket_tenant!r}",
                             tenant_id=clean_tenant,
@@ -1700,7 +1713,7 @@ class ResearchWriteOwner:
                 return None
 
             exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-            if exp_tenant and clean_tenant and clean_tenant != exp_tenant:
+            if exp_tenant and clean_tenant != exp_tenant:
                 raise ResearchTenantAuthorizationError(
                     f"Tenant {clean_tenant!r} is not authorized to cancel experiment belonging to tenant {exp_tenant!r}",
                     tenant_id=clean_tenant,
@@ -2067,7 +2080,7 @@ class ResearchWriteOwner:
             if exp is None or not isinstance(exp, dict):
                 return None
             exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-            if exp_tenant and clean_tenant and clean_tenant != exp_tenant:
+            if exp_tenant and clean_tenant != exp_tenant:
                 raise ResearchTenantAuthorizationError(
                     f"Tenant {clean_tenant!r} is not authorized to archive experiment belonging to tenant {exp_tenant!r}",
                     tenant_id=clean_tenant,
@@ -2202,7 +2215,7 @@ class ResearchWriteOwner:
             if exp is None or not isinstance(exp, dict):
                 return None
             exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
-            if exp_tenant and clean_tenant and clean_tenant != exp_tenant:
+            if exp_tenant and clean_tenant != exp_tenant:
                 raise ResearchTenantAuthorizationError(
                     f"Tenant {clean_tenant!r} is not authorized to invalidate experiment belonging to tenant {exp_tenant!r}",
                     tenant_id=clean_tenant,
@@ -2322,7 +2335,7 @@ class ResearchWriteOwner:
             return None
         exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
         clean_tenant = str(tenant_id).strip() if tenant_id else None
-        if exp_tenant and clean_tenant and clean_tenant != exp_tenant:
+        if exp_tenant and clean_tenant != exp_tenant:
             raise ResearchTenantAuthorizationError(
                 f"Tenant {clean_tenant!r} is not authorized to access experiment belonging to tenant {exp_tenant!r}",
                 tenant_id=clean_tenant,
@@ -2341,11 +2354,14 @@ class ResearchWriteOwner:
         experiments = self._experiments_store.list_all()
         experiments = [e for e in experiments if isinstance(e, dict) and e.get("is_committed", True)]
         clean_tenant = str(tenant_id).strip() if tenant_id else None
-        if clean_tenant:
-            experiments = [
-                e for e in experiments
-                if isinstance(e, dict) and (str(e.get("tenant_id") or (e.get("launch_context") or {}).get("tenant_id") or "").strip() == clean_tenant)
-            ]
+        experiments = [
+            e for e in experiments
+            if isinstance(e, dict)
+            and _tenant_scope_allows(
+                str(e.get("tenant_id") or (e.get("launch_context") or {}).get("tenant_id") or "").strip() or None,
+                clean_tenant,
+            )
+        ]
         if not include_archived:
             experiments = [e for e in experiments if not bool(e.get("is_archived", False))]
         if ticket_id:

@@ -32,8 +32,15 @@ except (ImportError, ValueError):
 from .service import RuntimeRouterService, _MissingRuntimeDependency
 
 
-def _resolve_identity_tenant_id(identity: Any) -> str:
-    return resolve_identity_tenant(identity) or ""
+def _resolve_identity_tenant_id(identity: Any) -> Optional[str]:
+    # An unresolved (missing/ambiguous) tenant claim must stay ``None``, not
+    # be coerced to ``""``. ``""`` is falsy the same way ``None`` is in every
+    # ``if tenant_id`` guard below, but it is also a distinct, reusable scope
+    # key inside f-string cache keys (``f"{tenant_id}:{operator_id}:..."``):
+    # every caller with an unresolved tenant would otherwise collapse onto
+    # the same literal ``""`` scope segment instead of each being treated as
+    # having no tenant scope at all.
+    return resolve_identity_tenant(identity)
 
 
 def create_runtime_router(

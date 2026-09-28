@@ -536,8 +536,11 @@ class ReadSurfacePorts:
     def list_research_experiments(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_research_experiments(**kwargs)
 
-    def get_research_experiment(self, experiment_id: str) -> Optional[Dict[str, Any]]:
-        return self.research_knowledge_source.get_research_experiment(experiment_id)
+    def get_research_experiment(self, experiment_id: str, *, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            return self.research_knowledge_source.get_research_experiment(experiment_id, tenant_id=tenant_id)
+        except TypeError:
+            return self.research_knowledge_source.get_research_experiment(experiment_id)
 
     # NOTE: create_research_experiment/cancel_research_experiment are
     # deliberately NOT exposed here. Per
@@ -1129,8 +1132,11 @@ class ReadSurfacePorts:
             return {"progress": 0.0}
         return runs[0] if runs else None
 
-    def get_experiment_bff(self, exp_id: str) -> Optional[Dict[str, Any]]:
-        return self.research_knowledge_source.get_research_experiment(exp_id)
+    def get_experiment_bff(self, exp_id: str, *, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            return self.research_knowledge_source.get_research_experiment(exp_id, tenant_id=tenant_id)
+        except TypeError:
+            return self.research_knowledge_source.get_research_experiment(exp_id)
 
     def get_job_bff(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Typed Job read composition (BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001).

@@ -2350,7 +2350,7 @@ def _get_persona_directory_snapshot(
         if not isinstance(raw, dict):
             continue
         rec_tenant = _persona_record_tenant_id(raw)
-        if clean_tenant and rec_tenant != clean_tenant:
+        if rec_tenant and rec_tenant != clean_tenant:
             continue
         pid = str(raw.get("persona_id") or raw.get("id") or "").strip()
         if pid:
