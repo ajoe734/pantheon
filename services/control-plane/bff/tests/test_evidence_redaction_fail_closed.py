@@ -180,15 +180,32 @@ def _kw03_seeded_client():
 
 
 def test_kw03_research_evidence_list_and_detail_redact_for_low_capability() -> None:
+    # The single seeded evidence ref resolves to the "artifact" kind, which
+    # the operator role (LOW_CAPABILITY_AUTH elsewhere in this file) already
+    # holds; use viewer (lacks artifact.read) so this is a genuine
+    # low-capability probe rather than a vacuous nonempty-200 check.
     with _stub_auth_env():
         client = _kw03_seeded_client()
 
         listing = client.get(
-            "/api/v1/knowledge/evidence", headers={"Authorization": LOW_CAPABILITY_AUTH}
+            "/api/v1/knowledge/evidence", headers={"Authorization": "Bearer evd-fc-viewer:viewer"}
         )
         assert listing.status_code == 200, listing.text
         payload = listing.json()
-        assert payload["evidence_refs"], "seeded evidence list must not be empty"
+        refs = payload["evidence_refs"]
+        assert refs, "seeded evidence list must not be empty"
+        withheld = [ref for ref in refs if ref.get("redacted") is True]
+        assert withheld, (
+            "operator (low-capability) identity must have at least one "
+            "evidence ref withheld, not just a nonempty 200"
+        )
+        for ref in withheld:
+            assert ref.get("required_capability"), ref
+            assert ref.get("reason"), ref
+            assert "source_document" not in ref, (
+                f"a withheld ref must not leak source_document payload, got: {ref}"
+            )
+        assert payload["meta"]["redacted_evidence_count"] == len(withheld)
 
 
 def test_kw03_research_evidence_list_and_detail_pass_through_for_full_capability() -> None:
@@ -290,6 +307,50 @@ def test_kw03_research_evidence_detail_self_and_linked_decisions_low_vs_full_cap
     # admin has artifact.read: full detail (including linked_decisions) is visible.
     assert full_payload.get("redacted") is not True
     assert full_payload["linked_decisions"][0]["entity_type"] == "memory_entry"
+
+
+def test_kw03_research_evidence_detail_fails_closed_when_capabilities_unresolvable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The detail route's self-ref ``redact_evidence_refs`` call site must
+    also fail closed when the capability lookup raises, mirroring the list
+    route's coverage above."""
+    from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+        create_seeded_knowledge_read_ports,
+    )
+    from services.control_plane.bff.research.router import create_research_router
+
+    def _boom(identity: Any) -> list:
+        raise RuntimeError("capability lookup unavailable")
+
+    monkeypatch.setattr(auth_policy, "capabilities_for_identity", _boom)
+
+    ports = create_seeded_knowledge_read_ports()
+    app = FastAPI()
+    app.include_router(
+        create_research_router(
+            read_surface=ports,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=lambda: "2026-09-28T00:00:00Z",
+            get_capabilities=_boom,
+        )
+    )
+    with _stub_auth_env():
+        client = TestClient(app)
+        detail = client.get(
+            f"/api/v1/knowledge/evidence/{_KW03_DETAIL_REF_ID}",
+            headers={"Authorization": FULL_CAPABILITY_AUTH},
+        )
+    assert detail.status_code == 200, detail.text
+    payload = detail.json()
+    assert payload.get("redacted") is True, (
+        f"a raised capability lookup must fail closed even for an "
+        f"admin-shaped token, got: {payload}"
+    )
+    assert "source_document" not in payload
 
 
 # ===========================================================================
@@ -655,4 +716,95 @@ def test_mutation_review_evidence_fails_closed_when_capabilities_unresolvable() 
     assert refs, "seeded mutation review evidence must not be empty"
     assert all(ref.get("redacted") is True for ref in refs), (
         "a raised capability lookup must fail closed even for an admin-shaped token"
+    )
+
+
+# ===========================================================================
+# 8. Wrapper-caller surface: governance/service.py committee_projection via
+#    the real governance router. Unlike callers 1-8 above (which all call
+#    ``redact_evidence_refs`` directly), this surface goes through the
+#    ``safe_redact_evidence_refs``/``safe_redact_scalar_ref`` wrappers in
+#    models.py, so it exercises the wrapper's own capability-resolution
+#    fail-closed path (``reason=redaction_policy_unavailable``) rather than
+#    the base function's ``capabilities=None`` path exercised above.
+# ===========================================================================
+
+class _CommitteeReadStore:
+    """Minimal read-store double exposing only what committee_projection needs."""
+
+    def dataset_source(self, dataset: str) -> str:
+        return "service_store"
+
+    def get_committee(self, committee_id: str) -> Optional[dict]:
+        if committee_id != "committee-fc-001":
+            return None
+        return {
+            "committee_id": "committee-fc-001",
+            "quorum_state": "quorum_met",
+            "consensus_state": "sponsor_required",
+            "linked_evidence": [
+                {"ref_id": "policy-doc-fc-2", "evidence_type": "policy"},
+            ],
+        }
+
+
+def _committee_client(*, capabilities_for_identity: Any = None) -> TestClient:
+    store = _CommitteeReadStore()
+    app = FastAPI()
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            redact_evidence_refs=redact_evidence_refs,
+            capabilities_for_identity=capabilities_for_identity or auth_policy.capabilities_for_identity,
+        )
+    )
+    return TestClient(app)
+
+
+def test_committee_projection_wrapper_redacts_for_low_capability_and_passes_for_full() -> None:
+    with _stub_auth_env():
+        low = _committee_client().get(
+            "/api/v1/committees/committee-fc-001",
+            headers={"Authorization": LOW_CAPABILITY_AUTH},
+        )
+        full = _committee_client().get(
+            "/api/v1/committees/committee-fc-001",
+            headers={"Authorization": FULL_CAPABILITY_AUTH},
+        )
+
+    assert low.status_code == 200, low.text
+    assert full.status_code == 200, full.text
+    low_refs = low.json()["linked_evidence"]
+    full_refs = full.json()["linked_evidence"]
+    assert low_refs, "seeded committee linked_evidence must not be empty"
+    # operator role lacks policy.read.
+    assert all(ref.get("redacted") is True for ref in low_refs)
+    assert all(ref.get("required_capability") == "policy.read" for ref in low_refs)
+    assert not any(ref.get("redacted") is True for ref in full_refs), (
+        "admin must see every evidence ref it could see before this change"
+    )
+
+
+def test_committee_projection_wrapper_fails_closed_when_capabilities_unresolvable() -> None:
+    def _boom(identity: Any) -> list:
+        raise RuntimeError("capability lookup unavailable")
+
+    with _stub_auth_env():
+        response = _committee_client(capabilities_for_identity=_boom).get(
+            "/api/v1/committees/committee-fc-001",
+            headers={"Authorization": FULL_CAPABILITY_AUTH},
+        )
+    assert response.status_code == 200, response.text
+    refs = response.json()["linked_evidence"]
+    assert refs, "seeded committee linked_evidence must not be empty"
+    assert all(ref.get("redacted") is True for ref in refs), (
+        "a raised capability lookup must fail closed even for an admin-shaped token"
+    )
+    assert all(ref.get("reason") == "redaction_policy_unavailable" for ref in refs), (
+        "the wrapper's own capability-resolution-failure path must report "
+        "redaction_policy_unavailable, distinct from insufficient_capability"
     )

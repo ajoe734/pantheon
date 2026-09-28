@@ -844,40 +844,6 @@ def _resolve_evidence_kind_and_capability(
     return kind_key, evidence_kind, required_capability
 
 
-def fail_closed_redacted_refs(
-    refs: list[Any],
-    *,
-    default_kind: Optional[str] = None,
-    kind_map: Optional[Mapping[str, str]] = None,
-) -> tuple[list[dict[str, Any]], int]:
-    """Withhold every ref because the redaction policy itself is unavailable.
-
-    Used when a capability lookup or a canonical redact call raises, so no
-    individual ref can be verified safe to disclose. Still resolves
-    ``required_capability`` from the known evidence-kind map when the ref's
-    kind can be determined, instead of dropping that field for every ref.
-    """
-    redacted: list[dict[str, Any]] = []
-    for ref in refs:
-        if isinstance(ref, dict):
-            ref_id = str(ref.get("ref_id") or ref.get("id") or ref.get("artifact_ref") or ref.get("entity_ref") or "")
-        else:
-            ref_id = str(ref)
-        _, evidence_kind, required_capability = _resolve_evidence_kind_and_capability(
-            ref, default_kind=default_kind, kind_map=kind_map
-        )
-        entry: dict[str, Any] = {
-            "ref_id": ref_id,
-            "redacted": True,
-            "required_capability": required_capability or "unknown",
-            "reason": "redaction_policy_unavailable",
-        }
-        if evidence_kind is not None:
-            entry["kind"] = evidence_kind
-        redacted.append(entry)
-    return redacted, len(redacted)
-
-
 def redact_evidence_refs(
     identity: OperatorIdentity,
     evidence_refs: list[Any],
@@ -885,6 +851,7 @@ def redact_evidence_refs(
     *,
     default_kind: Optional[str] = None,
     kind_map: Optional[Mapping[str, str]] = None,
+    unavailable_reason: Optional[str] = None,
 ) -> tuple[list[Any], int]:
     """Redact evidence references that require an unavailable capability.
 
@@ -897,6 +864,12 @@ def redact_evidence_refs(
     identity with no capabilities rather than full visibility, and a ref
     whose kind cannot be resolved is withheld rather than passed through,
     since its ``required_capability`` cannot be verified either way.
+
+    ``unavailable_reason`` lets ``fail_closed_redacted_refs`` reuse this same
+    kind-resolution/redaction loop for the distinct "the capability lookup
+    itself failed" case, reporting that reason on every withheld ref instead
+    of the normal per-ref ``unresolved_evidence_kind``/``insufficient_capability``
+    split. Callers that do not pass it keep the normal per-ref reasons.
     """
 
     del identity
@@ -919,7 +892,7 @@ def redact_evidence_refs(
                 ref_id=ref_id,
                 kind=evidence_kind,
                 required_capability="unknown",
-                reason="unresolved_evidence_kind",
+                reason=unavailable_reason or "unresolved_evidence_kind",
             )
             processed.append(redacted.model_dump())
             continue
@@ -929,13 +902,37 @@ def redact_evidence_refs(
                 ref_id=ref_id,
                 kind=evidence_kind,
                 required_capability=required_capability,
-                reason="insufficient_capability",
+                reason=unavailable_reason or "insufficient_capability",
             )
             processed.append(redacted.model_dump())
             continue
         processed.append(ref)
 
     return processed, redacted_count
+
+
+def fail_closed_redacted_refs(
+    refs: list[Any],
+    *,
+    default_kind: Optional[str] = None,
+    kind_map: Optional[Mapping[str, str]] = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Withhold every ref because the redaction policy itself is unavailable.
+
+    Used when a capability lookup or a canonical redact call raises, so no
+    individual ref can be verified safe to disclose. Thin delegate onto
+    ``redact_evidence_refs`` (capabilities=None, reason forced to
+    ``redaction_policy_unavailable``) so there is exactly one kind-resolution
+    and redaction loop rather than a second independent implementation.
+    """
+    return redact_evidence_refs(
+        None,
+        refs,
+        capabilities=None,
+        default_kind=default_kind,
+        kind_map=kind_map,
+        unavailable_reason="redaction_policy_unavailable",
+    )
 
 
 def safe_redact_evidence_refs(
