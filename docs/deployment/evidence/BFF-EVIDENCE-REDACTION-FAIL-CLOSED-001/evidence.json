@@ -2,8 +2,8 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001",
   "base_ref": "dev@c17eddae2e064d88588160c6d8601942d48dd924",
-  "head_ref": "task/BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001, parent f2ea8d345623f146468404593da5d8a96eb8f2a1 (the exact reviewer-cited PR #6004 head, which fixed the P1 research/service.py self-ref bypass; this evidence.json correction lands one further commit ahead to address the independent-review REJECT's required changes -- the owner must re-verify head_ref against `git rev-parse HEAD` immediately before handoff rather than trusting this stale-by-one-commit value)",
-  "depends_on": "(none declared); DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 running concurrently on overlapping files (models.py, governance/service.py, governance/router.py); rebased cleanly onto origin/dev tip immediately before handoff with no conflicts",
+  "head_ref": "task/BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001, parent d092d8160726828c12d74d762cdddce6b30349ca (prior evidence-gap-correction commit, itself a child of the reviewer-cited PR #6004 head f2ea8d345623f146468404593da5d8a96eb8f2a1, which fixed the P1 research/service.py self-ref bypass); this evidence.json correction and the test_read_store_final_deletion.py fix land one further commit ahead to close the second independent-review REJECT's remaining required change -- the owner must re-verify head_ref against `git rev-parse HEAD` immediately before handoff rather than trusting this value",
+  "depends_on": "(none declared); DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 running concurrently on overlapping files (models.py, governance/service.py, governance/router.py); origin/dev tip is still c17eddae2e064d88588160c6d8601942d48dd924 (== frozen base) as of this requeue, so no rebase was required",
   "normative_plan": "Operator-opened hardening task: make services/control-plane/bff/models.py::redact_evidence_refs fail closed for missing capabilities and unresolvable evidence kinds",
   "demonstration_of_fail_open_bugs_before_any_change": {
     "method": "Called the real (unmodified base) redact_evidence_refs directly via .venv-pantheon/bin/python3, no mocking",
@@ -198,9 +198,9 @@
     },
     {
       "id": "P2-read-store-final-deletion-stale-test",
-      "severity": "P2 (test expectation only, no product defect)",
-      "description": "services/control-plane/bff/tests/test_read_store_final_deletion.py::test_retained_redaction_uses_model_policy_without_data_access still asserts redact_evidence_refs(identity, refs) with capabilities defaulting to None returns refs unchanged (raw_trace pass-through) -- the exact fail-open expectation this task's base-function fix corrects. Running the independent reviewer's bounded validation command confirms this is the only failure: 222 passed, 1 failed.",
-      "status": "not fixed in this delivery -- test_read_store_final_deletion.py is not declared in this task's artifact contract either. Bundled into the same Human/Ops artifact-contract blocker as the P1 item above so both can be corrected and reviewed together."
+      "severity": "P2 (test expectation only, no product defect) -- FIXED",
+      "description": "services/control-plane/bff/tests/test_read_store_final_deletion.py::test_retained_redaction_uses_model_policy_without_data_access asserted redact_evidence_refs(identity, refs) with capabilities defaulting to None returned refs unchanged (raw_trace pass-through) -- the exact fail-open expectation this task's base-function fix corrects. 'raw_trace' is not a production evidence kind and has no known required_capability, so the fail-closed base policy must withhold it.",
+      "status": "FIXED in this delivery -- Human/Ops added services/control-plane/bff/tests/test_read_store_final_deletion.py to the artifact contract (reviewer-named file, standing authorisation for reviewer-named files) on 2026-09-28. Replaced the pass-through assertions with explicit withheld-shape checks (redacted=true, required_capability='unknown', reason='unresolved_evidence_kind', ref_id preserved) and kept the data-access boundary coverage (the second half of the same test, capabilities=[] against a resolvable kind, still asserts reason='insufficient_capability') and every other assertion in the file unchanged. See test_edits_citing_old_fail_open_expectations for the citation."
     }
   ],
   "test_edits_citing_old_fail_open_expectations": [
@@ -228,6 +228,11 @@
       "file": "services/control-plane/bff/tests/test_research_router.py",
       "test": "test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfaces",
       "citation": "the 'evidence-detail' fixture ref had source_document.source_type='internal' (unmapped) and no evidence_type, so its kind was unresolvable; the test's top-level assertion `set(evidence_payload) == {full projection keys}` with the client at capabilities=[] literally encoded the P1 fail-open bypass (an unresolved-kind self-ref disclosed in full instead of being withheld). Gave the fixture an explicit resolvable `evidence_type: 'postmortem'` and changed the client to capabilities=['postmortem.read'] (a capability distinct from the strategy.view/artifact.read the nested linked_decisions assertions below still deliberately withhold), so the test now demonstrates a full-capability identity for the ref's own kind still seeing the full projection (no over-redaction) while the pre-existing linked_decisions low-capability assertions are unaffected."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_read_store_final_deletion.py",
+      "test": "test_retained_redaction_uses_model_policy_without_data_access",
+      "citation": "previously asserted redact_evidence_refs(identity, refs) with capabilities defaulting to None returned an unmapped-kind ref ('raw_trace') unchanged -- literally the fail-open path 2 this task's base-function fix corrects. Replaced with explicit withheld-shape assertions (redacted=true, required_capability='unknown', reason='unresolved_evidence_kind', ref_id preserved); the second half of the same test (capabilities=[] against a resolvable kind, asserting reason='insufficient_capability') is unchanged and still exercises the data-access boundary."
     }
   ],
   "changed_files": [
@@ -240,9 +245,10 @@
     "services/control-plane/bff/tests/test_research_router.py",
     "services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py",
     "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+    "services/control-plane/bff/tests/test_read_store_final_deletion.py",
     "docs/deployment/evidence/BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001/evidence.json"
   ],
-  "changed_files_note": "This is the actual `git diff --name-only <base>..HEAD` result (10 files), verified with `git diff --stat` at commit time. research/service.py is now in scope (Human/Ops added it to the artifact contract on 2026-09-28 as a reviewer-named file) and is modified in this delivery to fix the P1 self-ref bypass (see per_caller_audit and known_gaps). research/routes/common.py remains unmodified.",
+  "changed_files_note": "This is the actual `git diff --name-only <base>..HEAD` result (11 files), verified with `git diff --stat` at commit time. research/service.py is in scope (Human/Ops added it to the artifact contract on 2026-09-28 as a reviewer-named file) and is modified in this delivery to fix the P1 self-ref bypass (see per_caller_audit and known_gaps). test_read_store_final_deletion.py is also in scope (Human/Ops added it to the artifact contract on 2026-09-28 as a reviewer-named file) and is modified to fix the P2-read-store-final-deletion-stale-test regression (see known_gaps and test_edits_citing_old_fail_open_expectations). research/routes/common.py remains unmodified.",
   "terminal_commands_and_results": [
     {
       "command": "PANTHEON_DEPENDENCY_PYTHON=<venv> python3 scripts/dev/provision_python_distribution.py",
@@ -259,6 +265,14 @@
     {
       "command": "(fresh re-run on this delivery's current head, requeue after independent-review REJECT for PR #6004) .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py services/control-plane/bff/tests/test_research_router.py",
       "result": "222 passed, 0 failed, 157.32s -- no source changes since the P1 fix commit, only this evidence.json correction; confirms no regression from the caller-table/known-gaps documentation update. origin/dev tip is still c17eddae2e064d88588160c6d8601942d48dd924 (== frozen base), so no rebase was required before this requeue."
+    },
+    {
+      "command": "(this requeue, after fixing the P2-read-store-final-deletion-stale-test regression under the 2026-09-28 Human/Ops artifact-contract addition for test_read_store_final_deletion.py) .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_read_store_final_deletion.py",
+      "result": "227 passed, 0 failed, 192.84s -- this is the reviewer's exact bounded validation command (matches the P1-fix-delivery command that returned 222 passed / 1 failed) with the same 8 files, now all green; the previously-failing test_retained_redaction_uses_model_policy_without_data_access now passes. origin/dev tip is still c17eddae2e064d88588160c6d8601942d48dd924 (== frozen base), so no rebase was required before this requeue."
+    },
+    {
+      "command": "(isolated confirmation) .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_read_store_final_deletion.py",
+      "result": "5 passed, 2 warnings, 28.85s -- all 5 tests in the file pass in isolation, including the corrected test_retained_redaction_uses_model_policy_without_data_access"
     },
     {
       "command": "git diff --stat c17eddae2e064d88588160c6d8601942d48dd924..HEAD (frozen base from PR #6004)",
