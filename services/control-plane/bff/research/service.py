@@ -616,18 +616,28 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         *,
         ticket_id: Optional[str] = None,
         status: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        if self._read_surface is not None and hasattr(self._read_surface, "list_research_experiments"):
-            return self._read_surface.list_research_experiments(ticket_id=ticket_id, status=status)
-        if self._ks is not None and hasattr(self._ks, "list_research_experiments"):
-            return self._ks.list_research_experiments(ticket_id=ticket_id, status=status)
+        target = self._read_surface if (self._read_surface is not None and hasattr(self._read_surface, "list_research_experiments")) else self._ks
+        if target is not None and hasattr(target, "list_research_experiments"):
+            try:
+                return target.list_research_experiments(ticket_id=ticket_id, status=status, tenant_id=tenant_id)
+            except TypeError:
+                return target.list_research_experiments(ticket_id=ticket_id, status=status)
         raise AttributeError("Research port operation 'list_research_experiments' not implemented")
 
-    def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        if self._read_surface is not None and hasattr(self._read_surface, "get_research_experiment"):
-            return self._read_surface.get_research_experiment(experiment_id)
-        if self._ks is not None and hasattr(self._ks, "get_research_experiment"):
-            return self._ks.get_research_experiment(experiment_id)
+    def get_research_experiment(
+        self,
+        experiment_id: Optional[str],
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        target = self._read_surface if (self._read_surface is not None and hasattr(self._read_surface, "get_research_experiment")) else self._ks
+        if target is not None and hasattr(target, "get_research_experiment"):
+            try:
+                return target.get_research_experiment(experiment_id, tenant_id=tenant_id)
+            except TypeError:
+                return target.get_research_experiment(experiment_id)
         raise AttributeError("Research port operation 'get_research_experiment' not implemented")
 
     def create_research_experiment(
@@ -640,27 +650,44 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         run_config: Dict[str, Any],
         launch_context: Dict[str, Any],
         queued_at: Optional[str] = None,
+        experiment_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        command_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if self._read_surface is not None and hasattr(self._read_surface, "create_research_experiment"):
-            return self._read_surface.create_research_experiment(
-                ticket_id=ticket_id,
-                experiment_name=experiment_name,
-                strategy_selector=strategy_selector,
-                parameter_set=parameter_set,
-                run_config=run_config,
-                launch_context=launch_context,
-                queued_at=queued_at,
-            )
-        if self._ks is not None and hasattr(self._ks, "create_research_experiment"):
-            return self._ks.create_research_experiment(
-                ticket_id=ticket_id,
-                experiment_name=experiment_name,
-                strategy_selector=strategy_selector,
-                parameter_set=parameter_set,
-                run_config=run_config,
-                launch_context=launch_context,
-                queued_at=queued_at,
-            )
+        target = self._read_surface if (self._read_surface is not None and hasattr(self._read_surface, "create_research_experiment")) else self._ks
+        if target is not None and hasattr(target, "create_research_experiment"):
+            fn = target.create_research_experiment
+            sig = inspect.signature(fn)
+            params = sig.parameters
+            call_kw: Dict[str, Any] = {
+                "ticket_id": ticket_id,
+                "experiment_name": experiment_name,
+                "strategy_selector": strategy_selector,
+                "parameter_set": parameter_set,
+                "run_config": run_config,
+                "launch_context": launch_context,
+            }
+            if queued_at is not None or "queued_at" in params:
+                call_kw["queued_at"] = queued_at
+            if experiment_id is not None or "experiment_id" in params:
+                call_kw["experiment_id"] = experiment_id
+            if idempotency_key is not None or "idempotency_key" in params:
+                call_kw["idempotency_key"] = idempotency_key
+            if request_hash is not None or "request_hash" in params:
+                call_kw["request_hash"] = request_hash
+            if tenant_id is not None or "tenant_id" in params:
+                call_kw["tenant_id"] = tenant_id
+            if actor_id is not None or "actor_id" in params:
+                call_kw["actor_id"] = actor_id
+            if command_id is not None or "command_id" in params:
+                call_kw["command_id"] = command_id
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            if not has_var_keyword:
+                call_kw = {k: v for k, v in call_kw.items() if k in params}
+            return fn(**call_kw)
         raise AttributeError("Research port operation 'create_research_experiment' not implemented")
 
     def cancel_research_experiment(
@@ -668,11 +695,37 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         experiment_id: str,
         *,
         completed_at: Optional[str] = None,
+        reason: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        command_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        if self._read_surface is not None and hasattr(self._read_surface, "cancel_research_experiment"):
-            return self._read_surface.cancel_research_experiment(experiment_id, completed_at=completed_at)
-        if self._ks is not None and hasattr(self._ks, "cancel_research_experiment"):
-            return self._ks.cancel_research_experiment(experiment_id, completed_at=completed_at)
+        target = self._read_surface if (self._read_surface is not None and hasattr(self._read_surface, "cancel_research_experiment")) else self._ks
+        if target is not None and hasattr(target, "cancel_research_experiment"):
+            fn = target.cancel_research_experiment
+            sig = inspect.signature(fn)
+            params = sig.parameters
+            call_kw: Dict[str, Any] = {}
+            if completed_at is not None or "completed_at" in params:
+                call_kw["completed_at"] = completed_at
+            if reason is not None or "reason" in params:
+                call_kw["reason"] = reason
+            if actor_id is not None or "actor_id" in params:
+                call_kw["actor_id"] = actor_id
+            if tenant_id is not None or "tenant_id" in params:
+                call_kw["tenant_id"] = tenant_id
+            if idempotency_key is not None or "idempotency_key" in params:
+                call_kw["idempotency_key"] = idempotency_key
+            if request_hash is not None or "request_hash" in params:
+                call_kw["request_hash"] = request_hash
+            if command_id is not None or "command_id" in params:
+                call_kw["command_id"] = command_id
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            if not has_var_keyword:
+                call_kw = {k: v for k, v in call_kw.items() if k in params}
+            return fn(experiment_id, **call_kw)
         raise AttributeError("Research port operation 'cancel_research_experiment' not implemented")
 
     # -------------------------------------------------------------------------
@@ -838,6 +891,10 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         created_at: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
         status: str = "active",
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        command_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         ticket_id = str((params or {}).get("ticket_id") or "")
         return self.create_research_experiment(
@@ -846,8 +903,13 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             strategy_selector=(params or {}).get("strategy_selector") or {},
             parameter_set=(params or {}).get("parameter_set") or {},
             run_config=(params or {}).get("run_config") or {},
-            launch_context=(params or {}).get("launch_context") or {"actor_id": actor_id or "system"},
+            launch_context=(params or {}).get("launch_context") or {"actor_id": actor_id or "system", "tenant_id": tenant_id},
             queued_at=created_at,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            command_id=command_id,
         )
 
     def get_experiment_logs(self, experiment_id: str) -> List[Dict[str, Any]]:
@@ -3884,21 +3946,15 @@ class ResearchRouterService:
             )
         status = str(experiment.get("status") or "")
         with self._map_port_errors("cancel_research_experiment"):
-            try:
-                canceled = port.cancel_research_experiment(
-                    clean_id,
-                    completed_at=snap,
-                    reason=reason,
-                    actor_id=clean_actor,
-                    tenant_id=clean_tenant,
-                    idempotency_key=clean_key,
-                    request_hash=req_hash,
-                )
-            except TypeError:
-                canceled = port.cancel_research_experiment(
-                    clean_id,
-                    completed_at=snap,
-                )
+            canceled = port.cancel_research_experiment(
+                clean_id,
+                completed_at=snap,
+                reason=reason,
+                actor_id=clean_actor,
+                tenant_id=clean_tenant,
+                idempotency_key=clean_key,
+                request_hash=req_hash,
+            )
         if not canceled:
             if status not in {"queued", "running"}:
                 self._raise_error(

@@ -23,6 +23,7 @@ from services.control_plane.bff.command_adapters.router import create_command_ad
 from services.control_plane.bff.deployment.router import create_deployment_router
 from services.control_plane.bff.research.router import create_research_experiments_router, create_research_router
 from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 from services.research.write_owner import ResearchWriteOwner
 
@@ -2012,5 +2013,182 @@ def test_concurrent_cancel_research_experiment_cas_atomic_history():
     recorded_commands = [c["command_id"] for c in persisted.get("command_history") or []]
     for r in successful_results:
         assert r["cancel_receipt"]["command_id"] in recorded_commands
+
+
+def _composed_read_surface_research_client(tickets, experiments, notes=None, tenant="tenant", actor="actor", roles=("admin", "operator")):
+    owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments, notes_store=notes or AtomicIO())
+    port = DefaultResearchKnowledgeSourcePort(research_write_owner=owner)
+    reads = ReadSurfacePorts(research_knowledge_source=port)
+    app = FastAPI()
+    identity = SimpleNamespace(operator_id=actor, tenant_id=tenant, roles=list(roles))
+    app.include_router(
+        create_research_router(
+            read_surface=reads,
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda i: None,
+            require_operator_role=lambda i: None,
+            bff_error=lambda s, c, m, *a, **kw: HTTPException(s, detail=m),
+            utc_now=lambda: "2026-09-28T00:00:00Z",
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False), owner, experiments
+
+
+def test_composed_read_surface_mounted_create_restart_and_conflict():
+    tickets, experiments = CASStore(), CASStore()
+    client, owner, _ = _composed_read_surface_research_client(tickets, experiments, tenant="tenant-a", actor="actor-a")
+    body = {"name": "composed-exp", "ticket_id": ""}
+    headers = {"Idempotency-Key": "composed-create-key-1"}
+
+    # 1. First create returns 201
+    first = client.post("/bff/experiments", json=body, headers=headers)
+    assert first.status_code == 201, first.text
+    eid = first.json()["experiment_id"]
+    cmd_id = first.json()["command_id"]
+
+    # 2. Restarted client with identical payload replayed returns 201 with same experiment and receipt
+    client_restart, _, _ = _composed_read_surface_research_client(tickets, experiments, tenant="tenant-a", actor="actor-a")
+    replay = client_restart.post("/bff/experiments", json=body, headers=headers)
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["experiment_id"] == eid
+    assert replay.json()["command_id"] == cmd_id
+
+    # 3. Conflicting payload with same key returns 409
+    conflict_body = {"name": "different-name", "ticket_id": ""}
+    conflict = client.post("/bff/experiments", json=conflict_body, headers=headers)
+    assert conflict.status_code == 409, conflict.text
+
+    # 4. Durable store has valid receipt
+    row = experiments.get(eid)
+    assert row is not None
+    assert row["tenant_id"] == "tenant-a"
+    assert row["actor_id"] == "actor-a"
+    assert row["idempotency_key"] == "composed-create-key-1"
+    assert row["receipt"]["owner"] == "research"
+    assert row["receipt"]["status"] == "queued"
+
+
+def test_composed_read_surface_mounted_launch_restart_and_conflict():
+    tickets, experiments = CASStore(), CASStore()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "tenant_id": "tenant-a", "linked_experiments": []})
+    client, owner, _ = _composed_read_surface_research_client(tickets, experiments, tenant="tenant-a", actor="actor-a")
+    payload = {
+        "ticket_id": "ticket-1",
+        "experiment_name": "composed-launch-exp",
+        "strategy_selector": {},
+        "parameter_set": {},
+        "run_config": {
+            "dataset_ref": "isolated",
+            "time_range": {"start_at": "2026-01-01", "end_at": "2026-01-02"},
+            "execution_mode": "paper",
+            "requested_by": "actor-a",
+        },
+        "launch_context": {},
+    }
+    headers = {"Idempotency-Key": "composed-launch-key-1"}
+
+    # 1. Launch returns 200
+    first = client.post("/api/v1/experiments/launch", json=payload, headers=headers)
+    assert first.status_code == 200, first.text
+    eid = first.json()["experiment_id"]
+
+    # 2. Restarted client with same payload returns 200 and same experiment
+    client_restart, _, _ = _composed_read_surface_research_client(tickets, experiments, tenant="tenant-a", actor="actor-a")
+    replay = client_restart.post("/api/v1/experiments/launch", json=payload, headers=headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["experiment_id"] == eid
+
+    # 3. Conflicting payload with same key returns 409
+    conflict_payload = dict(payload, experiment_name="conflict-launch-name")
+    conflict = client.post("/api/v1/experiments/launch", json=conflict_payload, headers=headers)
+    assert conflict.status_code == 409, conflict.text
+
+    # 4. Check durable row
+    row = experiments.get(eid)
+    assert row["tenant_id"] == "tenant-a"
+    assert row["actor_id"] == "actor-a"
+    assert row["idempotency_key"] == "composed-launch-key-1"
+
+
+def test_composed_read_surface_mounted_cancel_restart_and_conflict():
+    tickets, experiments = CASStore(), CASStore()
+    client, owner, _ = _composed_read_surface_research_client(tickets, experiments, tenant="tenant-a", actor="actor-a")
+
+    created = owner.create_research_experiment(
+        ticket_id="",
+        experiment_name="cancel-exp",
+        strategy_selector={},
+        parameter_set={},
+        run_config={},
+        launch_context={},
+        tenant_id="tenant-a",
+        actor_id="actor-a",
+        idempotency_key="create-for-cancel",
+        request_hash="hash-1",
+    )
+    eid = created["experiment_id"]
+    cancel_path = f"/api/v1/experiments/{eid}/cancel"
+    cancel_headers = {"Idempotency-Key": "cancel-key-1"}
+    cancel_body = {"reason": "operator requested cancel"}
+
+    # 1. First cancel returns 200
+    first = client.post(cancel_path, json=cancel_body, headers=cancel_headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "canceled"
+    completed_at = first.json()["completed_at"]
+
+    # 2. Replay with restarted client returns 200 with same status and completed_at
+    client_restart, _, _ = _composed_read_surface_research_client(tickets, experiments, tenant="tenant-a", actor="actor-a")
+    replay = client_restart.post(cancel_path, json=cancel_body, headers=cancel_headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["status"] == "canceled"
+    assert replay.json()["completed_at"] == completed_at
+
+    # 3. Conflicting cancel payload with same key returns 409
+    conflict = client.post(cancel_path, json={"reason": "different reason"}, headers=cancel_headers)
+    assert conflict.status_code == 409, conflict.text
+
+    # 4. Different key on already canceled experiment returns 409 (terminal state)
+    diff_key = client.post(cancel_path, json={"reason": "new attempt"}, headers={"Idempotency-Key": "other-key"})
+    assert diff_key.status_code == 409, diff_key.text
+
+    # 5. Check durable cancel receipt
+    row = experiments.get(eid)
+    receipt = row.get("cancel_receipt", {})
+    assert receipt["actor_id"] == "actor-a"
+    assert receipt["tenant_id"] == "tenant-a"
+    assert receipt["idempotency_key"] == "cancel-key-1"
+    assert receipt["request_hash"] is not None
+    assert receipt["status"] == "committed"
+    assert receipt["owner"] == "ResearchWriteOwner"
+    assert receipt["command"] == "CancelResearchExperiment"
+    assert receipt["aggregate_id"] == eid
+    assert receipt["aggregate_version"] == 2
+
+
+def test_composed_read_surface_cross_tenant_isolation():
+    tickets, experiments = CASStore(), CASStore()
+    client_a, owner, _ = _composed_read_surface_research_client(tickets, experiments, tenant="tenant-a", actor="actor-a")
+    client_b, _, _ = _composed_read_surface_research_client(tickets, experiments, tenant="tenant-b", actor="actor-b")
+
+    # Tenant A creates experiment
+    res_a = client_a.post("/bff/experiments", json={"name": "exp-a"}, headers={"Idempotency-Key": "shared-key"})
+    assert res_a.status_code == 201
+    eid_a = res_a.json()["experiment_id"]
+
+    # Tenant B cannot read Tenant A's experiment detail
+    read_b = client_b.get(f"/api/v1/experiments/{eid_a}")
+    assert read_b.status_code == 403
+
+    # Tenant B cannot cancel Tenant A's experiment
+    cancel_b = client_b.post(f"/api/v1/experiments/{eid_a}/cancel", json={"reason": "stop"}, headers={"Idempotency-Key": "cancel-b"})
+    assert cancel_b.status_code == 403
+
+    # Tenant B can create their own experiment using same idempotency key (tenant-scoped)
+    res_b = client_b.post("/bff/experiments", json={"name": "exp-b"}, headers={"Idempotency-Key": "shared-key"})
+    assert res_b.status_code == 201
+    eid_b = res_b.json()["experiment_id"]
+    assert eid_b != eid_a
+
 
 

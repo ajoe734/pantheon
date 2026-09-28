@@ -252,6 +252,10 @@
     "defect_62_research_experiment_cross_tenant_read_and_mutation_disclosure": {
       "problem": "services/research/write_owner.py create_research_experiment appended linked_experiments to tickets without verifying ticket tenant matches caller tenant, allowing cross-tenant ticket alteration via POST /api/v1/experiments/launch; endpoint_cancel_experiment_api lacked operator role enforcement and tenant scoping, allowing foreign viewers to cancel experiments; get/list experiment endpoints lacked tenant boundaries on reads before projection and pagination.",
       "remediation": "Enforced ticket ownership/tenant verification in ResearchWriteOwner.create_research_experiment raising ResearchTenantAuthorizationError (mapped to 403 Forbidden); updated endpoint_cancel_experiment_api to require operator role (ctx.identity(request, operator=True)) and propagate actor_id, tenant_id, and idempotency_key to owner-level cancel; enforced owner-level tenant checking and command replay/receipts on cancel; propagated tenant_id in get/list experiment endpoints across routes, service, and port; updated summary projection to include tenant_id and actor_id; and added negative regression tests verifying foreign launch rejection, foreign viewer cancel rejection, foreign read rejection, and idempotent cancel replay."
+    },
+    "defect_63_research_wiring_typed_signatures_and_composed_mounted_routes": {
+      "problem": "Acceptance 2 & 3 failed in production-shaped ReadSurfacePorts -> ResearchPortWiring composition (core/app_factory.py:1133-1134 and research/service.py:956-962). ResearchPortWiring.create_research_experiment lacked idempotency_key, request_hash, tenant_id, actor_id parameters, causing POST /bff/experiments and /api/v1/experiments/launch to raise TypeError: unexpected keyword argument 'idempotency_key' (HTTP 500). ResearchPortWiring.cancel_research_experiment dropped authenticated actor_id, tenant_id, reason, idempotency_key, request_hash, and ResearchService.cancel_experiment_api caught TypeError and silently retried without identity, causing replay on canceled experiments to return 409 Conflict instead of 200 OK and nullifying cancel receipt identities.",
+      "remediation": "Updated ResearchPortWiring.create_research_experiment, cancel_research_experiment, and create_experiment_bff with explicit typed signatures and concrete parameter forwarding to the selected owner without *args or **kwargs. Eliminated identity-dropping mutation fallback in ResearchService.cancel_experiment_api. Added composed ReadSurfacePorts mounted-route create/launch/cancel restart/conflict and cross-tenant tests in test_domain_durability_corrective_p1.py."
     }
   },
   "mutation_caller_inventory": {
@@ -747,6 +751,24 @@
         "result": "passed, exit 0, persisted cancel_receipt has event_id and correlation_id and replay preserves receipt identity",
         "executed": 1,
         "collected": 1
+      },
+      {
+        "command": "/tmp/venv-bff-test/bin/python3 -m pytest -q -s /tmp/test_domain_review_c38_composition.py",
+        "result": "2 passed, 1 warning in 2.17s",
+        "executed": 2,
+        "collected": 2
+      },
+      {
+        "command": "env PYTHONPATH=. timeout 120 /tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "result": "39 passed, 3 warnings in 44.62s",
+        "executed": 39,
+        "collected": 39
+      },
+      {
+        "command": "env PYTHONPATH=. timeout 180 /tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "170 passed, 10 warnings in 95.71s",
+        "executed": 170,
+        "collected": 170
       }
     ]
   },
@@ -817,7 +839,8 @@
     "defect_59_research_tickets_tenant_authorization_on_fresh_cas_snapshot_resolved": true,
     "defect_60_research_tickets_replay_canonical_identity_after_subsequent_mutation_resolved": true,
     "defect_61_research_tickets_cross_tenant_read_disclosure_resolved": true,
-    "defect_62_research_experiment_cross_tenant_read_and_mutation_disclosure_resolved": true
+    "defect_62_research_experiment_cross_tenant_read_and_mutation_disclosure_resolved": true,
+    "defect_63_research_wiring_typed_signatures_and_composed_mounted_routes_resolved": true
   },
   "review": {
     "reviewer": "Codex",
