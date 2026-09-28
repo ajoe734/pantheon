@@ -335,7 +335,7 @@
     },
     "defect_83_domain_writer_identity_tenant_attribute_read": {
       "problem": "Independent exact-head review rejection of PR #5998 at commit ff6f7c052cb66b4f5ee7f3d5de1e1a564899edd8 identified that production OperatorIdentity (models.py) carries the authenticated tenant only in identity.claims (a JWT claims dict); it has no top-level tenant_id/tenant attribute. command_adapters/service.py (11 call sites: check_confirm_token_tenant_authorization and every durable confirm-token/command admission, revalidation, and idempotency path) as well as capital/router.py, governance/service.py, runtime/router.py, and research/routes/experiments.py and tickets.py all resolved tenant via getattr(identity, 'tenant_id', None) or getattr(identity, 'tenant', None), which is always None for a real extract_identity_jwt identity. This silently disabled tenant ownership checking: an independently mounted reproducer using locally signed HS256 JWTs through the real extract_identity_jwt showed tenant A issuing a PauseRuntime confirm token and tenant B (same JWT subject) confirming/redeeming it via both POST /bff/command-confirmations/{token}/confirm and POST /bff/v1/commands, producing unauthorized durable PauseRuntime and RedeemConfirmToken rows. Also flagged: git diff --check against the frozen base exited 2 for added EOF blank lines in command_adapters/service.py:3170 and tests/test_research_jobs_action_receipts.py:813.",
-      "remediation": "Added a single canonical resolve_identity_tenant_id(identity) in auth/policy.py that reads identity.claims via the same claim path set bff_me_tenant_payload already uses (tenant_id, tenantId, tenant.id, tid, tenant), with a fallback to a direct attribute read for test doubles that model identity as a plain object. Replaced every getattr(identity, 'tenant_id', None) or getattr(identity, 'tenant', None) call site with this resolver: command_adapters/service.py (_resolve_identity_tenant now aliases the canonical resolver, 11 call sites plus the standalone _gov_bff_action_command helper), capital/router.py (_identity_tenant_id), governance/service.py (_identity_tenant_id), runtime/router.py (POST /bff/runtimes idempotency tenant scoping), and research/routes/common.py (new shared _identity_tenant_id used by experiments.py's 13 call sites and tickets.py's 4 call sites). Committed a mounted regression, test_signed_identity_tenant_cannot_consume_foreign_confirm_token in test_command_adapters_router.py, that issues and redeems confirm tokens through the real extract_identity_jwt with locally signed HS256 JWTs for two tenants sharing one JWT subject, parametrized over both durable-write routes (command-confirmations confirm and guarded POST /bff/v1/commands) and a service/CommandStore restart, asserting the cross-tenant redemption is rejected (403/404/428) and exactly one durable command row exists. Also stripped the trailing extra blank line from command_adapters/service.py and test_research_jobs_action_receipts.py so git diff --check exits 0."
+      "remediation": "Inlined a claims-first tenant resolver directly in each in-scope call site (no shared helper outside this task's artifact contract): command_adapters/service.py's _resolve_identity_tenant (11 call sites plus the standalone _gov_bff_action_command helper), capital/router.py's _identity_tenant_id, governance/service.py's _identity_tenant_id, runtime/router.py's new _resolve_identity_tenant_id (POST /bff/runtimes idempotency tenant scoping), and research/routes/common.py's _identity_tenant_id shared by experiments.py's 13 call sites and tickets.py's 4 call sites. Each resolver reads identity.claims for tenant_id/tenantId/tenant before falling back to a direct attribute read for test doubles, replacing the prior getattr(identity, 'tenant_id', None) or getattr(identity, 'tenant', None) pattern that always returned None for a real extract_identity_jwt identity. (An earlier attempt centralized this in a new auth/policy.py function, but auth/policy.py is outside this task's declared artifact contract and the governed handoff command correctly rejected that delivery; the inlined approach keeps every changed file within services/control-plane/bff/{command_adapters,capital,governance,runtime,research}/**.) Committed a mounted regression, test_signed_identity_tenant_cannot_consume_foreign_confirm_token in test_command_adapters_router.py, that issues and redeems confirm tokens through the real extract_identity_jwt with locally signed HS256 JWTs for two tenants sharing one JWT subject, parametrized over both durable-write routes (command-confirmations confirm and guarded POST /bff/v1/commands) and a service/CommandStore restart, asserting the cross-tenant redemption is rejected (403/404/428) and exactly one durable command row exists. Also stripped the trailing extra blank line from command_adapters/service.py and test_research_jobs_action_receipts.py so git diff --check exits 0."
     }
   },
   "mutation_caller_inventory": {
@@ -1171,6 +1171,18 @@
       {
         "command": "git diff --check",
         "result": "exit 0 (frozen-base EOF blank-line violations at command_adapters/service.py:3170 and tests/test_research_jobs_action_receipts.py:813 resolved)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "result": "267 passed, 10 warnings in 152.69s (post scope-correction inlining)",
+        "executed": 267,
+        "collected": 267
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "227 passed, 3 warnings in 81.78s (post scope-correction inlining)",
+        "executed": 227,
+        "collected": 227
       }
     ]
   },
@@ -1270,7 +1282,8 @@
     "prior_rejection": {
       "pr": 5998,
       "rejected_head": "ff6f7c052cb66b4f5ee7f3d5de1e1a564899edd8",
-      "finding": "P1 acceptance 3 domain-writer identity.tenant_id/tenant attribute read defect (see defect_83_domain_writer_identity_tenant_attribute_read); resolved at the current head."
+      "finding": "P1 acceptance 3 domain-writer identity.tenant_id/tenant attribute read defect (see defect_83_domain_writer_identity_tenant_attribute_read); resolved at the current head.",
+      "scope_correction": "First DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 handoff attempt after this fix (head 58f46efe7dc6f86b554397c27679459cd346ee21, then f95c742d45b5a96c160a55a1a3606904415179b5 after a dev merge) was rejected by the governed handoff command itself for touching services/control-plane/bff/auth/policy.py, which is outside this task's artifact contract. Reverted that file and inlined the resolver logic in-scope; see defect_83 remediation."
     }
   }
 }
