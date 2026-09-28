@@ -279,11 +279,24 @@ def _finalize_experiment_record(
 
     target_lock = getattr(store, "lock", None)
     target_rows = getattr(store, "rows", None)
+    if target_rows is None:
+        target_rows = getattr(store, "_data", None)
     if target_lock is None or target_rows is None:
         db = getattr(store, "db", None)
         if db is not None:
             target_lock = getattr(db, "lock", None)
             target_rows = getattr(db, "rows", None)
+            if target_rows is None:
+                target_rows = getattr(db, "_data", None)
+
+    if target_lock is None and isinstance(target_rows, dict):
+        target_lock = getattr(store, "_finalization_lock", None)
+        if target_lock is None:
+            target_lock = threading.Lock()
+            try:
+                setattr(store, "_finalization_lock", target_lock)
+            except Exception:
+                pass
 
     if target_lock is not None and isinstance(target_rows, dict):
         with target_lock:
@@ -294,6 +307,27 @@ def _finalize_experiment_record(
                 merged = copy.deepcopy(current)
                 merged["is_committed"] = True
                 target_rows[exp_id] = merged
+                return copy.deepcopy(merged)
+            raise RuntimeError(f"Experiment {exp_id!r} not found for finalization")
+
+    if hasattr(store, "get") and hasattr(store, "put"):
+        target_lock = getattr(store, "_finalization_lock", None)
+        if target_lock is None:
+            target_lock = getattr(store, "lock", None)
+        if target_lock is None:
+            target_lock = threading.Lock()
+            try:
+                setattr(store, "_finalization_lock", target_lock)
+            except Exception:
+                pass
+        with target_lock:
+            current = store.get(exp_id)
+            if isinstance(current, dict):
+                if current.get("is_committed"):
+                    return copy.deepcopy(current)
+                merged = copy.deepcopy(current)
+                merged["is_committed"] = True
+                store.put(exp_id, merged)
                 return copy.deepcopy(merged)
             raise RuntimeError(f"Experiment {exp_id!r} not found for finalization")
 
