@@ -741,6 +741,12 @@
         "result": "passed, exit 0, competing cancellations resolved via CAS retry loop preserving durable command history",
         "executed": 1,
         "collected": 1
+      },
+      {
+        "command": "env PYTHONPATH=.:/tmp timeout 30 /tmp/venv-bff-test/bin/python3 /tmp/domain_cancel_receipt_repro.py",
+        "result": "passed, exit 0, persisted cancel_receipt has event_id and correlation_id and replay preserves receipt identity",
+        "executed": 1,
+        "collected": 1
       }
     ]
   },

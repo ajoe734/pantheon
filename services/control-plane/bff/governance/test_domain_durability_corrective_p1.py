@@ -1915,11 +1915,25 @@ def test_experiment_cancel_idempotent_replay_and_receipt():
     assert cancel1.status_code == 200
     assert cancel1.json()["status"] == "canceled"
 
+    row1 = experiments.get(eid)
+    rcpt1 = row1["cancel_receipt"]
+    assert rcpt1.get("event_id"), "accepted cancellation lacks durable event identity"
+    assert rcpt1.get("correlation_id"), "accepted cancellation lacks durable correlation identity"
+    assert rcpt1["command_id"]
+    assert rcpt1["aggregate_version"] == 2
+
     # Replay with same key
     cancel_replay = client_a.post(f"/api/v1/experiments/{eid}/cancel", json={"reason": "stop exp"}, headers={"Idempotency-Key": "cancel-key-1"})
     assert cancel_replay.status_code == 200
     assert cancel_replay.json()["status"] == "canceled"
     assert cancel_replay.json()["completed_at"] == cancel1.json()["completed_at"]
+
+    row_replay = experiments.get(eid)
+    rcpt_replay = row_replay["cancel_receipt"]
+    assert rcpt_replay["event_id"] == rcpt1["event_id"]
+    assert rcpt_replay["correlation_id"] == rcpt1["correlation_id"]
+    assert rcpt_replay["command_id"] == rcpt1["command_id"]
+    assert rcpt_replay["aggregate_version"] == rcpt1["aggregate_version"]
 
 
 class _ConcurrentBarrierStore:

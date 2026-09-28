@@ -1549,6 +1549,8 @@ class ResearchWriteOwner:
             updated["aggregate_version"] = new_version
 
             cmd_id = command_id or f"cmd-cancel-{experiment_id}-{new_version}"
+            event_id = f"evt-{cmd_id}"
+            correlation_id = clean_key or f"corr-{cmd_id}"
             cancel_receipt = {
                 "receipt_id": f"rcpt-{cmd_id}",
                 "command_id": cmd_id,
@@ -1556,6 +1558,8 @@ class ResearchWriteOwner:
                 "aggregate_id": str(experiment_id),
                 "aggregate_type": "ResearchExperiment",
                 "aggregate_version": new_version,
+                "event_id": event_id,
+                "correlation_id": correlation_id,
                 "status": "committed",
                 "owner": "ResearchWriteOwner",
                 "actor_id": clean_actor,
@@ -1564,11 +1568,15 @@ class ResearchWriteOwner:
                 "request_hash": clean_hash,
                 "committed_at": timestamp,
             }
+            updated["event_id"] = event_id
+            updated["correlation_id"] = correlation_id
             updated["cancel_receipt"] = cancel_receipt
             history = list(updated.get("command_history") or [])
             history.append({
                 "command": "CancelResearchExperiment",
                 "command_id": cmd_id,
+                "event_id": event_id,
+                "correlation_id": correlation_id,
                 "actor_id": clean_actor,
                 "tenant_id": clean_tenant or exp_tenant,
                 "idempotency_key": clean_key,
