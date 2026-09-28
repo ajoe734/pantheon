@@ -1016,11 +1016,11 @@ def test_retry_experiment_final_commit_failure_and_recovery():
     experiments.armed = True
     owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments, notes_store=AtomicIO())
     with pytest.raises(OSError):
-        owner.retry_research_experiment(exp_id, actor_id="actor", idempotency_key="retry-key")
+        owner.retry_research_experiment(exp_id, actor_id="actor", idempotency_key="retry-key", tenant_id="tenant")
 
     experiments.armed = False
     restarted_owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments, notes_store=AtomicIO())
-    retried = restarted_owner.retry_research_experiment(exp_id, actor_id="actor", idempotency_key="retry-key")
+    retried = restarted_owner.retry_research_experiment(exp_id, actor_id="actor", idempotency_key="retry-key", tenant_id="tenant")
     assert retried is not None
     new_id = retried["experiment_id"]
     assert experiments.rows[new_id]["is_committed"] is True

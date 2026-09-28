@@ -671,6 +671,7 @@ def test_experiment_adapter_dispatcher_command_id_authoritative_all_actions(
         parameter_set={},
         run_config={"stage": "backtest"},
         launch_context={"tenant_id": "tenant-test"},
+        tenant_id="tenant-test",
     )
     eid1 = exp1["experiment_id"]
     rcpt_cancel = adapter.execute(
@@ -765,6 +766,7 @@ def test_experiment_adapter_dispatcher_command_id_empty_fails_closed_all_actions
         parameter_set={},
         run_config={"stage": "backtest"},
         launch_context={"tenant_id": "tenant-test"},
+        tenant_id="tenant-test",
     )
     eid = exp["experiment_id"]
 

@@ -257,6 +257,27 @@ _OPERATION_ALIASES: Dict[str, set[str]] = {
 }
 
 
+def _trusted_tenant_id(kwargs: Mapping[str, Any], payload: Mapping[str, Any]) -> Optional[str]:
+    """Resolve the authoritative tenant for a durable capital write.
+
+    ``kwargs["tenant_id"]`` is the caller-authenticated tenant threaded down
+    from the router's identity resolution; it is the only trusted source. A
+    ``tenant_id`` present in the request ``payload`` may only be checked for
+    equality against it -- a mismatch (including an unresolved/None trusted
+    tenant with any payload tenant_id) is rejected fail-closed instead of
+    silently adopting the caller-controlled value as authority.
+    """
+    trusted_raw = kwargs.get("tenant_id")
+    trusted = str(trusted_raw).strip() if trusted_raw else None
+    payload_raw = payload.get("tenant_id")
+    payload_tenant = str(payload_raw).strip() if payload_raw else None
+    if payload_tenant and payload_tenant != trusted:
+        raise CapitalValidationError(
+            "Request tenant_id does not match the authenticated tenant scope"
+        )
+    return trusted
+
+
 def _matches_operation(
     operation: str,
     saved_op: Optional[str],
@@ -339,7 +360,7 @@ class DefaultCapitalAuthority:
             )
         from datetime import datetime, timezone
         now_iso = datetime.now(timezone.utc).isoformat()
-        tenant_id = kwargs.get("tenant_id") or payload.get("tenant_id")
+        tenant_id = _trusted_tenant_id(kwargs, payload)
         idempotency_key = kwargs.get("idempotency_key") or payload.get("idempotency_key")
         request_hash = request_digest or stable_digest(payload)
 
@@ -509,7 +530,7 @@ class DefaultCapitalAuthority:
     def create_capital_pool(self, payload: Dict[str, Any], *, actor_id: str = "operator", **kwargs: Any) -> Dict[str, Any]:
         pool_id = str(payload.get("pool_id") or payload.get("id") or "").strip()
         idempotency_key = kwargs.get("idempotency_key") or payload.get("idempotency_key")
-        tenant_id = kwargs.get("tenant_id") or payload.get("tenant_id")
+        tenant_id = _trusted_tenant_id(kwargs, payload)
         if not pool_id and idempotency_key and self._command_store is not None and hasattr(self._command_store, "get_command_by_idempotency_key"):
             existing = self._command_store.get_command_by_idempotency_key(
                 idempotency_key, operator_id=actor_id, tenant_id=tenant_id

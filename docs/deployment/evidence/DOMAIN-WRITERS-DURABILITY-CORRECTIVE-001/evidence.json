@@ -345,6 +345,10 @@
       "problem": "Independent exact-head REJECT of PR #5998 at b4e787e70981577761cca7afd374759b8c7330fb (manifest c6350b55693bb6b184c8cc1b2a579ebcdc895dbb). P1 acceptance 3: runtime/router.py:1068-1086 passed an unresolved tenant=None into CommandStore.get_command_by_idempotency_key; command_queue.py:443-447 treated None as an unrestricted tenant lookup, so a real signed HS256 identity with an absent or ambiguous tenant claim could retrieve and replay another tenant's durable POST /bff/runtimes command/result under the same operator/idempotency key (4 failed cases, warm and after router/CommandStore reconstruction). P2: ResearchPortWiring.list_experiments_bff at services/control-plane/bff/research/service.py:878-881 did not accept tenant_id, so the caller's own fail-closed tenant filter in list_research_experiments_bff/list_experiments_bff (research/service.py ~3573-3614) had nothing to authorize against: after a successful same-tenant ticket/experiment launch, GET /bff/experiments returned 200 items=[] while GET /api/v1/experiments and GET /bff/experiments/{id} correctly exposed the owned experiment (2 failed cases including reconstruction).",
       "remediation": "CommandStore.get_command_by_idempotency_key (command_queue.py) no longer treats an unresolved tenant_id as unscoped: when the caller's tenant is unresolved it only matches durable records that are themselves tenant-less, never a record that carries a resolved tenant. A new match_any_tenant=True mode exists purely to detect (never to return data for) a same-operator/same-key collision against a resolved tenant. runtime/router.py's POST /bff/runtimes handler uses that mode: when the caller's own tenant is unresolved and the tenant-scoped lookup found nothing, it probes for a foreign-tenant collision on the same operator/idempotency-key pair and fails closed with 403 precondition_failed=tenant_unresolved instead of silently admitting a second command under that key. ResearchPortWiring.list_experiments_bff (research/service.py:878) now accepts tenant_id (with a TypeError fallback for read surfaces that do not yet support it) and threads it into list_research_experiments, so the same-tenant list path is authorized against the correct tenant instead of an implicit None.",
       "reproducer": "/tmp/test_domain_writer_head_b4_review.py (reviewer's exact-head reproducer)"
+    },
+    "defect_86_payload_launch_context_tenant_authority_fallback": {
+      "problem": "Independent exact-head REJECT of PR #5998 at cc05eea4b04819e4095099d74713294454f9421b; acceptance 3 still fails. P1 Capital: services/control-plane/bff/capital/service.py:342 and :512 used kwargs.get('tenant_id') or payload.get('tenant_id'). POST /bff/capital-pools with a signed HS256 identity whose tenant claims are absent or ambiguous resolved trusted tenant to None, but body tenant_id=tenant-a restored foreign authority: after tenant-a created a pool, the same actor/key/body replayed with absent/ambiguous claims returned HTTP 201 and the tenant-a data/command receipt, one downstream stub invocation and one stored command total, before and after a fresh router/CommandStore restart. P1 Research: research/service.py:3783 forwarded the caller-supplied payload launch_context wholesale; services/research/write_owner.py:1539 replaced a trusted-but-unresolved (None) tenant with launch_context.tenant_id, so POST /bff/experiments with absent/ambiguous signed tenant claims and body launch_context.tenant_id=tenant-a returned 201 and persisted a tenant-a experiment. A related shape at write_owner.py:1842/1860 let a None caller tenant fall back to the stored experiment's own tenant in retry_research_experiment, authorizing any caller as the record owner for retry.",
+      "remediation": "capital/service.py: added _trusted_tenant_id(kwargs, payload) used at both call sites (_execute_with_durability and create_capital_pool). It resolves the tenant exclusively from kwargs['tenant_id'] (the router's resolve_identity_tenant() result); a payload/body tenant_id is only compared for equality and raises CapitalValidationError (422) on any mismatch, including when the trusted value is None. research/write_owner.py create_research_experiment: clean_tenant now derives only from the trusted tenant_id parameter; launch_context['tenant_id'] is compared for equality and a mismatch (including trusted None vs a payload-supplied tenant) raises ResearchTenantAuthorizationError (403) before any store lookup or write. retry_research_experiment: the authorization check now rejects whenever the stored experiment has a tenant and the trusted caller tenant does not exactly match it -- including when the trusted tenant is None -- instead of only checking when a caller tenant was present; the second, redundant clean_tenant recomputation that re-introduced the stored-tenant fallback was removed so it cannot undo the guard. Swept every 'trusted or untrusted'/'tenant_id or'/'launch_context tenant' shape in the declared artifact contract (capital/service.py, capital/router.py, write_owner.py, research/service.py, command_adapters/service.py ~2716 audit/idempotency/params tenant chain): the command_adapters/service.py chain and admission-time tenant assignment (ten_id = resolve_identity_tenant(identity); admitted_params['tenant_id'] = ten_id unconditionally overwrites any payload value before the durable submit_command call) were confirmed to already read stored-record provenance only, not live caller/body scope, and needed no change. Two existing test fixtures called the write_owner layer directly without the trusted tenant_id kwarg while relying on the removed fallback (services/control-plane/bff/governance/test_domain_durability_corrective_p1.py::test_retry_experiment_final_commit_failure_and_recovery; services/control-plane/bff/tests/test_research_jobs_action_receipts.py x2); updated to pass the matching trusted tenant_id explicitly."
     }
   },
   "mutation_caller_inventory": {
@@ -1293,6 +1297,34 @@
       {
         "command": "git diff --check",
         "result": "exit 0"
+      },
+      {
+        "command": "timeout 90 env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q -s /tmp/test_domain_writer_payload_scope_review.py",
+        "result": "6 passed, 1 warning in 3.98s (reviewer's exact isolated reproducer, previously 6 failed)",
+        "executed": 6,
+        "collected": 6
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "result": "309 passed, 7 warnings in 169.32s (post payload/launch_context tenant-authority fix)",
+        "executed": 309,
+        "collected": 309
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "227 passed, 3 warnings in 86.04s (post payload/launch_context tenant-authority fix)",
+        "executed": 227,
+        "collected": 227
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
+        "result": "26 passed in 1.238s (post payload/launch_context tenant-authority fix)",
+        "executed": 26,
+        "collected": 26
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit 0"
       }
     ]
   },
@@ -1419,6 +1451,12 @@
       "rejected_head": "b4e787e70981577761cca7afd374759b8c7330fb",
       "finding": "See defect_85_idempotency_wildcard_tenant_lookup_and_research_list_scope.problem above (verbatim independent review verdict).",
       "fix": "See defect_85_idempotency_wildcard_tenant_lookup_and_research_list_scope.remediation above."
+    },
+    "fifth_rejection_and_fix": {
+      "pr": 5998,
+      "rejected_head": "cc05eea4b04819e4095099d74713294454f9421b",
+      "finding": "See defect_86_payload_launch_context_tenant_authority_fallback.problem above (verbatim independent review verdict).",
+      "fix": "See defect_86_payload_launch_context_tenant_authority_fallback.remediation above."
     }
   }
 }
