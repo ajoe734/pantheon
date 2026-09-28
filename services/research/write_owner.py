@@ -351,6 +351,29 @@ class ResearchWriteOwner:
 
     @classmethod
     def _project_ticket_detail(cls, ticket: Dict[str, Any]) -> Dict[str, Any]:
+        tid = ticket.get("ticket_id")
+        cmd_id = ticket.get("command_id") or f"cmd-{tid}"
+        clean_key = ticket.get("idempotency_key")
+        receipt = ticket.get("receipt")
+        if not receipt or not isinstance(receipt, dict):
+            timestamp = ticket.get("created_at") or _utc_now_rfc3339()
+            receipt = {
+                "receipt_id": f"rcpt-{tid}",
+                "command_id": cmd_id,
+                "commandId": cmd_id,
+                "aggregate_type": ticket.get("aggregate_type") or "research_ticket",
+                "aggregate_id": tid,
+                "aggregate_version": ticket.get("aggregate_version", 1),
+                "status": ticket.get("status") or "open",
+                "event_id": ticket.get("event_id") or f"evt-{tid}",
+                "correlation_id": ticket.get("correlation_id") or clean_key or tid,
+                "owner": "research",
+                "committed_at": ticket.get("committed_at") or timestamp,
+                "command": "CreateResearchTicket",
+                "target": {"type": "research_ticket", "id": tid},
+                "submitted_at": timestamp,
+                "accepted_at": timestamp,
+            }
         return {
             "ticket_id": ticket.get("ticket_id"),
             "title": ticket.get("title"),
@@ -366,6 +389,17 @@ class ResearchWriteOwner:
             "linked_experiments": list(ticket.get("linked_experiments") or []),
             "linked_artifacts": list(ticket.get("linked_artifacts") or []),
             "allowedActions": cls._ticket_allowed_actions(ticket.get("status")),
+            "command_id": cmd_id,
+            "commandId": cmd_id,
+            "aggregate_type": ticket.get("aggregate_type") or "research_ticket",
+            "aggregate_id": tid,
+            "aggregate_version": ticket.get("aggregate_version", 1),
+            "event_id": ticket.get("event_id") or f"evt-{tid}",
+            "correlation_id": ticket.get("correlation_id") or clean_key or tid,
+            "receipt": receipt,
+            "idempotency_key": clean_key,
+            "tenant_id": ticket.get("tenant_id"),
+            "actor_id": ticket.get("actor_id"),
         }
 
     def create_research_ticket(
@@ -378,14 +412,43 @@ class ResearchWriteOwner:
         actor_id: str,
         created_at: Optional[str] = None,
         ticket_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         clean_title = str(title or "").strip()
         if not clean_title:
             raise ValueError("title is required")
-        clean_priority = str(priority or "medium").strip().lower()
+        clean_priority = str(priority or "normal").strip().lower()
         clean_owner = str(owner or "").strip()
         clean_actor = str(actor_id or "").strip() or clean_owner or "system"
         timestamp = created_at or _utc_now_rfc3339()
+
+        clean_key = str(idempotency_key).strip() if idempotency_key else None
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        clean_hash = str(request_hash).strip() if request_hash else None
+        if clean_key and not clean_hash:
+            clean_hash = hashlib.sha256(f"{clean_title}:{clean_priority}:{clean_owner}:{description}".encode("utf-8")).hexdigest()
+
+        if clean_key:
+            existing_tickets = self._tickets_store.list_all()
+            for t in existing_tickets:
+                if not isinstance(t, dict):
+                    continue
+                if t.get("idempotency_key") != clean_key:
+                    continue
+                t_tenant = str(t.get("tenant_id") or "").strip() or None
+                if t_tenant != clean_tenant:
+                    continue
+                t_actor = str(t.get("actor_id") or t.get("owner") or "").strip() or None
+                if t_actor != clean_actor:
+                    continue
+                saved_hash = t.get("request_hash")
+                if clean_hash and saved_hash and saved_hash != clean_hash:
+                    raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                return self._project_ticket_detail(t)
 
         if ticket_id:
             tid = str(ticket_id).strip()
@@ -405,6 +468,25 @@ class ResearchWriteOwner:
                     break
                 known_ids.add(cand_id)
                 idx += 1
+
+        cmd_id = command_id or f"cmd-{tid}"
+        canonical_receipt = {
+            "receipt_id": f"rcpt-{tid}",
+            "command_id": cmd_id,
+            "commandId": cmd_id,
+            "aggregate_type": "research_ticket",
+            "aggregate_id": tid,
+            "aggregate_version": 1,
+            "status": "open",
+            "event_id": f"evt-{tid}",
+            "correlation_id": clean_key or tid,
+            "owner": "research",
+            "committed_at": timestamp,
+            "command": "CreateResearchTicket",
+            "target": {"type": "research_ticket", "id": tid},
+            "submitted_at": timestamp,
+            "accepted_at": timestamp,
+        }
 
         record: Dict[str, Any] = {
             "ticket_id": tid,
@@ -427,6 +509,18 @@ class ResearchWriteOwner:
             ],
             "linked_experiments": [],
             "linked_artifacts": [],
+            "command_id": cmd_id,
+            "commandId": cmd_id,
+            "aggregate_type": "research_ticket",
+            "aggregate_id": tid,
+            "aggregate_version": 1,
+            "event_id": f"evt-{tid}",
+            "correlation_id": clean_key or tid,
+            "receipt": canonical_receipt,
+            "idempotency_key": clean_key,
+            "request_hash": clean_hash,
+            "tenant_id": clean_tenant,
+            "actor_id": clean_actor,
         }
         self._tickets_store.put(tid, record)
         return self._project_ticket_detail(record)
@@ -438,7 +532,16 @@ class ResearchWriteOwner:
         patch: Dict[str, Any],
         actor_id: str,
         updated_at: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
+        clean_key = str(idempotency_key).strip() if idempotency_key else None
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        clean_hash = str(request_hash).strip() if request_hash else None
+
         ticket = self._tickets_store.get(str(ticket_id))
         if ticket is None or not isinstance(ticket, dict):
             return None
@@ -487,6 +590,14 @@ class ResearchWriteOwner:
             ticket["linked_artifacts"] = list(patch["linked_artifacts"])
 
         ticket["updated_at"] = timestamp
+        if clean_key:
+            ticket["idempotency_key"] = clean_key
+        if clean_tenant:
+            ticket["tenant_id"] = clean_tenant
+        if clean_actor:
+            ticket["actor_id"] = clean_actor
+        if clean_hash:
+            ticket["request_hash"] = clean_hash
         self._tickets_store.put(ticket_id, ticket)
         return self._project_ticket_detail(ticket)
 

@@ -1420,3 +1420,118 @@ def test_midnight_scoped_idempotency_independent_of_date_prefix():
     assert len(store.rows) == 1, result
 
 
+def _research_ticket_client(tickets, role="admin", utc_now=None):
+    owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=CASStore(), notes_store=AtomicIO())
+    identity = SimpleNamespace(operator_id="actor", tenant_id="tenant", roles=[role])
+
+    def require_operator(i):
+        if "admin" not in getattr(i, "roles", []):
+            raise HTTPException(403, detail="operator required")
+
+    app = FastAPI()
+    app.include_router(
+        create_research_router(
+            read_surface=DefaultResearchKnowledgeSourcePort(research_write_owner=owner),
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda i: None,
+            require_operator_role=require_operator,
+            bff_error=lambda s, c, m, *a, **kw: HTTPException(s, detail=m),
+            utc_now=utc_now or (lambda: "2026-09-28T00:00:00Z"),
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+TICKET_BODY = {"title": "Independent review", "description": "isolated test", "priority": "normal", "owner": "actor"}
+
+
+def test_ticket_create_rejects_viewer():
+    tickets = CASStore()
+    c = _research_ticket_client(tickets, "viewer")
+    control = c.post("/bff/experiments", json={"name": "must be denied"})
+    r = c.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "ticket-key"})
+    evidence = {"control": control.status_code, "ticket": r.status_code, "rows": len(tickets.rows)}
+    assert control.status_code == 403
+    assert r.status_code == 403 and not tickets.rows, evidence
+
+
+def test_ticket_restart_replay_and_receipt():
+    tickets = CASStore()
+    client = _research_ticket_client(tickets)
+    r1 = client.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "ticket-key"})
+    r2 = client.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "ticket-key"})
+    fresh = _research_ticket_client(tickets)
+    detail = fresh.get("/api/v1/research/tickets/" + r1.json()["ticket_id"])
+    evidence = {
+        "statuses": [r1.status_code, r2.status_code],
+        "ids": [r1.json()["ticket_id"], r2.json()["ticket_id"]],
+        "owner_rows": len(tickets.rows),
+        "fresh_detail_status": detail.status_code,
+        "body": r1.json(),
+    }
+    assert r1.json()["ticket_id"] == r2.json()["ticket_id"] and detail.status_code == 200 and tickets.rows, evidence
+    receipt = r1.json().get("receipt")
+    assert receipt and receipt.get("command_id"), evidence
+    assert receipt.get("aggregate_type") == "research_ticket"
+
+
+def test_ticket_patch_rejects_viewer():
+    tickets = CASStore()
+    admin_client = _research_ticket_client(tickets, "admin")
+    created = admin_client.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "ticket-key"})
+    assert created.status_code == 200
+    ticket_id = created.json()["ticket_id"]
+
+    viewer_client = _research_ticket_client(tickets, "viewer")
+    patched = viewer_client.patch(f"/api/v1/research/tickets/{ticket_id}", json={"status": "closed"}, headers={"Idempotency-Key": "patch-key"})
+    assert patched.status_code == 403
+
+
+def test_ticket_patch_durability_and_replay():
+    tickets = CASStore()
+    client = _research_ticket_client(tickets, "admin")
+    created = client.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "ticket-key"})
+    assert created.status_code == 200
+    ticket_id = created.json()["ticket_id"]
+
+    p1 = client.patch(f"/api/v1/research/tickets/{ticket_id}", json={"status": "closed"}, headers={"Idempotency-Key": "patch-key"})
+    assert p1.status_code == 200
+    assert p1.json()["status"] == "closed"
+
+    # Fresh client observes persisted closed status
+    fresh = _research_ticket_client(tickets, "admin")
+    readback = fresh.get(f"/api/v1/research/tickets/{ticket_id}")
+    assert readback.status_code == 200
+    assert readback.json()["status"] == "closed"
+
+
+def test_approval_caller_id_cannot_alias_other_tenant_command(tmp_path):
+    path = str(tmp_path / "commands.jsonl")
+    a, _ = governance_client(CommandStore(path), SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["admin"]))
+    b, _ = governance_client(CommandStore(path), SimpleNamespace(operator_id="actor-b", tenant_id="tenant-b", roles=["admin"]))
+    r1 = a.post("/api/v1/approval-decisions", json={**PAYLOAD, "decision_id": "shared-id"}, headers={"Idempotency-Key": "key-a"})
+    r2 = b.post("/api/v1/approval-decisions", json={**PAYLOAD, "decision_id": "shared-id", "decision": "reject"}, headers={"Idempotency-Key": "key-b"})
+    persisted = CommandStore(path).get_command(r2.json()["data"]["command_id"])
+    evidence = {
+        "statuses": [r1.status_code, r2.status_code],
+        "ids": [r1.json()["data"]["command_id"], r2.json()["data"]["command_id"]],
+        "second_receipt_actor": r2.json()["data"]["approver_id"],
+        "readback_actor": persisted["audit"]["operator_id"],
+    }
+    assert r2.status_code == 409 or persisted["audit"]["operator_id"] == "actor-b", evidence
+
+
+def test_approval_conflicting_command_id_rejected(tmp_path):
+    path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(path)
+    a, _ = governance_client(store, SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["admin"]))
+    b, _ = governance_client(store, SimpleNamespace(operator_id="actor-b", tenant_id="tenant-b", roles=["admin"]))
+    r1 = a.post("/api/v1/approval-decisions", json={**PAYLOAD, "command_id": "explicit-cmd-id"}, headers={"Idempotency-Key": "key-a"})
+    assert r1.status_code == 202
+    r2 = b.post("/api/v1/approval-decisions", json={**PAYLOAD, "command_id": "explicit-cmd-id", "decision": "reject"}, headers={"Idempotency-Key": "key-b"})
+    assert r2.status_code == 409
+    # Confirm original command was unchanged
+    persisted = store.get_command("explicit-cmd-id")
+    assert persisted["audit"]["operator_id"] == "actor-a"
+
+

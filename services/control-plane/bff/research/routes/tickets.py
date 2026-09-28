@@ -96,15 +96,26 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
         return date_range
 
     async def endpoint_create_ticket(request: Request, **_kwargs: Any) -> Dict[str, Any]:
-        identity = ctx.identity(request)
+        identity = ctx.identity(request, operator=True)
         payload = await ctx.body(request)
+        idempotency_key = request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
+        actor_id = (
+            getattr(identity, "operator_id", None)
+            or getattr(identity, "user_id", None)
+            or getattr(identity, "actor_id", None)
+            or str(identity)
+        )
+        tenant_id = getattr(identity, "tenant_id", None)
         try:
             return ctx.service.create_research_ticket(
                 title=ctx.required_text(payload, "title"),
                 description=ctx.required_text(payload, "description"),
                 priority=_validate_ticket_priority(payload.get("priority")),
                 owner=ctx.required_text(payload, "owner"),
-                actor_id=str(getattr(identity, "operator_id", "")),
+                actor_id=str(actor_id).strip() if actor_id else "",
+                tenant_id=str(tenant_id).strip() if tenant_id else None,
+                idempotency_key=str(idempotency_key).strip() if idempotency_key else None,
+                payload=payload,
             )
         except Exception as exc:
             ctx.raise_service_error(exc)
@@ -137,14 +148,24 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
             ctx.raise_service_error(exc)
 
     async def endpoint_patch_ticket(request: Request, **_kwargs: Any) -> Dict[str, Any]:
-        identity = ctx.identity(request)
+        identity = ctx.identity(request, operator=True)
         ticket_id = str(request.path_params.get("ticket_id") or "")
         payload = await ctx.body(request)
+        idempotency_key = request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
+        actor_id = (
+            getattr(identity, "operator_id", None)
+            or getattr(identity, "user_id", None)
+            or getattr(identity, "actor_id", None)
+            or str(identity)
+        )
+        tenant_id = getattr(identity, "tenant_id", None)
         try:
             return ctx.service.patch_research_ticket(
                 ticket_id,
                 payload,
-                actor_id=str(getattr(identity, "operator_id", "")),
+                actor_id=str(actor_id).strip() if actor_id else "",
+                tenant_id=str(tenant_id).strip() if tenant_id else None,
+                idempotency_key=str(idempotency_key).strip() if idempotency_key else None,
             )
         except Exception as exc:
             ctx.raise_service_error(exc)

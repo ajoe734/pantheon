@@ -3019,19 +3019,43 @@ class ResearchRouterService:
         owner: str,
         actor_id: str,
         created_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         snap = created_at or self.utc_now()
+        req_hash = None
+        if payload is not None:
+            req_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
         port = self._port()
-        with self._map_port_errors("create_research_ticket"):
-            ticket = port.create_research_ticket(
-                title=title,
-                description=description,
-                priority=priority,
-                owner=owner,
-                actor_id=actor_id,
-                created_at=snap,
+        try:
+            with self._map_port_errors("create_research_ticket"):
+                ticket = port.create_research_ticket(
+                    title=title,
+                    description=description,
+                    priority=priority,
+                    owner=owner,
+                    actor_id=actor_id,
+                    created_at=snap,
+                    tenant_id=tenant_id,
+                    idempotency_key=idempotency_key,
+                    request_hash=req_hash,
+                )
+        except ResearchWriteOwnerUnavailableError as exc:
+            self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Research ticket write owner unavailable",
+                str(exc),
             )
-        return {key: ticket.get(key) for key in ("ticket_id", "status", "created_at", "allowedActions")}
+        except ResearchIdempotencyConflictError as exc:
+            self._raise_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key conflict",
+                str(exc),
+            )
+        return ticket
 
     def list_research_tickets(
         self,
@@ -3093,6 +3117,8 @@ class ResearchRouterService:
         *,
         actor_id: str,
         snapshot_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         port = self._port()
@@ -3210,11 +3236,35 @@ class ResearchRouterService:
                 precondition_failed="payload_shape",
             )
 
-        with self._map_port_errors("patch_research_ticket"):
-            updated = port.patch_research_ticket(ticket_id, patch=patch, actor_id=actor_id, updated_at=snap)
+        req_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        try:
+            with self._map_port_errors("patch_research_ticket"):
+                updated = port.patch_research_ticket(
+                    ticket_id,
+                    patch=patch,
+                    actor_id=actor_id,
+                    updated_at=snap,
+                    tenant_id=tenant_id,
+                    idempotency_key=idempotency_key,
+                    request_hash=req_hash,
+                )
+        except ResearchWriteOwnerUnavailableError as exc:
+            self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Research ticket write owner unavailable",
+                str(exc),
+            )
+        except ResearchIdempotencyConflictError as exc:
+            self._raise_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key conflict",
+                str(exc),
+            )
         if not updated:
             self._raise_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Research ticket store unavailable", "Research ticket update store is unavailable")
-        return {key: updated.get(key) for key in ("ticket_id", "status", "updated_at", "allowedActions")}
+        return updated
 
     def search_research(
         self,

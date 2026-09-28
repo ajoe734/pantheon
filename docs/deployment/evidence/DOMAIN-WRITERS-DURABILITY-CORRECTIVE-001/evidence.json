@@ -196,6 +196,18 @@
     "defect_48_research_atomic_scoped_idempotency_across_midnight": {
       "problem": "services/research/write_owner.py _atomic_insert_record bound only date-derived experiment_id in store check. Concurrent or synchronized clients across UTC midnight (23:59:59Z and 00:00:00Z) created two durable rows with different date prefixes (exp-YYYYMMDD-001) under the same idempotency key.",
       "remediation": "Enforced database-atomic scoped idempotency binding unique_fields=('tenant_id', 'actor_id', 'idempotency_key') in _atomic_insert_record across store locks, insert_if_absent, and row scans, guaranteeing exactly 1 durable row across midnight transitions."
+    },
+    "defect_49_research_tickets_operator_role_enforcement": {
+      "problem": "POST /api/v1/research/tickets and PATCH /api/v1/research/tickets/{ticket_id} called ctx.identity(request, operator=False), allowing read-only viewer roles to create and patch research tickets.",
+      "remediation": "Enforced ctx.identity(request, operator=True) in endpoint_create_ticket and endpoint_patch_ticket in services/control-plane/bff/research/routes/tickets.py, guaranteeing that unprivileged viewer identities are rejected with 403 Forbidden."
+    },
+    "defect_50_research_tickets_durability_and_canonical_receipt": {
+      "problem": "DefaultResearchKnowledgeSourcePort maintained process-local self._tickets write mutation authority and was listed in evidence inventory with incorrect paths; tickets lacked durable scoped replay and canonical SD 4.4 receipts.",
+      "remediation": "Retired process-local self._tickets mutation authority in DefaultResearchKnowledgeSourcePort, routing create, patch, get, and list through ResearchWriteOwner with tenant+actor+key scoped replay, 409 conflict detection, and canonical SD 4.4 receipts (receipt_id, command_id, aggregate_type, aggregate_id, aggregate_version, status, event_id, correlation_id, owner, committed_at). Corrected evidence inventory to mounted POST /api/v1/research/tickets and PATCH /api/v1/research/tickets/{ticket_id}."
+    },
+    "defect_51_governance_canonical_command_identity_and_conflict_rejection": {
+      "problem": "governance/service.py:decide_approval reused caller-supplied decision_id as command_id, causing cross-tenant command aliasing in CommandStore.get_command; CommandStore.submit_command / submit_terminal_command permitted conflicting command_id submissions.",
+      "remediation": "Decoupled decision_id from command_id by generating independent canonical command IDs (cmd-dec-...) in decide_approval; added atomic conflicting command_id rejection inside CommandStore.serialized_transaction to prevent duplicate or cross-tenant command row key collisions."
     }
   },
   "mutation_caller_inventory": {
@@ -248,11 +260,11 @@
     },
     "research_ticket": {
       "routes": [
-        "POST /bff/research/tickets",
-        "POST /bff/research/tickets/{id}/actions/{action_id}"
+        "POST /api/v1/research/tickets",
+        "PATCH /api/v1/research/tickets/{ticket_id}"
       ],
-      "selected_owner": "services/control-plane/bff/ports/research_knowledge_source.py and ResearchCommandAdapter",
-      "durability_mechanism": "Typed command port with CommandStore receipt persistence."
+      "selected_owner": "services/control-plane/bff/ports/research_knowledge_source.py (DefaultResearchKnowledgeSourcePort) and services/research/write_owner.py (ResearchWriteOwner)",
+      "durability_mechanism": "Eliminated process-local self._tickets mutation authority; operations bound directly to ResearchWriteOwner with tenant+actor+key scoped replay, 409 conflict detection, and canonical SD 4.4 receipts."
     },
     "agora_audit": {
       "routes": [
@@ -329,6 +341,7 @@
       "services/control-plane/bff/personas/service.py",
       "services/control-plane/bff/ports/research_knowledge_source.py",
       "services/control-plane/bff/research/routes/experiments.py",
+      "services/control-plane/bff/research/routes/tickets.py",
       "services/control-plane/bff/research/service.py",
       "services/control-plane/bff/research/test_router.py",
       "services/control-plane/bff/runtime/router.py",
@@ -570,6 +583,24 @@
         "result": "143 passed, 9 warnings in 90.30s",
         "executed": 143,
         "collected": 143
+      },
+      {
+        "command": "/tmp/venv-bff-test/bin/python3 /tmp/test_domain_review_f60a.py",
+        "result": "3 passed, 0 failed in 4.46s",
+        "executed": 3,
+        "collected": 3
+      },
+      {
+        "command": "PYTHONPATH=. timeout 120 /tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "68 passed, 7 warnings in 37.30s",
+        "executed": 68,
+        "collected": 68
+      },
+      {
+        "command": "PYTHONPATH=. timeout 120 /tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "149 passed, 9 warnings in 87.00s",
+        "executed": 149,
+        "collected": 149
       }
     ]
   },
@@ -626,7 +657,10 @@
     "defect_45_research_launch_operator_role_enforcement_resolved": true,
     "defect_46_smoke_concurrent_modification_rejected_resolved": true,
     "defect_47_research_cas_exhaustion_preserves_concurrent_cancellation_resolved": true,
-    "defect_48_research_atomic_scoped_idempotency_across_midnight_resolved": true
+    "defect_48_research_atomic_scoped_idempotency_across_midnight_resolved": true,
+    "defect_49_research_tickets_operator_role_enforcement_resolved": true,
+    "defect_50_research_tickets_durability_and_canonical_receipt_resolved": true,
+    "defect_51_governance_canonical_command_identity_and_conflict_rejection_resolved": true
   },
   "review": {
     "reviewer": "Codex",

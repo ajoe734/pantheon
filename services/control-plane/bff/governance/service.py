@@ -465,6 +465,7 @@ class GovernanceService:
 
         decided_at = self.utc_now()
         decision_id = str(payload.get("decision_id") or payload.get("id") or uuid.uuid4())
+        command_id = str(payload.get("command_id") or f"cmd-dec-{uuid.uuid4()}")
         record = {
             "id": decision_id,
             "decision_id": decision_id,
@@ -477,7 +478,7 @@ class GovernanceService:
             "decided_at": decided_at,
         }
         receipt = {
-            "command_id": decision_id,
+            "command_id": command_id,
             "aggregate_type": "ApprovalDecision",
             "aggregate_id": decision_id,
             "aggregate_version": 1,
@@ -489,8 +490,8 @@ class GovernanceService:
         }
         data = {
             "status": "accepted",
-            "commandId": decision_id,
-            "command_id": decision_id,
+            "commandId": command_id,
+            "command_id": command_id,
             "aggregate_type": "ApprovalDecision",
             "aggregate_id": decision_id,
             "aggregate_version": 1,
@@ -544,7 +545,7 @@ class GovernanceService:
                 "receipt": copy.deepcopy(receipt),
             }
             admitted = self.command_store.submit_terminal_command(
-                command_id=decision_id,
+                command_id=command_id,
                 command_type=cmd_type,
                 target=TargetObject(type=ObjectType.APPROVAL_DECISION, id=decision_id),
                 submitted_at=decided_at,

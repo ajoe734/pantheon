@@ -134,6 +134,10 @@ class CommandStore:
                 if existing is not None:
                     return existing
 
+            existing_by_id = self.get_command(command_id)
+            if existing_by_id is not None:
+                raise RuntimeError(f"Command ID {command_id!r} already exists with conflicting identity")
+
             target_dump = target.model_dump() if hasattr(target, "model_dump") else dict(target)
             record = {
                 "command_id": command_id,
@@ -174,6 +178,10 @@ class CommandStore:
                 existing = self.get_command_by_idempotency_key(idem_key, operator_id=op_id, tenant_id=ten_id)
                 if existing is not None:
                     return existing
+
+            existing_by_id = self.get_command(command_id)
+            if existing_by_id is not None:
+                raise RuntimeError(f"Command ID {command_id!r} already exists with conflicting identity")
 
             target_dump = target.model_dump() if hasattr(target, "model_dump") else dict(target)
             record = {

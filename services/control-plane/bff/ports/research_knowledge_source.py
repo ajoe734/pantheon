@@ -497,14 +497,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             return "typed_store" if self._institutional_memory_store is not None else ("bff_composed" if self._notes else "missing")
         if dataset == "evidence_refs":
             return "typed_store" if (self._evidence_repo is not None or self._evidence_refs) else "missing"
-        if dataset == "research_experiments":
-            return "typed_store" if self._get_research_write_owner() is not None else "missing"
-        if dataset in ("research_notes", "insight_cards", "strategy_specs", "research_tickets", "research_analyses", "research_artifacts"):
+        if dataset in ("research_experiments", "research_tickets"):
+            return "typed_store" if (self._get_research_write_owner() is not None or (dataset == "research_tickets" and bool(self._tickets))) else "missing"
+        if dataset in ("research_notes", "insight_cards", "strategy_specs", "research_analyses", "research_artifacts"):
             store_map = {
                 "research_notes": self._notes,
                 "insight_cards": self._insights,
                 "strategy_specs": self._strategy_specs,
-                "research_tickets": self._tickets,
                 "research_analyses": self._analyses,
                 "research_artifacts": self._artifacts,
             }
@@ -1930,6 +1929,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         owner: Optional[str] = None,
         include_fixture_pack: bool = False,
     ) -> List[Dict[str, Any]]:
+        research_owner = self._get_research_write_owner()
+        if research_owner is not None:
+            return research_owner.list_research_tickets(statuses=statuses, owner=owner)
         tickets = list(self._tickets.values())
         if statuses:
             req_statuses = {str(s).strip().lower() for s in statuses if str(s).strip()}
@@ -1946,6 +1948,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ticket_id:
             return None
+        research_owner = self._get_research_write_owner()
+        if research_owner is not None:
+            return research_owner.get_research_ticket(ticket_id)
         ticket = self._tickets.get(str(ticket_id))
         return self._project_research_ticket_detail(ticket) if isinstance(ticket, dict) else None
 
@@ -1958,7 +1963,31 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         owner: str,
         actor_id: str,
         created_at: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
+        research_owner = self._get_research_write_owner()
+        if research_owner is not None:
+            return research_owner.create_research_ticket(
+                title=title,
+                description=description,
+                priority=priority,
+                owner=owner,
+                actor_id=actor_id,
+                created_at=created_at,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                tenant_id=tenant_id,
+                command_id=command_id,
+                **kwargs,
+            )
+        if not self._tickets:
+            raise ResearchWriteOwnerUnavailableError(
+                "Research write owner is not configured; cannot create a research ticket."
+            )
         timestamp = created_at or _utc_now_rfc3339()
         ticket_id = f"rt-{timestamp[:10].replace('-', '')}-{len(self._tickets) + 1:03d}"
         while ticket_id in self._tickets:
@@ -1996,7 +2025,29 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         patch: Dict[str, Any],
         actor_id: str,
         updated_at: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
+        research_owner = self._get_research_write_owner()
+        if research_owner is not None:
+            return research_owner.patch_research_ticket(
+                ticket_id,
+                patch=patch,
+                actor_id=actor_id,
+                updated_at=updated_at,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                tenant_id=tenant_id,
+                command_id=command_id,
+                **kwargs,
+            )
+        if not self._tickets:
+            raise ResearchWriteOwnerUnavailableError(
+                "Research write owner is not configured; cannot patch a research ticket."
+            )
         ticket = self._tickets.get(str(ticket_id))
         if ticket is None or not isinstance(ticket, dict):
             return None
