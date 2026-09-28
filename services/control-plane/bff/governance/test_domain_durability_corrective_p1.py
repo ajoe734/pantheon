@@ -2395,6 +2395,138 @@ def test_mounted_experiment_action_concurrent_conflict(tmp_path, monkeypatch):
     assert len(all_cmds) == 1
 
 
+def test_finalize_rejects_arbitrary_get_put_store_without_cas():
+    """Verify _finalize_experiment_record fails closed on stores lacking conditional CAS authority.
+
+    Stores lacking compare_and_set or store-level lock/rows must not be finalized via
+    unconditional get/put fallbacks or private process-local locks, which could overwrite
+    concurrent durable state.
+    """
+    from services.research.write_owner import _finalize_experiment_record
+
+    persisted = {"exp-1": {"version": 1, "status": "queued", "is_committed": False}}
+
+    class ArbitraryGetPutStore:
+        def get(self, key):
+            return deepcopy(persisted.get(key))
+
+        def put(self, key, value):
+            persisted[key] = deepcopy(value)
+
+    store = ArbitraryGetPutStore()
+    with pytest.raises(RuntimeError, match="store does not support conditional finalization"):
+        _finalize_experiment_record(store, "exp-1", deepcopy(persisted["exp-1"]))
+
+    # Must not have been modified or committed via unconditional fallback
+    assert persisted["exp-1"] == {"version": 1, "status": "queued", "is_committed": False}
+
+
+def test_finalize_interleaving_preserves_concurrent_cancellation_via_cas():
+    """Verify CAS-capable finalization preserves concurrent durable updates under get/put interleaving.
+
+    When an interleaving writer persists a cancellation (version 2, status 'canceled')
+    between the initial snapshot read and the final commit, the CAS path detects the
+    conflict and preserves the cancellation rather than overwriting it with stale state.
+    """
+    from services.research.write_owner import _finalize_experiment_record
+
+    store = CASStore()
+    initial_record = {"version": 1, "status": "queued", "is_committed": False}
+    store.put("exp-interleaved-1", initial_record)
+
+    # Wrap compare_and_set to simulate an interleaving concurrent cancel on the first CAS attempt
+    original_cas = store.compare_and_set
+    interleaved_done = Event()
+
+    def interleaving_cas(key, expected, candidate, *, conn=None):
+        if not interleaved_done.is_set():
+            # Interleave concurrent durable cancellation before first CAS executes
+            store.put(key, {"version": 2, "status": "canceled", "is_committed": False})
+            interleaved_done.set()
+        return original_cas(key, expected, candidate, conn=conn)
+
+    store.compare_and_set = interleaving_cas
+
+    result = _finalize_experiment_record(store, "exp-interleaved-1", deepcopy(initial_record))
+
+    persisted = store.get("exp-interleaved-1")
+    assert persisted["version"] == 2, f"Expected version 2, got {persisted}"
+    assert persisted["status"] == "canceled", f"Expected status 'canceled', got {persisted}"
+    assert persisted["is_committed"] is True, f"Expected is_committed=True, got {persisted}"
+    assert result["version"] == 2 and result["status"] == "canceled" and result["is_committed"] is True
+
+
+def test_finalize_two_owners_shared_backend_preserves_concurrent_cancellation_via_shared_cas():
+    """Verify two independent store instances sharing a backend preserve concurrent updates via store-owned CAS.
+
+    Simulates the two-owner topology: owner A attempts to finalize an experiment record,
+    while owner B concurrently persists a cancellation (version 2, status 'canceled') to
+    the shared backend. The store-owned atomic compare_and_set detects the conflict, and
+    owner A retries against the fresh snapshot to preserve the cancellation.
+    """
+    from services.research.write_owner import _finalize_experiment_record
+
+    backend = {"exp-shared-1": {"version": 1, "status": "queued", "is_committed": False}}
+    backend_lock = Lock()
+
+    class SharedBackendCASStore:
+        def __init__(self, pause_event=None, resume_event=None):
+            self.pause_event = pause_event
+            self.resume_event = resume_event
+
+        def get(self, key):
+            with backend_lock:
+                return deepcopy(backend.get(key))
+
+        def put(self, key, value):
+            with backend_lock:
+                backend[key] = deepcopy(value)
+
+        def list_all(self, *, conn=None):
+            with backend_lock:
+                return deepcopy(list(backend.values()))
+
+        def compare_and_set(self, key, expected, value, *, conn=None):
+            if self.pause_event and not self.pause_event.is_set():
+                self.pause_event.set()
+                if self.resume_event:
+                    assert self.resume_event.wait(timeout=5)
+            with backend_lock:
+                current = backend.get(key)
+                if expected is None:
+                    if current is not None:
+                        return False, deepcopy(current)
+                elif current != expected:
+                    return False, deepcopy(current)
+                backend[key] = deepcopy(value)
+                return True, deepcopy(value)
+
+    read_pause = Event()
+    resume_signal = Event()
+
+    store_a = SharedBackendCASStore(pause_event=read_pause, resume_event=resume_signal)
+    store_b = SharedBackendCASStore()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            _finalize_experiment_record,
+            store_a,
+            "exp-shared-1",
+            deepcopy(backend["exp-shared-1"]),
+        )
+        assert read_pause.wait(timeout=5)
+        store_b.put("exp-shared-1", {"version": 2, "status": "canceled", "is_committed": False})
+        resume_signal.set()
+        final = future.result(timeout=5)
+
+    persisted = backend["exp-shared-1"]
+    assert persisted["version"] == 2, f"Expected version 2, got {persisted}"
+    assert persisted["status"] == "canceled", f"Expected status 'canceled', got {persisted}"
+    assert persisted["is_committed"] is True, f"Expected is_committed=True, got {persisted}"
+    assert final["version"] == 2 and final["status"] == "canceled" and final["is_committed"] is True
+
+
+
 
 
 

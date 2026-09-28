@@ -266,8 +266,8 @@
       "remediation": "Preserved immutable original create-command receipt and create result on experiment records, returning the original create receipt on create command replay without reverting aggregate state; added restart-after-cancel regression."
     },
     "defect_66_mounted_action_command_durability_and_actor_isolation": {
-      "problem": "core/app_factory.py:1143 binds main._gov_bff_action_command for POST /bff/experiments/{id}/actions/cancel. It raised NameError for undefined get_catalog_entry at main.py:6950; used a global key-only cache _GOV_BFF_IDEMPOTENCY causing cross-actor command stealing; ignored submit_command return value causing restart replay to return a fresh unpersisted command_id; failed to compare request_hash on admitted rows returned from concurrent submit_command calls leading to 202/202 instead of 202/409 on concurrent conflicting payloads; and test_research_jobs_action_receipts.py in-memory test stores lacked explicit rows or compare_and_set attributes causing RuntimeError at write_owner.py:300 on conditional finalization.",
-      "remediation": "Imported get_catalog_entry with resilient fallback in services/control-plane/bff/main.py. Replaced process-local _GOV_BFF_IDEMPOTENCY cache with durable scoped lookup (command_store.get_command_by_idempotency_key) checking operator_id, tenant_id, and request_hash (raising 409 on conflict). Preserved admitted command_id, submitted_at, and status from submit_command return value and checked request_hash on replayed admitted rows to ensure concurrent conflicting submissions raise 409. Updated _finalize_experiment_record in services/research/write_owner.py to support in-memory test stores with _data and get/put fallbacks under thread-safe locking. Added regression tests in test_domain_durability_corrective_p1.py covering mounted action actor scoping, restart replay, sequential conflict, negative auth, storage failures, and concurrent conflict."
+      "problem": "core/app_factory.py:1143 binds main._gov_bff_action_command for POST /bff/experiments/{id}/actions/cancel. It raised NameError for undefined get_catalog_entry at main.py:6950; used a global key-only cache _GOV_BFF_IDEMPOTENCY causing cross-actor command stealing; ignored submit_command return value causing restart replay to return a fresh unpersisted command_id; failed to compare request_hash on admitted rows returned from concurrent submit_command calls leading to 202/202 instead of 202/409 on concurrent conflicting payloads; and _finalize_experiment_record admitted arbitrary get/put stores and performed unconditional put with process-local locks overwriting concurrent durable state.",
+      "remediation": "Imported get_catalog_entry with resilient fallback in services/control-plane/bff/main.py. Replaced process-local _GOV_BFF_IDEMPOTENCY cache with durable scoped lookup (command_store.get_command_by_idempotency_key) checking operator_id, tenant_id, and request_hash (raising 409 on conflict). Preserved admitted command_id, submitted_at, and status from submit_command return value and checked request_hash on replayed admitted rows to ensure concurrent conflicting submissions raise 409. Eliminated private _finalization_lock, synthetic CAS adapters, and unconditional get/put fallbacks in write_owner.py _finalize_experiment_record; enforced strict fail-closed store-owned atomic compare_and_set / store-level locking. Added regression tests test_finalize_rejects_arbitrary_get_put_store_without_cas, test_finalize_interleaving_preserves_concurrent_cancellation_via_cas, and test_finalize_two_owners_shared_backend_preserves_concurrent_cancellation_via_shared_cas in test_domain_durability_corrective_p1.py alongside mounted action actor scoping, restart replay, sequential conflict, negative auth, storage failures, and concurrent conflict."
     }
   },
   "mutation_caller_inventory": {
@@ -845,6 +845,30 @@
       {
         "command": "PYTHONPATH=. .venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
         "result": "26 passed in 1.132s",
+        "executed": 26,
+        "collected": 26
+      },
+      {
+        "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/pytest -v services/control-plane/bff/governance/test_domain_durability_corrective_p1.py -k \"test_finalize\"",
+        "result": "3 passed, 97 deselected, 1 warning in 2.31s",
+        "executed": 3,
+        "collected": 100
+      },
+      {
+        "command": "RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 PYTHONPATH=. /tmp/venv-bff-test/bin/pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "100 passed, 6 warnings in 63.61s",
+        "executed": 100,
+        "collected": 100
+      },
+      {
+        "command": "RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 PYTHONPATH=. /tmp/venv-bff-test/bin/pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "181 passed, 6 warnings in 104.20s",
+        "executed": 181,
+        "collected": 181
+      },
+      {
+        "command": "PYTHONPATH=. /tmp/venv-bff-test/bin/python3 services/control-plane/bff/smoke_test.py",
+        "result": "26 passed in 1.139s",
         "executed": 26,
         "collected": 26
       }
