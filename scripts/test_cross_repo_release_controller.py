@@ -1540,3 +1540,70 @@ def test_coordinate_release_with_predecessor_fe_sha_mismatch_fails_closed() -> N
             fetch_fn=mismatch_fetch,
         )
     assert client.dispatches == []
+
+
+def test_in_flight_dev_pair_keeps_payload_when_frontend_advances() -> None:
+    class AdvancingClient(FakeClient):
+        def get_ref(self, ref):
+            return "2" * 40
+
+        def is_ancestor(self, base, head):
+            return base == FRONTEND_SHA and head == "2" * 40
+
+    client = AdvancingClient(controller_sha="2" * 40)
+    coordinate_release(client, frontend_sha=FRONTEND_SHA, backend_sha=BACKEND_SHA,
+        bff_base_url="https://bff.test", fe_base_url="https://fe.test",
+        release_candidate_id=CANDIDATE_ID, compatibility_manifest_sha256=MANIFEST_SHA,
+        controller_run_id=CONTROLLER_RUN_ID, gate_timeout_seconds=5,
+        deploy_timeout_seconds=5, poll_seconds=0, fetch_fn=_default_fetch_fn,
+        sleep=lambda _: None)
+    assert client.dispatches[0][1]["fe_sha"] == FRONTEND_SHA
+    assert client.dispatches[1][1]["candidate_sha"] == FRONTEND_SHA
+
+
+def test_in_flight_pair_rejects_frontend_removed_from_dev_history() -> None:
+    class RewrittenClient(FakeClient):
+        def get_ref(self, ref):
+            return "2" * 40
+
+        def is_ancestor(self, base, head):
+            return False
+
+    client = RewrittenClient()
+    with pytest.raises(ControllerError, match="exact frontend SHA"):
+        _coordinate(client)
+    assert not client.dispatches
+
+
+def test_persistent_operator_profile_is_dispatched_and_read_back() -> None:
+    client = FakeClient()
+    def fetch(url):
+        payload = _default_fetch_fn(url)
+        if url.endswith("deployment.json"):
+            payload["profile"] = "operator-live"
+        return payload
+    result = _coordinate(client, candidate_profile="operator-live", fetch_fn=fetch)
+    assert client.dispatches[1][1]["deployment_profile"] == "operator-live"
+    assert result["candidate"]["profile"] == "operator-live"
+    assert result["outcome"] == "accepted"
+    assert "READ_ONLY_RESTORED" not in result["proof_history"]
+
+
+def test_persistent_profile_cannot_be_silently_downgraded() -> None:
+    with pytest.raises(ControllerError, match="preserve operator-live"):
+        _coordinate(FakeClient(), candidate_profile="operator-live")
+
+
+def test_new_controller_code_between_gate_and_deploy_keeps_same_candidate() -> None:
+    class ChangingController(FakeClient):
+        def get_ref(self, ref):
+            if self.dispatches:
+                self.controller_sha = "3" * 40
+            return self.controller_sha
+    client = ChangingController()
+    result = _coordinate(client)
+    assert result["outcome"] == "accepted"
+    assert client.dispatches[0][1]["fe_sha"] == FRONTEND_SHA
+    assert client.dispatches[1][1]["candidate_sha"] == FRONTEND_SHA
+    assert client.dispatches[0][1]["bff_sha"] == BACKEND_SHA
+    assert client.controller_sha == "3" * 40

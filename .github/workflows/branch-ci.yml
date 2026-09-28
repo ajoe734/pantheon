@@ -376,6 +376,8 @@ jobs:
         if: steps.boundary.outputs.delivery_touched == 'true'
         run: |
           PYTHONPATH=.orchestrator python3 -m pytest -q \
+            scripts/test_auto_deploy_dev_pair.py \
+            scripts/test_cross_repo_release_controller.py \
             scripts/test_capture_dev_artifact_baseline.py \
             scripts/test_dev_release_artifact_driver.py \
             scripts/test_dev_release_artifacts.py \

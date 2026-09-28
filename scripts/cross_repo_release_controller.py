@@ -693,6 +693,10 @@ class GitHubClient:
             raise ControllerError(f"run {run_id} response is not an object")
         return payload
 
+    def is_ancestor(self, base: str, head: str) -> bool:
+        payload = self.request("GET", f"/repos/{self.repository}/compare/{base}...{head}")
+        return payload.get("status") in {"identical", "ahead"}
+
     def get_ref(self, ref: str) -> str:
         normalized = str(ref).removeprefix("refs/heads/").removeprefix("heads/")
         if not normalized:
@@ -816,10 +820,14 @@ def coordinate_release(
     frontend_ref = exact_ref(frontend_ref)
     controller_sha = client.get_ref("heads/dev")
     candidate_ref_sha = client.get_ref(frontend_ref)
-    if candidate_ref_sha != frontend_sha:
+    if candidate_ref_sha != frontend_sha and not (
+        frontend_ref == FRONTEND_BRANCH and client.is_ancestor(frontend_sha, candidate_ref_sha)
+    ):
         raise ControllerError(
             f"frontend ref {frontend_ref} does not point to the exact frontend SHA"
         )
+    if candidate_profile not in PROOF_PROFILES:
+        raise ControllerError("unknown frontend candidate profile")
     backend_sha = exact_sha(backend_sha, "backend SHA")
     if predecessor_fe_sha is not None:
         predecessor_fe_sha = exact_sha(predecessor_fe_sha, "predecessor frontend SHA")
@@ -920,7 +928,7 @@ def coordinate_release(
             "release_candidate_id": release_candidate_id,
             "compatibility_manifest_sha256": compatibility_manifest_sha256,
             "release_controller_run_id": controller_run_id,
-            "deployment_profile": "read-only",
+            "deployment_profile": "operator-live" if candidate_profile == "operator-live" else "read-only",
             "proof_window_ack": "false",
             "emergency_override": "false",
             "rollback_drill": "false",
@@ -933,6 +941,9 @@ def coordinate_release(
         if os.environ.get("PANTHEON_DEV_BOOTSTRAP_PREDECESSOR", "").strip().lower() == "true":
             deploy_inputs["bootstrap_predecessor"] = "true"
 
+        # Workflow code may advance while the gate runs; the admitted payload
+        # and authenticated gate artifact remain pinned to the original pair.
+        controller_sha = client.get_ref("heads/dev")
         deploy = dispatch_and_wait(
             client,
             expected=ExpectedRun(
@@ -968,12 +979,16 @@ def coordinate_release(
             except Exception:
                 refetched_manifest = None
 
-        if sys.exc_info()[0] is None and post_switch_verification is not None and refetched_manifest is not None:
+        if candidate_profile == "operator-live":
+            if sys.exc_info()[0] is None and (refetched_manifest or {}).get("profile") != "operator-live":
+                raise ControllerError("accepted frontend did not preserve operator-live profile")
+        elif sys.exc_info()[0] is None and post_switch_verification is not None and refetched_manifest is not None:
             candidate = restore_read_only_profile(candidate, served_manifest=refetched_manifest)
         else:
             candidate = restore_read_only_profile(candidate)
 
-        state_machine.transition("READ_ONLY_RESTORED")
+        if candidate_profile != "operator-live":
+            state_machine.transition("READ_ONLY_RESTORED")
         if candidate_out:
             cand_path = Path(candidate_out)
             cand_path.parent.mkdir(parents=True, exist_ok=True)
