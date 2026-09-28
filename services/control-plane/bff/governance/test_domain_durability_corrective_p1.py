@@ -1,3 +1,4 @@
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from copy import deepcopy
@@ -2933,11 +2934,74 @@ def test_mounted_retry_crash_recovery_preserves_canonical_owner_receipt(tmp_path
     assert result["domain_receipt"]["command"] == "RetryResearchExperiment"
 
 
+def confirmation_client(store, identity):
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(
+        command_store=store,
+        extract_identity=lambda authorization, **kwargs: identity,
+        check_read_surface_state=lambda: None,
+    ))
+    return TestClient(app, raise_server_exceptions=True)
 
 
+def test_confirmation_actor_tenant_isolation(tmp_path):
+    store = CommandStore(str(tmp_path / 'commands.jsonl'))
+    identity = SimpleNamespace(operator_id='actor-a', tenant_id='tenant-a', roles=['operator'])
+    client = confirmation_client(store, identity)
+    payload = {'confirm_token': 'synthetic-token', 'command_id': 'synthetic-command'}
+    first = client.post('/bff/command-confirmations', json=payload, headers={'Idempotency-Key': 'shared'})
+    assert first.status_code == 202, first.text
+    identity.operator_id = 'actor-b'
+    identity.tenant_id = 'tenant-b'
+    second = client.post('/bff/command-confirmations', json=payload, headers={'Idempotency-Key': 'shared'})
+    assert second.status_code >= 400 or second.json()['confirmed_by'] == 'actor-b', second.text
 
 
+def test_confirmation_restart_identity(tmp_path):
+    path = str(tmp_path / 'commands.jsonl')
+    identity = SimpleNamespace(operator_id='actor-a', tenant_id='tenant-a', roles=['operator'])
+    client = confirmation_client(CommandStore(path), identity)
+    payload = {'confirm_token': 'synthetic-token', 'command_id': 'synthetic-command'}
+    first = client.post('/bff/command-confirmations', json=payload, headers={'Idempotency-Key': 'same'})
+    assert first.status_code == 202, first.text
+    restarted = confirmation_client(CommandStore(path), identity)
+    second = restarted.post('/bff/command-confirmations', json=payload, headers={'Idempotency-Key': 'same'})
+    assert second.status_code == 202, second.text
+    assert first.json()['confirmation_id'] == second.json()['confirmation_id'], (first.text, second.text)
 
 
+def test_confirmation_requires_durable_owner():
+    identity = SimpleNamespace(operator_id='actor-a', tenant_id='tenant-a', roles=['operator'])
+    client = confirmation_client(None, identity)
+    response = client.post('/bff/command-confirmations', json={'confirm_token': 'synthetic-token', 'command_id': 'synthetic-command'}, headers={'Idempotency-Key': 'key'})
+    assert response.status_code >= 500, response.text
 
 
+@pytest.mark.parametrize('action', ['archive', 'invalidate'])
+def test_repeated_action_does_not_borrow_other_actor_receipt(tmp_path, monkeypatch, action):
+    from services.control_plane.bff.command_adapters.registry import find_adapter
+    from services.control_plane.bff.command_adapters.service import process_command
+    from services.control_plane.bff.models import CommandType
+
+    client, holder, identity, owner, store = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    adapter = find_adapter(CommandType.EXPERIMENT_ACTION)
+    monkeypatch.setattr(adapter, '_research_write_owner', owner)
+    created = client.post('/bff/experiments', json={'name': 'isolated reviewer case'}, headers={'Idempotency-Key': 'create'})
+    assert created.status_code == 201, created.text
+    eid = created.json()['experiment_id']
+    if action == 'archive':
+        cancel = client.post(f'/bff/experiments/{eid}/actions/cancel', json={}, headers={'Idempotency-Key': 'cancel'})
+        assert cancel.status_code == 202, cancel.text
+        asyncio.run(process_command(cancel.json()['data']['command_id'], command_store=store))
+    first = client.post(f'/bff/experiments/{eid}/actions/{action}', json={}, headers={'Idempotency-Key': 'actor-a-key'})
+    assert first.status_code == 202, first.text
+    first_id = first.json()['data']['command_id']
+    asyncio.run(process_command(first_id, command_store=store))
+    assert store.get_command(first_id)['status'] == 'executed', store.get_command(first_id)
+    identity.operator_id = 'actor-b'
+    second = client.post(f'/bff/experiments/{eid}/actions/{action}', json={}, headers={'Idempotency-Key': 'actor-b-key'})
+    assert second.status_code == 202, second.text
+    second_id = second.json()['data']['command_id']
+    asyncio.run(process_command(second_id, command_store=store))
+    result = store.get_command(second_id)
+    assert result['status'] != 'executed' or result['result']['domain_receipt']['command_id'] == second_id, result

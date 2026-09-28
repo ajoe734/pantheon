@@ -2079,11 +2079,26 @@ class ResearchWriteOwner:
             if exp.get("is_archived"):
                 if clean_key:
                     for cmd in (exp.get("command_history") or []):
-                        if isinstance(cmd, dict) and cmd.get("idempotency_key") == clean_key:
-                            saved_hash = cmd.get("request_hash")
+                        if not isinstance(cmd, dict):
+                            continue
+                        if cmd.get("command") == "ArchiveResearchExperiment" and cmd.get("idempotency_key") == clean_key:
+                            cmd_tenant = str(cmd.get("tenant_id") or "").strip() or None
+                            cmd_actor = str(cmd.get("actor_id") or "").strip() or None
+                            if cmd_tenant == clean_tenant and (not clean_actor or not cmd_actor or cmd_actor == clean_actor):
+                                saved_hash = cmd.get("request_hash")
+                                if clean_hash and saved_hash and saved_hash != clean_hash:
+                                    raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                                return self._project_experiment_detail(exp)
+                    archive_rcpt = exp.get("archive_receipt") or {}
+                    if archive_rcpt.get("idempotency_key") == clean_key:
+                        rcpt_tenant = str(archive_rcpt.get("tenant_id") or "").strip() or None
+                        rcpt_actor = str(archive_rcpt.get("actor_id") or "").strip() or None
+                        if rcpt_tenant == clean_tenant and (not clean_actor or not rcpt_actor or rcpt_actor == clean_actor):
+                            saved_hash = archive_rcpt.get("request_hash")
                             if clean_hash and saved_hash and saved_hash != clean_hash:
                                 raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
-                return self._project_experiment_detail(exp)
+                            return self._project_experiment_detail(exp)
+                return None
             updated = copy.deepcopy(exp)
             timestamp = archived_at or _utc_now_rfc3339()
             updated["is_archived"] = True
@@ -2198,16 +2213,25 @@ class ResearchWriteOwner:
                 if status == "invalidated" and exp.get("invalidate_receipt"):
                     if clean_key:
                         for cmd in (exp.get("command_history") or []):
-                            if isinstance(cmd, dict) and cmd.get("idempotency_key") == clean_key:
-                                saved_hash = cmd.get("request_hash")
-                                if clean_hash and saved_hash and saved_hash != clean_hash:
-                                    raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                            if not isinstance(cmd, dict):
+                                continue
+                            if cmd.get("command") == "InvalidateResearchExperiment" and cmd.get("idempotency_key") == clean_key:
+                                cmd_tenant = str(cmd.get("tenant_id") or "").strip() or None
+                                cmd_actor = str(cmd.get("actor_id") or "").strip() or None
+                                if cmd_tenant == clean_tenant and (not clean_actor or not cmd_actor or cmd_actor == clean_actor):
+                                    saved_hash = cmd.get("request_hash")
+                                    if clean_hash and saved_hash and saved_hash != clean_hash:
+                                        raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                                    return self._project_experiment_detail(exp)
                         inv_rcpt = exp.get("invalidate_receipt") or {}
                         if inv_rcpt.get("idempotency_key") == clean_key:
-                            saved_hash = inv_rcpt.get("request_hash")
-                            if clean_hash and saved_hash and saved_hash != clean_hash:
-                                raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
-                    return self._project_experiment_detail(exp)
+                            rcpt_tenant = str(inv_rcpt.get("tenant_id") or "").strip() or None
+                            rcpt_actor = str(inv_rcpt.get("actor_id") or "").strip() or None
+                            if rcpt_tenant == clean_tenant and (not clean_actor or not rcpt_actor or rcpt_actor == clean_actor):
+                                saved_hash = inv_rcpt.get("request_hash")
+                                if clean_hash and saved_hash and saved_hash != clean_hash:
+                                    raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                                return self._project_experiment_detail(exp)
                 return None
             updated = copy.deepcopy(exp)
             timestamp = invalidated_at or _utc_now_rfc3339()

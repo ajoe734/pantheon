@@ -754,69 +754,74 @@ def test_command_confirmation_degraded_read_surface() -> None:
     """Test POST /bff/command-confirmations projects staleness_warning when read surface is degraded."""
     from services.control_plane.bff.models import StalenessWarning
 
-    # 1. Custom check_read_surface_state injected
-    custom_warning = StalenessWarning(
-        read_surface_state="degraded",
-        message="Command submitted against stale read surface data. Verify target state via secondary control path before confirming action.",
-    )
-    router = create_command_adapters_router(
-        check_read_surface_state=lambda: custom_warning,
-        extract_identity=_test_extract_identity,
-    )
-    app = FastAPI()
-    app.include_router(router)
-    client = TestClient(app)
+    with tempfile.TemporaryDirectory() as td:
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        # 1. Custom check_read_surface_state injected
+        custom_warning = StalenessWarning(
+            read_surface_state="degraded",
+            message="Command submitted against stale read surface data. Verify target state via secondary control path before confirming action.",
+        )
+        router = create_command_adapters_router(
+            command_store=store,
+            check_read_surface_state=lambda: custom_warning,
+            extract_identity=_test_extract_identity,
+        )
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
 
-    # Create token
-    client.post(
-        "/bff/confirm-tokens",
-        headers={**HEADERS, "Idempotency-Key": "degraded-ct-1"},
-        json={"tokenId": "ct-deg-001", "reason": "test"},
-    )
+        # Create token
+        client.post(
+            "/bff/confirm-tokens",
+            headers={**HEADERS, "Idempotency-Key": "degraded-ct-1"},
+            json={"tokenId": "ct-deg-001", "reason": "test"},
+        )
 
-    # Submit confirmation - should include staleness_warning
-    resp = client.post(
-        "/bff/command-confirmations",
-        headers={**HEADERS, "Idempotency-Key": "degraded-conf-1"},
-        json={"command_id": "cmd-deg-100", "confirm_token": "ct-deg-001"},
-    )
-    assert resp.status_code == 202, resp.text
-    data = resp.json()
-    assert data["status"] == "accepted"
-    assert "staleness_warning" in data
-    assert data["staleness_warning"]["read_surface_state"] == "degraded"
-    assert "stale read surface data" in data["staleness_warning"]["message"]
+        # Submit confirmation - should include staleness_warning
+        resp = client.post(
+            "/bff/command-confirmations",
+            headers={**HEADERS, "Idempotency-Key": "degraded-conf-1"},
+            json={"command_id": "cmd-deg-100", "confirm_token": "ct-deg-001"},
+        )
+        assert resp.status_code == 202, resp.text
+        data = resp.json()
+        assert data["status"] == "accepted"
+        assert "staleness_warning" in data
+        assert data["staleness_warning"]["read_surface_state"] == "degraded"
+        assert "stale read surface data" in data["staleness_warning"]["message"]
 
-    # 2. Replay preserves staleness_warning in idempotent cache
-    replay = client.post(
-        "/bff/command-confirmations",
-        headers={**HEADERS, "Idempotency-Key": "degraded-conf-1"},
-        json={"command_id": "cmd-deg-100", "confirm_token": "ct-deg-001"},
-    )
-    assert replay.status_code == 202
-    assert replay.json() == data
+        # 2. Replay preserves staleness_warning in idempotent cache
+        replay = client.post(
+            "/bff/command-confirmations",
+            headers={**HEADERS, "Idempotency-Key": "degraded-conf-1"},
+            json={"command_id": "cmd-deg-100", "confirm_token": "ct-deg-001"},
+        )
+        assert replay.status_code == 202
+        assert replay.json() == data
 
-    # 3. Fresh read surface returns no staleness_warning
-    fresh_router = create_command_adapters_router(
-        check_read_surface_state=lambda: None,
-        extract_identity=_test_extract_identity,
-    )
-    fresh_app = FastAPI()
-    fresh_app.include_router(fresh_router)
-    fresh_client = TestClient(fresh_app)
+        # 3. Fresh read surface returns no staleness_warning
+        fresh_store = CommandStore(os.path.join(td, "fresh_commands.jsonl"))
+        fresh_router = create_command_adapters_router(
+            command_store=fresh_store,
+            check_read_surface_state=lambda: None,
+            extract_identity=_test_extract_identity,
+        )
+        fresh_app = FastAPI()
+        fresh_app.include_router(fresh_router)
+        fresh_client = TestClient(fresh_app)
 
-    fresh_client.post(
-        "/bff/confirm-tokens",
-        headers={**HEADERS, "Idempotency-Key": "fresh-ct-1"},
-        json={"tokenId": "ct-fresh-001", "reason": "test"},
-    )
-    fresh_resp = fresh_client.post(
-        "/bff/command-confirmations",
-        headers={**HEADERS, "Idempotency-Key": "fresh-conf-1"},
-        json={"command_id": "cmd-fresh-100", "confirm_token": "ct-fresh-001"},
-    )
-    assert fresh_resp.status_code == 202, fresh_resp.text
-    assert "staleness_warning" not in fresh_resp.json()
+        fresh_client.post(
+            "/bff/confirm-tokens",
+            headers={**HEADERS, "Idempotency-Key": "fresh-ct-1"},
+            json={"tokenId": "ct-fresh-001", "reason": "test"},
+        )
+        fresh_resp = fresh_client.post(
+            "/bff/command-confirmations",
+            headers={**HEADERS, "Idempotency-Key": "fresh-conf-1"},
+            json={"command_id": "cmd-fresh-100", "confirm_token": "ct-fresh-001"},
+        )
+        assert fresh_resp.status_code == 202, fresh_resp.text
+        assert "staleness_warning" not in fresh_resp.json()
 
 
 def test_main_app_command_confirmation_degraded_read_surface_regression() -> None:

@@ -646,22 +646,36 @@ class CommandAdapterService:
         confirmation_id: str,
         confirmed_at: str,
         identity: OperatorIdentity,
-        idempotency_key: str,
+        idempotency_key: Optional[str] = None,
         request_hash: str,
-    ) -> None:
+        result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         store = self.command_store
         if store is None:
-            return
-        existing_record = store.get_command_by_idempotency_key(
-            idempotency_key,
-            operator_id=identity.operator_id,
-        )
+            raise self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Command persistence is unavailable",
+                "CommandStore is not configured; refusing to accept unpersisted confirmation",
+                precondition_failed="command_store_unconfigured",
+            )
+        tenant_id = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+        clean_tenant_id = str(tenant_id or "").strip() or None
+        caller_op_id = getattr(identity, "operator_id", None) or "operator"
+
+        existing_record = None
+        if idempotency_key:
+            existing_record = store.get_command_by_idempotency_key(
+                idempotency_key,
+                operator_id=caller_op_id,
+                tenant_id=clean_tenant_id,
+            )
         if existing_record:
             stored_hash = (
                 (existing_record.get("foundation") or {})
                 .get("idempotency_record", {})
                 .get("request_hash")
-            )
+            ) or (existing_record.get("audit") or {}).get("request_hash")
             if stored_hash and stored_hash != request_hash:
                 raise self._raise_error(
                     409,
@@ -671,38 +685,56 @@ class CommandAdapterService:
                     precondition_failed="idempotency_conflict",
                     suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
                 )
-            return
+            return existing_record
 
         foundation_ctx = {
             "idempotency_record": {
                 "idempotency_key": idempotency_key,
                 "request_hash": request_hash,
                 "status": "succeeded",
-            }
+                "tenant_id": clean_tenant_id,
+                "operator_id": caller_op_id,
+            },
+            "trace_context": {
+                "tenant_ref": {"tenant_id": clean_tenant_id} if clean_tenant_id else {},
+                "tenant_id": clean_tenant_id,
+            },
         }
-        store.submit_command(
-            command_id=f"cmd-{uuid.uuid4().hex[:16]}",
+        audit_ctx = {
+            "actor": caller_op_id,
+            "tenant_id": clean_tenant_id,
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+            "reason": "Command confirmation",
+            "command_id": command_id,
+            "confirmation_id": confirmation_id,
+            "confirmed_at": confirmed_at,
+            "confirmed_by": caller_op_id,
+            "foundation": foundation_ctx,
+        }
+        params = {
+            "confirm_token": token_id,
+            "command_id": command_id,
+            "confirmation_id": confirmation_id,
+            "confirmed_at": confirmed_at,
+            "confirmed_by": caller_op_id,
+            "tenant_id": clean_tenant_id,
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+        }
+        admitted = store.submit_command(
+            command_id=f"cmd-confirm-{uuid.uuid4().hex[:16]}",
             command_type=CommandType.CONFIRM_TOKEN_REDEEM,
             target=TargetObject(type=ObjectType.CONFIRM_TOKEN, id=token_id),
             submitted_at=confirmed_at,
-            params={
-                "confirm_token": token_id,
-                "command_id": command_id,
-                "confirmation_id": confirmation_id,
-                "confirmed_at": confirmed_at,
-                "confirmed_by": identity.operator_id,
-            },
-            audit_context={
-                "actor": identity.operator_id,
-                "reason": "Command confirmation",
-                "command_id": command_id,
-                "confirmation_id": confirmation_id,
-                "confirmed_at": confirmed_at,
-                "confirmed_by": identity.operator_id,
-                "foundation": foundation_ctx,
-            },
+            params=params,
+            audit_context=audit_ctx,
             foundation_context=foundation_ctx,
+            result=result,
         )
+        if result is not None and admitted.get("command_id"):
+            store.update_status(admitted["command_id"], CommandStatus.EXECUTED, result=result)
+        return admitted
 
     def sem_command_response(
         self,
@@ -1469,10 +1501,36 @@ class CommandAdapterService:
                 suggestion="Include the command_id from the original command submission",
             )
 
+        store = self.command_store
+        if store is None:
+            raise self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Command persistence is unavailable",
+                "CommandStore is not configured; refusing to accept unpersisted confirmation",
+                precondition_failed="command_store_unconfigured",
+            )
+
         req_hash = _stable_json_hash({"command_id": original_command_id, "confirm_token": confirm_token})
-        existing = self._gov_bff_idempotency.get(resolved_key)
+        tenant_id = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+        clean_tenant_id = str(tenant_id or "").strip() or None
+        caller_op_id = getattr(identity, "operator_id", None) or "operator"
+
+        existing = None
+        if resolved_key:
+            existing = store.get_command_by_idempotency_key(
+                resolved_key,
+                operator_id=caller_op_id,
+                tenant_id=clean_tenant_id,
+            )
+
         if existing is not None:
-            if existing.get("request_hash") != req_hash:
+            stored_hash = (
+                (existing.get("foundation") or {})
+                .get("idempotency_record", {})
+                .get("request_hash")
+            ) or (existing.get("audit") or {}).get("request_hash")
+            if stored_hash and stored_hash != req_hash:
                 raise self._raise_error(
                     409,
                     ErrorCode.IDEMPOTENCY_CONFLICT,
@@ -1481,21 +1539,26 @@ class CommandAdapterService:
                     precondition_failed="idempotency_conflict",
                     suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
                 )
-            return existing["result"]
+            if existing.get("result") and isinstance(existing["result"], dict):
+                return dict(existing["result"])
+            params = existing.get("params") or {}
+            reconstructed = {
+                "confirmation_id": params.get("confirmation_id") or existing.get("command_id"),
+                "command_id": original_command_id,
+                "token": confirm_token,
+                "tokenId": confirm_token,
+                "status": "accepted",
+                "lifecycleStatus": "redeemed",
+                "redeemed": True,
+                "confirmed_at": params.get("confirmed_at") or self._utc_now(),
+                "confirmed_by": params.get("confirmed_by") or identity.operator_id,
+            }
+            return reconstructed
 
         self.raise_if_confirm_token_expired(confirm_token)
         staleness_warning = self.check_read_surface_state()
         confirmation_id = str(uuid.uuid4())
         confirmed_at = self._utc_now()
-        self.record_command_confirmation_redeem(
-            token_id=confirm_token,
-            command_id=original_command_id,
-            confirmation_id=confirmation_id,
-            confirmed_at=confirmed_at,
-            identity=identity,
-            idempotency_key=resolved_key,
-            request_hash=req_hash,
-        )
         result = {
             "confirmation_id": confirmation_id,
             "command_id": original_command_id,
@@ -1512,7 +1575,23 @@ class CommandAdapterService:
                 "read_surface_state": staleness_warning.read_surface_state,
                 "message": staleness_warning.message,
             }
-        self._gov_bff_idempotency[resolved_key] = {"request_hash": req_hash, "result": result}
+        admitted = self.record_command_confirmation_redeem(
+            token_id=confirm_token,
+            command_id=original_command_id,
+            confirmation_id=confirmation_id,
+            confirmed_at=confirmed_at,
+            identity=identity,
+            idempotency_key=resolved_key,
+            request_hash=req_hash,
+            result=result,
+        )
+        if admitted:
+            admitted_params = admitted.get("params") or {}
+            admitted_conf_id = admitted_params.get("confirmation_id")
+            if admitted_conf_id and admitted_conf_id != confirmation_id:
+                result["confirmation_id"] = admitted_conf_id
+            if admitted.get("result") and isinstance(admitted["result"], dict):
+                return dict(admitted["result"])
         return result
 
     def get_command_confirmation_status(self, token: str, identity: OperatorIdentity) -> Dict[str, Any]:
@@ -1622,10 +1701,37 @@ class CommandAdapterService:
                 headers={"X-Correlation-Id": correlation_id},
             )
 
+        store = self.command_store
+        if store is None:
+            raise self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Command persistence is unavailable",
+                "CommandStore is not configured; refusing to accept unpersisted confirmation",
+                precondition_failed="command_store_unconfigured",
+                correlation_id=correlation_id,
+            )
+
         req_hash = _stable_json_hash({"command_id": command_id, "confirm_token": token})
-        existing = self._gov_bff_idempotency.get(resolved_key)
+        tenant_id = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+        clean_tenant_id = str(tenant_id or "").strip() or None
+        caller_op_id = getattr(identity, "operator_id", None) or "operator"
+
+        existing = None
+        if resolved_key:
+            existing = store.get_command_by_idempotency_key(
+                resolved_key,
+                operator_id=caller_op_id,
+                tenant_id=clean_tenant_id,
+            )
+
         if existing is not None:
-            if existing.get("request_hash") != req_hash:
+            stored_hash = (
+                (existing.get("foundation") or {})
+                .get("idempotency_record", {})
+                .get("request_hash")
+            ) or (existing.get("audit") or {}).get("request_hash")
+            if stored_hash and stored_hash != req_hash:
                 raise self._raise_error(
                     409,
                     ErrorCode.IDEMPOTENCY_CONFLICT,
@@ -1635,29 +1741,27 @@ class CommandAdapterService:
                     suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
                     correlation_id=correlation_id,
                 )
-            return existing["result"]
-
-        self.record_command_confirmation_redeem(
-            token_id=token,
-            command_id=command_id,
-            confirmation_id=confirmation_id,
-            confirmed_at=snapshot_at,
-            identity=identity,
-            idempotency_key=resolved_key,
-            request_hash=req_hash,
-        )
-
-        if self._publish_event is not None:
-            self._publish_event(
-                "command.confirm",
-                {
+            if existing.get("result") and isinstance(existing["result"], dict):
+                return dict(existing["result"])
+            params = existing.get("params") or {}
+            saved_conf_id = params.get("confirmation_id") or existing.get("command_id")
+            saved_at = params.get("confirmed_at") or snapshot_at
+            return {
+                "data": {
+                    "status": "accepted",
                     "commandId": command_id,
+                    "confirmed_at": saved_at,
                     "tokenId": token,
-                    "confirmationId": confirmation_id,
-                    "confirmed_at": snapshot_at,
-                    "actor": identity.operator_id,
+                    "confirmationId": saved_conf_id,
                 },
-            )
+                "meta": {
+                    "snapshot_at": saved_at,
+                    "dryRun": False,
+                    "correlationId": correlation_id,
+                    "requestId": str(x_request_id or "").strip() or None,
+                    "evidenceKind": "command.confirm",
+                },
+            }
 
         result = {
             "data": {
@@ -1675,7 +1779,38 @@ class CommandAdapterService:
                 "evidenceKind": "command.confirm",
             },
         }
-        self._gov_bff_idempotency[resolved_key] = {"request_hash": req_hash, "result": result}
+
+        admitted = self.record_command_confirmation_redeem(
+            token_id=token,
+            command_id=command_id,
+            confirmation_id=confirmation_id,
+            confirmed_at=snapshot_at,
+            identity=identity,
+            idempotency_key=resolved_key,
+            request_hash=req_hash,
+            result=result,
+        )
+        if admitted:
+            admitted_params = admitted.get("params") or {}
+            admitted_conf_id = admitted_params.get("confirmation_id")
+            if admitted_conf_id and admitted_conf_id != confirmation_id:
+                result["data"]["confirmationId"] = admitted_conf_id
+
+        if self._publish_event is not None:
+            self._publish_event(
+                "command.confirm",
+                {
+                    "commandId": command_id,
+                    "tokenId": token,
+                    "confirmationId": result["data"]["confirmationId"],
+                    "confirmed_at": snapshot_at,
+                    "actor": identity.operator_id,
+                },
+            )
+
+        if admitted and admitted.get("result") and isinstance(admitted["result"], dict):
+            return dict(admitted["result"])
+
         return result
 
     def submit_command_admission(
