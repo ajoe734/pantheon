@@ -648,6 +648,12 @@ SOURCE_TYPE_TO_EVIDENCE_KIND: Dict[str, str] = {
     # capability rather than falling through unresolved.
     "external_paper": "artifact",
     "research_note": "artifact",
+    # Generic knowledge-linkage entity types (KW03/KW04 linked_decisions and
+    # linked_object_summary.entity_type): no dedicated EvidenceKind, so they
+    # gate on the generic artifact capability rather than falling through
+    # unresolved.
+    "memory_entry": "artifact",
+    "experiment": "artifact",
     # Governance review-queue evidence ref "type" values (PKT001):
     "IncidentReport": "incident",
     "BacktestResult": "artifact",
@@ -718,7 +724,9 @@ def _resolve_evidence_kind_and_capability(
     kind_key = ""
     ref_id = ""
     if isinstance(ref, dict):
-        ref_id = str(ref.get("ref_id") or ref.get("id") or ref.get("artifact_ref") or "").strip()
+        ref_id = str(
+            ref.get("ref_id") or ref.get("id") or ref.get("artifact_ref") or ref.get("entity_ref") or ""
+        ).strip()
         raw_kind = (
             str(ref.get("evidence_type") or "").strip()
             or str(ref.get("type") or "").strip()
@@ -742,6 +750,21 @@ def _resolve_evidence_kind_and_capability(
                     kind_key = source_type
                 elif source_type in URI_SCHEME_TO_EVIDENCE_KIND:
                     kind_key = URI_SCHEME_TO_EVIDENCE_KIND[source_type]
+
+        if not kind_key:
+            # linked-decision/linked-object-summary entity type (KW03/KW04):
+            # a decision or summary item may identify its own object type
+            # here instead of via an explicit evidence/ref/link type field.
+            # Checked after (not folded into) the raw_kind chain above, since
+            # a present-but-unresolvable link_type (e.g. "supporting_evidence")
+            # must not shadow a resolvable entity_type.
+            entity_type = str(ref.get("entity_type") or "").strip()
+            if entity_type in SOURCE_TYPE_TO_EVIDENCE_KIND:
+                kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND[entity_type]
+            elif entity_type in EVIDENCE_CAPABILITY_MAP:
+                kind_key = entity_type
+            elif entity_type in URI_SCHEME_TO_EVIDENCE_KIND:
+                kind_key = URI_SCHEME_TO_EVIDENCE_KIND[entity_type]
     else:
         ref_id = str(ref).strip()
 
