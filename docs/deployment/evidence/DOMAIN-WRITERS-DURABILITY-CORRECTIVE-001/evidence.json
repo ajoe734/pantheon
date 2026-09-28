@@ -208,6 +208,22 @@
     "defect_51_governance_canonical_command_identity_and_conflict_rejection": {
       "problem": "governance/service.py:decide_approval reused caller-supplied decision_id as command_id, causing cross-tenant command aliasing in CommandStore.get_command; CommandStore.submit_command / submit_terminal_command permitted conflicting command_id submissions.",
       "remediation": "Decoupled decision_id from command_id by generating independent canonical command IDs (cmd-dec-...) in decide_approval; added atomic conflicting command_id rejection inside CommandStore.serialized_transaction to prevent duplicate or cross-tenant command row key collisions."
+    },
+    "defect_52_research_tickets_midnight_admission_race": {
+      "problem": "write_owner.py:create_research_ticket used list_all and unconditional put; concurrent or midnight-crossing clients with identical tenant/actor/key generated distinct ticket IDs (rt-YYYYMMDD-001) across midnight, producing two durable rows.",
+      "remediation": "Enforced database-scoped atomic insert in create_research_ticket with unique_fields=('tenant_id', 'actor_id', 'idempotency_key') and fixed _atomic_insert_record to evaluate all unique fields without skipping None values, guaranteeing exactly 1 durable row across midnight transitions."
+    },
+    "defect_53_research_ticket_patch_idempotency_preservation": {
+      "problem": "write_owner.py:patch_research_ticket overwrote ticket['idempotency_key'] and ticket['request_hash'] with patch metadata, destroying creation idempotency state and causing subsequent retries of the creation command to create duplicate ticket rows.",
+      "remediation": "Preserved creation idempotency key and request hash on ticket record across subsequent PATCH calls; recorded PATCH commands in command_history with canonical PatchResearchTicket receipts and aggregate version bump."
+    },
+    "defect_54_research_ticket_patch_conflict_rejection": {
+      "problem": "write_owner.py:patch_research_ticket never checked existing scoped key/request hash, accepting conflicting PATCH payloads with HTTP 200 instead of 409, and returned create receipts instead of canonical PATCH receipts.",
+      "remediation": "Validated scoped idempotency key and request hash on PATCH against command_history, raised ResearchIdempotencyConflictError (mapped to HTTP 409 in BFF) on conflicting payloads, bumped aggregate_version, and emitted canonical PatchResearchTicket receipts."
+    },
+    "defect_55_research_tickets_write_owner_unavailable_503": {
+      "problem": "DefaultResearchKnowledgeSourcePort maintained a process-local self._tickets fallback writer that mutated in-memory state and returned HTTP 200 when ResearchWriteOwner was absent.",
+      "remediation": "Retired process-local fallback mutation of self._tickets in DefaultResearchKnowledgeSourcePort; raises ResearchWriteOwnerUnavailableError (mapped to HTTP 503) with zero local mutation when research_owner is None."
     }
   },
   "mutation_caller_inventory": {
@@ -601,6 +617,36 @@
         "result": "149 passed, 9 warnings in 87.00s",
         "executed": 149,
         "collected": 149
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 /tmp/domain_ticket_midnight_repro.py",
+        "result": "passed, exactly 1 durable row admitted across UTC midnight race",
+        "executed": 1,
+        "collected": 1
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest -q /tmp/test_domain_review_9495_ticket_patch.py",
+        "result": "2 passed, 1 warning in 2.88s",
+        "executed": 2,
+        "collected": 2
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 /tmp/domain_ticket_local_fallback_repro.py",
+        "result": "passed, HTTP 503 DEPENDENCY_UNAVAILABLE without local mutation",
+        "executed": 1,
+        "collected": 1
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "72 passed, 7 warnings in 38.63s",
+        "executed": 72,
+        "collected": 72
+      },
+      {
+        "command": "PYTHONPATH=. timeout 120 /tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "153 passed, 9 warnings in 83.01s",
+        "executed": 153,
+        "collected": 153
       }
     ]
   },
@@ -660,7 +706,11 @@
     "defect_48_research_atomic_scoped_idempotency_across_midnight_resolved": true,
     "defect_49_research_tickets_operator_role_enforcement_resolved": true,
     "defect_50_research_tickets_durability_and_canonical_receipt_resolved": true,
-    "defect_51_governance_canonical_command_identity_and_conflict_rejection_resolved": true
+    "defect_51_governance_canonical_command_identity_and_conflict_rejection_resolved": true,
+    "defect_52_research_tickets_midnight_admission_race_resolved": true,
+    "defect_53_research_ticket_patch_idempotency_preservation_resolved": true,
+    "defect_54_research_ticket_patch_conflict_rejection_resolved": true,
+    "defect_55_research_tickets_write_owner_unavailable_503_resolved": true
   },
   "review": {
     "reviewer": "Codex",

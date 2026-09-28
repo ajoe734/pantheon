@@ -12,6 +12,7 @@ JSON fallbacks, or abstract repositories.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import threading
@@ -82,14 +83,14 @@ def _atomic_insert_record(
 
     if target_lock is not None and target_rows is not None:
         if fail_flag:
-            raise OSError("injected experiment commit failure")
+            raise OSError("injected commit failure")
         with target_lock:
             if record_id in target_rows:
                 return False, copy.deepcopy(target_rows[record_id])
             if unique_fields:
                 for other in target_rows.values():
                     if isinstance(other, dict) and all(
-                        other.get(f) == record.get(f) for f in unique_fields if record.get(f) is not None
+                        other.get(f) == record.get(f) for f in unique_fields
                     ):
                         return False, copy.deepcopy(other)
             target_rows[record_id] = copy.deepcopy(record)
@@ -100,7 +101,7 @@ def _atomic_insert_record(
             try:
                 for other in store.list_all():
                     if isinstance(other, dict) and all(
-                        other.get(f) == record.get(f) for f in unique_fields if record.get(f) is not None
+                        other.get(f) == record.get(f) for f in unique_fields
                     ):
                         return False, copy.deepcopy(other)
             except Exception:
@@ -114,7 +115,7 @@ def _atomic_insert_record(
         try:
             for other in store.list_all():
                 if isinstance(other, dict) and all(
-                    other.get(f) == record.get(f) for f in unique_fields if record.get(f) is not None
+                    other.get(f) == record.get(f) for f in unique_fields
                 ):
                     return False, copy.deepcopy(other)
         except Exception:
@@ -402,6 +403,118 @@ class ResearchWriteOwner:
             "actor_id": ticket.get("actor_id"),
         }
 
+    @classmethod
+    def _replay_ticket_create(cls, ticket: Dict[str, Any]) -> Dict[str, Any]:
+        result = cls._project_ticket_detail(ticket)
+        create_receipt = ticket.get("create_receipt")
+        if not create_receipt and ticket.get("command_history"):
+            for c in ticket["command_history"]:
+                if isinstance(c, dict) and c.get("command") == "CreateResearchTicket" and c.get("receipt"):
+                    create_receipt = c["receipt"]
+                    break
+        if create_receipt and isinstance(create_receipt, dict):
+            result["receipt"] = copy.deepcopy(create_receipt)
+            result["command_id"] = create_receipt.get("command_id") or result.get("command_id")
+            result["commandId"] = result["command_id"]
+            result["aggregate_version"] = create_receipt.get("aggregate_version", 1)
+        return result
+
+    @classmethod
+    def _replay_ticket_patch(cls, ticket: Dict[str, Any], cmd: Dict[str, Any]) -> Dict[str, Any]:
+        result = cls._project_ticket_detail(ticket)
+        patch_receipt = cmd.get("receipt")
+        if patch_receipt and isinstance(patch_receipt, dict):
+            result["receipt"] = copy.deepcopy(patch_receipt)
+            result["command_id"] = patch_receipt.get("command_id") or result.get("command_id")
+            result["commandId"] = result["command_id"]
+            result["aggregate_version"] = patch_receipt.get("aggregate_version", result.get("aggregate_version", 1))
+        if cmd.get("idempotency_key"):
+            result["idempotency_key"] = cmd["idempotency_key"]
+        return result
+
+    @classmethod
+    def _build_ticket_record(
+        cls,
+        *,
+        tid: str,
+        clean_title: str,
+        clean_priority: str,
+        clean_owner: str,
+        clean_actor: str,
+        description: str,
+        timestamp: str,
+        clean_key: Optional[str],
+        clean_hash: Optional[str],
+        clean_tenant: Optional[str],
+        command_id: Optional[str],
+    ) -> Dict[str, Any]:
+        cmd_id = command_id or f"cmd-{tid}"
+        canonical_receipt = {
+            "receipt_id": f"rcpt-{tid}",
+            "command_id": cmd_id,
+            "commandId": cmd_id,
+            "aggregate_type": "research_ticket",
+            "aggregate_id": tid,
+            "aggregate_version": 1,
+            "status": "open",
+            "event_id": f"evt-{tid}",
+            "correlation_id": clean_key or tid,
+            "owner": "research",
+            "committed_at": timestamp,
+            "command": "CreateResearchTicket",
+            "target": {"type": "research_ticket", "id": tid},
+            "submitted_at": timestamp,
+            "accepted_at": timestamp,
+        }
+        create_command_entry = {
+            "command_id": cmd_id,
+            "command": "CreateResearchTicket",
+            "idempotency_key": clean_key,
+            "request_hash": clean_hash,
+            "actor_id": clean_actor,
+            "tenant_id": clean_tenant,
+            "aggregate_version": 1,
+            "receipt": canonical_receipt,
+            "timestamp": timestamp,
+        }
+        record: Dict[str, Any] = {
+            "ticket_id": tid,
+            "title": clean_title,
+            "description": str(description or "").strip(),
+            "status": "open",
+            "priority": clean_priority,
+            "owner": clean_owner,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "closed_at": None,
+            "archived_at": None,
+            "lifecycle_history": [
+                {
+                    "from_status": None,
+                    "to_status": "open",
+                    "transitioned_at": timestamp,
+                    "transitioned_by": clean_actor,
+                }
+            ],
+            "linked_experiments": [],
+            "linked_artifacts": [],
+            "command_id": cmd_id,
+            "commandId": cmd_id,
+            "aggregate_type": "research_ticket",
+            "aggregate_id": tid,
+            "aggregate_version": 1,
+            "event_id": canonical_receipt["event_id"],
+            "correlation_id": canonical_receipt["correlation_id"],
+            "receipt": canonical_receipt,
+            "create_receipt": canonical_receipt,
+            "idempotency_key": clean_key,
+            "request_hash": clean_hash,
+            "tenant_id": clean_tenant,
+            "actor_id": clean_actor,
+            "command_history": [create_command_entry] if clean_key else [],
+        }
+        return record
+
     def create_research_ticket(
         self,
         *,
@@ -432,27 +545,77 @@ class ResearchWriteOwner:
         if clean_key and not clean_hash:
             clean_hash = hashlib.sha256(f"{clean_title}:{clean_priority}:{clean_owner}:{description}".encode("utf-8")).hexdigest()
 
-        if clean_key:
-            existing_tickets = self._tickets_store.list_all()
-            for t in existing_tickets:
-                if not isinstance(t, dict):
-                    continue
-                if t.get("idempotency_key") != clean_key:
-                    continue
-                t_tenant = str(t.get("tenant_id") or "").strip() or None
-                if t_tenant != clean_tenant:
-                    continue
-                t_actor = str(t.get("actor_id") or t.get("owner") or "").strip() or None
-                if t_actor != clean_actor:
-                    continue
-                saved_hash = t.get("request_hash")
-                if clean_hash and saved_hash and saved_hash != clean_hash:
-                    raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
-                return self._project_ticket_detail(t)
+        inflight_token = (clean_tenant, clean_actor, clean_key) if clean_key else None
+        if inflight_token:
+            with self._active_inflight_lock:
+                if inflight_token in self._active_inflight:
+                    raise ResearchIdempotencyConflictError(
+                        f"Command with key {clean_key!r} is currently being processed"
+                    )
+                self._active_inflight.add(inflight_token)
 
-        if ticket_id:
-            tid = str(ticket_id).strip()
-        else:
+        try:
+            if clean_key:
+                existing_tickets = self._tickets_store.list_all()
+                for t in existing_tickets:
+                    if not isinstance(t, dict):
+                        continue
+                    t_key = t.get("idempotency_key")
+                    t_tenant = str(t.get("tenant_id") or "").strip() or None
+                    t_actor = str(t.get("actor_id") or t.get("owner") or "").strip() or None
+                    if t_key == clean_key and t_tenant == clean_tenant and t_actor == clean_actor:
+                        saved_hash = t.get("request_hash")
+                        if clean_hash and saved_hash and saved_hash != clean_hash:
+                            raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                        return self._replay_ticket_create(t)
+
+                    for cmd in t.get("command_history", []):
+                        if not isinstance(cmd, dict):
+                            continue
+                        if cmd.get("idempotency_key") == clean_key:
+                            c_tenant = str(cmd.get("tenant_id") or "").strip() or None
+                            c_actor = str(cmd.get("actor_id") or "").strip() or None
+                            if c_tenant == clean_tenant and c_actor == clean_actor:
+                                saved_hash = cmd.get("request_hash")
+                                if clean_hash and saved_hash and saved_hash != clean_hash:
+                                    raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                                if cmd.get("command") == "CreateResearchTicket":
+                                    return self._replay_ticket_create(t)
+                                raise ResearchIdempotencyConflictError("Idempotency key reused for different command")
+
+            if ticket_id:
+                tid = str(ticket_id).strip()
+                record = self._build_ticket_record(
+                    tid=tid,
+                    clean_title=clean_title,
+                    clean_priority=clean_priority,
+                    clean_owner=clean_owner,
+                    clean_actor=clean_actor,
+                    description=description,
+                    timestamp=timestamp,
+                    clean_key=clean_key,
+                    clean_hash=clean_hash,
+                    clean_tenant=clean_tenant,
+                    command_id=command_id,
+                )
+                inserted, existing_row = _atomic_insert_record(
+                    self._tickets_store,
+                    tid,
+                    record,
+                    unique_fields=("tenant_id", "actor_id", "idempotency_key") if clean_key else (),
+                )
+                if not inserted and existing_row is not None:
+                    if clean_key and existing_row.get("idempotency_key") == clean_key:
+                        row_tenant = str(existing_row.get("tenant_id") or "").strip() or None
+                        row_actor = str(existing_row.get("actor_id") or existing_row.get("owner") or "").strip() or None
+                        if row_tenant == clean_tenant and row_actor == clean_actor:
+                            saved_hash = existing_row.get("request_hash")
+                            if clean_hash and saved_hash and saved_hash != clean_hash:
+                                raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                            return self._replay_ticket_create(existing_row)
+                    raise ValueError(f"Ticket {tid!r} already exists")
+                return self._project_ticket_detail(record)
+
             existing_tickets = self._tickets_store.list_all()
             date_prefix = timestamp[:10].replace("-", "")
             known_ids = {str(t.get("ticket_id") or "") for t in existing_tickets if isinstance(t, dict)}
@@ -462,68 +625,58 @@ class ResearchWriteOwner:
                 if cand_id in known_ids:
                     idx += 1
                     continue
-                existing_row = self._tickets_store.get(cand_id)
-                if existing_row is None:
-                    tid = cand_id
-                    break
-                known_ids.add(cand_id)
+                existing_probe = self._tickets_store.get(cand_id)
+                if existing_probe is not None:
+                    known_ids.add(cand_id)
+                    if clean_key and existing_probe.get("idempotency_key") == clean_key:
+                        row_tenant = str(existing_probe.get("tenant_id") or "").strip() or None
+                        row_actor = str(existing_probe.get("actor_id") or existing_probe.get("owner") or "").strip() or None
+                        if row_tenant == clean_tenant and row_actor == clean_actor:
+                            saved_hash = existing_probe.get("request_hash")
+                            if clean_hash and saved_hash and saved_hash != clean_hash:
+                                raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                            return self._replay_ticket_create(existing_probe)
+                    idx += 1
+                    continue
+
+                tid = cand_id
+                record = self._build_ticket_record(
+                    tid=tid,
+                    clean_title=clean_title,
+                    clean_priority=clean_priority,
+                    clean_owner=clean_owner,
+                    clean_actor=clean_actor,
+                    description=description,
+                    timestamp=timestamp,
+                    clean_key=clean_key,
+                    clean_hash=clean_hash,
+                    clean_tenant=clean_tenant,
+                    command_id=command_id,
+                )
+                inserted, existing_row = _atomic_insert_record(
+                    self._tickets_store,
+                    tid,
+                    record,
+                    unique_fields=("tenant_id", "actor_id", "idempotency_key") if clean_key else (),
+                )
+                if inserted:
+                    return self._project_ticket_detail(record)
+
+                known_ids.add(tid)
+                if existing_row and isinstance(existing_row, dict):
+                    if clean_key and existing_row.get("idempotency_key") == clean_key:
+                        row_tenant = str(existing_row.get("tenant_id") or "").strip() or None
+                        row_actor = str(existing_row.get("actor_id") or existing_row.get("owner") or "").strip() or None
+                        if row_tenant == clean_tenant and row_actor == clean_actor:
+                            saved_hash = existing_row.get("request_hash")
+                            if clean_hash and saved_hash and saved_hash != clean_hash:
+                                raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                            return self._replay_ticket_create(existing_row)
                 idx += 1
-
-        cmd_id = command_id or f"cmd-{tid}"
-        canonical_receipt = {
-            "receipt_id": f"rcpt-{tid}",
-            "command_id": cmd_id,
-            "commandId": cmd_id,
-            "aggregate_type": "research_ticket",
-            "aggregate_id": tid,
-            "aggregate_version": 1,
-            "status": "open",
-            "event_id": f"evt-{tid}",
-            "correlation_id": clean_key or tid,
-            "owner": "research",
-            "committed_at": timestamp,
-            "command": "CreateResearchTicket",
-            "target": {"type": "research_ticket", "id": tid},
-            "submitted_at": timestamp,
-            "accepted_at": timestamp,
-        }
-
-        record: Dict[str, Any] = {
-            "ticket_id": tid,
-            "title": clean_title,
-            "description": str(description or "").strip(),
-            "status": "open",
-            "priority": clean_priority,
-            "owner": clean_owner,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "closed_at": None,
-            "archived_at": None,
-            "lifecycle_history": [
-                {
-                    "from_status": None,
-                    "to_status": "open",
-                    "transitioned_at": timestamp,
-                    "transitioned_by": clean_actor,
-                }
-            ],
-            "linked_experiments": [],
-            "linked_artifacts": [],
-            "command_id": cmd_id,
-            "commandId": cmd_id,
-            "aggregate_type": "research_ticket",
-            "aggregate_id": tid,
-            "aggregate_version": 1,
-            "event_id": f"evt-{tid}",
-            "correlation_id": clean_key or tid,
-            "receipt": canonical_receipt,
-            "idempotency_key": clean_key,
-            "request_hash": clean_hash,
-            "tenant_id": clean_tenant,
-            "actor_id": clean_actor,
-        }
-        self._tickets_store.put(tid, record)
-        return self._project_ticket_detail(record)
+        finally:
+            if inflight_token:
+                with self._active_inflight_lock:
+                    self._active_inflight.discard(inflight_token)
 
     def patch_research_ticket(
         self,
@@ -541,65 +694,170 @@ class ResearchWriteOwner:
         clean_key = str(idempotency_key).strip() if idempotency_key else None
         clean_tenant = str(tenant_id).strip() if tenant_id else None
         clean_hash = str(request_hash).strip() if request_hash else None
+        if not clean_hash and patch is not None:
+            try:
+                clean_hash = hashlib.sha256(json.dumps(patch, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+            except Exception:
+                pass
 
-        ticket = self._tickets_store.get(str(ticket_id))
-        if ticket is None or not isinstance(ticket, dict):
-            return None
+        target_lock = getattr(self._tickets_store, "lock", None)
+        target_rows = getattr(self._tickets_store, "rows", None)
+        fail_flag = getattr(self._tickets_store, "fail", False)
+        if target_lock is None or target_rows is None:
+            db = getattr(self._tickets_store, "db", None)
+            if db is not None:
+                target_lock = getattr(db, "lock", None)
+                target_rows = getattr(db, "rows", None)
+                fail_flag = getattr(db, "fail", False)
 
-        timestamp = updated_at or _utc_now_rfc3339()
-        clean_actor = str(actor_id or "").strip() or str(ticket.get("owner") or "system")
+        max_retries = 50
+        for _ in range(max_retries):
+            current = self._tickets_store.get(str(ticket_id))
+            if current is None or not isinstance(current, dict):
+                return None
 
-        editable = {"title", "description", "priority", "owner"}
-        for field in editable:
-            if field in patch:
-                ticket[field] = patch[field]
+            clean_actor = str(actor_id or "").strip() or str(current.get("owner") or "system")
 
-        next_status = patch.get("status")
-        if next_status is not None:
-            clean_next_status = str(next_status).strip().lower()
-            prev_status = str(ticket.get("status") or "").strip().lower()
-            if clean_next_status != prev_status:
-                ticket["status"] = clean_next_status
-                if clean_next_status == "closed":
-                    ticket["closed_at"] = timestamp
-                    ticket["archived_at"] = None
-                elif clean_next_status == "archived":
-                    ticket["archived_at"] = timestamp
-                    if ticket.get("closed_at") is None:
-                        ticket["closed_at"] = timestamp
-                else:
-                    if clean_next_status in {"open", "in_progress"}:
-                        ticket["closed_at"] = None
-                    if clean_next_status != "archived":
-                        ticket["archived_at"] = None
+            if clean_key:
+                for cmd in (current.get("command_history") or []):
+                    if not isinstance(cmd, dict):
+                        continue
+                    if cmd.get("idempotency_key") == clean_key:
+                        cmd_tenant = str(cmd.get("tenant_id") or "").strip() or None
+                        cmd_actor = str(cmd.get("actor_id") or "").strip() or None
+                        if cmd_tenant == clean_tenant and cmd_actor == clean_actor:
+                            saved_hash = cmd.get("request_hash")
+                            if clean_hash and saved_hash and saved_hash != clean_hash:
+                                raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                            replayed = self._replay_ticket_patch(current, cmd)
+                            replayed["idempotency_key"] = clean_key
+                            return replayed
 
-                history = list(ticket.get("lifecycle_history") or [])
-                history.append(
-                    {
-                        "from_status": prev_status,
-                        "to_status": clean_next_status,
-                        "transitioned_at": timestamp,
-                        "transitioned_by": clean_actor,
-                    }
-                )
-                ticket["lifecycle_history"] = history
+                if current.get("idempotency_key") == clean_key:
+                    row_tenant = str(current.get("tenant_id") or "").strip() or None
+                    row_actor = str(current.get("actor_id") or current.get("owner") or "").strip() or None
+                    if row_tenant == clean_tenant and row_actor == clean_actor:
+                        saved_hash = current.get("request_hash")
+                        if clean_hash and saved_hash and saved_hash != clean_hash:
+                            raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
 
-        if "linked_experiments" in patch and isinstance(patch["linked_experiments"], list):
-            ticket["linked_experiments"] = list(patch["linked_experiments"])
-        if "linked_artifacts" in patch and isinstance(patch["linked_artifacts"], list):
-            ticket["linked_artifacts"] = list(patch["linked_artifacts"])
+            updated = copy.deepcopy(current)
+            timestamp = updated_at or _utc_now_rfc3339()
 
-        ticket["updated_at"] = timestamp
-        if clean_key:
-            ticket["idempotency_key"] = clean_key
-        if clean_tenant:
-            ticket["tenant_id"] = clean_tenant
-        if clean_actor:
-            ticket["actor_id"] = clean_actor
-        if clean_hash:
-            ticket["request_hash"] = clean_hash
-        self._tickets_store.put(ticket_id, ticket)
-        return self._project_ticket_detail(ticket)
+            editable = {"title", "description", "priority", "owner"}
+            for field in editable:
+                if field in patch:
+                    updated[field] = patch[field]
+
+            next_status = patch.get("status")
+            if next_status is not None:
+                clean_next_status = str(next_status).strip().lower()
+                prev_status = str(updated.get("status") or "").strip().lower()
+                if clean_next_status != prev_status:
+                    updated["status"] = clean_next_status
+                    if clean_next_status == "closed":
+                        updated["closed_at"] = timestamp
+                        updated["archived_at"] = None
+                    elif clean_next_status == "archived":
+                        updated["archived_at"] = timestamp
+                        if updated.get("closed_at") is None:
+                            updated["closed_at"] = timestamp
+                    else:
+                        if clean_next_status in {"open", "in_progress"}:
+                            updated["closed_at"] = None
+                        if clean_next_status != "archived":
+                            updated["archived_at"] = None
+
+                    history = list(updated.get("lifecycle_history") or [])
+                    history.append(
+                        {
+                            "from_status": prev_status,
+                            "to_status": clean_next_status,
+                            "transitioned_at": timestamp,
+                            "transitioned_by": clean_actor,
+                        }
+                    )
+                    updated["lifecycle_history"] = history
+
+            if "linked_experiments" in patch and isinstance(patch["linked_experiments"], list):
+                updated["linked_experiments"] = list(patch["linked_experiments"])
+            if "linked_artifacts" in patch and isinstance(patch["linked_artifacts"], list):
+                updated["linked_artifacts"] = list(patch["linked_artifacts"])
+
+            prev_version = int(current.get("aggregate_version") or 1)
+            new_version = prev_version + 1
+            updated["aggregate_version"] = new_version
+            updated["updated_at"] = timestamp
+
+            if not updated.get("create_receipt") and current.get("receipt"):
+                if (current.get("receipt") or {}).get("command") == "CreateResearchTicket":
+                    updated["create_receipt"] = copy.deepcopy(current["receipt"])
+
+            cmd_id = command_id or f"cmd-patch-{ticket_id}-{new_version}"
+            patch_receipt = {
+                "receipt_id": f"rcpt-{cmd_id}",
+                "command_id": cmd_id,
+                "commandId": cmd_id,
+                "aggregate_type": current.get("aggregate_type") or "research_ticket",
+                "aggregate_id": str(ticket_id),
+                "aggregate_version": new_version,
+                "status": updated.get("status") or "open",
+                "event_id": f"evt-{cmd_id}",
+                "correlation_id": clean_key or current.get("correlation_id") or str(ticket_id),
+                "owner": "research",
+                "committed_at": timestamp,
+                "command": "PatchResearchTicket",
+                "target": {"type": "research_ticket", "id": str(ticket_id)},
+                "submitted_at": timestamp,
+                "accepted_at": timestamp,
+            }
+            updated["receipt"] = patch_receipt
+            updated["command_id"] = cmd_id
+            updated["commandId"] = cmd_id
+            updated["event_id"] = patch_receipt["event_id"]
+            updated["correlation_id"] = patch_receipt["correlation_id"]
+
+            patch_command_entry = {
+                "command_id": cmd_id,
+                "command": "PatchResearchTicket",
+                "idempotency_key": clean_key,
+                "request_hash": clean_hash,
+                "actor_id": clean_actor,
+                "tenant_id": clean_tenant,
+                "aggregate_version": new_version,
+                "receipt": patch_receipt,
+                "timestamp": timestamp,
+            }
+            cmd_history = list(updated.get("command_history") or [])
+            cmd_history.append(patch_command_entry)
+            updated["command_history"] = cmd_history
+
+            if hasattr(self._tickets_store, "compare_and_set"):
+                success, actual = self._tickets_store.compare_and_set(str(ticket_id), current, updated)
+                if success:
+                    res = self._project_ticket_detail(updated)
+                    if clean_key:
+                        res["idempotency_key"] = clean_key
+                    return res
+                continue
+
+            if target_lock is not None and target_rows is not None:
+                if fail_flag:
+                    raise OSError("injected commit failure")
+                with target_lock:
+                    target_rows[str(ticket_id)] = copy.deepcopy(updated)
+                    res = self._project_ticket_detail(updated)
+                    if clean_key:
+                        res["idempotency_key"] = clean_key
+                    return res
+
+            self._tickets_store.put(str(ticket_id), updated)
+            res = self._project_ticket_detail(updated)
+            if clean_key:
+                res["idempotency_key"] = clean_key
+            return res
+
+        raise RuntimeError(f"Failed to update ticket {ticket_id!r} after {max_retries} attempts")
 
     def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ticket_id:

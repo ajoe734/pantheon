@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import inspect
 import json
 import logging
 import os
@@ -1970,53 +1971,28 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         **kwargs: Any,
     ) -> Dict[str, Any]:
         research_owner = self._get_research_write_owner()
-        if research_owner is not None:
-            return research_owner.create_research_ticket(
-                title=title,
-                description=description,
-                priority=priority,
-                owner=owner,
-                actor_id=actor_id,
-                created_at=created_at,
-                idempotency_key=idempotency_key,
-                request_hash=request_hash,
-                tenant_id=tenant_id,
-                command_id=command_id,
-                **kwargs,
-            )
-        if not self._tickets:
+        if research_owner is None:
             raise ResearchWriteOwnerUnavailableError(
                 "Research write owner is not configured; cannot create a research ticket."
             )
-        timestamp = created_at or _utc_now_rfc3339()
-        ticket_id = f"rt-{timestamp[:10].replace('-', '')}-{len(self._tickets) + 1:03d}"
-        while ticket_id in self._tickets:
-            ticket_id = f"rt-{timestamp[:10].replace('-', '')}-{len(self._tickets) + 2:03d}"
-
-        ticket = {
-            "ticket_id": ticket_id,
+        call_kwargs = {
             "title": title,
             "description": description,
-            "status": "open",
             "priority": priority,
             "owner": owner,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "closed_at": None,
-            "archived_at": None,
-            "lifecycle_history": [
-                {
-                    "from_status": None,
-                    "to_status": "open",
-                    "transitioned_at": timestamp,
-                    "transitioned_by": actor_id,
-                }
-            ],
-            "linked_experiments": [],
-            "linked_artifacts": [],
+            "actor_id": actor_id,
+            "created_at": created_at,
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+            "tenant_id": tenant_id,
+            "command_id": command_id,
+            **kwargs,
         }
-        self._tickets[ticket_id] = ticket
-        return self._project_research_ticket_detail(ticket)
+        sig = inspect.signature(research_owner.create_research_ticket)
+        has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if not has_var_keyword:
+            call_kwargs = {k: v for k, v in call_kwargs.items() if k in sig.parameters}
+        return research_owner.create_research_ticket(**call_kwargs)
 
     def patch_research_ticket(
         self,
@@ -2032,58 +2008,26 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         research_owner = self._get_research_write_owner()
-        if research_owner is not None:
-            return research_owner.patch_research_ticket(
-                ticket_id,
-                patch=patch,
-                actor_id=actor_id,
-                updated_at=updated_at,
-                idempotency_key=idempotency_key,
-                request_hash=request_hash,
-                tenant_id=tenant_id,
-                command_id=command_id,
-                **kwargs,
-            )
-        if not self._tickets:
+        if research_owner is None:
             raise ResearchWriteOwnerUnavailableError(
                 "Research write owner is not configured; cannot patch a research ticket."
             )
-        ticket = self._tickets.get(str(ticket_id))
-        if ticket is None or not isinstance(ticket, dict):
-            return None
-
-        timestamp = updated_at or _utc_now_rfc3339()
-        editable = {"title", "description", "priority", "owner"}
-        for f in editable:
-            if f in patch:
-                ticket[f] = patch[f]
-
-        next_status = patch.get("status")
-        if next_status is not None and next_status != ticket.get("status"):
-            prev_status = ticket.get("status")
-            ticket["status"] = next_status
-            if next_status == "closed":
-                ticket["closed_at"] = timestamp
-                ticket["archived_at"] = None
-            elif next_status == "archived":
-                ticket["archived_at"] = timestamp
-                if ticket.get("closed_at") is None:
-                    ticket["closed_at"] = timestamp
-            else:
-                if next_status in {"open", "in_progress"}:
-                    ticket["closed_at"] = None
-                if next_status != "archived":
-                    ticket["archived_at"] = None
-            ticket.setdefault("lifecycle_history", []).append(
-                {
-                    "from_status": prev_status,
-                    "to_status": next_status,
-                    "transitioned_at": timestamp,
-                    "transitioned_by": actor_id,
-                }
-            )
-        ticket["updated_at"] = timestamp
-        return self._project_research_ticket_detail(ticket)
+        call_kwargs = {
+            "ticket_id": ticket_id,
+            "patch": patch,
+            "actor_id": actor_id,
+            "updated_at": updated_at,
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+            "tenant_id": tenant_id,
+            "command_id": command_id,
+            **kwargs,
+        }
+        sig = inspect.signature(research_owner.patch_research_ticket)
+        has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if not has_var_keyword:
+            call_kwargs = {k: v for k, v in call_kwargs.items() if k in sig.parameters}
+        return research_owner.patch_research_ticket(**call_kwargs)
 
     # -------------------------------------------------------------------------
     # Research Analyses (RW-03)
@@ -2220,21 +2164,26 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             raise ResearchWriteOwnerUnavailableError(
                 "Research write owner (Postgres) is not configured; cannot create a research experiment."
             )
-        return owner.create_research_experiment(
-            ticket_id=ticket_id,
-            experiment_name=experiment_name,
-            strategy_selector=strategy_selector,
-            parameter_set=parameter_set,
-            run_config=run_config,
-            launch_context=launch_context,
-            queued_at=queued_at,
-            idempotency_key=idempotency_key,
-            request_hash=request_hash,
-            tenant_id=tenant_id,
-            actor_id=actor_id,
-            command_id=command_id,
+        call_kwargs = {
+            "ticket_id": ticket_id,
+            "experiment_name": experiment_name,
+            "strategy_selector": strategy_selector,
+            "parameter_set": parameter_set,
+            "run_config": run_config,
+            "launch_context": launch_context,
+            "queued_at": queued_at,
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+            "tenant_id": tenant_id,
+            "actor_id": actor_id,
+            "command_id": command_id,
             **kwargs,
-        )
+        }
+        sig = inspect.signature(owner.create_research_experiment)
+        has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if not has_var_keyword:
+            call_kwargs = {k: v for k, v in call_kwargs.items() if k in sig.parameters}
+        return owner.create_research_experiment(**call_kwargs)
 
     def cancel_research_experiment(
         self,

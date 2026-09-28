@@ -478,6 +478,7 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         owner: str,
         actor_id: str,
         created_at: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         if self._read_surface is not None and hasattr(self._read_surface, "create_research_ticket"):
             return self._read_surface.create_research_ticket(
@@ -487,6 +488,7 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
                 owner=owner,
                 actor_id=actor_id,
                 created_at=created_at,
+                **kwargs,
             )
         if self._ks is not None and hasattr(self._ks, "create_research_ticket"):
             return self._ks.create_research_ticket(
@@ -496,6 +498,7 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
                 owner=owner,
                 actor_id=actor_id,
                 created_at=created_at,
+                **kwargs,
             )
         raise AttributeError("Research port operation 'create_research_ticket' not implemented")
 
@@ -506,14 +509,15 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         patch: Dict[str, Any],
         actor_id: str,
         updated_at: Optional[str] = None,
+        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "patch_research_ticket"):
             return self._read_surface.patch_research_ticket(
-                ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at
+                ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at, **kwargs
             )
         if self._ks is not None and hasattr(self._ks, "patch_research_ticket"):
             return self._ks.patch_research_ticket(
-                ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at
+                ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at, **kwargs
             )
         raise AttributeError("Research port operation 'patch_research_ticket' not implemented")
 

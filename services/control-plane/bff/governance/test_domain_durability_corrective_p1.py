@@ -1535,3 +1535,94 @@ def test_approval_conflicting_command_id_rejected(tmp_path):
     assert persisted["audit"]["operator_id"] == "actor-a"
 
 
+def test_research_ticket_midnight_admission_race():
+    from threading import Barrier, local
+
+    class SynchronizedTickets(AtomicIO):
+        def __init__(self):
+            super().__init__()
+            self.first_snapshot = Barrier(2)
+            self.thread_local = local()
+
+        def list_all(self):
+            snapshot = super().list_all()
+            if not getattr(self.thread_local, "seen", False):
+                self.thread_local.seen = True
+                self.first_snapshot.wait(timeout=10)
+            return snapshot
+
+    tickets = SynchronizedTickets()
+    owners = [ResearchWriteOwner(tickets_store=tickets, experiments_store=AtomicIO(), notes_store=AtomicIO()) for _ in range(2)]
+    timestamps = ["2026-09-27T23:59:59Z", "2026-09-28T00:00:00Z"]
+
+    def submit(index):
+        return owners[index].create_research_ticket(
+            title="same ticket", description="same body", priority="normal", owner="actor",
+            actor_id="actor", tenant_id="tenant", idempotency_key="same-key", request_hash="same-payload-hash",
+            created_at=timestamps[index],
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(submit, range(2)))
+    ids = [row["ticket_id"] for row in results]
+    assert len(set(ids)) == 1 and len(tickets.rows) == 1
+
+
+def test_create_replay_survives_patch():
+    tickets = CASStore()
+    client = _research_ticket_client(tickets)
+    first = client.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "create-key"})
+    assert first.status_code == 200
+    tid = first.json()["ticket_id"]
+    changed = client.patch("/api/v1/research/tickets/" + tid, json={"title": "new title"}, headers={"Idempotency-Key": "patch-key"})
+    assert changed.status_code == 200
+    retry = _research_ticket_client(tickets).post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "create-key"})
+    assert retry.status_code == 200
+    assert retry.json()["ticket_id"] == tid, {"first": tid, "retry": retry.json()["ticket_id"], "rows": len(tickets.rows)}
+
+
+def test_patch_conflicting_payload_is_rejected():
+    tickets = CASStore()
+    client = _research_ticket_client(tickets)
+    first = client.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "create-key"})
+    assert first.status_code == 200
+    path = "/api/v1/research/tickets/" + first.json()["ticket_id"]
+    patched = client.patch(path, json={"title": "one"}, headers={"Idempotency-Key": "patch-key"})
+    assert patched.status_code == 200
+    assert patched.json().get("aggregate_version") == 2
+    assert patched.json().get("receipt", {}).get("command") == "PatchResearchTicket"
+    retry = _research_ticket_client(tickets).patch(path, json={"title": "two"}, headers={"Idempotency-Key": "patch-key"})
+    assert retry.status_code == 409, {"status": retry.status_code, "title": retry.json().get("title"), "receipt": retry.json().get("receipt")}
+
+
+def test_ticket_writer_absent_returns_503_without_local_mutation():
+    port = DefaultResearchKnowledgeSourcePort(research_tickets_store={"seed": {"ticket_id": "seed", "title": "seed", "status": "open"}})
+    port._get_research_write_owner = lambda: None
+    app = FastAPI()
+    app.include_router(create_research_router(
+        read_surface=port,
+        extract_identity=lambda auth: SimpleNamespace(operator_id="actor", tenant_id="tenant", roles=["admin"]),
+        require_read_role=lambda identity: None,
+        require_operator_role=lambda identity: None,
+        bff_error=lambda status, code, message, *args, **kwargs: HTTPException(status, detail=message),
+        utc_now=lambda: "2026-09-28T00:00:00Z",
+    ))
+    client = TestClient(app, raise_server_exceptions=False)
+    create_resp = client.post(
+        "/api/v1/research/tickets",
+        json={"title": "no owner", "description": "process local", "priority": "normal", "owner": "actor"},
+        headers={"Idempotency-Key": "local-write-key"},
+    )
+    assert create_resp.status_code == 503
+    assert len(port._tickets) == 1
+
+    patch_resp = client.patch(
+        "/api/v1/research/tickets/seed",
+        json={"title": "patch without owner"},
+        headers={"Idempotency-Key": "local-patch-key"},
+    )
+    assert patch_resp.status_code == 503
+    assert port._tickets["seed"]["title"] == "seed"
+
+
+
