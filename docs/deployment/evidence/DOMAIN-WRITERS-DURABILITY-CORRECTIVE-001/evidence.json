@@ -340,6 +340,11 @@
     "defect_84_domain_writer_tenant_guard_fail_open_on_none": {
       "problem": "Independent exact-head review REJECT for PR #5998 at fdb75d96dcfc9434afe58af8a039a9d42e8fad98. resolve_identity_tenant() (fixed by defect_83) correctly returns None for a missing or ambiguous signed JWT tenant claim, but every consumer still guarded tenant mismatch with a truthiness check on the CALLER tenant (for example `if clean_tenant and exp_tenant and clean_tenant != exp_tenant`), so a None caller tenant short-circuited the guard instead of being treated as a mismatch against a tenant-bound record. Reproducer /tmp/test_domain_writer_missing_scope_review.py (real signed HS256 JWTs through mounted create_research_router -> ReadSurfacePorts -> DefaultResearchKnowledgeSourcePort -> ResearchWriteOwner) showed a tenant-A ticket and queued experiment readable by an operator with absent or ambiguous tenant claims, and POST /api/v1/experiments/{id}/cancel returning 200 with a committed cancel receipt attributing actor_id=actor-tenant-b against tenant_id=tenant-a. 4 of 6 parametrized cases failed (absent/ambiguous claim shape x service reconstruction).",
       "remediation": "Rewrote every in-scope fail-open guard from `if caller_tenant and record_tenant and caller_tenant != record_tenant` to `if record_tenant and caller_tenant != record_tenant`, so a tenant-bound record now rejects a None/empty caller while an untenanted record stays unrestricted (guards already shaped that way were left untouched): research/service.py (ticket detail, patch, experiment detail x2, require_experiment, cancel_experiment_api -- 6 sites) and services/research/write_owner.py (matching ticket/experiment detail, patch, cancel, archive, invalidate -- 6 sites). Also closed the same fail-open shape in the four list endpoints that skipped their tenant filter entirely (`if clean_tenant: ... filter ...`) when the caller tenant was unresolved, disclosing every tenant's tickets/experiments: research/service.py's list_research_tickets_api/list_experiments_bff/list_experiments_api/list legacy-experiments paths and write_owner.py's list_research_tickets/list_research_experiments, via a shared _tenant_scope_allows(record_tenant, caller_tenant) helper (record with no tenant always visible; tenant-bound record only visible to the matching caller, including when caller is None). personas/service.py:2353's directory-snapshot filter had the identical shape and was fixed the same way. command_adapters/strategy_adapter.py's registry readback tenant check exempted any caller claiming the literal tenant \"unscoped\" from verification regardless of the record's real owner_tenant; rewrote it to only exempt an untenanted or literally \"unscoped\" *record*, never an unscoped caller claim. runtime/router.py's _resolve_identity_tenant_id no longer coerces an unresolved tenant to \"\", which had reused \"\" as a shared idempotency-cache scope segment for every unresolved-tenant caller under the same operator. Fixing the guards exposed two composed-port methods that never threaded tenant_id at all -- ReadSurfacePorts.get_experiment_bff and ReadSurfacePorts.get_research_experiment (services/control-plane/bff/ports/read_surface_ports.py), and ResearchPortWiring's matching passthroughs in research/service.py -- previously harmless only because the fail-open guard downstream never enforced the mismatch either way; added tenant_id passthrough with a TypeError fallback for legacy port shapes so genuine same-tenant reads/actions (ticket patch, experiment cancel/archive/invalidate) keep working now that the guard fails closed, and fixed patch_research_ticket to pass the caller's own resolved tenant into its ticket fetch instead of fetching unscoped and relying on a second, separately computed check. Out-of-scope guards with the identical fail-open shape exist in agora/operational_readiness.py, agora/servant/router.py, assistant/management_service.py, and auth/handlers.py; per task brief these are reported through governed coordination, not edited here."
+    },
+    "defect_85_idempotency_wildcard_tenant_lookup_and_research_list_scope": {
+      "problem": "Independent exact-head REJECT of PR #5998 at b4e787e70981577761cca7afd374759b8c7330fb (manifest c6350b55693bb6b184c8cc1b2a579ebcdc895dbb). P1 acceptance 3: runtime/router.py:1068-1086 passed an unresolved tenant=None into CommandStore.get_command_by_idempotency_key; command_queue.py:443-447 treated None as an unrestricted tenant lookup, so a real signed HS256 identity with an absent or ambiguous tenant claim could retrieve and replay another tenant's durable POST /bff/runtimes command/result under the same operator/idempotency key (4 failed cases, warm and after router/CommandStore reconstruction). P2: ResearchPortWiring.list_experiments_bff at services/control-plane/bff/research/service.py:878-881 did not accept tenant_id, so the caller's own fail-closed tenant filter in list_research_experiments_bff/list_experiments_bff (research/service.py ~3573-3614) had nothing to authorize against: after a successful same-tenant ticket/experiment launch, GET /bff/experiments returned 200 items=[] while GET /api/v1/experiments and GET /bff/experiments/{id} correctly exposed the owned experiment (2 failed cases including reconstruction).",
+      "remediation": "CommandStore.get_command_by_idempotency_key (command_queue.py) no longer treats an unresolved tenant_id as unscoped: when the caller's tenant is unresolved it only matches durable records that are themselves tenant-less, never a record that carries a resolved tenant. A new match_any_tenant=True mode exists purely to detect (never to return data for) a same-operator/same-key collision against a resolved tenant. runtime/router.py's POST /bff/runtimes handler uses that mode: when the caller's own tenant is unresolved and the tenant-scoped lookup found nothing, it probes for a foreign-tenant collision on the same operator/idempotency-key pair and fails closed with 403 precondition_failed=tenant_unresolved instead of silently admitting a second command under that key. ResearchPortWiring.list_experiments_bff (research/service.py:878) now accepts tenant_id (with a TypeError fallback for read surfaces that do not yet support it) and threads it into list_research_experiments, so the same-tenant list path is authorized against the correct tenant instead of an implicit None.",
+      "reproducer": "/tmp/test_domain_writer_head_b4_review.py (reviewer's exact-head reproducer)"
     }
   },
   "mutation_caller_inventory": {
@@ -1256,6 +1261,38 @@
       {
         "command": "git diff --check",
         "result": "exit 0"
+      },
+      {
+        "command": "timeout 60s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q /tmp/test_domain_writer_head_b4_review.py --tb=short",
+        "result": "6 passed, 1 warning in 4.19s (reviewer's exact reject-head reproducer, previously 6 failed at rejected head)",
+        "executed": 6,
+        "collected": 6
+      },
+      {
+        "command": "timeout 260s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_command_store_multiprocess.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/research/",
+        "result": "293 passed, 8 warnings in 162.54s",
+        "executed": 293,
+        "collected": 293
+      },
+      {
+        "command": "timeout 260s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_aud_002_audit_action_write_engine.py services/control-plane/bff/test_final_command_execution_bridge.py services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_command_store_multiprocess.py services/control-plane/bff/management_read_models/",
+        "result": "166 passed, 141 warnings in 64.91s",
+        "executed": 166,
+        "collected": 166
+      },
+      {
+        "command": "timeout 260s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_registry_split.py",
+        "result": "68 passed, 2 warnings in 14.08s",
+        "executed": 68,
+        "collected": 68
+      },
+      {
+        "command": "temporary local stash apply of this fix's 3-file diff, reran test_bff_evolution_experiment_jobs_events_contract.py and tests/test_bff_b2_004_research_search.py, then stash apply/drop restored the fix",
+        "result": "same 10 failures (missing DATABASE_URL/RESEARCH_STORE_DSN) reproduce identically with the fix reverted; confirmed pre-existing and unrelated to this change"
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit 0"
       }
     ]
   },
@@ -1376,6 +1413,12 @@
         "assistant/management_service.py",
         "auth/handlers.py"
       ]
+    },
+    "fourth_rejection_and_fix": {
+      "pr": 5998,
+      "rejected_head": "b4e787e70981577761cca7afd374759b8c7330fb",
+      "finding": "See defect_85_idempotency_wildcard_tenant_lookup_and_research_list_scope.problem above (verbatim independent review verdict).",
+      "fix": "See defect_85_idempotency_wildcard_tenant_lookup_and_research_list_scope.remediation above."
     }
   }
 }
