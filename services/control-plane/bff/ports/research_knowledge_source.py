@@ -2057,7 +2057,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         sig = inspect.signature(research_owner.create_research_ticket)
         has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
         if not has_var_keyword:
-            call_kwargs = {k: v for k, v in call_kwargs.items() if k in sig.parameters}
+            missing = [p for p in ("actor_id", "tenant_id", "idempotency_key", "request_hash") if p not in sig.parameters]
+            if missing:
+                raise TypeError(
+                    f"Research write owner operation 'create_research_ticket' is incompatible: "
+                    f"missing required identity parameters {missing}"
+                )
         return research_owner.create_research_ticket(**call_kwargs)
 
     def patch_research_ticket(
@@ -2089,7 +2094,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         sig = inspect.signature(research_owner.patch_research_ticket)
         has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
         if not has_var_keyword:
-            call_kwargs = {k: v for k, v in call_kwargs.items() if k in sig.parameters}
+            missing = [p for p in ("actor_id", "tenant_id", "idempotency_key", "request_hash") if p not in sig.parameters]
+            if missing:
+                raise TypeError(
+                    f"Research write owner operation 'patch_research_ticket' is incompatible: "
+                    f"missing required identity parameters {missing}"
+                )
         return research_owner.patch_research_ticket(ticket_id, **call_kwargs)
 
     # -------------------------------------------------------------------------
@@ -2257,7 +2267,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         sig = inspect.signature(owner.create_research_experiment)
         has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
         if not has_var_keyword:
-            call_kwargs = {k: v for k, v in call_kwargs.items() if k in sig.parameters}
+            missing = [p for p in ("actor_id", "tenant_id", "idempotency_key", "request_hash") if p not in sig.parameters]
+            if missing:
+                raise TypeError(
+                    f"Research write owner operation 'create_research_experiment' is incompatible: "
+                    f"missing required identity parameters {missing}"
+                )
         return owner.create_research_experiment(**call_kwargs)
 
     def cancel_research_experiment(
@@ -2292,7 +2307,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         sig = inspect.signature(owner.cancel_research_experiment)
         has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
         if not has_var_keyword:
-            call_kwargs = {k: v for k, v in call_kwargs.items() if k in sig.parameters}
+            missing = [p for p in ("actor_id", "tenant_id", "idempotency_key", "request_hash") if p not in sig.parameters]
+            if missing:
+                raise TypeError(
+                    f"Research write owner operation 'cancel_research_experiment' is incompatible: "
+                    f"missing required identity parameters {missing}"
+                )
         return owner.cancel_research_experiment(experiment_id, **call_kwargs)
 
     # -------------------------------------------------------------------------

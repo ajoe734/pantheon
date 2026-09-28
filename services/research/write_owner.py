@@ -1253,10 +1253,60 @@ class ResearchWriteOwner:
             "owner": "research",
             "committed_at": timestamp,
             "receipt": canonical_receipt,
+            "create_receipt": copy.deepcopy(canonical_receipt),
             "is_committed": is_committed,
         }
         record["allowedActions"] = cls._rw04_allowed_actions(record)
+        record["create_result"] = copy.deepcopy(cls._project_experiment_detail(record))
         return record
+
+    @classmethod
+    def _replay_experiment_create(cls, exp: Dict[str, Any]) -> Dict[str, Any]:
+        if exp.get("create_result") and isinstance(exp["create_result"], dict):
+            return copy.deepcopy(exp["create_result"])
+        for c in (exp.get("command_history") or []):
+            if isinstance(c, dict) and c.get("command") == "CreateResearchExperiment" and c.get("result"):
+                return copy.deepcopy(c["result"])
+        create_receipt = exp.get("create_receipt")
+        if not create_receipt and exp.get("command_history"):
+            for c in exp["command_history"]:
+                if isinstance(c, dict) and c.get("command") == "CreateResearchExperiment" and c.get("receipt"):
+                    create_receipt = c["receipt"]
+                    break
+        if not create_receipt:
+            cand = exp.get("receipt")
+            if isinstance(cand, dict) and cand.get("command") == "CreateResearchExperiment":
+                create_receipt = cand
+        if not create_receipt:
+            exp_id = exp.get("experiment_id")
+            cmd_id = exp.get("create_command_id") or exp.get("command_id") or f"cmd-{exp_id}"
+            create_receipt = {
+                "receipt_id": f"rcpt-{exp_id}",
+                "command_id": cmd_id,
+                "commandId": cmd_id,
+                "aggregate_type": exp.get("aggregate_type") or "research_experiment",
+                "aggregate_id": exp_id,
+                "aggregate_version": 1,
+                "status": "queued",
+                "event_id": exp.get("event_id") or f"evt-{exp_id}",
+                "correlation_id": exp.get("idempotency_key") or exp_id,
+                "owner": "research",
+                "committed_at": exp.get("queued_at") or exp.get("committed_at") or _utc_now_rfc3339(),
+                "command": "CreateResearchExperiment",
+                "target": {"type": "research_experiment", "id": exp_id},
+                "submitted_at": exp.get("queued_at"),
+                "accepted_at": exp.get("queued_at"),
+            }
+        result = cls._project_experiment_detail(exp)
+        result["receipt"] = copy.deepcopy(create_receipt)
+        result["command_id"] = create_receipt.get("command_id") or result.get("command_id")
+        result["commandId"] = result["command_id"]
+        result["aggregate_version"] = create_receipt.get("aggregate_version", 1)
+        result["event_id"] = create_receipt.get("event_id") or f"evt-{result.get('experiment_id')}"
+        result["correlation_id"] = create_receipt.get("correlation_id") or result.get("correlation_id")
+        result["status"] = create_receipt.get("status") or "queued"
+        result["allowedActions"] = {"canCancel": True, "canRetry": False, "canArchive": False, "canInvalidate": False}
+        return result
 
     def _recover_or_replay_experiment(
         self,
@@ -1275,7 +1325,7 @@ class ResearchWriteOwner:
         exp_id = str(existing_exp.get("experiment_id") or "").strip()
 
         if existing_exp.get("is_committed", True):
-            return self._project_experiment_detail(existing_exp)
+            return self._replay_experiment_create(existing_exp)
 
         exp_ticket_id = str(existing_exp.get("ticket_id") or "").strip() or None
         if exp_ticket_id:
@@ -1293,7 +1343,7 @@ class ResearchWriteOwner:
 
         recovered = copy.deepcopy(existing_exp)
         recovered = _finalize_experiment_record(self._experiments_store, exp_id, recovered)
-        return self._project_experiment_detail(recovered)
+        return self._replay_experiment_create(recovered)
 
     def create_research_experiment(
         self,

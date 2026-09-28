@@ -216,6 +216,26 @@ def _filter_legacy_artifacts(
 
 
 
+def _assert_compatible_research_mutation_owner(
+    fn: Any,
+    required_identity_params: tuple[str, ...],
+    op_name: str,
+) -> None:
+    try:
+        sig = inspect.signature(fn)
+    except (ValueError, TypeError):
+        return
+    params = sig.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return
+    missing = [p for p in required_identity_params if p not in params]
+    if missing:
+        raise TypeError(
+            f"Research write owner operation {op_name!r} is incompatible: "
+            f"cannot accept required identity parameters {missing}"
+        )
+
+
 class ResearchPortWiring(ResearchKnowledgeSourcePort):
     """Explicit domain-specific typed dependency wiring for Research domain.
 
@@ -297,8 +317,6 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         raise AttributeError("Research port operation 'get_research_note' not implemented")
 
     def create_research_note(self, note: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if self._read_surface is not None and hasattr(self._read_surface, "create_research_note"):
-            return self._read_surface.create_research_note(note)
         if self._ks is not None and hasattr(self._ks, "create_research_note"):
             return self._ks.create_research_note(note)
         raise AttributeError("Research port operation 'create_research_note' not implemented")
@@ -515,32 +533,25 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         request_hash: Optional[str] = None,
         command_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target = self._read_surface if (self._read_surface is not None and hasattr(self._read_surface, "create_research_ticket")) else self._ks
-        if target is not None and hasattr(target, "create_research_ticket"):
-            fn = target.create_research_ticket
-            sig = inspect.signature(fn)
-            params = sig.parameters
-            call_kw: Dict[str, Any] = {
-                "title": title,
-                "description": description,
-                "priority": priority,
-                "owner": owner,
-                "actor_id": actor_id,
-            }
-            if created_at is not None or "created_at" in params:
-                call_kw["created_at"] = created_at
-            if tenant_id is not None or "tenant_id" in params:
-                call_kw["tenant_id"] = tenant_id
-            if idempotency_key is not None or "idempotency_key" in params:
-                call_kw["idempotency_key"] = idempotency_key
-            if request_hash is not None or "request_hash" in params:
-                call_kw["request_hash"] = request_hash
-            if command_id is not None or "command_id" in params:
-                call_kw["command_id"] = command_id
-            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-            if not has_var_keyword:
-                call_kw = {k: v for k, v in call_kw.items() if k in params}
-            return fn(**call_kw)
+        if self._ks is not None and hasattr(self._ks, "create_research_ticket"):
+            fn = self._ks.create_research_ticket
+            _assert_compatible_research_mutation_owner(
+                fn,
+                ("actor_id", "tenant_id", "idempotency_key", "request_hash"),
+                "create_research_ticket",
+            )
+            return fn(
+                title=title,
+                description=description,
+                priority=priority,
+                owner=owner,
+                actor_id=actor_id,
+                created_at=created_at,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                command_id=command_id,
+            )
         raise AttributeError("Research port operation 'create_research_ticket' not implemented")
 
     def patch_research_ticket(
@@ -555,29 +566,23 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         request_hash: Optional[str] = None,
         command_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        target = self._read_surface if (self._read_surface is not None and hasattr(self._read_surface, "patch_research_ticket")) else self._ks
-        if target is not None and hasattr(target, "patch_research_ticket"):
-            fn = target.patch_research_ticket
-            sig = inspect.signature(fn)
-            params = sig.parameters
-            call_kw: Dict[str, Any] = {
-                "patch": patch,
-                "actor_id": actor_id,
-            }
-            if updated_at is not None or "updated_at" in params:
-                call_kw["updated_at"] = updated_at
-            if tenant_id is not None or "tenant_id" in params:
-                call_kw["tenant_id"] = tenant_id
-            if idempotency_key is not None or "idempotency_key" in params:
-                call_kw["idempotency_key"] = idempotency_key
-            if request_hash is not None or "request_hash" in params:
-                call_kw["request_hash"] = request_hash
-            if command_id is not None or "command_id" in params:
-                call_kw["command_id"] = command_id
-            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-            if not has_var_keyword:
-                call_kw = {k: v for k, v in call_kw.items() if k in params}
-            return fn(ticket_id, **call_kw)
+        if self._ks is not None and hasattr(self._ks, "patch_research_ticket"):
+            fn = self._ks.patch_research_ticket
+            _assert_compatible_research_mutation_owner(
+                fn,
+                ("actor_id", "tenant_id", "idempotency_key", "request_hash"),
+                "patch_research_ticket",
+            )
+            return fn(
+                ticket_id,
+                patch=patch,
+                actor_id=actor_id,
+                updated_at=updated_at,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                command_id=command_id,
+            )
         raise AttributeError("Research port operation 'patch_research_ticket' not implemented")
 
     # -------------------------------------------------------------------------
@@ -657,37 +662,28 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         actor_id: Optional[str] = None,
         command_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target = self._read_surface if (self._read_surface is not None and hasattr(self._read_surface, "create_research_experiment")) else self._ks
-        if target is not None and hasattr(target, "create_research_experiment"):
-            fn = target.create_research_experiment
-            sig = inspect.signature(fn)
-            params = sig.parameters
-            call_kw: Dict[str, Any] = {
-                "ticket_id": ticket_id,
-                "experiment_name": experiment_name,
-                "strategy_selector": strategy_selector,
-                "parameter_set": parameter_set,
-                "run_config": run_config,
-                "launch_context": launch_context,
-            }
-            if queued_at is not None or "queued_at" in params:
-                call_kw["queued_at"] = queued_at
-            if experiment_id is not None or "experiment_id" in params:
-                call_kw["experiment_id"] = experiment_id
-            if idempotency_key is not None or "idempotency_key" in params:
-                call_kw["idempotency_key"] = idempotency_key
-            if request_hash is not None or "request_hash" in params:
-                call_kw["request_hash"] = request_hash
-            if tenant_id is not None or "tenant_id" in params:
-                call_kw["tenant_id"] = tenant_id
-            if actor_id is not None or "actor_id" in params:
-                call_kw["actor_id"] = actor_id
-            if command_id is not None or "command_id" in params:
-                call_kw["command_id"] = command_id
-            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-            if not has_var_keyword:
-                call_kw = {k: v for k, v in call_kw.items() if k in params}
-            return fn(**call_kw)
+        if self._ks is not None and hasattr(self._ks, "create_research_experiment"):
+            fn = self._ks.create_research_experiment
+            _assert_compatible_research_mutation_owner(
+                fn,
+                ("actor_id", "tenant_id", "idempotency_key", "request_hash"),
+                "create_research_experiment",
+            )
+            return fn(
+                ticket_id=ticket_id,
+                experiment_name=experiment_name,
+                strategy_selector=strategy_selector,
+                parameter_set=parameter_set,
+                run_config=run_config,
+                launch_context=launch_context,
+                queued_at=queued_at,
+                experiment_id=experiment_id,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                command_id=command_id,
+            )
         raise AttributeError("Research port operation 'create_research_experiment' not implemented")
 
     def cancel_research_experiment(
@@ -702,30 +698,23 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         request_hash: Optional[str] = None,
         command_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        target = self._read_surface if (self._read_surface is not None and hasattr(self._read_surface, "cancel_research_experiment")) else self._ks
-        if target is not None and hasattr(target, "cancel_research_experiment"):
-            fn = target.cancel_research_experiment
-            sig = inspect.signature(fn)
-            params = sig.parameters
-            call_kw: Dict[str, Any] = {}
-            if completed_at is not None or "completed_at" in params:
-                call_kw["completed_at"] = completed_at
-            if reason is not None or "reason" in params:
-                call_kw["reason"] = reason
-            if actor_id is not None or "actor_id" in params:
-                call_kw["actor_id"] = actor_id
-            if tenant_id is not None or "tenant_id" in params:
-                call_kw["tenant_id"] = tenant_id
-            if idempotency_key is not None or "idempotency_key" in params:
-                call_kw["idempotency_key"] = idempotency_key
-            if request_hash is not None or "request_hash" in params:
-                call_kw["request_hash"] = request_hash
-            if command_id is not None or "command_id" in params:
-                call_kw["command_id"] = command_id
-            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-            if not has_var_keyword:
-                call_kw = {k: v for k, v in call_kw.items() if k in params}
-            return fn(experiment_id, **call_kw)
+        if self._ks is not None and hasattr(self._ks, "cancel_research_experiment"):
+            fn = self._ks.cancel_research_experiment
+            _assert_compatible_research_mutation_owner(
+                fn,
+                ("actor_id", "tenant_id", "idempotency_key", "request_hash"),
+                "cancel_research_experiment",
+            )
+            return fn(
+                experiment_id,
+                completed_at=completed_at,
+                reason=reason,
+                actor_id=actor_id,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                command_id=command_id,
+            )
         raise AttributeError("Research port operation 'cancel_research_experiment' not implemented")
 
     # -------------------------------------------------------------------------

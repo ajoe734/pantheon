@@ -2191,4 +2191,65 @@ def test_composed_read_surface_cross_tenant_isolation():
     assert eid_b != eid_a
 
 
+def test_create_replay_keeps_original_receipt_after_cancel():
+    tickets, experiments = CASStore(), CASStore()
+    client, _, _ = _composed_read_surface_research_client(tickets, experiments)
+    body = {"name": "receipt-replay-review"}
+    headers = {"Idempotency-Key": "create-key"}
+    created = client.post("/bff/experiments", json=body, headers=headers)
+    assert created.status_code == 201, created.text
+    first = created.json()
+    eid = first["experiment_id"]
+    canceled = client.post(f"/api/v1/experiments/{eid}/cancel", json={"reason": "review"}, headers={"Idempotency-Key": "cancel-key"})
+    assert canceled.status_code == 200, canceled.text
+    restarted, _, _ = _composed_read_surface_research_client(tickets, experiments)
+    replay = restarted.post("/bff/experiments", json=body, headers=headers)
+    assert replay.status_code == 201, replay.text
+    actual = replay.json()
+    assert actual["receipt"] == first["receipt"], "Create replay must preserve original create command receipt"
+    assert actual["command_id"] == first["command_id"]
+    row = experiments.get(eid)
+    assert row["status"] == "canceled"
+    assert row["aggregate_version"] == 2
+
+
+def test_wiring_rejects_identity_dropping_mutation_port():
+    from services.control_plane.bff.research.service import ResearchPortWiring
+    calls = []
+    class LegacyOwner:
+        def cancel_research_experiment(self, experiment_id, *, completed_at=None):
+            calls.append((experiment_id, completed_at))
+            return {"experiment_id": experiment_id, "status": "canceled"}
+    wiring = ResearchPortWiring(knowledge_source=LegacyOwner())
+    with pytest.raises(TypeError) as exc_info:
+        wiring.cancel_research_experiment("exp-1", completed_at="2026-09-28T00:00:00Z", tenant_id="tenant-a", actor_id="actor-a", idempotency_key="cancel-key", request_hash="hash")
+    assert not calls, "Wiring dispatched a mutation after silently dropping tenant, actor and idempotency identity"
+    assert "incompatible" in str(exc_info.value)
+
+
+def test_mounted_legacy_cancel_must_fail_closed_before_mutation():
+    tickets, experiments = CASStore(), CASStore()
+    owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments, notes_store=AtomicIO())
+    class LegacyCancelPort(DefaultResearchKnowledgeSourcePort):
+        def cancel_research_experiment(self, experiment_id, *, completed_at=None):
+            return owner.cancel_research_experiment(experiment_id, completed_at=completed_at)
+    port = LegacyCancelPort(research_write_owner=owner)
+    app = FastAPI()
+    app.include_router(create_research_router(
+        read_surface=ReadSurfacePorts(research_knowledge_source=port),
+        extract_identity=lambda auth: SimpleNamespace(operator_id="actor", tenant_id="tenant", roles=["admin", "operator"]),
+        require_read_role=lambda i: None, require_operator_role=lambda i: None,
+        bff_error=lambda s,c,m,*a,**kw: HTTPException(s, detail=m),
+        utc_now=lambda: "2026-09-28T00:00:00Z",
+    ))
+    client = TestClient(app, raise_server_exceptions=False)
+    created = client.post("/bff/experiments", json={"name": "legacy-port"}, headers={"Idempotency-Key": "create-key"})
+    assert created.status_code == 201, created.text
+    eid = created.json()["experiment_id"]
+    result = client.post(f"/api/v1/experiments/{eid}/cancel", json={"reason": "review"}, headers={"Idempotency-Key": "cancel-key"})
+    row = experiments.get(eid)
+    assert result.status_code >= 500 and row["status"] == "queued", "Incompatible owner silently accepted cancellation without authenticated actor/key/hash"
+
+
+
 
