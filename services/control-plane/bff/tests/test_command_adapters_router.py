@@ -866,3 +866,117 @@ def test_main_app_command_confirmation_degraded_read_surface_regression() -> Non
         else:
             os.environ["BFF_READ_SURFACE_STATE"] = orig_env
 
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("route", ["confirmation", "guarded"])
+def test_signed_identity_tenant_cannot_consume_foreign_confirm_token(
+    tmp_path, monkeypatch, restart, route
+) -> None:
+    """Regression: a real, signed OperatorIdentity JWT must scope confirm
+    tokens by tenant. ``CommandAdapterService`` previously resolved the
+    caller's tenant via
+    ``getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)``,
+    which is always ``None`` for a genuine ``extract_identity_jwt`` identity
+    (tenant lives in ``identity.claims``, not a top-level attribute). That
+    bug silently disabled ``check_confirm_token_tenant_authorization``, so a
+    caller from tenant B with the same JWT subject as tenant A could confirm
+    or redeem a confirm token tenant A issued. Uses real signed HS256 JWTs
+    through the production ``extract_identity_jwt`` (not a test identity
+    stub) against both durable-write routes, with and without service/store
+    reconstruction (restart), to prove the durable rejection survives
+    process restart.
+    """
+    import time
+
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff.command_adapters.service import CommandAdapterService
+
+    secret = "test-tenant-identity-regression-secret"
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "tenant-identity-regression")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "tenant-identity-regression")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+    def headers(tenant: str, idempotency_key: str) -> Dict[str, str]:
+        now = int(time.time())
+        token = encode_jwt_hs256(
+            {
+                "sub": "same-actor",
+                "roles": ["operator"],
+                "tenant_id": tenant,
+                "iss": "tenant-identity-regression",
+                "aud": "tenant-identity-regression",
+                "iat": now - 10,
+                "exp": now + 300,
+            },
+            secret=secret,
+        )
+        auth = "Bearer " + token
+        identity = extract_identity_jwt(auth)
+        assert identity.claims["tenant_id"] == tenant
+        return {"Authorization": auth, "Idempotency-Key": idempotency_key}
+
+    command_path = str(tmp_path / "commands.jsonl")
+
+    def client() -> TestClient:
+        service = CommandAdapterService(
+            command_store=CommandStore(command_path),
+            extract_identity=extract_identity_jwt,
+            check_read_surface_state=lambda: None,
+            process_command_task=lambda command_id: None,
+        )
+        app = FastAPI()
+        app.include_router(create_command_adapters_router(service=service))
+        return TestClient(app)
+
+    mounted = client()
+    issued = mounted.post(
+        "/bff/confirm-tokens",
+        headers=headers("tenant-a", "issue-a"),
+        json={
+            "tokenId": "tenant-a-token",
+            "ttlSeconds": 300,
+            "command": "PauseRuntime",
+            "target_type": "Runtime",
+            "target_id": "isolated-runtime",
+            "operator_id": "same-actor",
+        },
+    )
+    assert issued.status_code == 201, issued.text
+
+    if restart:
+        mounted = client()
+
+    foreign_headers = headers("tenant-b", "foreign-submit")
+    if route == "confirmation":
+        foreign = mounted.post(
+            "/bff/command-confirmations/tenant-a-token/confirm",
+            headers=foreign_headers,
+            json={"command_id": "foreign-command"},
+        )
+    else:
+        foreign_headers["X-Confirm-Token"] = "tenant-a-token"
+        foreign = mounted.post(
+            "/bff/v1/commands",
+            headers=foreign_headers,
+            json={
+                "command": "PauseRuntime",
+                "target": {"type": "Runtime", "id": "isolated-runtime"},
+                "params": {"runtime_binding_id": "isolated-binding", "pause_action": "pause"},
+                "audit_context": {"reason": "tenant identity regression negative authorization test"},
+            },
+        )
+
+    records = CommandStore(command_path)._get_all_commands()
+    evidence = {
+        "response_status": foreign.status_code,
+        "rows": [
+            {"type": record["type"], "tenant": record.get("audit", {}).get("tenant_id")}
+            for record in records
+        ],
+    }
+    assert foreign.status_code in (403, 404, 428), evidence
+    assert len(records) == 1, evidence
+

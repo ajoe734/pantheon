@@ -21,6 +21,8 @@ except (ImportError, ValueError):
     except (ImportError, ValueError):
         from models import CommandStatus, CommandType, ErrorCode, ObjectType
 
+from services.control_plane.bff.auth.policy import resolve_identity_tenant_id
+
 from .service import RuntimeRouterService, _MissingRuntimeDependency
 
 
@@ -1016,7 +1018,10 @@ def create_runtime_router(
         request_hash = _stable_json_hash({"route": "POST /bff/runtimes", "payload": payload})
         dry_run = _request_dry_run_requested()
         operator_id = str(getattr(identity, "operator_id", "") or "operator").strip()
-        tenant_id = str(getattr(identity, "tenant_id", "") or "").strip()
+        # ``OperatorIdentity`` carries tenant in ``identity.claims``, not a
+        # top-level ``tenant_id`` attribute; use the canonical claims-aware
+        # resolver so durable runtime idempotency lookups are tenant-scoped.
+        tenant_id = resolve_identity_tenant_id(identity) or ""
 
         cmd_store = (
             service.dependency("command_store", None)

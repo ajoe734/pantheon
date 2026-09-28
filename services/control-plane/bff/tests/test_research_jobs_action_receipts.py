@@ -810,4 +810,3 @@ def test_experiment_adapter_dispatcher_command_id_empty_fails_closed_all_actions
     elif action_id == "invalidate":
         assert current_exp["status"] == "queued"
         assert "invalidate_receipt" not in current_exp
-

@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
+from services.control_plane.bff.auth.policy import resolve_identity_tenant_id
 from services.control_plane.bff.models import ErrorCode
 
 from .service import (
@@ -86,8 +87,10 @@ def _identity_id(identity: Any) -> str:
 
 
 def _identity_tenant_id(identity: Any) -> Optional[str]:
-    tenant_id = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
-    return str(tenant_id).strip() if tenant_id else None
+    # ``OperatorIdentity`` carries tenant in ``identity.claims``, not a
+    # top-level ``tenant_id``/``tenant`` attribute; use the canonical
+    # claims-aware resolver so durable capital writes are tenant-scoped.
+    return resolve_identity_tenant_id(identity)
 
 
 def _resolve_idempotency_key(

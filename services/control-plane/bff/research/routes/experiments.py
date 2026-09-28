@@ -19,6 +19,7 @@ from .common import (
     _default_snapshot_meta,
     _default_surface_status,
     _filter_by_status_csv,
+    _identity_tenant_id,
     _path,
     _signature,
     _signature_query,
@@ -89,7 +90,7 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         return service.list_experiments_bff(
             status=status,
             page_token=page_token,
@@ -109,7 +110,7 @@ def create_research_experiments_router(
         require_operator_role(identity)
         resolved_key = (idempotency_key or x_idempotency_key or "").strip()
         actor_id = getattr(identity, "operator_id", None) or getattr(identity, "user_id", None) or str(identity)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         return service.create_experiment(
             payload,
             actor_id=str(actor_id),
@@ -124,7 +125,7 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         return service.get_experiment_bff(
             experiment_id,
             snapshot_at=utc_now(),
@@ -142,7 +143,7 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_operator_role(identity)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         resolved_key = (idempotency_key or x_idempotency_key or "").strip()
         clean_id = experiment_id.strip()
         service.require_experiment(clean_id, tenant_id=str(tenant_id).strip() if tenant_id else None)
@@ -166,7 +167,7 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         return service.get_experiment_logs(
             experiment_id,
             snapshot_at=utc_now(),
@@ -180,7 +181,7 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         return service.get_experiment_metrics(
             experiment_id,
             snapshot_at=utc_now(),
@@ -194,7 +195,7 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         return service.get_experiment_artifacts(
             experiment_id,
             snapshot_at=utc_now(),
@@ -210,7 +211,7 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         return service.list_research_experiments_bff(
             status=status,
             page_token=page_token,
@@ -226,7 +227,7 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         return service.get_research_experiment_bff(
             experiment_id,
             snapshot_at=utc_now(),
@@ -306,7 +307,7 @@ def build_experiments_router(ctx: ResearchRouteContext) -> APIRouter:
             or getattr(identity, "actor_id", None)
             or str(identity)
         )
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         payload = _validate_experiment_launch(await ctx.body(request))
         return ctx.service.launch_experiment(
             payload,
@@ -317,7 +318,7 @@ def build_experiments_router(ctx: ResearchRouteContext) -> APIRouter:
 
     async def endpoint_list_experiments_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         identity = ctx.identity(request)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         raw_status = ctx.query(request, "status")
         status = _validate_experiment_status(raw_status) if raw_status is not None else None
         return ctx.service.list_experiments_api(
@@ -331,7 +332,7 @@ def build_experiments_router(ctx: ResearchRouteContext) -> APIRouter:
 
     async def endpoint_get_experiment_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         identity = ctx.identity(request)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         experiment_id = str(request.path_params.get("experiment_id") or "")
         return ctx.service.get_experiment_api(
             experiment_id,
@@ -348,7 +349,7 @@ def build_experiments_router(ctx: ResearchRouteContext) -> APIRouter:
             or getattr(identity, "actor_id", None)
             or str(identity)
         )
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         experiment_id = str(request.path_params.get("experiment_id") or "")
         reason = ctx.required_text(await ctx.body(request), "reason")
         return ctx.service.cancel_experiment_api(

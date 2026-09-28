@@ -9,6 +9,7 @@ from .common import (
     ResearchRouteContext,
     _authorization,
     _body_parameter,
+    _identity_tenant_id,
     _path,
     _signature,
     _signature_query,
@@ -105,7 +106,7 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
             or getattr(identity, "actor_id", None)
             or str(identity)
         )
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         try:
             return ctx.service.create_research_ticket(
                 title=ctx.required_text(payload, "title"),
@@ -122,7 +123,7 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
 
     async def endpoint_list_tickets(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         identity = ctx.identity(request)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         statuses = [item.strip() for item in str(ctx.query(request, "status", "") or "").split(",") if item.strip()] or None
         if statuses:
             statuses = [_validate_ticket_status(status) for status in statuses]
@@ -143,7 +144,7 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
 
     async def endpoint_get_ticket(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         identity = ctx.identity(request)
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         ticket_id = str(request.path_params.get("ticket_id") or "")
         try:
             return ctx.service.get_research_ticket(
@@ -164,7 +165,7 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
             or getattr(identity, "actor_id", None)
             or str(identity)
         )
-        tenant_id = getattr(identity, "tenant_id", None)
+        tenant_id = _identity_tenant_id(identity)
         try:
             return ctx.service.patch_research_ticket(
                 ticket_id,

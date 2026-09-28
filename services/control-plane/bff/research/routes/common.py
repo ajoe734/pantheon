@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from fastapi import HTTPException, Request
 
 try:
+    from services.control_plane.bff.auth.policy import resolve_identity_tenant_id
     from services.control_plane.bff.models import (
         ErrorCode,
         ObjectType,
@@ -16,6 +17,7 @@ try:
         redact_evidence_refs,
     )
 except (ImportError, ValueError):
+    from ..auth.policy import resolve_identity_tenant_id
     from ..models import (
         ErrorCode,
         ObjectType,
@@ -23,7 +25,16 @@ except (ImportError, ValueError):
         redact_evidence_refs,
     )
 
+
 from ..service import ResearchNotFoundError, ResearchRouterService, ResearchValidationError
+
+
+def _identity_tenant_id(identity: Any) -> Optional[str]:
+    # ``OperatorIdentity`` carries tenant in ``identity.claims``, not a
+    # top-level ``tenant_id``/``tenant`` attribute; use the canonical
+    # claims-aware resolver so research route tenant scoping is not
+    # silently disabled for real JWT identities.
+    return resolve_identity_tenant_id(identity)
 
 PageSlice = Callable[[List[Dict[str, Any]], Optional[str], int], Tuple[List[Dict[str, Any]], Optional[str]]]
 SnapshotMeta = Callable[[str], Dict[str, Any]]

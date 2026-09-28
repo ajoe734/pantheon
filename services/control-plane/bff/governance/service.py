@@ -28,6 +28,7 @@ from typing import (
     Union,
 )
 
+from ..auth.policy import resolve_identity_tenant_id
 from ..models import (
     _resolve_evidence_kind_and_capability,
     fail_closed_redacted_refs,
@@ -153,8 +154,10 @@ def _identity_operator_id(identity: Any) -> str:
 
 
 def _identity_tenant_id(identity: Any) -> Optional[str]:
-    val = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
-    return str(val).strip() if val else None
+    # ``OperatorIdentity`` carries tenant in ``identity.claims``, not a
+    # top-level ``tenant_id``/``tenant`` attribute; use the canonical
+    # claims-aware resolver so durable governance writes are tenant-scoped.
+    return resolve_identity_tenant_id(identity)
 
 
 async def _maybe_await(value: Any) -> Any:
