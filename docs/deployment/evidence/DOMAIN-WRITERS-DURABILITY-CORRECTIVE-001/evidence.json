@@ -268,6 +268,10 @@
     "defect_66_mounted_action_command_durability_and_actor_isolation": {
       "problem": "core/app_factory.py:1143 binds main._gov_bff_action_command for POST /bff/experiments/{id}/actions/cancel. It raised NameError for undefined get_catalog_entry at main.py:6950; used a global key-only cache _GOV_BFF_IDEMPOTENCY causing cross-actor command stealing; ignored submit_command return value causing restart replay to return a fresh unpersisted command_id; failed to compare request_hash on admitted rows returned from concurrent submit_command calls leading to 202/202 instead of 202/409 on concurrent conflicting payloads; and _finalize_experiment_record admitted arbitrary get/put stores and performed unconditional put with process-local locks overwriting concurrent durable state.",
       "remediation": "Imported get_catalog_entry with resilient fallback in services/control-plane/bff/main.py. Replaced process-local _GOV_BFF_IDEMPOTENCY cache with durable scoped lookup (command_store.get_command_by_idempotency_key) checking operator_id, tenant_id, and request_hash (raising 409 on conflict). Preserved admitted command_id, submitted_at, and status from submit_command return value and checked request_hash on replayed admitted rows to ensure concurrent conflicting submissions raise 409. Eliminated private _finalization_lock, synthetic CAS adapters, and unconditional get/put fallbacks in write_owner.py _finalize_experiment_record; enforced strict fail-closed store-owned atomic compare_and_set / store-level locking. Added regression tests test_finalize_rejects_arbitrary_get_put_store_without_cas, test_finalize_interleaving_preserves_concurrent_cancellation_via_cas, and test_finalize_two_owners_shared_backend_preserves_concurrent_cancellation_via_shared_cas in test_domain_durability_corrective_p1.py alongside mounted action actor scoping, restart replay, sequential conflict, negative auth, storage failures, and concurrent conflict."
+    },
+    "defect_67_research_jobs_action_receipts_in_memory_cas": {
+      "problem": "services/control-plane/bff/tests/test_research_jobs_action_receipts.py defined _InMemoryOwnerStore without compare_and_set or store-level lock. Following defect 66's fail-closed CAS enforcement in write_owner.py, create_research_experiment raised RuntimeError 'store does not support conditional finalization' on 5 action receipt tests, and the test file was omitted from the original task artifact contract.",
+      "remediation": "Human/Ops revised task artifact contract to include test_research_jobs_action_receipts.py. Implemented genuine shared-lock atomic compare_and_set, delete, and delete_if_matches synchronized on store lock in _InMemoryOwnerStore while preserving production fail-closed CAS. Verified all 19 receipt tests passed, full 200-test declared suites passed, and 26-test smoke passed."
     }
   },
   "mutation_caller_inventory": {
@@ -871,6 +875,24 @@
         "result": "26 passed in 1.139s",
         "executed": 26,
         "collected": 26
+      },
+      {
+        "command": "PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "19 passed, 3 warnings in 5.97s",
+        "executed": 19,
+        "collected": 19
+      },
+      {
+        "command": "PYTHONPATH=. .venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
+        "result": "26 passed in 1.122s",
+        "executed": 26,
+        "collected": 26
+      },
+      {
+        "command": "RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "200 passed, 9 warnings in 120.80s",
+        "executed": 200,
+        "collected": 200
       }
     ]
   },
@@ -945,7 +967,8 @@
     "defect_63_research_wiring_typed_signatures_and_composed_mounted_routes_resolved": true,
     "defect_64_research_wiring_mutation_identity_forwarding_and_fail_closed_resolved": true,
     "defect_65_research_experiment_create_replay_keeps_original_receipt_after_cancel_resolved": true,
-    "defect_66_mounted_action_command_durability_and_actor_isolation_resolved": true
+    "defect_66_mounted_action_command_durability_and_actor_isolation_resolved": true,
+    "defect_67_research_jobs_action_receipts_in_memory_cas_resolved": true
   },
   "review": {
     "reviewer": "Codex",

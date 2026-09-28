@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+import threading
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 from fastapi.testclient import TestClient
@@ -46,18 +47,62 @@ from services.research.write_owner import ResearchWriteOwner
 class _InMemoryOwnerStore:
     """In-memory stand-in for PostgresJsonOwnerStore used for isolated tests."""
 
-    def __init__(self) -> None:
-        self._data: Dict[str, Dict[str, Any]] = {}
+    def __init__(
+        self,
+        lock: Optional[threading.Lock] = None,
+        data: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> None:
+        self.lock = lock if lock is not None else threading.Lock()
+        self._data: Dict[str, Dict[str, Any]] = data if data is not None else {}
+        self.rows = self._data
 
     def put(self, record_id: str, payload: Dict[str, Any]) -> None:
-        self._data[record_id] = json.loads(json.dumps(payload))
+        with self.lock:
+            self._data[record_id] = json.loads(json.dumps(payload))
 
     def get(self, record_id: str) -> Optional[Dict[str, Any]]:
-        record = self._data.get(record_id)
-        return json.loads(json.dumps(record)) if record else None
+        with self.lock:
+            record = self._data.get(record_id)
+            return json.loads(json.dumps(record)) if record else None
 
     def list_all(self, *, conn: Optional[Any] = None) -> List[Dict[str, Any]]:
-        return [json.loads(json.dumps(v)) for v in self._data.values()]
+        with self.lock:
+            return [json.loads(json.dumps(v)) for v in self._data.values()]
+
+    def compare_and_set(
+        self,
+        record_id: str,
+        expected_payload: Optional[Dict[str, Any]],
+        payload: Dict[str, Any],
+        *,
+        conn: Optional[Any] = None,
+    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        with self.lock:
+            current = self._data.get(record_id)
+            current_copy = json.loads(json.dumps(current)) if current is not None else None
+            expected_copy = json.loads(json.dumps(expected_payload)) if expected_payload is not None else None
+
+            if current_copy != expected_copy:
+                return False, current_copy
+
+            new_copy = json.loads(json.dumps(payload))
+            self._data[record_id] = new_copy
+            return True, json.loads(json.dumps(new_copy))
+
+    def delete(self, record_id: str) -> Optional[Dict[str, Any]]:
+        with self.lock:
+            record = self._data.pop(record_id, None)
+            return json.loads(json.dumps(record)) if record else None
+
+    def delete_if_matches(self, record_id: str, expected_payload: Dict[str, Any]) -> bool:
+        with self.lock:
+            current = self._data.get(record_id)
+            current_copy = json.loads(json.dumps(current)) if current is not None else None
+            expected_copy = json.loads(json.dumps(expected_payload)) if expected_payload is not None else None
+            if current_copy == expected_copy:
+                del self._data[record_id]
+                return True
+            return False
 
 
 # =============================================================================
