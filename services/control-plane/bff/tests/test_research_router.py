@@ -1099,15 +1099,25 @@ def test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfac
     assert redacted_decision["required_capability"] == "strategy.view"
     assert redacted_decision["reason"] == "insufficient_capability"
     assert redacted_decision["redacted"] is True
-    assert evidence_payload["linked_decisions"][1] == {
-        "entity_type": "research_note", "entity_ref": "note-include",
-    }
+    # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: this decision's entity_type
+    # ("research_note") had no EvidenceKind mapping, so the old fail-open
+    # base function passed it through unchanged even with an empty
+    # capability set. It now resolves to the generic artifact capability
+    # (research/service.py's _ENTITY_TYPE_EVIDENCE_KIND) and is correctly
+    # withheld for this zero-capability identity, like the strategy_spec
+    # decision above it.
+    research_note_decision = evidence_payload["linked_decisions"][1]
+    assert research_note_decision["ref_id"] == "note-include"
+    assert research_note_decision["kind"] == "artifact"
+    assert research_note_decision["required_capability"] == "artifact.read"
+    assert research_note_decision["reason"] == "insufficient_capability"
+    assert research_note_decision["redacted"] is True
     assert evidence_payload["meta"] == {
         "snapshot_at": "2026-08-30T00:00:00Z",
         "surfaces": {
             "evidence_ref_detail": "ok", "resolved_link": "ok", "linked_decisions": "ok",
         },
-        "redacted_evidence_count": 1,
+        "redacted_evidence_count": 2,
     }
 
     blocked = client.get("/api/v1/knowledge/evidence/evidence-blocked")

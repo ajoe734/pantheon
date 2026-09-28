@@ -68,6 +68,9 @@ _ENTITY_TYPE_EVIDENCE_KIND: Dict[str, str] = {
     "signal": "signal",
     "journal": "journal",
     "postmortem": "postmortem",
+    "memory_entry": "artifact",
+    "experiment": "artifact",
+    "research_note": "artifact",
 }
 
 

@@ -97,6 +97,13 @@ _ENTITY_TYPE_EVIDENCE_KIND: Dict[str, str] = {
     "signal": "signal",
     "journal": "journal",
     "postmortem": "postmortem",
+    # Generic knowledge-linkage entity types (KW03/KW04 linked_decisions and
+    # linked_entity_type filters): these carry no dedicated EvidenceKind, so
+    # they gate on the generic artifact capability rather than falling
+    # through unresolved.
+    "memory_entry": "artifact",
+    "experiment": "artifact",
+    "research_note": "artifact",
 }
 
 

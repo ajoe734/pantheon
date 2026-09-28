@@ -638,10 +638,21 @@ SOURCE_TYPE_TO_EVIDENCE_KIND: Dict[str, str] = {
     "internal_metric": "metric",
     "runtime_snapshot": "runtime",
     "deployment_log": "deployment",
+    "deployment_plan": "deployment",
     "strategy_spec": "strategy",
     "journal_entry": "journal",
     "agora_signal": "signal",
     "policy_document": "policy",
+    # Generic knowledge-source document types (KW03 evidence refs): no
+    # dedicated EvidenceKind, so they gate on the generic artifact
+    # capability rather than falling through unresolved.
+    "external_paper": "artifact",
+    "research_note": "artifact",
+    # Governance review-queue evidence ref "type" values (PKT001):
+    "IncidentReport": "incident",
+    "BacktestResult": "artifact",
+    # Management-console live-evidence workflow artifact (BB3):
+    "workflow_artifact": "artifact",
 }
 
 
@@ -858,13 +869,15 @@ def redact_evidence_refs(
     current policy is expressed entirely by the supplied capability set.
     Supports string references and dicts with optional ``default_kind`` and
     ``kind_map`` overrides.
+
+    Fails closed: a missing capability set (``None``) is treated as an
+    identity with no capabilities rather than full visibility, and a ref
+    whose kind cannot be resolved is withheld rather than passed through,
+    since its ``required_capability`` cannot be verified either way.
     """
 
     del identity
-    if capabilities is None:
-        return list(evidence_refs), 0
-
-    capability_set = set(capabilities)
+    capability_set = set(capabilities) if capabilities is not None else set()
     processed: list[Any] = []
     redacted_count = 0
 
@@ -873,7 +886,17 @@ def redact_evidence_refs(
         _, evidence_kind, required_capability = _resolve_evidence_kind_and_capability(
             ref, default_kind=default_kind, kind_map=kind_map
         )
-        if required_capability and required_capability not in capability_set:
+        if not required_capability:
+            redacted_count += 1
+            redacted = RedactedEvidenceRef(
+                ref_id=ref_id,
+                kind=evidence_kind,
+                required_capability="unknown",
+                reason="unresolved_evidence_kind",
+            )
+            processed.append(redacted.model_dump())
+            continue
+        if required_capability not in capability_set:
             redacted_count += 1
             redacted = RedactedEvidenceRef(
                 ref_id=ref_id,
@@ -903,9 +926,12 @@ def safe_redact_evidence_refs(
     identity-gated evidence references (``evidence_refs``,
     ``linked_evidence``, ``context_refs``, and similar capability-gated
     reference lists). A capability lookup that raises or returns ``None``
-    fails closed -- it is treated as an empty capability set so
-    ``redact_evidence_refs`` above gates every capability-required ref --
-    rather than defaulting to open disclosure.
+    fails closed with ``reason="redaction_policy_unavailable"`` -- distinct
+    from ``redact_evidence_refs``'s own ``capabilities=None`` handling
+    (identity with no capabilities, ``reason="insufficient_capability"``),
+    because here the caller could not even determine the identity's
+    capabilities, so no individual ref's authorization is knowable either
+    way.
     """
     try:
         capabilities = capabilities_fn(identity)
@@ -1060,8 +1086,9 @@ def redact_ooda_packet(
     obs = packet_copy.get("observe")
     _inspect_field(obs, "incident_refs", "incident")
     _inspect_field(obs, "signal_refs", "signal")
-    for f in ("source_refs", "telemetry_refs", "market_refs", "human_feedback_refs"):
-        _inspect_field(obs, f, None)
+    _inspect_field(obs, "telemetry_refs", "runtime")
+    for f in ("source_refs", "market_refs", "human_feedback_refs"):
+        _inspect_field(obs, f, "artifact")
 
     ori = packet_copy.get("orient")
     _inspect_field(ori, "persona_proposal_refs", "persona")
@@ -1069,21 +1096,22 @@ def redact_ooda_packet(
     _inspect_field(ori, "evidence_bundle_refs", "artifact")
     _inspect_field(ori, "risk_adjudication_ref", "policy")
     for f in ("allocation_proposal_refs", "regime_state_ref", "universe_selection_ref"):
-        _inspect_field(ori, f, None)
+        _inspect_field(ori, f, "artifact")
 
     dec = packet_copy.get("decide")
     _inspect_field(dec, "policy_decision_refs", "policy")
-    _inspect_field(dec, "decision_rationale_ref", None)
+    _inspect_field(dec, "decision_rationale_ref", "artifact")
 
     act = packet_copy.get("act")
     _inspect_field(act, "broker_evidence_refs", "audit")
     for f in ("command_receipt_refs", "rollback_refs", "safe_mode_refs"):
-        _inspect_field(act, f, None)
+        _inspect_field(act, f, "audit")
 
     lrn = packet_copy.get("learn")
     _inspect_field(lrn, "postmortem_refs", "postmortem")
-    for f in ("telemetry_refs", "evolution_followthrough_refs", "trainer_refs", "retrain_refs"):
-        _inspect_field(lrn, f, None)
+    _inspect_field(lrn, "telemetry_refs", "runtime")
+    for f in ("evolution_followthrough_refs", "trainer_refs", "retrain_refs"):
+        _inspect_field(lrn, f, "artifact")
 
     packet_kind_map: dict[str, str] = {}
     if resolved_caps is not None:
@@ -1138,8 +1166,9 @@ def redact_ooda_packet(
     if isinstance(observe, dict):
         _redact_field(observe, "incident_refs", default_kind="incident")
         _redact_field(observe, "signal_refs", default_kind="signal")
-        for other_field in ("source_refs", "telemetry_refs", "market_refs", "human_feedback_refs"):
-            _redact_field(observe, other_field, default_kind=None)
+        _redact_field(observe, "telemetry_refs", default_kind="runtime")
+        for other_field in ("source_refs", "market_refs", "human_feedback_refs"):
+            _redact_field(observe, other_field, default_kind="artifact")
 
     # OrientBundle:
     orient = packet_copy.get("orient")
@@ -1149,27 +1178,28 @@ def redact_ooda_packet(
         _redact_field(orient, "evidence_bundle_refs", default_kind="artifact")
         _redact_field(orient, "risk_adjudication_ref", default_kind="policy")
         for other_field in ("allocation_proposal_refs", "regime_state_ref", "universe_selection_ref"):
-            _redact_field(orient, other_field, default_kind=None)
+            _redact_field(orient, other_field, default_kind="artifact")
 
     # DecideBundle:
     decide = packet_copy.get("decide")
     if isinstance(decide, dict):
         _redact_field(decide, "policy_decision_refs", default_kind="policy")
-        _redact_field(decide, "decision_rationale_ref", default_kind=None)
+        _redact_field(decide, "decision_rationale_ref", default_kind="artifact")
 
     # ActBundle:
     act = packet_copy.get("act")
     if isinstance(act, dict):
         _redact_field(act, "broker_evidence_refs", default_kind="audit")
         for other_field in ("command_receipt_refs", "rollback_refs", "safe_mode_refs"):
-            _redact_field(act, other_field, default_kind=None)
+            _redact_field(act, other_field, default_kind="audit")
 
     # LearnBundle:
     learn = packet_copy.get("learn")
     if isinstance(learn, dict):
         _redact_field(learn, "postmortem_refs", default_kind="postmortem")
-        for other_field in ("telemetry_refs", "evolution_followthrough_refs", "trainer_refs", "retrain_refs"):
-            _redact_field(learn, other_field, default_kind=None)
+        _redact_field(learn, "telemetry_refs", default_kind="runtime")
+        for other_field in ("evolution_followthrough_refs", "trainer_refs", "retrain_refs"):
+            _redact_field(learn, other_field, default_kind="artifact")
 
     return packet_copy, total_redacted
 
