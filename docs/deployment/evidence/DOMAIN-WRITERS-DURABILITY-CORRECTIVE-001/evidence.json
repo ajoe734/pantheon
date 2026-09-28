@@ -458,7 +458,6 @@
       "services/control-plane/bff/command_adapters/base.py",
       "services/control-plane/bff/command_adapters/capital_adapter.py",
       "services/control-plane/bff/command_adapters/governance_adapter.py",
-      "services/control-plane/bff/command_adapters/preconditions.py",
       "services/control-plane/bff/command_adapters/service.py",
       "services/control-plane/bff/command_queue.py",
       "services/control-plane/bff/governance/router.py",
