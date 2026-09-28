@@ -121,6 +121,7 @@ class CommandStore:
         audit_context: Dict[str, Any],
         foundation_context: Optional[Dict[str, Any]] = None,
         result: Optional[Dict[str, Any]] = None,
+        status: CommandStatus = CommandStatus.SUBMITTED,
     ):
         with self.serialized_transaction():
             idem_key = (
@@ -140,12 +141,13 @@ class CommandStore:
                 raise RuntimeError(f"Command ID {command_id!r} already exists with conflicting identity")
 
             target_dump = target.model_dump() if hasattr(target, "model_dump") else dict(target)
+            status_val = status.value if hasattr(status, "value") else str(status)
             record = {
                 "command_id": command_id,
                 "type": command_type.value if hasattr(command_type, "value") else str(command_type),
                 "target": target_dump,
                 "submitted_at": submitted_at,
-                "status": CommandStatus.SUBMITTED.value,
+                "status": status_val,
                 "params": params,
                 "audit": audit_context,
                 "foundation": foundation_context,
@@ -167,38 +169,17 @@ class CommandStore:
         result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Append one already-complete command record without a crash window."""
-        with self.serialized_transaction():
-            idem_key = (
-                (audit_context or {}).get("idempotency_key")
-                or (params or {}).get("idempotency_key")
-                or ((foundation_context or {}).get("idempotency_record") or {}).get("idempotency_key")
-            )
-            if idem_key:
-                op_id = self._operator_id_from_command({"audit": audit_context, "foundation": foundation_context, "params": params})
-                ten_id = self._tenant_id_from_command({"audit": audit_context, "foundation": foundation_context, "params": params})
-                existing = self.get_command_by_idempotency_key(idem_key, operator_id=op_id, tenant_id=ten_id)
-                if existing is not None:
-                    return existing
-
-            existing_by_id = self.get_command(command_id)
-            if existing_by_id is not None:
-                raise RuntimeError(f"Command ID {command_id!r} already exists with conflicting identity")
-
-            target_dump = target.model_dump() if hasattr(target, "model_dump") else dict(target)
-            record = {
-                "command_id": command_id,
-                "type": command_type.value if hasattr(command_type, "value") else str(command_type),
-                "target": target_dump,
-                "submitted_at": submitted_at,
-                "status": CommandStatus.EXECUTED.value,
-                "params": params,
-                "audit": audit_context,
-                "foundation": foundation_context,
-                "result": result,
-                "error": None,
-            }
-            self._save_command(record)
-            return record
+        return self.submit_command(
+            command_id=command_id,
+            command_type=command_type,
+            target=target,
+            submitted_at=submitted_at,
+            params=params,
+            audit_context=audit_context,
+            foundation_context=foundation_context,
+            result=result,
+            status=CommandStatus.EXECUTED,
+        )
 
     def submit_terminal_command_if_no_active_target(
         self,

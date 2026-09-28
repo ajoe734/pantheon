@@ -316,6 +316,10 @@
     "defect_78_research_action_unscoped_replay_receipt_borrowing": {
       "problem": "services/research/write_owner.py:2079-2086 and 2212-2235: in archive_research_experiment and invalidate_research_experiment, when an experiment was already archived or invalidated/canceled, the methods projected existing status and returned success regardless of whether the incoming command key, tenant, or actor matched, borrowing another actor's prior receipt and returning executed status instead of rejecting replay.",
       "remediation": "Updated archive_research_experiment and invalidate_research_experiment in services/research/write_owner.py to strictly validate the incoming idempotency key against the existing command history and archive/invalidate receipt for the exact same tenant and actor. If not matching, returns None (causing the adapter to reject as ActionUnavailableError with non-executed status); if the key matches but request_hash conflicts, raises ResearchIdempotencyConflictError."
+    },
+    "defect_79_confirmation_concurrent_admission_revalidation_and_result_preservation": {
+      "problem": "command_adapters/service.py:725-736 record_command_confirmation_redeem unconditionally updated the admitted row using the losing request result, without revalidating the deduplicated command type/target/request hash. Both mounted POST /bff/command-confirmations and POST /bff/command-confirmations/{token}/confirm reproduced: concurrent same-key different-token requests returned 202/202 instead of 202/409 and overwrote the winning receipt; same-key identical requests returned the original confirmation ID but fresh CommandStore replay returned a different confirmation ID.",
+      "remediation": "In command_queue.py, delegated submit_terminal_command to submit_command with status=CommandStatus.EXECUTED to atomically record complete executed commands without a crash window or separate update_status call. In record_command_confirmation_redeem, used submit_terminal_command, detected deduplicated admission (admitted.get('command_id') != generated_command_id), and revalidated the admitted row against the incoming tenant, operator, command type, target, and request hash via _revalidate_admitted_command_record (raising 409 IDEMPOTENCY_CONFLICT on mismatch). Bypassed store.update_status on replay, preserving the original canonical receipt and confirmation_id without overwriting it on disk. In confirm_command_by_token, preserved unknown-token 404 semantics without any prefix bypass, returned the admitted canonical result on replay, and published audit events only for initial executions. Integrated the 4 mounted seeded concurrency/restart regressions and unissued token prefix regressions into test_domain_durability_corrective_p1.py."
     }
   },
   "mutation_caller_inventory": {
@@ -1053,38 +1057,26 @@
         "collected": 26
       },
       {
-        "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 60 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q /tmp/test_domain_41c868_review.py",
-        "result": "5 passed, 1 warning in 4.79s",
-        "executed": 5,
-        "collected": 5
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 60 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -v /tmp/test_domain_unknown_token_prefix.py /tmp/test_domain_130598_review_seeded.py",
+        "result": "6 passed, 1 warning in 2.78s",
+        "executed": 6,
+        "collected": 6
       },
       {
         "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 120 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
-        "result": "135 passed, 10 warnings in 78.11s",
-        "executed": 135,
-        "collected": 135
+        "result": "141 passed, 8 warnings in 79.37s",
+        "executed": 141,
+        "collected": 141
       },
       {
-        "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 60 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_command_adapters_router.py",
-        "result": "14 passed, 3 warnings in 5.43s",
-        "executed": 14,
-        "collected": 14
-      },
-      {
-        "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 60 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_confirm_token_lifecycle.py",
-        "result": "2 passed, 3 warnings in 1.38s",
-        "executed": 2,
-        "collected": 2
-      },
-      {
-        "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 60 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
-        "result": "44 passed, 3 warnings in 11.75s",
-        "executed": 44,
-        "collected": 44
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 60 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_confirm_token_lifecycle.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "60 passed, 3 warnings in 17.96s",
+        "executed": 60,
+        "collected": 60
       },
       {
         "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 60 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/smoke_test.py",
-        "result": "57 passed, 3 warnings in 32.82s",
+        "result": "57 passed, 3 warnings in 32.75s",
         "executed": 57,
         "collected": 57
       }
@@ -1173,7 +1165,8 @@
     "defect_75_experiment_retry_canonical_aggregate_identity_resolved": true,
     "defect_76_experiment_retry_crash_recovery_canonical_receipt_resolved": true,
     "defect_77_confirmation_process_local_replay_and_missing_owner_durability_resolved": true,
-    "defect_78_research_action_unscoped_replay_receipt_borrowing_resolved": true
+    "defect_78_research_action_unscoped_replay_receipt_borrowing_resolved": true,
+    "defect_79_confirmation_concurrent_admission_revalidation_and_result_preservation_resolved": true
   },
   "review": {
     "reviewer": "Codex",

@@ -3005,3 +3005,75 @@ def test_repeated_action_does_not_borrow_other_actor_receipt(tmp_path, monkeypat
     asyncio.run(process_command(second_id, command_store=store))
     result = store.get_command(second_id)
     assert result['status'] != 'executed' or result['result']['domain_receipt']['command_id'] == second_id, result
+
+
+@pytest.mark.parametrize('different_payload', [False, True])
+@pytest.mark.parametrize('token_route', [False, True])
+def test_confirmation_concurrent_admission_preserves_receipt(tmp_path, monkeypatch, different_payload, token_route):
+    from threading import local
+
+    path = str(tmp_path / 'commands.jsonl')
+    store = CommandStore(path)
+    identity = SimpleNamespace(operator_id='review-actor', tenant_id='review-tenant', roles=['operator'])
+    client = confirmation_client(store, identity)
+    if token_route:
+        for token in ("synthetic-token", "other-token"):
+            seeded = client.post("/bff/confirm-tokens", json={"tokenId": token, "ttlSeconds": 300}, headers={"Idempotency-Key": "seed-" + token})
+            assert seeded.status_code == 201, seeded.text
+    submit = store.submit_command
+    barrier = Barrier(2)
+    first_response_done = Event()
+    lock = Lock()
+    thread_state = local()
+    arrivals = []
+
+    def concurrent_submit(*args, **kwargs):
+        with lock:
+            thread_state.index = len(arrivals)
+            arrivals.append(kwargs['command_id'])
+        barrier.wait(timeout=10)
+        if thread_state.index == 1:
+            assert first_response_done.wait(timeout=10)
+        return submit(*args, **kwargs)
+
+    monkeypatch.setattr(store, 'submit_command', concurrent_submit)
+    payloads = [
+        dict(confirm_token='synthetic-token', command_id='synthetic-command'),
+        dict(confirm_token='other-token' if different_payload else 'synthetic-token', command_id='synthetic-command'),
+    ]
+
+    def endpoint(payload):
+        return '/bff/command-confirmations/' + payload['confirm_token'] + '/confirm' if token_route else '/bff/command-confirmations'
+
+    def post(payload):
+        response = client.post(endpoint(payload), json=payload, headers={'Idempotency-Key': 'same-key'})
+        first_response_done.set()
+        return response
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(post, payloads))
+    records = [r for r in store._get_all_commands() if r.get('type') == 'RedeemConfirmToken']
+    assert len(records) == 1
+    assert records[0]['status'] == 'executed'
+    if different_payload:
+        assert sorted(r.status_code for r in responses) == [202, 409]
+    else:
+        assert [r.status_code for r in responses] == [202, 202]
+        restarted = confirmation_client(CommandStore(path), identity)
+        replay = restarted.post(endpoint(payloads[0]), json=payloads[0], headers={'Idempotency-Key': 'same-key'})
+        assert replay.status_code == 202
+        assert responses[0].json() == responses[1].json() == replay.json()
+
+
+@pytest.mark.parametrize("token", ["synthetic-unissued", "other-unissued"])
+def test_unissued_token_prefix_stays_unknown(tmp_path, token):
+    store = CommandStore(str(tmp_path / "commands.jsonl"))
+    identity = SimpleNamespace(operator_id="review-actor", tenant_id="review-tenant", roles=["operator"])
+    client = confirmation_client(store, identity)
+    response = client.post(
+        f"/bff/command-confirmations/{token}/confirm",
+        json={"command_id": "synthetic-command"},
+        headers={"Idempotency-Key": "key"},
+    )
+    assert response.status_code == 404, response.text
+

@@ -671,20 +671,16 @@ class CommandAdapterService:
                 tenant_id=clean_tenant_id,
             )
         if existing_record:
-            stored_hash = (
-                (existing_record.get("foundation") or {})
-                .get("idempotency_record", {})
-                .get("request_hash")
-            ) or (existing_record.get("audit") or {}).get("request_hash")
-            if stored_hash and stored_hash != request_hash:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key already used with a different payload",
-                    f"Key {idempotency_key!r} is bound to a different confirmation request",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
-                )
+            self._revalidate_admitted_command_record(
+                existing_record,
+                resolved_key=idempotency_key,
+                identity=identity,
+                command_type=CommandType.CONFIRM_TOKEN_REDEEM,
+                entity_type=ObjectType.CONFIRM_TOKEN,
+                target_id=token_id,
+                request_hash=request_hash,
+                server_generated_target=False,
+            )
             return existing_record
 
         foundation_ctx = {
@@ -722,17 +718,44 @@ class CommandAdapterService:
             "idempotency_key": idempotency_key,
             "request_hash": request_hash,
         }
-        admitted = store.submit_command(
-            command_id=f"cmd-confirm-{uuid.uuid4().hex[:16]}",
-            command_type=CommandType.CONFIRM_TOKEN_REDEEM,
-            target=TargetObject(type=ObjectType.CONFIRM_TOKEN, id=token_id),
-            submitted_at=confirmed_at,
-            params=params,
-            audit_context=audit_ctx,
-            foundation_context=foundation_ctx,
-            result=result,
-        )
-        if result is not None and admitted.get("command_id"):
+        generated_command_id = f"cmd-confirm-{uuid.uuid4().hex[:16]}"
+        if hasattr(store, "submit_terminal_command"):
+            admitted = store.submit_terminal_command(
+                command_id=generated_command_id,
+                command_type=CommandType.CONFIRM_TOKEN_REDEEM,
+                target=TargetObject(type=ObjectType.CONFIRM_TOKEN, id=token_id),
+                submitted_at=confirmed_at,
+                params=params,
+                audit_context=audit_ctx,
+                foundation_context=foundation_ctx,
+                result=result,
+            )
+        else:
+            admitted = store.submit_command(
+                command_id=generated_command_id,
+                command_type=CommandType.CONFIRM_TOKEN_REDEEM,
+                target=TargetObject(type=ObjectType.CONFIRM_TOKEN, id=token_id),
+                submitted_at=confirmed_at,
+                params=params,
+                audit_context=audit_ctx,
+                foundation_context=foundation_ctx,
+                result=result,
+            )
+        is_replayed = (admitted.get("command_id") != generated_command_id)
+        if is_replayed:
+            self._revalidate_admitted_command_record(
+                admitted,
+                resolved_key=idempotency_key or "",
+                identity=identity,
+                command_type=CommandType.CONFIRM_TOKEN_REDEEM,
+                entity_type=ObjectType.CONFIRM_TOKEN,
+                target_id=token_id,
+                request_hash=request_hash,
+                server_generated_target=False,
+            )
+            return admitted
+
+        if not hasattr(store, "submit_terminal_command") and result is not None and admitted.get("command_id"):
             store.update_status(admitted["command_id"], CommandStatus.EXECUTED, result=result)
         return admitted
 
@@ -1726,21 +1749,16 @@ class CommandAdapterService:
             )
 
         if existing is not None:
-            stored_hash = (
-                (existing.get("foundation") or {})
-                .get("idempotency_record", {})
-                .get("request_hash")
-            ) or (existing.get("audit") or {}).get("request_hash")
-            if stored_hash and stored_hash != req_hash:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key already used with a different payload",
-                    f"Key {resolved_key!r} is bound to a different confirmation request",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
-                    correlation_id=correlation_id,
-                )
+            self._revalidate_admitted_command_record(
+                existing,
+                resolved_key=resolved_key or "",
+                identity=identity,
+                command_type=CommandType.CONFIRM_TOKEN_REDEEM,
+                entity_type=ObjectType.CONFIRM_TOKEN,
+                target_id=token,
+                request_hash=req_hash,
+                server_generated_target=False,
+            )
             if existing.get("result") and isinstance(existing["result"], dict):
                 return dict(existing["result"])
             params = existing.get("params") or {}
@@ -1790,13 +1808,15 @@ class CommandAdapterService:
             request_hash=req_hash,
             result=result,
         )
+        is_replayed = False
         if admitted:
             admitted_params = admitted.get("params") or {}
             admitted_conf_id = admitted_params.get("confirmation_id")
             if admitted_conf_id and admitted_conf_id != confirmation_id:
+                is_replayed = True
                 result["data"]["confirmationId"] = admitted_conf_id
 
-        if self._publish_event is not None:
+        if not is_replayed and self._publish_event is not None:
             self._publish_event(
                 "command.confirm",
                 {
