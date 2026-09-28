@@ -42,6 +42,12 @@ except (ImportError, ValueError):
     )
     from ..ports.read_surface_ports import ReadSurfacePorts  # type: ignore[no-redef]
 
+try:
+    from services.research.write_owner import ResearchIdempotencyConflictError
+except (ImportError, ValueError):
+    class ResearchIdempotencyConflictError(ValueError):  # type: ignore[no-redef]
+        pass
+
 log = logging.getLogger(__name__)
 
 PageSlice = Callable[[List[Dict[str, Any]], Optional[str], int], Tuple[List[Dict[str, Any]], Optional[str]]]
@@ -881,7 +887,6 @@ class ResearchRouterService:
     build_knowledge_workbench: Optional[Callable[[], Any]] = None
     cross_entity_search_fn: Optional[Callable[..., Any]] = None
     persona_reader: Optional[Callable[[Optional[str]], Optional[Dict[str, Any]]]] = None
-    _experiment_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def _port(self) -> ResearchKnowledgeSourcePort:
         port = self.port_getter() if callable(getattr(self, "port_getter", None)) else getattr(self, "port_getter", None)
@@ -898,6 +903,15 @@ class ResearchRouterService:
             yield
         except (HTTPException, ResearchNotFoundError, ResearchValidationError, TypeError):
             raise
+        except ResearchIdempotencyConflictError as exc:
+            self._raise_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different payload",
+                str(exc),
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
                 503,
@@ -3466,22 +3480,9 @@ class ResearchRouterService:
         payload: Dict[str, Any],
         actor_id: str,
         idempotency_key: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         req_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
-        if idempotency_key:
-            existing = self._experiment_idempotency.get(idempotency_key)
-            if existing is not None:
-                if existing.get("hash") != req_hash:
-                    self._raise_error(
-                        409,
-                        ErrorCode.IDEMPOTENCY_CONFLICT,
-                        "Idempotency key was already used with a different payload",
-                        f"Key {idempotency_key!r} is bound to a different request hash",
-                        precondition_failed="idempotency_conflict",
-                        suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                    )
-                return existing["result"]
-
         name = str(payload.get("name") or payload.get("experiment_name") or "").strip()
         if not name:
             self._raise_error(
@@ -3500,8 +3501,12 @@ class ResearchRouterService:
                     strategy_selector=payload.get("strategy_selector") or {},
                     parameter_set=payload.get("parameter_set") or {},
                     run_config=payload.get("run_config") or {},
-                    launch_context=payload.get("launch_context") or {"actor_id": actor_id},
+                    launch_context=payload.get("launch_context") or {"actor_id": actor_id, "tenant_id": tenant_id},
                     queued_at=self.utc_now(),
+                    idempotency_key=idempotency_key,
+                    request_hash=req_hash,
+                    tenant_id=tenant_id,
+                    actor_id=actor_id,
                 )
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
@@ -3510,8 +3515,6 @@ class ResearchRouterService:
                 "Research experiment write owner unavailable",
                 str(exc),
             )
-        if idempotency_key:
-            self._experiment_idempotency[idempotency_key] = {"hash": req_hash, "result": result}
         return result
 
     def launch_experiment(self, payload: Dict[str, Any]) -> Dict[str, Any]:

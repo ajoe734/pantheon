@@ -814,7 +814,12 @@ class CommandAdapterService:
                 },
             }
             if not existing_record.get("result"):
-                store.update_status(admitted_command_id, CommandStatus.SUBMITTED, result=response_data)
+                store.update_status(
+                    admitted_command_id,
+                    CommandStatus.SUBMITTED,
+                    result=response_data,
+                    expected_status=CommandStatus.SUBMITTED,
+                )
             return JSONResponse(status_code=status_code, content=response_data)
 
         now = self._utc_now()
@@ -968,6 +973,7 @@ class CommandAdapterService:
                 admitted_command_id,
                 CommandStatus.EXECUTED if terminal_on_persist else CommandStatus.SUBMITTED,
                 result=result_content,
+                expected_status=CommandStatus.SUBMITTED if not terminal_on_persist else None,
             )
         return JSONResponse(status_code=status_code, content=result_content)
 
@@ -1197,7 +1203,12 @@ class CommandAdapterService:
                 idempotency_key=resolved_key,
                 submitted_at=admitted_submitted_at,
             )
-            store.update_status(admitted_command_id, CommandStatus.SUBMITTED, result=res_dict)
+            store.update_status(
+                admitted_command_id,
+                CommandStatus.SUBMITTED,
+                result=res_dict,
+                expected_status=CommandStatus.SUBMITTED,
+            )
             return res_dict
 
         staleness_warning = self.check_read_surface_state()
@@ -1296,7 +1307,12 @@ class CommandAdapterService:
             idempotency_key=resolved_key,
             submitted_at=admitted_submitted_at,
         )
-        store.update_status(admitted_command_id, CommandStatus.SUBMITTED, result=res_dict)
+        store.update_status(
+            admitted_command_id,
+            CommandStatus.SUBMITTED,
+            result=res_dict,
+            expected_status=CommandStatus.SUBMITTED,
+        )
         return res_dict
 
     def create_confirm_token(
@@ -1332,15 +1348,20 @@ class CommandAdapterService:
         content = json.loads(response.body.decode("utf-8"))
         final_token_id = token_id
         if server_generated and content.get("meta", {}).get("idempotency", {}).get("replayed"):
-            clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-            store = self.command_store
-            if store is not None:
-                stored = store.get_command_by_idempotency_key(
-                    clean_key,
-                    operator_id=identity.operator_id,
-                )
-                if stored:
-                    final_token_id = str(stored.get("target", {}).get("id") or token_id)
+            admitted_target_id = (content.get("data") or {}).get("target", {}).get("id")
+            if admitted_target_id:
+                final_token_id = str(admitted_target_id)
+            else:
+                clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+                store = self.command_store
+                if store is not None:
+                    stored = store.get_command_by_idempotency_key(
+                        clean_key,
+                        operator_id=getattr(identity, "operator_id", None),
+                        tenant_id=getattr(identity, "tenant_id", None),
+                    )
+                    if stored:
+                        final_token_id = str(stored.get("target", {}).get("id") or token_id)
         content["data"]["tokenId"] = final_token_id
         content["data"]["id"] = final_token_id
         content["data"]["status"] = "created"

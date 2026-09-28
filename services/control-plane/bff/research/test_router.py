@@ -53,6 +53,36 @@ class _FakeReadStore:
             "created_at": exp.get("queued_at"),
         }
 
+    def create_research_experiment(
+        self,
+        *,
+        ticket_id: str = "",
+        experiment_name: str,
+        strategy_selector: Optional[Dict[str, Any]] = None,
+        parameter_set: Optional[Dict[str, Any]] = None,
+        run_config: Optional[Dict[str, Any]] = None,
+        launch_context: Optional[Dict[str, Any]] = None,
+        queued_at: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        self._next_id += 1
+        experiment_id = f"exp-{self._next_id}"
+        record = {
+            "experiment_id": experiment_id,
+            "experiment_name": experiment_name,
+            "status": "queued",
+            "queued_at": queued_at or "2026-08-28T00:00:00Z",
+            "created_by": (launch_context or {}).get("actor_id"),
+        }
+        self._experiments[experiment_id] = record
+        return {
+            "id": experiment_id,
+            "experiment_id": experiment_id,
+            "name": experiment_name,
+            "status": "queued",
+            "created_at": record["queued_at"],
+        }
+
     def create_experiment_bff(self, *, name, actor_id, created_at=None, params=None):
         self._next_id += 1
         experiment_id = f"exp-{self._next_id}"

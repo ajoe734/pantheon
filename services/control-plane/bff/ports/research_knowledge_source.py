@@ -267,6 +267,12 @@ class ResearchKnowledgeSourcePort:
         run_config: Dict[str, Any],
         launch_context: Dict[str, Any],
         queued_at: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -2151,6 +2157,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         run_config: Dict[str, Any],
         launch_context: Dict[str, Any],
         queued_at: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         owner = self._get_research_write_owner()
         if owner is None:
@@ -2165,6 +2177,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             run_config=run_config,
             launch_context=launch_context,
             queued_at=queued_at,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            command_id=command_id,
+            **kwargs,
         )
 
     def cancel_research_experiment(

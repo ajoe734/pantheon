@@ -19,6 +19,11 @@ from typing import Any, Dict, List, Optional, Sequence
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 
 
+class ResearchIdempotencyConflictError(ValueError):
+    """Raised when an idempotency key is reused with a different request hash."""
+    pass
+
+
 def _utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -348,6 +353,28 @@ class ResearchWriteOwner:
         run_config = exp.get("run_config") or {}
         time_range = run_config.get("time_range") or {}
         launch_context = exp.get("launch_context") or {}
+        exp_id = exp.get("experiment_id")
+        cmd_id = exp.get("command_id") or f"cmd-{exp_id}"
+        clean_key = exp.get("idempotency_key")
+        receipt = exp.get("receipt")
+        if not receipt or not isinstance(receipt, dict):
+            receipt = {
+                "receipt_id": f"rcpt-{exp_id}",
+                "command_id": cmd_id,
+                "commandId": cmd_id,
+                "aggregate_type": exp.get("aggregate_type") or "research_experiment",
+                "aggregate_id": exp_id,
+                "aggregate_version": exp.get("aggregate_version", 1),
+                "status": status,
+                "event_id": exp.get("event_id") or f"evt-{exp_id}",
+                "correlation_id": exp.get("correlation_id") or clean_key or exp_id,
+                "owner": exp.get("owner") or "research",
+                "committed_at": exp.get("committed_at") or exp.get("queued_at") or _utc_now_rfc3339(),
+                "command": "CreateResearchExperiment",
+                "target": {"type": "research_experiment", "id": exp_id},
+                "submitted_at": exp.get("queued_at"),
+                "accepted_at": exp.get("queued_at"),
+            }
         return {
             "experiment_id": exp.get("experiment_id"),
             "ticket_id": exp.get("ticket_id"),
@@ -411,6 +438,19 @@ class ResearchWriteOwner:
                 "message": failure.get("message"),
             },
             "allowedActions": cls._rw04_allowed_actions(exp),
+            "command_id": cmd_id,
+            "commandId": cmd_id,
+            "aggregate_type": exp.get("aggregate_type") or "research_experiment",
+            "aggregate_id": exp_id,
+            "aggregate_version": exp.get("aggregate_version", 1),
+            "event_id": exp.get("event_id") or f"evt-{exp_id}",
+            "correlation_id": exp.get("correlation_id") or clean_key or exp_id,
+            "owner": exp.get("owner") or "research",
+            "committed_at": exp.get("committed_at") or exp.get("queued_at") or _utc_now_rfc3339(),
+            "receipt": receipt,
+            "idempotency_key": clean_key,
+            "tenant_id": exp.get("tenant_id"),
+            "actor_id": exp.get("actor_id"),
         }
 
     def create_research_experiment(
@@ -424,12 +464,43 @@ class ResearchWriteOwner:
         launch_context: Dict[str, Any],
         queued_at: Optional[str] = None,
         experiment_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         clean_ticket_id = str(ticket_id or "").strip()
         clean_exp_name = str(experiment_name or "").strip()
         if not clean_exp_name:
             raise ValueError("experiment_name is required")
         timestamp = queued_at or _utc_now_rfc3339()
+
+        clean_key = str(idempotency_key).strip() if idempotency_key else None
+        clean_actor = str(actor_id or (launch_context or {}).get("actor_id") or "").strip() or None
+        clean_tenant = str(tenant_id or (launch_context or {}).get("tenant_id") or "").strip() or None
+        clean_hash = str(request_hash or "").strip() if request_hash else None
+
+        if clean_key:
+            existing_experiments = self._experiments_store.list_all()
+            for exp in existing_experiments:
+                if not isinstance(exp, dict):
+                    continue
+                if exp.get("idempotency_key") != clean_key:
+                    continue
+                exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                if exp_tenant != clean_tenant:
+                    continue
+                exp_actor = str(exp.get("actor_id") or exp.get("created_by") or (exp.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                if exp_actor != clean_actor:
+                    continue
+                saved_hash = exp.get("request_hash")
+                if saved_hash and clean_hash and saved_hash != clean_hash:
+                    raise ResearchIdempotencyConflictError(
+                        f"Key {clean_key!r} is bound to a different request hash"
+                    )
+                return self._project_experiment_detail(exp)
 
         if experiment_id:
             exp_id = str(experiment_id).strip()
@@ -438,10 +509,29 @@ class ResearchWriteOwner:
             date_prefix = timestamp[:10].replace("-", "")
             idx = len(existing_experiments) + 1
             exp_id = f"exp-{date_prefix}-{idx:03d}"
-            existing_ids = {str(e.get("experiment_id") or "") for e in existing_experiments}
+            existing_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
             while exp_id in existing_ids:
                 idx += 1
                 exp_id = f"exp-{date_prefix}-{idx:03d}"
+
+        cmd_id = command_id or f"cmd-{exp_id}"
+        canonical_receipt = {
+            "receipt_id": f"rcpt-{exp_id}",
+            "command_id": cmd_id,
+            "commandId": cmd_id,
+            "aggregate_type": "research_experiment",
+            "aggregate_id": exp_id,
+            "aggregate_version": 1,
+            "status": "queued",
+            "event_id": f"evt-{exp_id}",
+            "correlation_id": clean_key or exp_id,
+            "owner": "research",
+            "committed_at": timestamp,
+            "command": "CreateResearchExperiment",
+            "target": {"type": "research_experiment", "id": exp_id},
+            "submitted_at": timestamp,
+            "accepted_at": timestamp,
+        }
 
         record: Dict[str, Any] = {
             "experiment_id": exp_id,
@@ -461,6 +551,20 @@ class ResearchWriteOwner:
             "artifact_ids": [],
             "failure": {"reason_code": None, "message": None},
             "allowedActions": {"canCancel": True, "canRetry": False, "canArchive": False, "canInvalidate": False},
+            "idempotency_key": clean_key,
+            "request_hash": clean_hash,
+            "tenant_id": clean_tenant,
+            "actor_id": clean_actor,
+            "created_by": clean_actor,
+            "command_id": cmd_id,
+            "aggregate_type": "research_experiment",
+            "aggregate_id": exp_id,
+            "aggregate_version": 1,
+            "event_id": canonical_receipt["event_id"],
+            "correlation_id": canonical_receipt["correlation_id"],
+            "owner": "research",
+            "committed_at": timestamp,
+            "receipt": canonical_receipt,
         }
 
         if clean_ticket_id:

@@ -132,6 +132,18 @@
     "defect_32_canonical_receipt_sd44_coverage": {
       "problem": "SD 4.4 receipt coverage remained incomplete: POST /bff/reviews response/persisted result lacked aggregate identity/version, event/correlation, owner, and committed_at; POST /bff/runtimes response/persisted receipt lacked status (runtime/router.py:1232-1241). Mutation caller inventory omitted live POST/PATCH /bff/deployments.",
       "remediation": "Populated and persisted complete canonical SD 4.4 receipts (command_id, aggregate_type, aggregate_id, aggregate_version, status, event_id, correlation_id, owner, committed_at) for POST /bff/reviews and POST /bff/runtimes; updated mutation caller inventory to include live POST/PATCH /bff/deployments."
+    },
+    "defect_33_admission_receipt_cas_and_non_regression": {
+      "problem": "command_adapters/service.py:966-971 and 1299 performed unconditional post-admission update_status(SUBMITTED, result=acceptance); if executor completed after admission lock release, mounted POST /bff/deployments and POST /bff/reviews reverted EXECUTED to SUBMITTED and overwrote canonical owner result.",
+      "remediation": "Implemented expected_status CAS in CommandStore.update_status, guarded against regressing processing or terminal states back to SUBMITTED, and passed expected_status=SUBMITTED on admission receipt persistence."
+    },
+    "defect_34_research_mounted_durability_and_idempotency_scope": {
+      "problem": "research/service.py:3478-3522 retained process-local key-only _experiment_idempotency, creating exp-001 then exp-002 after router restart, while different actor or tenant with same key/body incorrectly replayed exp-001; inventory listed nonexistent /bff/research/experiments.",
+      "remediation": "Retired process-local cache, bound authenticated tenant/actor/command/request in ResearchWriteOwner and DefaultResearchKnowledgeSourcePort, enforced restart-safe replay and conflict detection, produced SD4.4 canonical receipts, and corrected the inventory routes to mounted /bff/experiments."
+    },
+    "defect_35_confirm_token_tenant_scoped_replay": {
+      "problem": "command_adapters/service.py:1334-1345 create_confirm_token secondary replay lookup was unscoped by tenant, returning tenant A token ID on tenant B replay with identical actor/key/body.",
+      "remediation": "Reused admitted tenant-bound target from content, and scoped fallback store lookup by both operator_id and tenant_id across restart."
     }
   },
   "mutation_caller_inventory": {
@@ -168,8 +180,8 @@
     },
     "experiment_query_command": {
       "routes": [
-        "POST /bff/research/experiments",
-        "POST /bff/research/experiments/{id}/actions/{action_id}"
+        "POST /bff/experiments",
+        "POST /bff/experiments/{experiment_id}/actions/{action_id}"
       ],
       "selected_owner": "services/control-plane/bff/ports/research_knowledge_source.py (DefaultResearchKnowledgeSourcePort.create_research_experiment) and ResearchCommandAdapter",
       "durability_mechanism": "Eliminated read_store.create_experiment_bff fallback; routed directly to typed port with CommandStore logging."
@@ -254,18 +266,23 @@
     "files_modified": [
       "services/control-plane/bff/capital/router.py",
       "services/control-plane/bff/capital/service.py",
+      "services/control-plane/bff/command_adapters/base.py",
       "services/control-plane/bff/command_adapters/capital_adapter.py",
       "services/control-plane/bff/command_adapters/governance_adapter.py",
       "services/control-plane/bff/command_adapters/service.py",
       "services/control-plane/bff/command_queue.py",
       "services/control-plane/bff/governance/router.py",
       "services/control-plane/bff/governance/service.py",
+      "services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
       "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/ports/research_knowledge_source.py",
+      "services/control-plane/bff/research/routes/experiments.py",
       "services/control-plane/bff/research/service.py",
+      "services/control-plane/bff/research/test_router.py",
       "services/control-plane/bff/runtime/router.py",
       "services/control-plane/bff/runtime/service.py",
       "services/control-plane/bff/tests/test_command_adapters_router.py",
-      "services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+      "services/research/write_owner.py",
       "docs/deployment/evidence/DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001/evidence.json"
     ],
     "artifact_scope_boundary": "core/app_factory.py is preserved byte-identical to base dev commit because core/app_factory.py falls outside this task's declared artifact contract. Capital and governance routers encapsulate their durable store and authority resolution entirely within their domain-scoped boundaries.",
@@ -387,6 +404,24 @@
         "result": "38 passed, 2 warnings in 21.33s",
         "executed": 38,
         "collected": 38
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v /tmp/test_domain_review_88c0.py",
+        "result": "6 passed, 1 warning in 3.63s",
+        "executed": 6,
+        "collected": 6
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/research/test_router.py",
+        "result": "8 passed, 1 warning in 4.32s",
+        "executed": 8,
+        "collected": 8
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "result": "117 passed, 6 warnings in 66.88s",
+        "executed": 117,
+        "collected": 117
       }
     ]
   },
@@ -427,7 +462,10 @@
     "defect_29_capital_pool_receipt_command_identity_resolved": true,
     "defect_30_sem_command_response_tenant_isolation_resolved": true,
     "defect_31_sem_command_response_concurrent_admission_revalidation_resolved": true,
-    "defect_32_canonical_receipt_sd44_coverage_resolved": true
+    "defect_32_canonical_receipt_sd44_coverage_resolved": true,
+    "defect_33_admission_receipt_cas_and_non_regression_resolved": true,
+    "defect_34_research_mounted_durability_and_idempotency_scope_resolved": true,
+    "defect_35_confirm_token_tenant_scoped_replay_resolved": true
   },
   "review": {
     "reviewer": "Codex",

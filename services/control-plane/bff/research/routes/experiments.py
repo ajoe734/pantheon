@@ -106,9 +106,12 @@ def create_research_experiments_router(
         identity = extract_identity(authorization)
         require_operator_role(identity)
         resolved_key = (idempotency_key or x_idempotency_key or "").strip()
+        actor_id = getattr(identity, "operator_id", None) or getattr(identity, "user_id", None) or str(identity)
+        tenant_id = getattr(identity, "tenant_id", None)
         return service.create_experiment(
             payload,
-            actor_id=identity.operator_id,
+            actor_id=str(actor_id),
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
             idempotency_key=resolved_key or None,
         )
 

@@ -3,6 +3,7 @@ from threading import Barrier
 from types import SimpleNamespace
 from unittest.mock import patch
 import inspect
+import json
 import pytest
 
 from fastapi import FastAPI, HTTPException
@@ -10,12 +11,17 @@ from fastapi.testclient import TestClient
 from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.governance.service import GovernanceService
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import CommandStatus
 from services.control_plane.bff.capital.router import create_capital_router
 from services.control_plane.bff.capital.service import DefaultCapitalAuthority
 from services.control_plane.bff.runtime.router import create_runtime_router
 from services.control_plane.bff.runtime.service import _resolve_default_runtime_owner_port
 from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.command_adapters.router import create_command_adapters_router
 from services.control_plane.bff.deployment.router import create_deployment_router
+from services.control_plane.bff.research.router import create_research_experiments_router
+from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+from services.research.write_owner import ResearchWriteOwner
 
 PAYLOAD = {"plan_id": "review-plan", "decision": "approve", "memo": "isolated reviewer check"}
 IDENTITY = SimpleNamespace(operator_id="reviewer-test", roles=["admin", "approver", "operator"])
@@ -561,5 +567,118 @@ def test_mounted_canonical_receipt(tmp_path, monkeypatch, route):
     candidates = [data, data.get('receipt') or {}, result, result.get('data') or {}, (row.get('foundation') or {}).get('receipt') or {}]
     missing = [sorted(required - set(x)) for x in candidates]
     assert any(required <= set(x) for x in candidates), {'route': route, 'missing': missing}
+
+
+class IsolatedJsonIO:
+    # Only database I/O is substituted; the actual owner and router run unchanged.
+    def __init__(self, path):
+        self.path = path
+
+    def rows(self):
+        return json.loads(self.path.read_text()) if self.path.exists() else {}
+
+    def list_all(self):
+        return list(self.rows().values())
+
+    def get(self, key):
+        return self.rows().get(key)
+
+    def put(self, key, value):
+        rows = self.rows()
+        rows[key] = value
+        self.path.write_text(json.dumps(rows))
+
+
+def research_client(tmp_path, identity):
+    owner = ResearchWriteOwner(
+        tickets_store=IsolatedJsonIO(tmp_path / "tickets.json"),
+        experiments_store=IsolatedJsonIO(tmp_path / "experiments.json"),
+        notes_store=IsolatedJsonIO(tmp_path / "notes.json"),
+    )
+    port = DefaultResearchKnowledgeSourcePort(research_write_owner=owner)
+    app = FastAPI()
+    app.include_router(
+        create_research_experiments_router(
+            read_surface=port,
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda i: None,
+            require_operator_role=lambda i: None,
+            bff_error=lambda s, c, m, *a, **kw: HTTPException(s, detail=m),
+            utc_now=lambda: "2026-09-27T00:00:00Z",
+        )
+    )
+    return TestClient(app)
+
+
+@pytest.mark.parametrize("route", ["deployment", "review"])
+def test_receipt_write_must_not_requeue_completed_command(tmp_path, route):
+    store = CommandStore(str(tmp_path / "commands.jsonl"))
+    identity = SimpleNamespace(operator_id="actor", tenant_id="tenant", roles=["admin"])
+    client = deployment_client(store, identity) if route == "deployment" else review_client(store)
+    method = "submit_command_if_no_active_target" if route == "deployment" else "submit_command"
+    original = getattr(store, method)
+    owner_result = {"status": "executed", "owner_receipt": "isolated-owner-result"}
+
+    def admit_and_finish(**kw):
+        returned = original(**kw)
+        record = returned[0] if isinstance(returned, tuple) else returned
+        # An executor can finish after admission releases the store lock.
+        CommandStore(store.file_path).update_status(record["command_id"], CommandStatus.EXECUTED, result=owner_result)
+        return returned
+
+    with patch.object(store, method, side_effect=admit_and_finish):
+        response = client.post(
+            "/bff/deployments" if route == "deployment" else "/bff/reviews",
+            json={"name": "review-test"} if route == "deployment" else {"review_id": "review-test"},
+            headers={"Idempotency-Key": "independent-88c0"},
+        )
+    assert response.status_code < 300, response.text
+    row = CommandStore(store.file_path)._get_all_commands()[0]
+    assert row["status"] == "executed" and row["result"] == owner_result, {
+        "route": route,
+        "status": row["status"],
+        "result": row["result"],
+    }
+
+
+@pytest.mark.parametrize("change", ["restart", "actor", "tenant"])
+def test_research_mounted_idempotency_scope(tmp_path, change):
+    headers = {"Idempotency-Key": "independent-88c0"}
+    identity = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["admin"])
+    client = research_client(tmp_path, identity)
+    first = client.post("/bff/experiments", json={"name": "isolated-experiment"}, headers=headers)
+    if change == "restart":
+        client = research_client(tmp_path, identity)
+    elif change == "actor":
+        identity.operator_id = "actor-b"
+    else:
+        identity.tenant_id = "tenant-b"
+    second = client.post("/bff/experiments", json={"name": "isolated-experiment"}, headers=headers)
+    assert first.status_code == second.status_code == 201, (first.text, second.text)
+    ids = [r.json()["experiment_id"] for r in (first, second)]
+    rows = IsolatedJsonIO(tmp_path / "experiments.json").list_all()
+    assert (ids[0] == ids[1]) == (change == "restart"), {"change": change, "ids": ids, "owner_rows": len(rows)}
+
+
+def test_confirm_token_replay_keeps_tenant_target(tmp_path):
+    headers = {"Idempotency-Key": "independent-88c0"}
+    path = str(tmp_path / "commands.jsonl")
+    identity = SimpleNamespace(operator_id="actor", tenant_id="tenant-a", roles=["admin"])
+    app = FastAPI()
+    app.include_router(
+        create_command_adapters_router(
+            command_store=CommandStore(path),
+            extract_identity=lambda auth, **kw: identity,
+            require_read_role=lambda i: None,
+        )
+    )
+    client = TestClient(app)
+    first = client.post("/bff/confirm-tokens", json={}, headers=headers)
+    identity.tenant_id = "tenant-b"
+    second = client.post("/bff/confirm-tokens", json={}, headers=headers)
+    replay = client.post("/bff/confirm-tokens", json={}, headers=headers)
+    assert first.status_code == second.status_code == replay.status_code == 201, [r.text for r in (first, second, replay)]
+    ids = [r.json()["data"]["tokenId"] for r in (first, second, replay)]
+    assert ids[1] == ids[2] and ids[0] != ids[2], {"token_ids": ids, "replay_target": replay.json()["data"]["target"]}
 
 

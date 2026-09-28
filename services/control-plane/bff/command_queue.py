@@ -433,13 +433,36 @@ class CommandStore:
         result: Optional[Dict[str, Any]] = None,
         error: Optional[Dict[str, Any]] = None,
         audit: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[Any] = None,
     ):
         with self.serialized_transaction():
             commands = self._get_all_commands()
             updated = False
             for i, cmd in enumerate(commands):
                 if cmd.get("command_id") == command_id:
-                    commands[i]["status"] = status.value if hasattr(status, "value") else str(status)
+                    current_status = cmd.get("status")
+                    if expected_status is not None:
+                        expected_set = (
+                            {s.value if hasattr(s, "value") else str(s) for s in expected_status}
+                            if isinstance(expected_status, (list, tuple, set))
+                            else {expected_status.value if hasattr(expected_status, "value") else str(expected_status)}
+                        )
+                        if current_status not in expected_set:
+                            return False
+
+                    target_status_val = status.value if hasattr(status, "value") else str(status)
+                    terminal_or_processing = {
+                        CommandStatus.PROCESSING.value,
+                        CommandStatus.EXECUTED.value,
+                        CommandStatus.FAILED.value,
+                    }
+                    if hasattr(CommandStatus, "CANCELLED"):
+                        terminal_or_processing.add(CommandStatus.CANCELLED.value)
+
+                    if target_status_val == CommandStatus.SUBMITTED.value and current_status in terminal_or_processing:
+                        return False
+
+                    commands[i]["status"] = target_status_val
                     if result is not None:
                         commands[i]["result"] = result
                         foundation = commands[i].get("foundation")
