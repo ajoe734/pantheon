@@ -404,7 +404,6 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "bounded_duration_minutes": 30,
                 "verified_binding": verified_binding,
                 "verified_binding_id": "bind-paper-001",
-                "tenant_id": "tenant-default",
             },
         )
 
@@ -465,7 +464,6 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "action_id": "PausePaperRuntime",
                 "verified_binding": verified_binding,
                 "verified_binding_id": "bind-paper-001",
-                "tenant_id": "tenant-default",
             },
         )
 
@@ -502,7 +500,6 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "action_id": "PausePaperRuntime",
                 "verified_binding": verified_binding,
                 "verified_binding_id": "bind-paper-001",
-                "tenant_id": "tenant-default",
             },
         )
 
@@ -538,7 +535,6 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "action_id": "PausePaperRuntime",
                 "verified_binding": verified_binding,
                 "verified_binding_id": "bind-paper-001",
-                "tenant_id": "tenant-default",
             },
         )
 

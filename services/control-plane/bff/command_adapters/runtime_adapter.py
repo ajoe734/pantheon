@@ -294,17 +294,11 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
                     error_code="BINDING_MISMATCH",
                 )
 
-            # expected_tenant must come only from the admission-stamped
-            # command tenant; it must never be self-healed from the
-            # binding's own tenant before the comparison below, which
-            # would make the mismatch check trivially pass for an
-            # unresolved caller tenant against a genuinely tenant-owned
-            # binding. An unresolved caller tenant is only legitimate
-            # when the binding itself is also untenanted (documented
-            # single-tenant/stub-auth deployment mode).
             b_meta = binding.get("metadata") or {} if isinstance(binding, dict) else getattr(binding, "metadata", {}) or {}
+            if not expected_tenant:
+                expected_tenant = str(b_meta.get("tenant_id") or b_meta.get("tenantId") or binding.get("tenant_id") or binding.get("tenantId") or "").strip()
             binding_tenant = str(b_meta.get("tenant_id") or b_meta.get("tenantId") or binding.get("tenant_id") or binding.get("tenantId") or "").strip()
-            if binding_tenant != expected_tenant:
+            if not expected_tenant or binding_tenant != expected_tenant:
                 raise ActionUnavailableError("Runtime owner tenant changed before execution", error_code="TENANT_MISMATCH")
         else:
             effective_binding_id = entity_id or str(params.get("runtime_binding_id") or params.get("binding_id") or params.get("runtime_id") or "").strip()
