@@ -111,13 +111,33 @@ Emergency flags:
 
 ## Dev Lane
 
-The hourly publish cut creates immutable `publish/v*` snapshots but does not
-dispatch a dev deployment. A push event produced with `GITHUB_TOKEN` does not
-recursively start this workflow, and the publish workflow no longer works
-around that suppression. Dev delivery is a separate governed operation:
-`nonprod-deploy.yml` must admit the exact Pantheon/execute-plans pair before any
-switch. An inadmissible snapshot may remain available for investigation or
-promotion history, but must not create a doomed deploy dispatch.
+The hourly workflow has two independent jobs: creating immutable `publish/v*`
+snapshots and reconciling the dev FE/BFF pair. `scripts/auto_deploy_dev_pair.py`
+checks both protected `dev` tips every tick, including frontend-only updates,
+ticks with no new snapshot, and retries after failed deployments. Both exact
+commits must have a successful latest dev-push Branch CI Gate. An active backend
+or frontend deployment defers the check without cancelling it.
+
+An already accepted hosted manifest and matching live BFF version produce
+`up_to_date`. Otherwise the checker explicitly dispatches `nonprod-deploy.yml`
+with both SHAs, strict auth, and the currently accepted persistent frontend
+profile (`read-only` or `operator-live`). Temporary proof profiles are never
+propagated. Missing or unaccepted baseline evidence requires recovery through
+the existing deployment flow. The checker can run without `--apply` to inspect
+its decision without dispatching.
+
+The existing release workflow admits the exact current pair before any switch.
+Once admitted, new dev merges queue work for the next tick: the active release
+keeps its source SHAs, compatibility manifest and authenticated artifacts. Child
+workflows check protected-history ancestry rather than replacing the candidate
+with a later branch tip. Completed controllers cannot replay superseded pairs;
+the existing live-predecessor CAS and rollback remain mandatory.
+
+The hourly job reports `waiting_for_ci`, `deployment_in_progress`, `ready`,
+`dispatched`, or `up_to_date`, with the deployment run URL when applicable.
+Dispatch success is not hosted acceptance. Follow Nonprod Deploy and verify the
+served manifest, live version, candidate/post-switch probes and required product
+journeys. A failed release must restore the exact previous FE/BFF artifacts.
 
 Normal dev delivery enters through GitHub Actions, not through an operator
 locally SSHing to the VM and running Compose by hand. Use `Pantheon Nonprod

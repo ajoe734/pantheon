@@ -331,9 +331,14 @@ strategy.
    - Tags `release/v<YYYY>.<MM>.<DD>.<N>` (annotated).
    - Does **not** dispatch a deployment. A publish snapshot is an immutable
      promotion input, not proof that the exact Pantheon/execute-plans pair is
-     admitted for dev. Dev delivery is a separate governed operation and keeps
-     its own exact-pair gate before any switch.
-3. If `dev` has not advanced, no-op.
+     admitted for dev. The independent dev-pair job invokes the existing
+     exact-pair deployment workflow only after both dev tips pass CI.
+3. If `dev` has not advanced, the snapshot job no-ops. The dev-pair job still
+   checks both repositories and hosted identities, so frontend-only updates and
+   failed deployment retries do not depend on another backend publish cut.
+4. Dev releases are serialized, preserve the accepted persistent frontend
+   profile, and finish their admitted pair even if newer commits arrive. See
+   `docs/deployment/nonprod-ci-cd.md` for outcome and rollback semantics.
 
 ### 3.1 Version format `vYYYY.MM.DD.N`
 
