@@ -295,15 +295,60 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
                 )
 
             b_meta = binding.get("metadata") or {} if isinstance(binding, dict) else getattr(binding, "metadata", {}) or {}
-            if not expected_tenant:
-                expected_tenant = str(b_meta.get("tenant_id") or b_meta.get("tenantId") or binding.get("tenant_id") or binding.get("tenantId") or "").strip()
             binding_tenant = str(b_meta.get("tenant_id") or b_meta.get("tenantId") or binding.get("tenant_id") or binding.get("tenantId") or "").strip()
+            # expected_tenant is the admission-stamped caller tenant only. An
+            # absent or ambiguous admission tenant must never be replaced by
+            # the target binding's own tenant here -- doing so let any caller
+            # with no resolvable tenant identity "authenticate" as whatever
+            # tenant happens to own the target runtime.
             if not expected_tenant or binding_tenant != expected_tenant:
                 raise ActionUnavailableError("Runtime owner tenant changed before execution", error_code="TENANT_MISMATCH")
         else:
             effective_binding_id = entity_id or str(params.get("runtime_binding_id") or params.get("binding_id") or params.get("runtime_id") or "").strip()
             if not effective_binding_id:
                 raise ValueError("Pause/Resume runtime requires binding_id.")
+
+            # Generic pause/resume aliases previously skipped ownership
+            # verification entirely. Resolve the target binding and enforce
+            # the same admission-stamped tenant check as the canonical
+            # PausePaperRuntime/ResumePaperRuntime path before any dispatch.
+            generic_binding = None
+            generic_store = _get_read_store()
+            if generic_store and hasattr(generic_store, "get_runtime_binding"):
+                generic_binding = generic_store.get_runtime_binding(effective_binding_id)
+            if not generic_binding and generic_store and hasattr(generic_store, "get_runtime_binding_by_runtime_id"):
+                generic_binding = generic_store.get_runtime_binding_by_runtime_id(effective_binding_id)
+
+            if not generic_binding:
+                try:
+                    rm_client = _get_runtime_manager_client()
+                    generic_binding = rm_client.get(effective_binding_id)
+                except Exception:
+                    generic_binding = None
+
+            if not generic_binding:
+                raise ActionUnavailableError(
+                    f"Runtime binding {effective_binding_id!r} not found.",
+                    action_id=actual_action,
+                    entity_type="Runtime",
+                    error_code="RESOURCE_NOT_FOUND",
+                    downstream_status=404,
+                )
+
+            gb_meta = (
+                generic_binding.get("metadata") or {}
+                if isinstance(generic_binding, dict)
+                else getattr(generic_binding, "metadata", {}) or {}
+            )
+            generic_binding_tenant = str(
+                gb_meta.get("tenant_id")
+                or gb_meta.get("tenantId")
+                or generic_binding.get("tenant_id")
+                or generic_binding.get("tenantId")
+                or ""
+            ).strip()
+            if not expected_tenant or generic_binding_tenant != expected_tenant:
+                raise ActionUnavailableError("Runtime owner tenant changed before execution", error_code="TENANT_MISMATCH")
 
         # Duration handling honoring bounded_duration_minutes
         duration_seconds = params.get("duration_seconds")
@@ -447,7 +492,7 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         # Compare tenant
         readback_meta = readback_binding.get("metadata") or {} if isinstance(readback_binding, dict) else getattr(readback_binding, "metadata", {}) or {}
         readback_tenant = str(readback_meta.get("tenant_id") or readback_meta.get("tenantId") or readback_binding.get("tenant_id") or readback_binding.get("tenantId") or "").strip()
-        if is_canonical_paper and (not expected_tenant or readback_tenant != expected_tenant):
+        if not expected_tenant or readback_tenant != expected_tenant:
             raise ActionUnavailableError(
                 f"Authoritative readback tenant mismatch: expected '{expected_tenant}', got '{readback_tenant}'.",
                 action_id=actual_action,

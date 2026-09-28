@@ -363,7 +363,7 @@
         "services/control-plane/bff/command_adapters/evolution_adapter.py:322_outbound_header": "fixed: removed sub_payload (caller body) fallback; params (admission-stamped) and operator env-var default remain",
         "services/control-plane/bff/command_adapters/experiment_adapter.py:171,252,346,418_params_get_tenant_id": "safe: reads the execution-resolved params dict, which is now admission-stamped only (see service.py:2735 fix)",
         "services/control-plane/bff/command_adapters/runtime_adapter.py:211_expected_tenant": "fixed: removed params['metadata']['tenant_id'] (caller body) fallback; only params['tenant_id'] (admission-stamped) is trusted",
-        "services/control-plane/bff/command_adapters/runtime_adapter.py:297-306_binding_tenant_compare": "investigated, NOT fixed in this delivery: the self-heal-before-compare (`if not expected_tenant: expected_tenant = <binding's own tenant>`) makes the subsequent `binding_tenant != expected_tenant` check a no-op whenever the caller's admission-stamped tenant is empty, so an unresolved-tenant caller can PAUSE_PAPER_RUNTIME/RESUME_PAPER_RUNTIME a real tenant-owned binding. A same-shape fix was applied and verified (removes the self-heal, requires exact equality including the empty/empty legitimate-untenanted case), but it requires updating 4 tenant_id-less fixtures in services/control-plane/bff/tests/test_management_domain_actions.py, which is outside this task's declared artifact contract (only services/control-plane/bff/tests/test_read_surface_caller_migration.py and services/control-plane/bff/tests/test_command_adapters_router.py are in scope under tests/). Reverted to the pre-existing shape per the no-scope-creep-without-checkpoint rule; reporting for a scoped follow-up task with services/control-plane/bff/tests/test_management_domain_actions.py added to its artifact contract.",
+        "services/control-plane/bff/command_adapters/runtime_adapter.py:297-306_binding_tenant_compare": "superseded: this delivery's note that the same-shape fix was reverted for scope reasons is stale. Per operator directive the fix was reinstated and committed in defect_88_runtime_pause_resume_tenant_forgery_and_generic_alias_bypass (see above); the resulting out-of-contract test_management_domain_actions.py fixture conflict is recorded there and raised as an explicit blocker instead of being resolved by reverting the fix again.",
         "services/control-plane/bff/command_queue.py:398-419__tenant_id_from_command": "fixed: removed command['params'] tenant/tenant_id fallback used for duplicate-key admission lookups",
         "services/control-plane/bff/command_adapters/preconditions.py:1651-1660_binding_tenant_lookup": "safe: reads the canonical runtime binding record fields (server-resolved), not caller params/payload",
         "services/control-plane/bff/command_adapters/preconditions.py:1829_validator_stamp": "safe: sets cmd.params['tenant_id'] from _check_binding_tenant_ownership, which itself cross-checks the authenticated identity against the canonical binding tenant before returning; runs before, and is preserved by, the admission-time stamp",
@@ -373,6 +373,12 @@
         "services/control-plane/bff/capital/router.py_resolve_identity_tenant_passthrough": "investigated, no change: adding a blanket reject-on-unresolved-tenant guard regressed the documented untenanted stub-auth mode (confirmed against 8 pre-existing failing tests on the unmodified baseline); the real forgery vector is already closed by capital/service.py's _trusted_tenant_id mismatch check"
       },
       "reproducer": "/tmp/test_domain_writer_generic_scope_review.py (reviewer's exact-head reproducer); ported into services/control-plane/bff/governance/test_domain_durability_corrective_p1_generic_tenant_forgery.py"
+    },
+    "defect_88_runtime_pause_resume_tenant_forgery_and_generic_alias_bypass": {
+      "problem": "Independent exact-head REJECT of PR #5998 at 77f0d1ed3bde5bdc0765055a3256ed888e010183 (manifest 724dc57510ad528ab6d4d5f981b92510b054666e). P1 acceptance 3: mounted POST /bff/v1/commands with command=RuntimeAction bypasses tenant authorization through action aliases. For action_id PausePaperRuntime/ResumePaperRuntime, runtime_adapter.py:297-302 replaced an absent/ambiguous admission tenant with the victim binding tenant, then dispatched successfully. For action_id pause/resume, runtime_adapter.py:303-306 skipped the ownership check entirely, and :450 limited readback tenant validation to canonical-paper actions, so even a signed tenant-b operator could operate a tenant-a binding. Real signed-JWT mounted admission -> durable CommandStore -> process_command -> production executor/RuntimeCommandAdapter, with only owner readback and HTTP transport isolated, returned 202/executed and issued the unauthorized POST before and after CommandStore restart. Reproducer /tmp/test_domain_writer_77f0_runtime_review.py: 20 failed, 12 passed, exit 1, 7.22s (log /tmp/domain-review-77f0-runtime-sweep.log); focused regression baseline 227 passed, exit 0, 118.54s (log /tmp/domain-review-77f0-baseline.log). This is the same-shape gap reported but reverted in defect_87's params_tenant_read_inventory runtime_adapter.py:297-306_binding_tenant_compare entry, plus a distinct, previously-unreported gap in the generic pause/resume alias branch (runtime_adapter.py:303-306) which had no tenant ownership check at all, before or after dispatch.",
+      "remediation": "runtime_adapter.py _execute_pause: removed the `if not expected_tenant: expected_tenant = <binding's own tenant>` self-heal for the canonical PausePaperRuntime/ResumePaperRuntime path, so an absent or ambiguous admission-stamped tenant is compared as-is against the binding's tenant and always fails closed instead of trivially matching. Added the same binding lookup and admission-tenant comparison to the generic pause/resume alias branch (previously dispatched with zero ownership check), resolving the target binding via read_store.get_runtime_binding / get_runtime_binding_by_runtime_id, falling back to the RuntimeManager client, and rejecting with TENANT_MISMATCH before any downstream HTTP call when the admission tenant is empty or does not match. Made the post-dispatch authoritative readback tenant check (:450 pre-fix, gated to `is_canonical_paper`) unconditional so the generic alias path is also verified after execution, not only the canonical actions. All 32 cases of the reviewer's exact reproducer (/tmp/test_domain_writer_77f0_runtime_review.py) now pass: zero downstream dispatch for absent/ambiguous/foreign admission tenant across restart, for both canonical and generic action_id spellings, with the legitimate same-tenant case still executing. Ported the reproducer into a committed regression, test_signed_identity_runtime_pause_resume_requires_owner_tenant in services/control-plane/bff/tests/test_command_adapters_router.py (in the declared artifact contract), covering the same real signed-JWT mounted admission -> durable CommandStore -> process_command path across missing/ambiguous/foreign/same-tenant admission shapes, restart, and canonical/generic action aliases (32 cases).",
+      "out_of_contract_fixture_conflict": "Per operator directive (task next field, 2026-09-28), this fix is kept and committed rather than reverted, unlike the prior same-shape attempt noted in defect_87's params_tenant_read_inventory entry for runtime_adapter.py:297-306_binding_tenant_compare. Fixing the self-heal makes 5 pre-existing unit tests in services/control-plane/bff/tests/test_management_domain_actions.py::TestDomainExecutionAndReadback fail, because their fixtures call execute_command()/execute_command_with_status() directly (bypassing mounted admission tenant stamping) without a params['tenant_id'], relying on the removed self-heal to implicitly supply the binding's own tenant as the 'authenticated' tenant: test_runtime_pause_action (generic pause alias, no tenant check previously existed at all), test_pause_paper_runtime_distinct_binding_id_and_readback, test_pause_paper_runtime_rejects_binding_mismatch, test_pause_paper_runtime_rejects_downstream_degraded_mode, and test_pause_paper_runtime_rejects_downstream_unchanged_status. That test file is not in this task's declared artifact contract (only services/control-plane/bff/tests/test_read_surface_caller_migration.py and services/control-plane/bff/tests/test_command_adapters_router.py are in scope under tests/), so these 5 fixtures are left red pending an operator decision on artifact-contract extension rather than edited out-of-contract; recorded as an explicit blocker, not silently patched or silently left broken.",
+      "reproducer": "/tmp/test_domain_writer_77f0_runtime_review.py (reviewer's exact-head reproducer); ported into services/control-plane/bff/tests/test_command_adapters_router.py::test_signed_identity_runtime_pause_resume_requires_owner_tenant"
     }
   },
   "mutation_caller_inventory": {
@@ -1371,6 +1377,46 @@
         "result": "113 passed, 3 warnings (post defect_87 fix, no regressions)",
         "executed": 113,
         "collected": 113
+      },
+      {
+        "command": "timeout 90s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python -m pytest -p services.control_plane.bff.conftest -q -s /tmp/test_domain_writer_77f0_runtime_review.py --tb=short",
+        "result": "32 passed in 6.82s (post defect_88 fix; was 20 failed, 12 passed before)",
+        "executed": 32,
+        "collected": 32
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_command_adapters_router.py -k runtime_pause_resume",
+        "result": "32 passed, 60 deselected in 13.81s (new committed regression, defect_88)",
+        "executed": 32,
+        "collected": 92
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "296 passed, 8 warnings in 167.74s (post defect_88 fix, no regressions; was 227 passed pre-fix batch plus 33 new pause/resume cases minus deselected duplicates -- see raw count for exact scope)",
+        "executed": 296,
+        "collected": 296
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "227 passed, 3 warnings in 83.60s (post defect_88 fix, matches pre-fix baseline exactly, no regressions)",
+        "executed": 227,
+        "collected": 227
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python services/control-plane/bff/smoke_test.py",
+        "result": "26 passed in 1.129s (post defect_88 fix, matches pre-fix baseline)",
+        "executed": 26,
+        "collected": 26
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit 0"
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/governance/test_domain_durability_corrective_p1_generic_tenant_forgery.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/capital/ services/control-plane/bff/research/",
+        "result": "5 failed, 294 passed, 11 warnings, 2 subtests passed in 146.15s -- the 5 failures are the out-of-contract test_management_domain_actions.py fixtures documented in defect_88_runtime_pause_resume_tenant_forgery_and_generic_alias_bypass.out_of_contract_fixture_conflict, not a regression in any in-contract file",
+        "executed": 299,
+        "collected": 299
       }
     ]
   },
@@ -1464,7 +1510,8 @@
     "defect_82_cross_tenant_guarded_command_token_authorization_and_replay_durability_resolved": true,
     "defect_83_domain_writer_identity_tenant_attribute_read_resolved": true,
     "defect_84_domain_writer_tenant_guard_fail_open_on_none_resolved": true,
-    "defect_87_generic_admission_and_sibling_params_tenant_actor_fallbacks_resolved": true
+    "defect_87_generic_admission_and_sibling_params_tenant_actor_fallbacks_resolved": true,
+    "defect_88_runtime_pause_resume_tenant_forgery_and_generic_alias_bypass_resolved": true
   },
   "review": {
     "reviewer": "Codex",
@@ -1510,6 +1557,14 @@
       "rejected_head": "717b32c73c91b20a39fe7cf4560023053af1cedf",
       "finding": "See defect_87_generic_admission_and_sibling_params_tenant_actor_fallbacks.problem above (verbatim independent review verdict).",
       "fix": "See defect_87_generic_admission_and_sibling_params_tenant_actor_fallbacks.remediation above."
+    },
+    "seventh_rejection_and_fix": {
+      "pr": 5998,
+      "rejected_head": "77f0d1ed3bde5bdc0765055a3256ed888e010183",
+      "rejected_manifest": "724dc57510ad528ab6d4d5f981b92510b054666e",
+      "finding": "See defect_88_runtime_pause_resume_tenant_forgery_and_generic_alias_bypass.problem above (verbatim independent review verdict).",
+      "fix": "See defect_88_runtime_pause_resume_tenant_forgery_and_generic_alias_bypass.remediation above.",
+      "out_of_contract_fixture_conflict_blocked_not_reverted": "See defect_88_runtime_pause_resume_tenant_forgery_and_generic_alias_bypass.out_of_contract_fixture_conflict above."
     }
   }
 }

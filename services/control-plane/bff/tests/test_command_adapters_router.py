@@ -1098,3 +1098,161 @@ def test_signed_identity_same_tenant_confirm_token_idempotency_key_replays(
         "rows": [record["type"] for record in records],
     }
 
+
+@pytest.mark.parametrize("admission_shape", ["missing", "ambiguous", "foreign", "same_tenant"])
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("action", ["PausePaperRuntime", "ResumePaperRuntime", "pause", "resume"])
+def test_signed_identity_runtime_pause_resume_requires_owner_tenant(
+    tmp_path, monkeypatch, restart, action, admission_shape
+) -> None:
+    """Regression for the DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 independent
+    review REJECT at 77f0d1ed3bde5bdc0765055a3256ed888e010183: mounted
+    ``POST /bff/v1/commands`` with ``command=RuntimeAction`` bypassed tenant
+    authorization through action aliases.
+
+    ``RuntimeCommandAdapter._execute_pause`` (command_adapters/runtime_adapter.py)
+    previously replaced an absent/ambiguous admission-stamped tenant with
+    the *target* binding's own tenant before comparing them for
+    ``PausePaperRuntime``/``ResumePaperRuntime``, so any caller whose tenant
+    could not be resolved -- or whose claims named two tenants -- was always
+    "authorized" against whatever tenant happened to own the runtime. The
+    ``pause``/``resume`` generic aliases skipped the ownership check
+    entirely, so even a signed foreign-tenant operator could operate the
+    binding.
+
+    Drives a real signed-JWT mounted admission through the durable
+    ``CommandStore`` and ``process_command`` executor (only the HTTP
+    transport to the downstream runtime-manager and the owner readback are
+    stubbed), across a CommandStore restart, for every admission tenant
+    shape (missing, ambiguous, foreign, and the legitimate same-tenant
+    case) and for both the canonical actions and their generic aliases.
+    Every non-same-tenant shape must dispatch zero downstream pause/resume
+    calls; the same-tenant case must still execute.
+    """
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff.command_adapters import runtime_adapter
+    from services.control_plane.bff.command_adapters.service import (
+        CommandAdapterService,
+        process_command,
+    )
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "test-runtime-pause-resume-tenant-secret"
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://runtime-pause-resume-review.invalid")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "runtime-pause-resume-review")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "runtime-pause-resume-review")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+    now = int(time.time())
+    if admission_shape == "same_tenant":
+        scope: Dict[str, Any] = {"tenant_id": "tenant-a"}
+    elif admission_shape == "foreign":
+        scope = {"tenant_id": "tenant-b"}
+    elif admission_shape == "ambiguous":
+        scope = {"tenant_id": "tenant-b", "tid": "tenant-c"}
+    else:
+        scope = {}
+    token = encode_jwt_hs256(
+        {
+            "sub": "runtime-review-actor",
+            "roles": ["operator"],
+            "iss": "runtime-pause-resume-review",
+            "aud": "runtime-pause-resume-review",
+            "iat": now - 10,
+            "exp": now + 300,
+            **scope,
+        },
+        secret=secret,
+    )
+
+    command_path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(command_path)
+    service = CommandAdapterService(
+        command_store=store,
+        extract_identity=extract_identity_jwt,
+        check_read_surface_state=lambda: None,
+        process_command_task=lambda command_id: None,
+    )
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=service))
+    client = TestClient(app)
+
+    binding = {
+        "runtime_id": "rt-review",
+        "binding_id": "bind-review",
+        "deployment_mode": "paper",
+        "status": "active",
+        "metadata": {"tenant_id": "tenant-a"},
+    }
+    calls: List[Dict[str, Any]] = []
+
+    def fake_http(url, **kwargs):
+        calls.append({"url": url, "method": kwargs.get("method"), "payload": kwargs.get("payload")})
+        binding["status"] = "paused" if action in ("PausePaperRuntime", "pause") else "active"
+        return {
+            "status": "executed",
+            "status_after": binding["status"],
+            "binding_id": "bind-review",
+            "runtime_id": "rt-review",
+        }
+
+    monkeypatch.setattr(
+        runtime_adapter,
+        "_get_read_store",
+        lambda: SimpleNamespace(
+            get_runtime_binding_by_runtime_id=lambda rid: dict(binding) if rid == "rt-review" else None,
+            get_runtime_binding=lambda bid: dict(binding) if bid == "bind-review" else None,
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_adapter,
+        "_get_runtime_manager_client",
+        lambda: SimpleNamespace(get=lambda bid: dict(binding), list_all=lambda: [dict(binding)]),
+    )
+    monkeypatch.setattr(runtime_adapter, "http_request_json", fake_http)
+
+    target_id = "rt-review" if action in ("PausePaperRuntime", "ResumePaperRuntime") else "bind-review"
+    response = client.post(
+        "/bff/v1/commands",
+        headers={
+            "Authorization": "Bearer " + token,
+            "Idempotency-Key": f"runtime-pause-resume-{admission_shape}",
+        },
+        json={
+            "command": "RuntimeAction",
+            "target": {"type": "Runtime", "id": target_id},
+            "params": {"action_id": action},
+            "audit_context": {"reason": "runtime pause/resume tenant authorization regression"},
+        },
+    )
+
+    rows = store._get_all_commands()
+    if restart:
+        store = CommandStore(command_path)
+    for row in rows:
+        asyncio.run(process_command(row["command_id"], command_store=store))
+    final = store.get_command(rows[0]["command_id"]) if rows else {}
+    evidence = {
+        "admission_shape": admission_shape,
+        "restart": restart,
+        "action": action,
+        "response_status": response.status_code,
+        "calls": calls,
+        "status": final.get("status"),
+        "error": final.get("error"),
+    }
+
+    if admission_shape == "same_tenant":
+        assert response.status_code == 202, evidence
+        assert len(calls) == 1, evidence
+        assert final.get("status") == "executed", evidence
+    else:
+        assert calls == [], evidence
+        assert final.get("status") != "executed", evidence
+
