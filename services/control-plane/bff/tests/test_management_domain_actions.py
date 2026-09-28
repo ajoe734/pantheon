@@ -308,11 +308,20 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
         self.assertEqual(result["entity_id"], "plan-007")
         self.assertEqual(result["authoritative_readback"]["status"], "approved")
 
+    # The generic "pause" alias resolves ownership through the read store
+    # first, falling back to RuntimeManagerClient. _get_read_store is
+    # patched to None here (overriding setUp's default mock, which only
+    # knows about rt-paper-001) so resolution falls through to the
+    # RuntimeManagerClient mock below, whose tenant matches the caller's
+    # admission-stamped tenant_id.
+    @patch("services.control_plane.bff.command_adapters.runtime_adapter._get_read_store")
     @patch("services.control_plane.bff.command_adapters.runtime_adapter._get_runtime_manager_client")
     @patch("services.control_plane.bff.command_adapters.runtime_adapter.http_request_json")
-    def test_runtime_pause_action(self, mock_http, mock_get_rm):
+    def test_runtime_pause_action(self, mock_http, mock_get_rm, mock_get_read_store):
+        mock_get_read_store.return_value = None
         mock_get_rm.return_value.get.return_value = {
             "binding_id": "rt-bind-001", "runtime_id": "rt-distinct-owner", "status": "paused",
+            "metadata": {"tenant_id": "tenant-default"},
         }
         mock_http.return_value = {
             "status": "executed",
@@ -328,6 +337,7 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "entity_id": "rt-bind-001",
                 "action_id": "pause",
                 "duration_seconds": 1800,
+                "tenant_id": "tenant-default",
             },
         )
 
@@ -404,6 +414,7 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "bounded_duration_minutes": 30,
                 "verified_binding": verified_binding,
                 "verified_binding_id": "bind-paper-001",
+                "tenant_id": "tenant-default",
             },
         )
 
@@ -464,6 +475,7 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "action_id": "PausePaperRuntime",
                 "verified_binding": verified_binding,
                 "verified_binding_id": "bind-paper-001",
+                "tenant_id": "tenant-default",
             },
         )
 
@@ -500,6 +512,7 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "action_id": "PausePaperRuntime",
                 "verified_binding": verified_binding,
                 "verified_binding_id": "bind-paper-001",
+                "tenant_id": "tenant-default",
             },
         )
 
@@ -535,6 +548,7 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "action_id": "PausePaperRuntime",
                 "verified_binding": verified_binding,
                 "verified_binding_id": "bind-paper-001",
+                "tenant_id": "tenant-default",
             },
         )
 
