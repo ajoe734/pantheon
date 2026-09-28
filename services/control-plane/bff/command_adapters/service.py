@@ -2146,11 +2146,49 @@ def _resolve_execution_params_for_record(
 ) -> Dict[str, Any]:
     command_type = CommandType(record["type"])
     params = dict(record.get("params") or {})
+    target = record.get("target") or {}
+    target_id = str(target.get("id") or "").strip() if isinstance(target, dict) else str(getattr(target, "id", "") or "").strip()
+    target_type = str(target.get("type") or "").strip() if isinstance(target, dict) else str(getattr(target, "type", "") or "").strip()
+    audit = record.get("audit") or {}
+    foundation = record.get("foundation") or {}
+    idempotency = foundation.get("idempotency_record") or {}
+
+    # Authoritative identities from record
+    tenant_id = audit.get("tenant_id") or idempotency.get("tenant_id") or params.get("tenant_id")
+    actor_id = audit.get("operator_id") or audit.get("actor") or idempotency.get("operator_id") or params.get("actor_id") or params.get("operator_id")
+    idempotency_key = audit.get("idempotency_key") or idempotency.get("idempotency_key") or params.get("idempotency_key")
+    request_hash = audit.get("request_hash") or idempotency.get("request_hash") or params.get("request_hash")
+    command_id = record.get("command_id")
+
+    if target_id:
+        # Reject mismatched body identities before mutation
+        body_exp_id = str(params.get("experiment_id") or "").strip()
+        if body_exp_id and body_exp_id != target_id:
+            raise ValueError(f"Body experiment_id {body_exp_id!r} does not match validated target {target_id!r}")
+        body_ent_id = str(params.get("entity_id") or "").strip()
+        if body_ent_id and body_ent_id != target_id:
+            raise ValueError(f"Body entity_id {body_ent_id!r} does not match validated target {target_id!r}")
+
+        params["entity_id"] = target_id
+        if target_type.lower() in ("experiment", "researchexperiment", "research-experiment") or command_type == CommandType.EXPERIMENT_ACTION or "experiment" in command_type.value.lower():
+            params["experiment_id"] = target_id
+
+    if tenant_id:
+        params["tenant_id"] = tenant_id
+    if actor_id:
+        params["actor_id"] = actor_id
+        params["operator_id"] = actor_id
+    if idempotency_key:
+        params["idempotency_key"] = idempotency_key
+    if request_hash:
+        params["request_hash"] = request_hash
+    if command_id:
+        params["command_id"] = command_id
+
     if command_type not in _DRAWER_RUNTIME_COMMANDS:
         if command_type in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
             params.update(entity_type="Runtime", action_id=command_type.value, actionId=command_type.value)
-            target = record.get("target") or {}
-            rt_id = str(target.get("id") or "").strip()
+            rt_id = target_id
             params.pop("verified_binding", None)
             params.pop("verified_binding_id", None)
             params.pop("verified_runtime_binding_id", None)
@@ -2161,9 +2199,7 @@ def _resolve_execution_params_for_record(
                 params.pop("entityId", None)
         return params
 
-    target = record.get("target") or {}
-    audit = record.get("audit") or {}
-    runtime_id = str(target.get("id") or "").strip()
+    runtime_id = target_id
     if not runtime_id:
         raise ValueError(f"{command_type.value} is missing target.id.")
 
@@ -2273,4 +2309,364 @@ async def process_command(
 
 
 _process_command_stub = process_command
+
+
+def _gov_bff_action_command(
+    entity_type: Any,
+    entity_id: str,
+    action_id: str,
+    resolved_key: str,
+    identity: Any,
+    payload: Dict[str, Any],
+    command_type: Any,
+    *,
+    command_store: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Submit a governance/risk/research resource action through the command store."""
+    payload = dict(payload or {})
+    _reject_body_idempotency_key(payload)
+
+    if isinstance(entity_type, str):
+        try:
+            entity_type_obj = ObjectType(entity_type)
+        except ValueError:
+            entity_type_obj = entity_type
+    else:
+        entity_type_obj = entity_type
+    ent_type_str = entity_type_obj.value if hasattr(entity_type_obj, "value") else str(entity_type_obj)
+
+    if isinstance(command_type, str):
+        try:
+            command_type_obj = CommandType(command_type)
+        except ValueError:
+            command_type_obj = command_type
+    else:
+        command_type_obj = command_type
+    cmd_type_str = command_type_obj.value if hasattr(command_type_obj, "value") else str(command_type_obj)
+
+    request_hash = _stable_json_hash(
+        {"entity_type": ent_type_str, "entity_id": entity_id, "action_id": action_id, "payload": payload}
+    )
+
+    dry_run = False
+    try:
+        from ..assistant.management_service import _request_dry_run_requested
+        dry_run = _request_dry_run_requested()
+    except Exception:
+        pass
+
+    if dry_run:
+        submitted_at = utc_now()
+        command_id = f"dryrun-cmd-{uuid.uuid4().hex[:12]}"
+        owner_name = "ResearchWriteOwner" if ent_type_str.lower() in ("experiment", "researchexperiment") else ent_type_str
+        canonical_receipt = {
+            "receipt_id": f"rcpt-{command_id}",
+            "command_id": command_id,
+            "commandId": command_id,
+            "aggregate_type": ent_type_str,
+            "aggregate_id": entity_id,
+            "aggregate_version": 1,
+            "status": "accepted",
+            "event_id": f"evt-{command_id}",
+            "correlation_id": resolved_key or command_id,
+            "owner": owner_name,
+            "committed_at": submitted_at,
+            "command": cmd_type_str,
+            "target": {"type": ent_type_str, "id": entity_id},
+            "submitted_at": submitted_at,
+            "accepted_at": submitted_at,
+        }
+        return {
+            "status": "accepted",
+            "data": {
+                "command_id": command_id,
+                "commandId": command_id,
+                "aggregate_type": ent_type_str,
+                "aggregate_id": entity_id,
+                "aggregate_version": 1,
+                "status": "accepted",
+                "event_id": canonical_receipt["event_id"],
+                "correlation_id": canonical_receipt["correlation_id"],
+                "owner": owner_name,
+                "committed_at": submitted_at,
+                "command": cmd_type_str,
+                "target": {"type": ent_type_str, "id": entity_id},
+                "receipt": canonical_receipt,
+            },
+            "meta": {
+                "dryRun": True,
+                "durable": False,
+                "liveCapitalSideEffects": False,
+                "idempotency": {
+                    "key": resolved_key,
+                    "idempotencyKey": resolved_key,
+                    "replayed": False,
+                },
+            },
+        }
+
+    store = command_store
+    if store is None:
+        bff_main = sys.modules.get("services.control_plane.bff.main")
+        if bff_main is not None:
+            store = getattr(bff_main, "command_store", None)
+
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": {
+                    "code": ErrorCode.DEPENDENCY_UNAVAILABLE.value if hasattr(ErrorCode.DEPENDENCY_UNAVAILABLE, "value") else "DEPENDENCY_UNAVAILABLE",
+                    "message": "Command store is unavailable",
+                    "details": {
+                        "message": "CommandStore is not configured",
+                        "precondition_failed": "command_store_unconfigured",
+                    },
+                }
+            },
+        )
+
+    op_id = str(getattr(identity, "operator_id", None) or getattr(identity, "actor", None) or "").strip() or "unknown"
+    ten_id = str(getattr(identity, "tenant_id", None) or "").strip() or None
+    owner_name = "ResearchWriteOwner" if ent_type_str.lower() in ("experiment", "researchexperiment") else ent_type_str
+
+    durable = None
+    if resolved_key:
+        durable = store.get_command_by_idempotency_key(
+            resolved_key,
+            operator_id=op_id,
+            tenant_id=ten_id,
+        )
+
+    if durable is not None:
+        durable_idempotency = (durable.get("foundation") or {}).get("idempotency_record") or {}
+        durable_audit = durable.get("audit") or {}
+        stored_hash = (
+            durable_idempotency.get("request_hash")
+            or durable_audit.get("request_hash")
+            or (durable.get("params") or {}).get("request_hash")
+        )
+        if stored_hash and stored_hash != request_hash:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": {
+                        "code": ErrorCode.IDEMPOTENCY_CONFLICT.value if hasattr(ErrorCode.IDEMPOTENCY_CONFLICT, "value") else "IDEMPOTENCY_CONFLICT",
+                        "message": "Idempotency key was already used with a different payload",
+                        "details": {
+                            "message": f"Key {resolved_key!r} is bound to command {durable.get('command_id')}",
+                            "precondition_failed": "idempotency_conflict",
+                            "suggestion": "Use a new Idempotency-Key or resubmit the original payload unchanged",
+                        },
+                    }
+                },
+            )
+        admitted_command_id = str(durable["command_id"])
+        admitted_submitted_at = str(durable.get("submitted_at") or utc_now())
+        existing_result = durable.get("result")
+        if isinstance(existing_result, dict) and isinstance(existing_result.get("receipt"), dict):
+            canonical_receipt = dict(existing_result["receipt"])
+        else:
+            canonical_receipt = {
+                "receipt_id": f"rcpt-{admitted_command_id}",
+                "command_id": admitted_command_id,
+                "commandId": admitted_command_id,
+                "aggregate_type": ent_type_str,
+                "aggregate_id": entity_id,
+                "aggregate_version": 1,
+                "status": "accepted",
+                "event_id": f"evt-{admitted_command_id}",
+                "correlation_id": resolved_key or admitted_command_id,
+                "owner": owner_name,
+                "committed_at": admitted_submitted_at,
+                "command": cmd_type_str,
+                "target": {"type": ent_type_str, "id": entity_id},
+                "submitted_at": admitted_submitted_at,
+                "accepted_at": admitted_submitted_at,
+            }
+
+        tracking_url = f"/api/v1/operator/commands/{admitted_command_id}"
+        replay_data = {
+            "command_id": admitted_command_id,
+            "commandId": admitted_command_id,
+            "aggregate_type": ent_type_str,
+            "aggregate_id": entity_id,
+            "aggregate_version": 1,
+            "status": "accepted",
+            "event_id": canonical_receipt["event_id"],
+            "correlation_id": canonical_receipt["correlation_id"],
+            "owner": owner_name,
+            "committed_at": admitted_submitted_at,
+            "command": cmd_type_str,
+            "target": {"type": ent_type_str, "id": entity_id},
+            "tracking_url": tracking_url,
+            "trackingUrl": tracking_url,
+            "receipt": canonical_receipt,
+            "action_receipt": canonical_receipt,
+            "command_receipt": canonical_receipt,
+        }
+        if isinstance(existing_result, dict) and isinstance(existing_result.get("data"), dict):
+            replay_data.update(existing_result["data"])
+            replay_data["receipt"] = canonical_receipt
+
+        return {
+            "status": "accepted",
+            "data": replay_data,
+            "meta": {
+                "durable": True,
+                "liveCapitalSideEffects": False,
+                "idempotency": {
+                    "key": resolved_key,
+                    "idempotencyKey": resolved_key,
+                    "replayed": True,
+                },
+                "snapshot_at": admitted_submitted_at,
+            },
+        }
+
+    command_id = str(uuid.uuid4())
+    submitted_at = utc_now()
+    target_obj = TargetObject(type=entity_type_obj, id=entity_id) if hasattr(TargetObject, "type") else {"type": ent_type_str, "id": entity_id}
+
+    canonical_receipt = {
+        "receipt_id": f"rcpt-{command_id}",
+        "command_id": command_id,
+        "commandId": command_id,
+        "aggregate_type": ent_type_str,
+        "aggregate_id": entity_id,
+        "aggregate_version": 1,
+        "status": "accepted",
+        "event_id": f"evt-{command_id}",
+        "correlation_id": resolved_key or command_id,
+        "owner": owner_name,
+        "committed_at": submitted_at,
+        "command": cmd_type_str,
+        "target": {"type": ent_type_str, "id": entity_id},
+        "submitted_at": submitted_at,
+        "accepted_at": submitted_at,
+    }
+
+    tracking_url = f"/api/v1/operator/commands/{command_id}"
+    data_payload = {
+        "command_id": command_id,
+        "commandId": command_id,
+        "aggregate_type": ent_type_str,
+        "aggregate_id": entity_id,
+        "aggregate_version": 1,
+        "status": "accepted",
+        "event_id": canonical_receipt["event_id"],
+        "correlation_id": canonical_receipt["correlation_id"],
+        "owner": owner_name,
+        "committed_at": submitted_at,
+        "command": cmd_type_str,
+        "target": {"type": ent_type_str, "id": entity_id},
+        "tracking_url": tracking_url,
+        "trackingUrl": tracking_url,
+        "receipt": canonical_receipt,
+        "action_receipt": canonical_receipt,
+        "command_receipt": canonical_receipt,
+    }
+
+    durable_result = {
+        **canonical_receipt,
+        "status": "accepted",
+        "data": data_payload,
+        "receipt": canonical_receipt,
+    }
+
+    foundation_ctx = {
+        "idempotency_record": {
+            "idempotency_key": resolved_key,
+            "request_hash": request_hash,
+            "status": "succeeded",
+            "tenant_id": ten_id,
+            "operator_id": op_id,
+            "operation_type": f"bff.{cmd_type_str}",
+            "target_ref": f"{ent_type_str}:{entity_id}",
+            "trace_id": command_id,
+        }
+    }
+    audit_record = {
+        "operator_id": op_id,
+        "actor": op_id,
+        "tenant_id": ten_id,
+        "roles_at_submission": getattr(identity, "roles", []),
+        "action_id": action_id,
+        "preconditions_checked": ["authentication", "authorization", "idempotency"],
+        "timestamp": submitted_at,
+        "idempotency_key": resolved_key,
+        "request_hash": request_hash,
+        "command_id": command_id,
+        "foundation": foundation_ctx,
+    }
+
+    admitted_params = dict(payload)
+    admitted_params.update({
+        "action_id": action_id,
+        "entity_type": ent_type_str,
+        "target_id": entity_id,
+        "tenant_id": ten_id,
+        "actor_id": op_id,
+        "operator_id": op_id,
+        "idempotency_key": resolved_key,
+        "request_hash": request_hash,
+        "command_id": command_id,
+    })
+
+    record = store.submit_command(
+        command_id=command_id,
+        command_type=command_type_obj,
+        target=target_obj,
+        submitted_at=submitted_at,
+        params=admitted_params,
+        audit_context=audit_record,
+        foundation_context=foundation_ctx,
+        result=durable_result,
+    )
+
+    admitted_command_id = str((record or {}).get("command_id") or command_id)
+    is_replayed = admitted_command_id != command_id
+    if is_replayed:
+        durable_idempotency = ((record or {}).get("foundation") or {}).get("idempotency_record") or {}
+        durable_audit = (record or {}).get("audit") or {}
+        stored_hash = (
+            durable_idempotency.get("request_hash")
+            or durable_audit.get("request_hash")
+            or ((record or {}).get("params") or {}).get("request_hash")
+        )
+        if stored_hash and stored_hash != request_hash:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": {
+                        "code": ErrorCode.IDEMPOTENCY_CONFLICT.value if hasattr(ErrorCode.IDEMPOTENCY_CONFLICT, "value") else "IDEMPOTENCY_CONFLICT",
+                        "message": "Idempotency key was already used with a different payload",
+                        "details": {
+                            "message": f"Key {resolved_key!r} is bound to command {admitted_command_id}",
+                            "precondition_failed": "idempotency_conflict",
+                            "suggestion": "Use a new Idempotency-Key or resubmit the original payload unchanged",
+                        },
+                    }
+                },
+            )
+        data_payload["command_id"] = admitted_command_id
+        data_payload["commandId"] = admitted_command_id
+        canonical_receipt["command_id"] = admitted_command_id
+        canonical_receipt["commandId"] = admitted_command_id
+
+    return {
+        "status": "accepted",
+        "data": data_payload,
+        "meta": {
+            "durable": True,
+            "liveCapitalSideEffects": False,
+            "idempotency": {
+                "key": resolved_key,
+                "idempotencyKey": resolved_key,
+                "replayed": is_replayed,
+            },
+            "snapshot_at": submitted_at,
+        },
+    }
+
 

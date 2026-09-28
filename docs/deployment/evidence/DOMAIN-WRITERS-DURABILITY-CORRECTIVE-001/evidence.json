@@ -272,6 +272,14 @@
     "defect_67_research_jobs_action_receipts_in_memory_cas": {
       "problem": "services/control-plane/bff/tests/test_research_jobs_action_receipts.py defined _InMemoryOwnerStore without compare_and_set or store-level lock. Following defect 66's fail-closed CAS enforcement in write_owner.py, create_research_experiment raised RuntimeError 'store does not support conditional finalization' on 5 action receipt tests, and the test file was omitted from the original task artifact contract.",
       "remediation": "Human/Ops revised task artifact contract to include test_research_jobs_action_receipts.py. Implemented genuine shared-lock atomic compare_and_set, delete, and delete_if_matches synchronized on store lock in _InMemoryOwnerStore while preserving production fail-closed CAS. Verified all 19 receipt tests passed, full 200-test declared suites passed, and 26-test smoke passed."
+    },
+    "defect_68_mounted_action_trusted_identity_and_canonical_receipt": {
+      "problem": "Raw body params admitted instead of binding validated URL target/action and authenticated execution identity (tenant_id, actor_id, idempotency_key, request_hash, command_id). Foreign body experiment_id canceled cross-tenant experiment; normal body reason='review' failed because target.id was not projected into experiment_id; durable row had result=null lacking canonical SD4.4 receipt.",
+      "remediation": "Projected target.id into experiment_id, rejected mismatched body experiment_id/entity_id in _resolve_execution_params_for_record, bound authenticated execution identities, forwarded identity params in ExperimentCommandAdapter, and atomically persisted canonical SD4.4 receipt into CommandStore.submit_command."
+    },
+    "defect_69_test_bff_test_architecture_decouple_main_import": {
+      "problem": "services/control-plane/bff/governance/test_domain_durability_corrective_p1.py imported services.control_plane.bff.main, failing the architectural gate test_non_whitelisted_main_importers_is_live_scanned_and_bounded.",
+      "remediation": "Decoupled test_domain_durability_corrective_p1.py from main.py by defining _gov_bff_action_command in command_adapters.service and delegating from main.py; replaced main import in test helper with SimpleNamespace holder."
     }
   },
   "mutation_caller_inventory": {
@@ -890,9 +898,21 @@
       },
       {
         "command": "RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
-        "result": "200 passed, 9 warnings in 120.80s",
+        "result": "200 passed, 7 warnings in 113.03s",
         "executed": 200,
         "collected": 200
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 PYTHONPATH=. timeout 60 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q -s /tmp/domain_review_independent.py",
+        "result": "3 passed, 1 warning in 4.48s",
+        "executed": 3,
+        "collected": 3
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -k \"test_non_whitelisted_main_importers_is_live_scanned_and_bounded\"",
+        "result": "1 passed, 38 deselected, 2 warnings in 22.76s",
+        "executed": 1,
+        "collected": 1
       }
     ]
   },
@@ -968,7 +988,9 @@
     "defect_64_research_wiring_mutation_identity_forwarding_and_fail_closed_resolved": true,
     "defect_65_research_experiment_create_replay_keeps_original_receipt_after_cancel_resolved": true,
     "defect_66_mounted_action_command_durability_and_actor_isolation_resolved": true,
-    "defect_67_research_jobs_action_receipts_in_memory_cas_resolved": true
+    "defect_67_research_jobs_action_receipts_in_memory_cas_resolved": true,
+    "defect_68_mounted_action_trusted_identity_and_canonical_receipt_resolved": true,
+    "defect_69_test_bff_test_architecture_decouple_main_import_resolved": true
   },
   "review": {
     "reviewer": "Codex",

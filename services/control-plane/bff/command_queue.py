@@ -120,6 +120,7 @@ class CommandStore:
         params: Dict[str, Any],
         audit_context: Dict[str, Any],
         foundation_context: Optional[Dict[str, Any]] = None,
+        result: Optional[Dict[str, Any]] = None,
     ):
         with self.serialized_transaction():
             idem_key = (
@@ -148,7 +149,7 @@ class CommandStore:
                 "params": params,
                 "audit": audit_context,
                 "foundation": foundation_context,
-                "result": None,
+                "result": result,
                 "error": None,
             }
             self._save_command(record)

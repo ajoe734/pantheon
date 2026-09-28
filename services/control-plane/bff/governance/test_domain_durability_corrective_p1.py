@@ -2252,13 +2252,11 @@ def test_mounted_legacy_cancel_must_fail_closed_before_mutation():
 
 
 def _make_mounted_experiment_action_client(tmp_path, monkeypatch, identity=None, owner=None, store=None):
-    from services.control_plane.bff import main
+    from services.control_plane.bff.command_adapters.service import _gov_bff_action_command
     from services.control_plane.bff.models import CommandType, ObjectType
     if store is None:
         store = CommandStore(str(tmp_path / "commands.jsonl"))
-    monkeypatch.setattr(main, "command_store", store)
-    monkeypatch.setattr(main, "_request_dry_run_requested", lambda: False)
-    monkeypatch.setattr(main, "_check_read_surface_state", lambda: None)
+    main_holder = SimpleNamespace(command_store=store)
     if identity is None:
         identity = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["admin", "operator"], claims={}, token_kind="stub")
     if owner is None:
@@ -2278,11 +2276,13 @@ def _make_mounted_experiment_action_client(tmp_path, monkeypatch, identity=None,
         require_operator_role=require_op,
         bff_error=lambda s, c, m, *a, **kw: HTTPException(s, detail=m),
         utc_now=lambda: "2026-09-28T00:00:00Z",
-        submit_experiment_action=lambda entity_type, entity_id, action_id, key, ident, payload: main._gov_bff_action_command(
-            ObjectType.EXPERIMENT, entity_id, action_id, key, ident, payload, CommandType.EXPERIMENT_ACTION
+        submit_experiment_action=lambda entity_type, entity_id, action_id, key, ident, payload: _gov_bff_action_command(
+            ObjectType.EXPERIMENT, entity_id, action_id, key, ident, payload, CommandType.EXPERIMENT_ACTION,
+            command_store=main_holder.command_store,
         ),
     ))
-    return TestClient(app, raise_server_exceptions=False), main, identity, owner, store
+    return TestClient(app, raise_server_exceptions=False), main_holder, identity, owner, store
+
 
 
 def test_mounted_experiment_action_actor_scope_and_restart(tmp_path, monkeypatch):
