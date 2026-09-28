@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import re
 import subprocess
 
@@ -100,3 +101,32 @@ def test_dev_baseline_does_not_regrant_metadata_mutation_role() -> None:
     baseline = (ROOT / "scripts/gcp_nonprod_baseline.sh").read_text(encoding="utf-8")
     assert 'if [[ "${ENV_NAME}" != "dev" ]]' in baseline
     assert "Dev deployment uses its pinned direct-SSH transport" in baseline
+
+
+def test_lifecycle_probe_uses_workspace_transport_from_payload_directory(tmp_path):
+    workflow = yaml.safe_load(DEV_WORKFLOWS[0].read_text())
+    step = next(item for item in workflow["jobs"]["deploy-dev"]["steps"]
+                if item.get("id") == "loop-prod-tel-002-probe")
+    workspace = tmp_path / "workspace with spaces"
+    working_directory = workspace / step["working-directory"]
+    working_directory.mkdir(parents=True)
+    helper = workspace / ".agora-gate-controller/scripts/dev_vm_ssh.sh"
+    helper.parent.mkdir(parents=True)
+    helper.write_text('#!/bin/bash\nset -euo pipefail\nprintf "%s\\n" "$1" >> "$CALLS"\n'
+                      'case "$1" in exec) ;; copy-from) printf "{}" > "$3" ;; *) exit 2 ;; esac\n')
+    helper.chmod(0o755)
+    calls = tmp_path / "calls"
+    # Execute the actual step from its declared cwd; only transport/readback
+    # are stubs. Keep all generated local evidence inside the test directory.
+    body = ('python3() { printf "readback\\n" >> "$CALLS"; }\n' + step["run"])
+    body = body.replace('local_evidence="/tmp/', 'local_evidence="${TEST_OUTPUT_DIR}/')
+    body = body.replace('readback_evidence="/tmp/', 'readback_evidence="${TEST_OUTPUT_DIR}/')
+    environment = {**os.environ, "GITHUB_WORKSPACE": str(workspace), "GITHUB_RUN_ID": "123",
+                   "GITHUB_RUN_ATTEMPT": "1", "GITHUB_OUTPUT": str(tmp_path / "output"),
+                   "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"), "CALLS": str(calls),
+                   "TEST_OUTPUT_DIR": str(tmp_path), "DEV_DEPLOY_WORKTREE": "/fixture/dev-root",
+                   "DEPLOY_SHA": "a" * 40, "DEV_BFF_PUBLIC_URL": "https://bff.example.test"}
+    result = subprocess.run(["bash", "--noprofile", "--norc", "-c", body],
+                            cwd=working_directory, env=environment, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert calls.read_text().splitlines() == ["exec", "copy-from", "readback"]
