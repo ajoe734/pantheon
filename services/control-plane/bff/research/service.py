@@ -24,7 +24,6 @@ from fastapi import HTTPException
 try:
     from services.control_plane.bff.models import (
         ErrorCode,
-        SOURCE_TYPE_TO_EVIDENCE_KIND,
         redact_evidence_refs,
     )
     from services.control_plane.bff.ports.research_knowledge_source import (
@@ -35,7 +34,6 @@ try:
 except (ImportError, ValueError):
     from ..models import (  # type: ignore[no-redef]
         ErrorCode,
-        SOURCE_TYPE_TO_EVIDENCE_KIND,
         redact_evidence_refs,
     )
     from ..ports.research_knowledge_source import (  # type: ignore[no-redef]
@@ -1890,16 +1888,11 @@ class ResearchRouterService:
     ) -> Dict[str, Any]:
         detail_surface = self._knowledge_surface_state("evidence_refs", snapshot_at=snapshot_at, has_data=True)
         capabilities = self._get_capabilities_for(identity)
-        evidence_kind = str(evidence_ref.get("evidence_type") or "").strip()
-        if not evidence_kind:
-            source_document = evidence_ref.get("source_document")
-            if isinstance(source_document, dict):
-                evidence_kind = SOURCE_TYPE_TO_EVIDENCE_KIND.get(
-                    str(source_document.get("source_type") or "").strip(), "",
-                )
+        self_ref = json.loads(json.dumps(evidence_ref))
+        self_ref["ref_id"] = ref_id
         [processed_self], _ = redact_evidence_refs(
             identity,
-            [{"ref_id": ref_id, "evidence_type": evidence_kind}],
+            [self_ref],
             capabilities=capabilities,
         )
         if isinstance(processed_self, dict) and processed_self.get("redacted"):

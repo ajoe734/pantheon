@@ -425,6 +425,142 @@ def test_kw03_research_evidence_detail_self_ref_unresolved_kind_fails_closed_low
         assert "linked_decisions" not in payload, f"{label}: {payload}"
 
 
+class _AliasKindPort:
+    """Read-surface stub exposing a single evidence ref whose kind is only
+    resolvable via ``source_document.source_type`` through the canonical
+    ``SOURCE_TYPE_TO_EVIDENCE_KIND``/``URI_SCHEME_TO_EVIDENCE_KIND`` alias
+    tables -- no ``evidence_type`` field set, matching the independent
+    review's exact repro (ref_id=evref-001,
+    source_document={source_type: telemetry, ...}, linked_decisions=[])."""
+
+    def __init__(self, ref_id: str, source_type: str) -> None:
+        self.ref_id = ref_id
+        self._ref = {
+            "ref_id": ref_id,
+            "source_document": {"source_type": source_type, "title": f"{source_type} snapshot"},
+            "link_type": "supporting_evidence",
+            "credibility": {"tier": "primary", "verified": True},
+            "resolved_link": {"href": f"/evidence/{ref_id}", "availability": "available"},
+            "linked_object_summary": {},
+            "linked_decisions": [],
+            "source_note_context": None,
+            "source_memory_context": None,
+            "created_at": "2026-09-28T00:00:00Z",
+        }
+
+    def list_evidence_refs(self, **kwargs: Any) -> list:
+        return [dict(self._ref)]
+
+    def get_evidence_ref_detail(self, ref_id: str) -> Optional[dict]:
+        if ref_id != self.ref_id:
+            return None
+        return dict(self._ref)
+
+    def dataset_source(self, dataset: str) -> str:
+        return "service_backend" if dataset == "evidence_refs" else "missing"
+
+
+def _alias_kind_client(port: "_AliasKindPort") -> TestClient:
+    from services.control_plane.bff.research.router import create_research_router
+
+    app = FastAPI()
+    app.include_router(
+        create_research_router(
+            read_surface=port,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=lambda: "2026-09-28T00:00:00Z",
+            get_capabilities=auth_policy.capabilities_for_identity,
+        )
+    )
+    return TestClient(app)
+
+
+# (source_type, required_capability); required_capability=None marks the
+# genuinely-unknown case, which must stay withheld even for a full-capability
+# identity since ``unresolved_evidence_kind`` can never be proven safe.
+_ALIAS_KIND_CASES = [
+    ("postmortem", "postmortem.read"),  # SOURCE_TYPE_TO_EVIDENCE_KIND
+    ("audit_log", "audit.read"),  # SOURCE_TYPE_TO_EVIDENCE_KIND
+    ("strategy_spec", "strategy.view"),  # SOURCE_TYPE_TO_EVIDENCE_KIND
+    ("policy_document", "policy.read"),  # SOURCE_TYPE_TO_EVIDENCE_KIND
+    ("telemetry", "metric.read"),  # URI_SCHEME_TO_EVIDENCE_KIND: the exact independent-review repro
+    ("policy-decision", "policy.read"),  # URI_SCHEME_TO_EVIDENCE_KIND
+    ("genuinely-unknown-source-type-xyz", None),
+]
+
+
+@pytest.mark.parametrize("source_type,required_capability", _ALIAS_KIND_CASES)
+def test_kw03_list_and_detail_agree_on_source_type_alias_kind(
+    source_type: str, required_capability: Optional[str]
+) -> None:
+    """Regression for the [P2] research/service.py:1893-1904 second
+    kind-resolution policy: ``_evidence_detail_payload`` used to pre-resolve
+    kind through its own local ``SOURCE_TYPE_TO_EVIDENCE_KIND`` lookup and
+    hand the canonical redactor a synthetic ref carrying only ``ref_id`` +
+    ``evidence_type``, so ``source_document`` (and therefore any
+    ``URI_SCHEME_TO_EVIDENCE_KIND`` alias such as ``telemetry``) never
+    reached the canonical resolver and detail silently disagreed with list.
+    For every source_type alias the canonical resolver knows -- plus a
+    genuinely unknown one -- list and detail must now resolve identically."""
+    ref_id = f"evref-alias-{source_type.replace('-', '_')}"
+    port = _AliasKindPort(ref_id, source_type)
+
+    with _stub_auth_env():
+        admin_client = _alias_kind_client(port)
+        low_client = _alias_kind_client(port)
+
+        admin_list = admin_client.get(
+            "/api/v1/knowledge/evidence", headers={"Authorization": FULL_CAPABILITY_AUTH}
+        )
+        admin_detail = admin_client.get(
+            f"/api/v1/knowledge/evidence/{ref_id}", headers={"Authorization": FULL_CAPABILITY_AUTH}
+        )
+        low_list = low_client.get(
+            "/api/v1/knowledge/evidence", headers={"Authorization": LOW_CAPABILITY_AUTH}
+        )
+        low_detail = low_client.get(
+            f"/api/v1/knowledge/evidence/{ref_id}", headers={"Authorization": LOW_CAPABILITY_AUTH}
+        )
+
+    for resp in (admin_list, admin_detail, low_list, low_detail):
+        assert resp.status_code == 200, resp.text
+
+    admin_list_ref = next(
+        item for item in admin_list.json()["evidence_refs"] if item.get("ref_id") == ref_id
+    )
+    admin_detail_body = admin_detail.json()
+    low_list_ref = next(
+        item for item in low_list.json()["evidence_refs"] if item.get("ref_id") == ref_id
+    )
+    low_detail_body = low_detail.json()
+
+    if required_capability is None:
+        for label, item in (
+            ("admin list", admin_list_ref),
+            ("admin detail", admin_detail_body),
+            ("low list", low_list_ref),
+            ("low detail", low_detail_body),
+        ):
+            assert item.get("redacted") is True, f"{label}: {item}"
+            assert item.get("required_capability") == "unknown", f"{label}: {item}"
+            assert item.get("reason") == "unresolved_evidence_kind", f"{label}: {item}"
+        return
+
+    # admin (full capability) sees the ref via both list and detail.
+    assert admin_list_ref.get("redacted") is not True, admin_list_ref
+    assert admin_detail_body.get("redacted") is not True, admin_detail_body
+
+    # a low-capability identity lacking the mapped capability is withheld
+    # via both list and detail, naming that exact capability.
+    assert low_list_ref.get("redacted") is True, low_list_ref
+    assert low_list_ref.get("required_capability") == required_capability, low_list_ref
+    assert low_detail_body.get("redacted") is True, low_detail_body
+    assert low_detail_body.get("required_capability") == required_capability, low_detail_body
+
+
 # ===========================================================================
 # 3. Caller 4: personas/service.py PM12 quarterly evidence via the real
 #    persona router.
@@ -617,7 +753,14 @@ def test_management_evidence_list_fails_closed_when_capabilities_unresolvable(mo
 
     monkeypatch.setattr(mrm_service, "_capabilities_for_identity", _boom)
     with _stub_auth_env(), _evidence_client() as client:
-        response = client.get(
+        # Reuse the seeded app but build a client with
+        # ``raise_server_exceptions=False`` so a genuine fail-open regression
+        # (an unhandled ``RuntimeError`` reaching the ASGI boundary) surfaces
+        # as an HTTP response this test can assert on behaviourally, rather
+        # than as a rethrown exception pytest reports as an error instead of
+        # a failed assertion.
+        outage_client = TestClient(client.app, raise_server_exceptions=False)
+        response = outage_client.get(
             "/bff/management/evidence", headers={"Authorization": FULL_CAPABILITY_AUTH}
         )
     assert response.status_code == 200, response.text
