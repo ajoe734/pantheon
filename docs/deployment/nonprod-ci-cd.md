@@ -122,7 +122,9 @@ An already accepted hosted manifest and matching live BFF version produce
 `up_to_date`. Otherwise the checker explicitly dispatches `nonprod-deploy.yml`
 with both SHAs, strict auth, and the currently accepted persistent frontend
 profile (`read-only` or `operator-live`). Temporary proof profiles are never
-propagated. Missing or unaccepted baseline evidence requires recovery through
+propagated. Automatic releases enable the existing canonical paper lifecycle
+probe, including fresh stimulus and authenticated BFF readback; historical rows
+alone cannot satisfy this acceptance. Missing or unaccepted baseline evidence requires recovery through
 the existing deployment flow. The checker can run without `--apply` to inspect
 its decision without dispatching.
 

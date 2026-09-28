@@ -64,6 +64,7 @@ def test_backend_frontend_and_combined_changes_dispatch_exact_pair(host_b, host_
     assert inputs["ref"] == B and inputs["frontend_sha"] == F
     assert inputs["frontend_profile"] == "operator-live"
     assert inputs["component"] == "root" and inputs["allow_dirty"] == "false"
+    assert inputs["run_loop_prod_tel_002_probe"] == "true"
 
 
 def test_accepted_pair_is_noop_but_live_bff_drift_is_not():

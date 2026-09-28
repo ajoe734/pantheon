@@ -103,7 +103,7 @@ def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_ur
         "environment": "dev", "component": "root", "ref": result["backend_sha"],
         "frontend_sha": result["frontend_sha"], "frontend_ref": "dev",
         "frontend_profile": result["frontend_profile"], "dev_auth_profile": "strict",
-        "allow_dirty": "false",
+        "allow_dirty": "false", "run_loop_prod_tel_002_probe": "true",
     }, ref="dev")
     expected_title = f"Dev release {result['backend_sha']} + {result['frontend_sha']}"
     for _ in range(20):
