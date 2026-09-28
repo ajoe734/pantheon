@@ -277,10 +277,16 @@ class ResearchKnowledgeSourcePort:
         *,
         ticket_id: Optional[str] = None,
         status: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
-    def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_experiment(
+        self,
+        experiment_id: Optional[str],
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     def create_research_experiment(
@@ -307,6 +313,13 @@ class ResearchKnowledgeSourcePort:
         experiment_id: str,
         *,
         completed_at: Optional[str] = None,
+        reason: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
@@ -2173,15 +2186,24 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         *,
         ticket_id: Optional[str] = None,
         status: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         owner = self._get_research_write_owner()
         if owner is None:
             raise ResearchWriteOwnerUnavailableError(
                 "Research write owner (Postgres) is not configured; cannot list research experiments."
             )
-        return owner.list_research_experiments(ticket_id=ticket_id, status=status)
+        try:
+            return owner.list_research_experiments(ticket_id=ticket_id, status=status, tenant_id=tenant_id)
+        except TypeError:
+            return owner.list_research_experiments(ticket_id=ticket_id, status=status)
 
-    def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_experiment(
+        self,
+        experiment_id: Optional[str],
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         if not experiment_id:
             return None
         owner = self._get_research_write_owner()
@@ -2190,7 +2212,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 "Research write owner (Postgres) is not configured; cannot read research experiment "
                 f"{experiment_id!r}."
             )
-        return owner.get_research_experiment(experiment_id)
+        try:
+            return owner.get_research_experiment(experiment_id, tenant_id=tenant_id)
+        except TypeError:
+            return owner.get_research_experiment(experiment_id)
 
     def create_research_experiment(
         self,
@@ -2240,6 +2265,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         experiment_id: str,
         *,
         completed_at: Optional[str] = None,
+        reason: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         owner = self._get_research_write_owner()
         if owner is None:
@@ -2247,7 +2279,21 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 "Research write owner (Postgres) is not configured; cannot cancel research experiment "
                 f"{experiment_id!r}."
             )
-        return owner.cancel_research_experiment(experiment_id, completed_at=completed_at)
+        call_kwargs = {
+            "completed_at": completed_at,
+            "reason": reason,
+            "actor_id": actor_id,
+            "tenant_id": tenant_id,
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+            "command_id": command_id,
+            **kwargs,
+        }
+        sig = inspect.signature(owner.cancel_research_experiment)
+        has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if not has_var_keyword:
+            call_kwargs = {k: v for k, v in call_kwargs.items() if k in sig.parameters}
+        return owner.cancel_research_experiment(experiment_id, **call_kwargs)
 
     # -------------------------------------------------------------------------
     # Research Artifacts (RW-05)

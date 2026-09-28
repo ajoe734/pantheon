@@ -89,11 +89,13 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
+        tenant_id = getattr(identity, "tenant_id", None)
         return service.list_experiments_bff(
             status=status,
             page_token=page_token,
             page_size=page_size,
             snapshot_at=utc_now(),
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
         )
 
     @router.post("/bff/experiments", status_code=201)
@@ -122,7 +124,12 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return service.get_experiment_bff(experiment_id, snapshot_at=utc_now())
+        tenant_id = getattr(identity, "tenant_id", None)
+        return service.get_experiment_bff(
+            experiment_id,
+            snapshot_at=utc_now(),
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
+        )
 
     @router.post("/bff/experiments/{experiment_id}/actions/{action_id}", status_code=202)
     async def experiment_action(
@@ -135,9 +142,10 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_operator_role(identity)
+        tenant_id = getattr(identity, "tenant_id", None)
         resolved_key = (idempotency_key or x_idempotency_key or "").strip()
         clean_id = experiment_id.strip()
-        service.require_experiment(clean_id)
+        service.require_experiment(clean_id, tenant_id=str(tenant_id).strip() if tenant_id else None)
         if submit_experiment_action is None:
             raise bff_error(
                 501,
@@ -158,7 +166,12 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return service.get_experiment_logs(experiment_id, snapshot_at=utc_now())
+        tenant_id = getattr(identity, "tenant_id", None)
+        return service.get_experiment_logs(
+            experiment_id,
+            snapshot_at=utc_now(),
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
+        )
 
     @router.get("/bff/experiments/{experiment_id}/metrics")
     async def get_experiment_metrics(
@@ -167,7 +180,12 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return service.get_experiment_metrics(experiment_id, snapshot_at=utc_now())
+        tenant_id = getattr(identity, "tenant_id", None)
+        return service.get_experiment_metrics(
+            experiment_id,
+            snapshot_at=utc_now(),
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
+        )
 
     @router.get("/bff/experiments/{experiment_id}/artifacts")
     async def get_experiment_artifacts(
@@ -176,7 +194,12 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return service.get_experiment_artifacts(experiment_id, snapshot_at=utc_now())
+        tenant_id = getattr(identity, "tenant_id", None)
+        return service.get_experiment_artifacts(
+            experiment_id,
+            snapshot_at=utc_now(),
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
+        )
 
     @router.get("/bff/research-experiments")
     async def list_research_experiments(
@@ -187,11 +210,13 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
+        tenant_id = getattr(identity, "tenant_id", None)
         return service.list_research_experiments_bff(
             status=status,
             page_token=page_token,
             page_size=page_size,
             snapshot_at=utc_now(),
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
         )
 
     @router.get("/bff/research-experiments/{experiment_id}")
@@ -201,7 +226,12 @@ def create_research_experiments_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return service.get_research_experiment_bff(experiment_id, snapshot_at=utc_now())
+        tenant_id = getattr(identity, "tenant_id", None)
+        return service.get_research_experiment_bff(
+            experiment_id,
+            snapshot_at=utc_now(),
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
+        )
 
     return router
 
@@ -286,7 +316,8 @@ def build_experiments_router(ctx: ResearchRouteContext) -> APIRouter:
         )
 
     async def endpoint_list_experiments_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:
-        ctx.identity(request)
+        identity = ctx.identity(request)
+        tenant_id = getattr(identity, "tenant_id", None)
         raw_status = ctx.query(request, "status")
         status = _validate_experiment_status(raw_status) if raw_status is not None else None
         return ctx.service.list_experiments_api(
@@ -295,18 +326,39 @@ def build_experiments_router(ctx: ResearchRouteContext) -> APIRouter:
             page_token=ctx.query(request, "page_token"),
             page_size=int(ctx.query(request, "page_size") or 20),
             snapshot_at=ctx.utc_now(),
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
         )
 
     async def endpoint_get_experiment_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:
-        ctx.identity(request)
+        identity = ctx.identity(request)
+        tenant_id = getattr(identity, "tenant_id", None)
         experiment_id = str(request.path_params.get("experiment_id") or "")
-        return ctx.service.get_experiment_api(experiment_id, snapshot_at=ctx.utc_now())
+        return ctx.service.get_experiment_api(
+            experiment_id,
+            snapshot_at=ctx.utc_now(),
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
+        )
 
     async def endpoint_cancel_experiment_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:
-        ctx.identity(request)
+        identity = ctx.identity(request, operator=True)
+        idempotency_key = request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
+        actor_id = (
+            getattr(identity, "operator_id", None)
+            or getattr(identity, "user_id", None)
+            or getattr(identity, "actor_id", None)
+            or str(identity)
+        )
+        tenant_id = getattr(identity, "tenant_id", None)
         experiment_id = str(request.path_params.get("experiment_id") or "")
         reason = ctx.required_text(await ctx.body(request), "reason")
-        return ctx.service.cancel_experiment_api(experiment_id, reason=reason, snapshot_at=ctx.utc_now())
+        return ctx.service.cancel_experiment_api(
+            experiment_id,
+            reason=reason,
+            actor_id=str(actor_id).strip() if actor_id else None,
+            tenant_id=str(tenant_id).strip() if tenant_id else None,
+            idempotency_key=str(idempotency_key).strip() if idempotency_key else None,
+            snapshot_at=ctx.utc_now(),
+        )
 
     auth = _authorization()
     endpoint_launch_experiment.__signature__ = _signature(_body_parameter(), auth)

@@ -1420,8 +1420,8 @@ def test_midnight_scoped_idempotency_independent_of_date_prefix():
     assert len(store.rows) == 1, result
 
 
-def _research_ticket_client(tickets, role="admin", utc_now=None, identity=None):
-    owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=CASStore(), notes_store=AtomicIO())
+def _research_ticket_client(tickets, role="admin", utc_now=None, identity=None, experiments=None):
+    owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments if experiments is not None else CASStore(), notes_store=AtomicIO())
     if identity is None:
         identity = SimpleNamespace(operator_id="actor", tenant_id="tenant", roles=[role])
 
@@ -1788,3 +1788,215 @@ def test_ticket_list_pagination_and_count_strictly_tenant_filtered():
     payload_a = listing_a.json()
     assert payload_a["page_info"]["total"] == 3
     assert len(payload_a["data"]) == 2
+
+
+def test_foreign_tenant_cannot_modify_ticket_via_launch():
+    tickets, experiments = CASStore(), CASStore()
+    identity_a = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["operator"])
+    client_a = _research_ticket_client(tickets, identity=identity_a, experiments=experiments)
+    r_tkt = client_a.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "ticket-a"})
+    assert r_tkt.status_code == 200, r_tkt.text
+    tid = r_tkt.json()["ticket_id"]
+
+    identity_b = SimpleNamespace(operator_id="actor-b", tenant_id="tenant-b", roles=["operator"])
+    client_b = _research_ticket_client(tickets, identity=identity_b, experiments=experiments)
+    assert client_b.get(f"/api/v1/research/tickets/{tid}").status_code in (403, 404)
+
+    launch_payload = {
+        "ticket_id": tid,
+        "experiment_name": "isolated review",
+        "strategy_selector": {},
+        "parameter_set": {},
+        "run_config": {
+            "dataset_ref": "isolated",
+            "time_range": {"start_at": "2026-01-01", "end_at": "2026-01-02"},
+            "execution_mode": "paper",
+            "requested_by": "review",
+        },
+    }
+    r = client_b.post("/api/v1/experiments/launch", headers={"Idempotency-Key": "foreign-launch"}, json=launch_payload)
+    evidence = {"http": r.status_code, "body": r.json(), "ticket_after": tickets.get(tid)}
+    assert r.status_code in (403, 404), evidence
+    ticket_after = tickets.get(tid)
+    assert not ticket_after.get("linked_experiments")
+
+
+def test_viewer_cannot_cancel_foreign_experiment():
+    tickets, experiments = CASStore(), CASStore()
+    identity_a = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["operator"])
+    client_a = _research_ticket_client(tickets, identity=identity_a, experiments=experiments)
+    r_tkt = client_a.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "ticket-a"})
+    assert r_tkt.status_code == 200
+    tid = r_tkt.json()["ticket_id"]
+
+    launch_payload = {
+        "ticket_id": tid,
+        "experiment_name": "launch-a",
+        "strategy_selector": {},
+        "parameter_set": {},
+        "run_config": {
+            "dataset_ref": "isolated",
+            "time_range": {"start_at": "2026-01-01", "end_at": "2026-01-02"},
+            "execution_mode": "paper",
+            "requested_by": "review",
+        },
+    }
+    created = client_a.post("/api/v1/experiments/launch", headers={"Idempotency-Key": "launch-a"}, json=launch_payload)
+    assert created.status_code == 200, created.text
+    eid = created.json()["experiment_id"]
+
+    identity_b_viewer = SimpleNamespace(operator_id="actor-b", tenant_id="tenant-b", roles=["viewer"])
+    client_b_viewer = _research_ticket_client(tickets, identity=identity_b_viewer, experiments=experiments)
+    r_cancel = client_b_viewer.post(f"/api/v1/experiments/{eid}/cancel", json={"reason": "isolated auth test"}, headers={"Idempotency-Key": "cancel-b"})
+    row = experiments.get(eid)
+    assert r_cancel.status_code in (403, 404) and row["status"] == "queued", {
+        "http": r_cancel.status_code,
+        "response": r_cancel.json(),
+        "persisted_status": row["status"],
+        "tenant": row["tenant_id"],
+    }
+
+
+def test_foreign_tenant_cannot_read_experiment():
+    tickets, experiments = CASStore(), CASStore()
+    identity_a = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["operator"])
+    client_a = _research_ticket_client(tickets, identity=identity_a, experiments=experiments)
+    r_tkt = client_a.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "ticket-a"})
+    assert r_tkt.status_code == 200
+    tid = r_tkt.json()["ticket_id"]
+
+    launch_payload = {
+        "ticket_id": tid,
+        "experiment_name": "launch-a",
+        "strategy_selector": {},
+        "parameter_set": {},
+        "run_config": {
+            "dataset_ref": "isolated",
+            "time_range": {"start_at": "2026-01-01", "end_at": "2026-01-02"},
+            "execution_mode": "paper",
+            "requested_by": "review",
+        },
+    }
+    created = client_a.post("/api/v1/experiments/launch", headers={"Idempotency-Key": "launch-a"}, json=launch_payload)
+    assert created.status_code == 200
+    eid = created.json()["experiment_id"]
+
+    identity_b = SimpleNamespace(operator_id="actor-b", tenant_id="tenant-b", roles=["viewer"])
+    client_b = _research_ticket_client(tickets, identity=identity_b, experiments=experiments)
+    r_read = client_b.get(f"/api/v1/experiments/{eid}")
+    assert r_read.status_code in (403, 404), {"http": r_read.status_code, "response": r_read.json()}
+
+
+def test_experiment_cancel_idempotent_replay_and_receipt():
+    tickets, experiments = CASStore(), CASStore()
+    identity_a = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["operator"])
+    client_a = _research_ticket_client(tickets, identity=identity_a, experiments=experiments)
+    r_tkt = client_a.post("/api/v1/research/tickets", json=TICKET_BODY, headers={"Idempotency-Key": "ticket-a"})
+    assert r_tkt.status_code == 200
+    tid = r_tkt.json()["ticket_id"]
+
+    launch_payload = {
+        "ticket_id": tid,
+        "experiment_name": "launch-a",
+        "strategy_selector": {},
+        "parameter_set": {},
+        "run_config": {
+            "dataset_ref": "isolated",
+            "time_range": {"start_at": "2026-01-01", "end_at": "2026-01-02"},
+            "execution_mode": "paper",
+            "requested_by": "review",
+        },
+    }
+    created = client_a.post("/api/v1/experiments/launch", headers={"Idempotency-Key": "launch-a"}, json=launch_payload)
+    assert created.status_code == 200
+    eid = created.json()["experiment_id"]
+
+    cancel1 = client_a.post(f"/api/v1/experiments/{eid}/cancel", json={"reason": "stop exp"}, headers={"Idempotency-Key": "cancel-key-1"})
+    assert cancel1.status_code == 200
+    assert cancel1.json()["status"] == "canceled"
+
+    # Replay with same key
+    cancel_replay = client_a.post(f"/api/v1/experiments/{eid}/cancel", json={"reason": "stop exp"}, headers={"Idempotency-Key": "cancel-key-1"})
+    assert cancel_replay.status_code == 200
+    assert cancel_replay.json()["status"] == "canceled"
+    assert cancel_replay.json()["completed_at"] == cancel1.json()["completed_at"]
+
+
+class _ConcurrentBarrierStore:
+    def __init__(self, rows=None, barrier=None):
+        self.rows = deepcopy(rows or {})
+        self.lock = Lock()
+        self.barrier = barrier
+        self.get_count = 0
+
+    def get(self, key):
+        with self.lock:
+            result = deepcopy(self.rows.get(key))
+            self.get_count += 1
+            first_pair = self.get_count <= 2
+        if self.barrier is not None and first_pair:
+            self.barrier.wait(timeout=10)
+        return result
+
+    def put(self, key, value):
+        with self.lock:
+            self.rows[key] = deepcopy(value)
+
+    def list_all(self):
+        with self.lock:
+            return deepcopy(list(self.rows.values()))
+
+    def compare_and_set(self, key, expected, value, *, conn=None):
+        with self.lock:
+            current = deepcopy(self.rows.get(key))
+            if current != expected:
+                return False, current
+            self.rows[key] = deepcopy(value)
+            return True, deepcopy(value)
+
+
+def test_concurrent_cancel_research_experiment_cas_atomic_history():
+    experiment_id = "exp-concurrent-cancel"
+    row = {
+        "experiment_id": experiment_id,
+        "tenant_id": "tenant-a",
+        "status": "queued",
+        "is_committed": True,
+        "aggregate_version": 1,
+        "ticket_id": "ticket-a",
+        "experiment_name": "review",
+        "command_history": [],
+    }
+    experiments = _ConcurrentBarrierStore({experiment_id: row}, Barrier(2))
+    owner = ResearchWriteOwner(
+        tickets_store=_ConcurrentBarrierStore(),
+        experiments_store=experiments,
+        notes_store=_ConcurrentBarrierStore(),
+    )
+
+    def cancel(key):
+        return owner.cancel_research_experiment(
+            experiment_id,
+            tenant_id="tenant-a",
+            actor_id="actor-a",
+            idempotency_key=key,
+            request_hash=key,
+            command_id="cmd-" + key,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a = pool.submit(cancel, "cancel-a")
+        b = pool.submit(cancel, "cancel-b")
+        results = [a.result(timeout=15), b.result(timeout=15)]
+
+    persisted = experiments.rows[experiment_id]
+    successful_results = [r for r in results if r is not None]
+    assert len(successful_results) >= 1
+    assert len(successful_results) <= len(persisted.get("command_history") or []), (
+        "accepted cancellation receipt lost from durable command history"
+    )
+    recorded_commands = [c["command_id"] for c in persisted.get("command_history") or []]
+    for r in successful_results:
+        assert r["cancel_receipt"]["command_id"] in recorded_commands
+
+

@@ -3442,15 +3442,22 @@ class ResearchRouterService:
             enriched["analysis_links"] = analysis_links
         return enriched
 
-    def require_experiment(self, experiment_id: str) -> Dict[str, Any]:
+    def require_experiment(self, experiment_id: str, *, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         clean_id = experiment_id.strip()
         port = self._port()
+        clean_tenant = str(tenant_id or "").strip() or None
         try:
             with self._map_port_errors("get_experiment"):
                 if hasattr(port, "get_experiment_bff"):
-                    item = port.get_experiment_bff(clean_id)
+                    try:
+                        item = port.get_experiment_bff(clean_id, tenant_id=clean_tenant)
+                    except TypeError:
+                        item = port.get_experiment_bff(clean_id)
                 elif hasattr(port, "get_research_experiment"):
-                    item = port.get_research_experiment(clean_id)
+                    try:
+                        item = port.get_research_experiment(clean_id, tenant_id=clean_tenant)
+                    except TypeError:
+                        item = port.get_research_experiment(clean_id)
                 else:
                     item = None
         except ResearchWriteOwnerUnavailableError as exc:
@@ -3467,6 +3474,15 @@ class ResearchRouterService:
                 f"Experiment '{clean_id}' not found",
                 f"No experiment exists with id '{clean_id}'",
             )
+        exp_tenant = str(item.get("tenant_id") or (item.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+        if clean_tenant and exp_tenant and clean_tenant != exp_tenant:
+            self._raise_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Cross-tenant access forbidden",
+                f"Tenant {clean_tenant!r} cannot access experiment {clean_id!r} belonging to tenant {exp_tenant!r}",
+                precondition_failed="cross_tenant",
+            )
         return self._enrich_experiment_with_analyses(item, clean_id)
 
     def list_experiments_bff(
@@ -3476,17 +3492,30 @@ class ResearchRouterService:
         page_token: Optional[str] = None,
         page_size: int = 20,
         snapshot_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         port = self._port()
+        clean_tenant = str(tenant_id or "").strip() or None
         if hasattr(port, "list_experiments_bff"):
             with self._map_port_errors("list_experiments_bff"):
-                raw = port.list_experiments_bff(status=status) or []
+                try:
+                    raw = port.list_experiments_bff(status=status, tenant_id=clean_tenant) or []
+                except TypeError:
+                    raw = port.list_experiments_bff(status=status) or []
             items = list(raw)
         else:
             with self._map_port_errors("list_research_experiments"):
-                raw = port.list_research_experiments() or []
+                try:
+                    raw = port.list_research_experiments(tenant_id=clean_tenant) or []
+                except TypeError:
+                    raw = port.list_research_experiments() or []
             items = _filter_by_status_csv(raw, status)
+        if clean_tenant:
+            items = [
+                i for i in items
+                if isinstance(i, dict) and str(i.get("tenant_id") or (i.get("launch_context") or {}).get("tenant_id") or "").strip() == clean_tenant
+            ]
         surface = self._surface("research_experiments", snapshot_at=snap, has_data=bool(items) or None)
         if surface.get("status") == "unavailable" and not items:
             page_items, next_page_token = [], None
@@ -3496,16 +3525,22 @@ class ResearchRouterService:
         meta["surfaces"] = {"experiments": surface}
         return {"items": page_items, "page_info": {"next_page_token": next_page_token}, "meta": meta}
 
-    def get_experiment_bff(self, experiment_id: str, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def get_experiment_bff(
+        self,
+        experiment_id: str,
+        snapshot_at: Optional[str] = None,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         clean_id = experiment_id.strip()
         snap = snapshot_at or self.utc_now()
-        experiment = self.require_experiment(clean_id)
+        experiment = self.require_experiment(clean_id, tenant_id=tenant_id)
         return {"data": experiment, "meta": self.snapshot_meta(snap)}
 
-    def get_experiment_logs(self, experiment_id: str, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def get_experiment_logs(self, experiment_id: str, snapshot_at: Optional[str] = None, *, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         clean_id = experiment_id.strip()
         snap = snapshot_at or self.utc_now()
-        self.require_experiment(clean_id)
+        self.require_experiment(clean_id, tenant_id=tenant_id)
         port = self._port()
         if hasattr(port, "get_experiment_logs"):
             with self._map_port_errors("get_experiment_logs"):
@@ -3514,10 +3549,10 @@ class ResearchRouterService:
             logs = []
         return {"experiment_id": clean_id, "logs": logs, "meta": self.snapshot_meta(snap)}
 
-    def get_experiment_metrics(self, experiment_id: str, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def get_experiment_metrics(self, experiment_id: str, snapshot_at: Optional[str] = None, *, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         clean_id = experiment_id.strip()
         snap = snapshot_at or self.utc_now()
-        self.require_experiment(clean_id)
+        self.require_experiment(clean_id, tenant_id=tenant_id)
         port = self._port()
         if hasattr(port, "get_experiment_metrics"):
             with self._map_port_errors("get_experiment_metrics"):
@@ -3526,10 +3561,10 @@ class ResearchRouterService:
             metrics = {}
         return {"experiment_id": clean_id, "metrics": metrics, "meta": self.snapshot_meta(snap)}
 
-    def get_experiment_artifacts(self, experiment_id: str, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def get_experiment_artifacts(self, experiment_id: str, snapshot_at: Optional[str] = None, *, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         clean_id = experiment_id.strip()
         snap = snapshot_at or self.utc_now()
-        self.require_experiment(clean_id)
+        self.require_experiment(clean_id, tenant_id=tenant_id)
         port = self._port()
         if hasattr(port, "get_experiment_artifacts"):
             with self._map_port_errors("get_experiment_artifacts"):
@@ -3545,23 +3580,37 @@ class ResearchRouterService:
         page_token: Optional[str] = None,
         page_size: int = 20,
         snapshot_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         port = self._port()
+        clean_tenant = str(tenant_id or "").strip() or None
         if hasattr(port, "list_research_experiments"):
             try:
                 with self._map_port_errors("list_research_experiments"):
-                    all_items = port.list_research_experiments(status=status)
+                    all_items = port.list_research_experiments(status=status, tenant_id=clean_tenant)
             except TypeError:
-                with self._map_port_errors("list_research_experiments"):
-                    raw = port.list_research_experiments()
-                all_items = _filter_by_status_csv(raw, status)
+                try:
+                    with self._map_port_errors("list_research_experiments"):
+                        all_items = port.list_research_experiments(status=status)
+                except TypeError:
+                    with self._map_port_errors("list_research_experiments"):
+                        raw = port.list_research_experiments()
+                    all_items = _filter_by_status_csv(raw, status)
         elif hasattr(port, "list_experiments_bff"):
             with self._map_port_errors("list_experiments_bff"):
-                raw = port.list_experiments_bff(status=status) or []
+                try:
+                    raw = port.list_experiments_bff(status=status, tenant_id=clean_tenant) or []
+                except TypeError:
+                    raw = port.list_experiments_bff(status=status) or []
             all_items = list(raw)
         else:
             all_items = []
+        if clean_tenant:
+            all_items = [
+                i for i in all_items
+                if isinstance(i, dict) and str(i.get("tenant_id") or (i.get("launch_context") or {}).get("tenant_id") or "").strip() == clean_tenant
+            ]
         surface = self._surface("research_experiments", snapshot_at=snap, has_data=bool(all_items) or None)
         page_items, next_page_token = self.page_slice(all_items, page_token, page_size)
         meta = self.snapshot_meta(snap)
@@ -3573,21 +3622,40 @@ class ResearchRouterService:
             "meta": meta,
         }
 
-    def get_research_experiment_bff(self, experiment_id: str, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def get_research_experiment_bff(
+        self,
+        experiment_id: str,
+        snapshot_at: Optional[str] = None,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         clean_id = experiment_id.strip()
         snap = snapshot_at or self.utc_now()
         port = self._port()
+        clean_tenant = str(tenant_id or "").strip() or None
         if hasattr(port, "get_research_experiment"):
             with self._map_port_errors("get_research_experiment"):
-                experiment = port.get_research_experiment(clean_id)
+                try:
+                    experiment = port.get_research_experiment(clean_id, tenant_id=clean_tenant)
+                except TypeError:
+                    experiment = port.get_research_experiment(clean_id)
         else:
-            experiment = self.require_experiment(clean_id)
+            experiment = self.require_experiment(clean_id, tenant_id=clean_tenant)
         if not experiment:
             self._raise_error(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
                 f"Experiment '{clean_id}' not found",
                 f"No experiment exists with id '{clean_id}'",
+            )
+        exp_tenant = str(experiment.get("tenant_id") or (experiment.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+        if clean_tenant and exp_tenant and clean_tenant != exp_tenant:
+            self._raise_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Cross-tenant access forbidden",
+                f"Tenant {clean_tenant!r} cannot access experiment {clean_id!r} belonging to tenant {exp_tenant!r}",
+                precondition_failed="cross_tenant",
             )
         experiment = self._enrich_experiment_with_analyses(experiment, clean_id)
         surface = self._surface("research_experiments", snapshot_at=snap, has_data=bool(experiment) or None)
@@ -3699,11 +3767,25 @@ class ResearchRouterService:
         page_token: Optional[str] = None,
         page_size: int = 20,
         snapshot_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
+        clean_tenant = str(tenant_id or "").strip() or None
         port = self._port()
         with self._map_port_errors("list_research_experiments"):
-            records = list(port.list_research_experiments(ticket_id=ticket_id, status=status) or [])
+            try:
+                raw_records = port.list_research_experiments(ticket_id=ticket_id, status=status, tenant_id=clean_tenant)
+            except TypeError:
+                try:
+                    raw_records = port.list_research_experiments(ticket_id=ticket_id, status=status)
+                except TypeError:
+                    raw_records = port.list_research_experiments()
+            records = list(raw_records or [])
+        if clean_tenant:
+            records = [
+                r for r in records
+                if isinstance(r, dict) and str(r.get("tenant_id") or (r.get("launch_context") or {}).get("tenant_id") or "").strip() == clean_tenant
+            ]
         surface_state = self.legacy_experiment_surface_state(snapshot_at=snap, has_data=bool(records))
         if surface_state == "unavailable":
             items, next_token, total = [], None, 0
@@ -3726,18 +3808,38 @@ class ResearchRouterService:
         meta["surfaces"] = {"experiment_history": surface_state}
         return {"data": items, "page_info": {"next_page_token": next_token, "total": total}, "meta": meta}
 
-    def get_experiment_api(self, experiment_id: str, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def get_experiment_api(
+        self,
+        experiment_id: str,
+        snapshot_at: Optional[str] = None,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        clean_id = experiment_id.strip()
         snap = snapshot_at or self.utc_now()
+        clean_tenant = str(tenant_id or "").strip() or None
         port = self._port()
         with self._map_port_errors("get_research_experiment"):
-            experiment = port.get_research_experiment(experiment_id)
+            try:
+                experiment = port.get_research_experiment(clean_id, tenant_id=clean_tenant)
+            except TypeError:
+                experiment = port.get_research_experiment(clean_id)
         if not experiment:
-            self._not_found("Experiment", experiment_id)
+            self._not_found("Experiment", clean_id)
+        exp_tenant = str(experiment.get("tenant_id") or (experiment.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+        if clean_tenant and exp_tenant and clean_tenant != exp_tenant:
+            self._raise_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Cross-tenant access forbidden",
+                f"Tenant {clean_tenant!r} cannot access experiment {clean_id!r} belonging to tenant {exp_tenant!r}",
+                precondition_failed="cross_tenant",
+            )
         payload = dict(experiment)
         ticket_id = str(payload.get("ticket_id") or "")
         payload["links"] = {
-            "self": f"/api/v1/experiments/{experiment_id}",
-            "workbench_detail": f"/research/experiments/{experiment_id}",
+            "self": f"/api/v1/experiments/{clean_id}",
+            "workbench_detail": f"/research/experiments/{clean_id}",
             "linked_ticket_detail": f"/research/tickets/{ticket_id}",
         }
         meta = dict(self.snapshot_meta(snap))
@@ -3745,29 +3847,69 @@ class ResearchRouterService:
         payload["meta"] = meta
         return payload
 
-    def cancel_experiment_api(self, experiment_id: str, reason: str, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def cancel_experiment_api(
+        self,
+        experiment_id: str,
+        reason: str,
+        snapshot_at: Optional[str] = None,
+        *,
+        actor_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        clean_id = experiment_id.strip()
         snap = snapshot_at or self.utc_now()
+        clean_actor = str(actor_id or "").strip() or None
+        clean_tenant = str(tenant_id or "").strip() or None
+        clean_key = str(idempotency_key or "").strip() or None
+        payload = {"reason": reason}
+        req_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
         port = self._port()
         with self._map_port_errors("get_research_experiment"):
-            experiment = port.get_research_experiment(experiment_id)
+            try:
+                experiment = port.get_research_experiment(clean_id, tenant_id=clean_tenant)
+            except TypeError:
+                experiment = port.get_research_experiment(clean_id)
         if not experiment:
-            self._not_found("Experiment", experiment_id)
-        if str(experiment.get("status") or "") not in {"queued", "running"}:
+            self._not_found("Experiment", clean_id)
+        exp_tenant = str(experiment.get("tenant_id") or (experiment.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+        if clean_tenant and exp_tenant and clean_tenant != exp_tenant:
             self._raise_error(
-                409,
-                ErrorCode.OPERATION_NOT_ALLOWED,
-                "Experiment cannot be canceled",
-                f"Experiment {experiment_id} is in terminal state '{experiment.get('status')}' and cannot be canceled",
+                403,
+                ErrorCode.FORBIDDEN,
+                "Cross-tenant access forbidden",
+                f"Tenant {clean_tenant!r} cannot cancel experiment {clean_id!r} belonging to tenant {exp_tenant!r}",
+                precondition_failed="cross_tenant",
             )
+        status = str(experiment.get("status") or "")
         with self._map_port_errors("cancel_research_experiment"):
-            canceled = port.cancel_research_experiment(
-                experiment_id,
-                completed_at=snap,
-            )
+            try:
+                canceled = port.cancel_research_experiment(
+                    clean_id,
+                    completed_at=snap,
+                    reason=reason,
+                    actor_id=clean_actor,
+                    tenant_id=clean_tenant,
+                    idempotency_key=clean_key,
+                    request_hash=req_hash,
+                )
+            except TypeError:
+                canceled = port.cancel_research_experiment(
+                    clean_id,
+                    completed_at=snap,
+                )
         if not canceled:
+            if status not in {"queued", "running"}:
+                self._raise_error(
+                    409,
+                    ErrorCode.OPERATION_NOT_ALLOWED,
+                    "Experiment cannot be canceled",
+                    f"Experiment {clean_id} is in terminal state '{status}' and cannot be canceled",
+                )
             self._raise_error(409, ErrorCode.OPERATION_NOT_ALLOWED, "Experiment cancel rejected", "Experiment could not be canceled")
         return {
-            "experiment_id": experiment_id,
+            "experiment_id": clean_id,
             "status": canceled.get("status"),
             "completed_at": canceled.get("completed_at"),
             "allowedActions": {"canCancel": False},

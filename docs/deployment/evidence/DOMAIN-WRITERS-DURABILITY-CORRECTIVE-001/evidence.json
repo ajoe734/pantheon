@@ -248,6 +248,10 @@
     "defect_61_research_tickets_cross_tenant_read_disclosure": {
       "problem": "services/control-plane/bff/research/routes/tickets.py:123-146 discarded authenticated identity for list/detail; service.py:3125-3176 and services/research/write_owner.py:969-992 read without tenant scope, permitting foreign authenticated tenants to read and list tickets created by other tenants.",
       "remediation": "Propagated authenticated tenant_id through route handlers, application service, and ResearchKnowledgeSourcePort to ResearchWriteOwner. Enforced 403 Forbidden cross-tenant rejection on detail reads and strict tenant-scoped filtering before pagination and count calculation in list_research_tickets. Committed mounted-route regression tests covering fresh owner/router isolation and same-tenant access."
+    },
+    "defect_62_research_experiment_cross_tenant_read_and_mutation_disclosure": {
+      "problem": "services/research/write_owner.py create_research_experiment appended linked_experiments to tickets without verifying ticket tenant matches caller tenant, allowing cross-tenant ticket alteration via POST /api/v1/experiments/launch; endpoint_cancel_experiment_api lacked operator role enforcement and tenant scoping, allowing foreign viewers to cancel experiments; get/list experiment endpoints lacked tenant boundaries on reads before projection and pagination.",
+      "remediation": "Enforced ticket ownership/tenant verification in ResearchWriteOwner.create_research_experiment raising ResearchTenantAuthorizationError (mapped to 403 Forbidden); updated endpoint_cancel_experiment_api to require operator role (ctx.identity(request, operator=True)) and propagate actor_id, tenant_id, and idempotency_key to owner-level cancel; enforced owner-level tenant checking and command replay/receipts on cancel; propagated tenant_id in get/list experiment endpoints across routes, service, and port; updated summary projection to include tenant_id and actor_id; and added negative regression tests verifying foreign launch rejection, foreign viewer cancel rejection, foreign read rejection, and idempotent cancel replay."
     }
   },
   "mutation_caller_inventory": {
@@ -719,6 +723,24 @@
         "result": "80 passed, 3 warnings in 46.71s",
         "executed": 80,
         "collected": 80
+      },
+      {
+        "command": "env PYTHONPATH=. timeout 60 /tmp/venv-bff-test/bin/python3 -m pytest -v /tmp/test_domain_review_db7c.py",
+        "result": "3 passed, 1 warning in 3.63s",
+        "executed": 3,
+        "collected": 3
+      },
+      {
+        "command": "env PYTHONPATH=. timeout 120 /tmp/venv-bff-test/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/research/test_router.py",
+        "result": "93 passed, 3 warnings in 52.53s",
+        "executed": 93,
+        "collected": 93
+      },
+      {
+        "command": "env PYTHONPATH=. timeout 60 /tmp/venv-bff-test/bin/python3 /tmp/domain_cancel_concurrency_repro.py",
+        "result": "passed, exit 0, competing cancellations resolved via CAS retry loop preserving durable command history",
+        "executed": 1,
+        "collected": 1
       }
     ]
   },
@@ -788,7 +810,8 @@
     "defect_58_research_wiring_explicit_typed_signatures_resolved": true,
     "defect_59_research_tickets_tenant_authorization_on_fresh_cas_snapshot_resolved": true,
     "defect_60_research_tickets_replay_canonical_identity_after_subsequent_mutation_resolved": true,
-    "defect_61_research_tickets_cross_tenant_read_disclosure_resolved": true
+    "defect_61_research_tickets_cross_tenant_read_disclosure_resolved": true,
+    "defect_62_research_experiment_cross_tenant_read_and_mutation_disclosure_resolved": true
   },
   "review": {
     "reviewer": "Codex",

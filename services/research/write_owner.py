@@ -1068,6 +1068,8 @@ class ResearchWriteOwner:
             "registry_admission_status": exp.get("registry_admission_status"),
             "can_deploy": bool(exp.get("can_deploy", True)),
             "allowedActions": cls._rw04_allowed_actions(exp),
+            "tenant_id": exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id"),
+            "actor_id": exp.get("actor_id") or (exp.get("launch_context") or {}).get("actor_id"),
         }
 
     @classmethod
@@ -1082,7 +1084,7 @@ class ResearchWriteOwner:
         exp_id = exp.get("experiment_id")
         cmd_id = exp.get("command_id") or f"cmd-{exp_id}"
         clean_key = exp.get("idempotency_key")
-        receipt = exp.get("receipt")
+        receipt = exp.get("cancel_receipt") if status == "canceled" and exp.get("cancel_receipt") else exp.get("receipt")
         if not receipt or not isinstance(receipt, dict):
             receipt = {
                 "receipt_id": f"rcpt-{exp_id}",
@@ -1174,6 +1176,8 @@ class ResearchWriteOwner:
             "owner": exp.get("owner") or "research",
             "committed_at": exp.get("committed_at") or exp.get("queued_at") or _utc_now_rfc3339(),
             "receipt": receipt,
+            "cancel_receipt": exp.get("cancel_receipt"),
+            "command_history": list(exp.get("command_history") or []),
             "idempotency_key": clean_key,
             "tenant_id": exp.get("tenant_id"),
             "actor_id": exp.get("actor_id"),
@@ -1350,6 +1354,13 @@ class ResearchWriteOwner:
             if clean_ticket_id:
                 ticket = self._tickets_store.get(clean_ticket_id)
                 if ticket and isinstance(ticket, dict):
+                    ticket_tenant = str(ticket.get("tenant_id") or "").strip() or None
+                    if ticket_tenant and clean_tenant and clean_tenant != ticket_tenant:
+                        raise ResearchTenantAuthorizationError(
+                            f"Tenant {clean_tenant!r} is not authorized to access ticket belonging to tenant {ticket_tenant!r}",
+                            tenant_id=clean_tenant,
+                            expected_tenant=ticket_tenant,
+                        )
                     original_ticket = copy.deepcopy(ticket)
 
             if experiment_id:
@@ -1463,26 +1474,128 @@ class ResearchWriteOwner:
         completed_at: Optional[str] = None,
         reason: Optional[str] = None,
         actor_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
-        exp = self._experiments_store.get(str(experiment_id))
-        if exp is None or not isinstance(exp, dict):
-            return None
-        status = str(exp.get("status") or "").strip().lower()
-        if status not in self._RW04_CANCELABLE_STATUSES:
-            return None
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        clean_actor = str(actor_id).strip() if actor_id else None
+        clean_key = str(idempotency_key).strip() if idempotency_key else None
+        clean_hash = str(request_hash).strip() if request_hash else None
 
-        timestamp = completed_at or _utc_now_rfc3339()
-        exp["status"] = "canceled"
-        exp["completed_at"] = timestamp
-        exp["cancellation_fence"] = timestamp
-        if reason:
-            exp["cancellation_reason"] = reason
-        if actor_id:
-            exp["canceled_by"] = actor_id
-        exp["updated_at"] = timestamp
-        exp["allowedActions"] = self._rw04_allowed_actions(exp)
-        self._experiments_store.put(experiment_id, exp)
-        return self._project_experiment_detail(exp)
+        target_lock = getattr(self._experiments_store, "lock", None)
+        target_rows = getattr(self._experiments_store, "rows", None)
+        fail_flag = getattr(self._experiments_store, "fail", False)
+
+        exp = None
+        max_retries = 20
+        for attempt in range(max_retries):
+            if exp is None:
+                exp = self._experiments_store.get(str(experiment_id))
+            if exp is None or not isinstance(exp, dict):
+                return None
+
+            exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+            if exp_tenant and clean_tenant and clean_tenant != exp_tenant:
+                raise ResearchTenantAuthorizationError(
+                    f"Tenant {clean_tenant!r} is not authorized to cancel experiment belonging to tenant {exp_tenant!r}",
+                    tenant_id=clean_tenant,
+                    expected_tenant=exp_tenant,
+                )
+
+            if clean_key:
+                for cmd in (exp.get("command_history") or []):
+                    if not isinstance(cmd, dict):
+                        continue
+                    if cmd.get("idempotency_key") == clean_key:
+                        cmd_tenant = str(cmd.get("tenant_id") or "").strip() or None
+                        cmd_actor = str(cmd.get("actor_id") or "").strip() or None
+                        if cmd_tenant == clean_tenant and (not clean_actor or not cmd_actor or cmd_actor == clean_actor):
+                            saved_hash = cmd.get("request_hash")
+                            if clean_hash and saved_hash and saved_hash != clean_hash:
+                                raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                            return self._project_experiment_detail(exp)
+
+                cancel_rcpt = exp.get("cancel_receipt") or {}
+                if cancel_rcpt.get("idempotency_key") == clean_key:
+                    rcpt_tenant = str(cancel_rcpt.get("tenant_id") or "").strip() or None
+                    rcpt_actor = str(cancel_rcpt.get("actor_id") or "").strip() or None
+                    if rcpt_tenant == clean_tenant and (not clean_actor or not rcpt_actor or rcpt_actor == clean_actor):
+                        saved_hash = cancel_rcpt.get("request_hash")
+                        if clean_hash and saved_hash and saved_hash != clean_hash:
+                            raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                        return self._project_experiment_detail(exp)
+
+            status = str(exp.get("status") or "").strip().lower()
+            if status not in self._RW04_CANCELABLE_STATUSES:
+                return None
+
+            updated = copy.deepcopy(exp)
+            timestamp = completed_at or _utc_now_rfc3339()
+            updated["status"] = "canceled"
+            updated["completed_at"] = timestamp
+            updated["cancellation_fence"] = timestamp
+            if reason:
+                updated["cancellation_reason"] = reason
+            if clean_actor:
+                updated["canceled_by"] = clean_actor
+            updated["updated_at"] = timestamp
+            updated["allowedActions"] = self._rw04_allowed_actions(updated)
+
+            prev_version = int(exp.get("aggregate_version") or 1)
+            new_version = prev_version + 1
+            updated["aggregate_version"] = new_version
+
+            cmd_id = command_id or f"cmd-cancel-{experiment_id}-{new_version}"
+            cancel_receipt = {
+                "receipt_id": f"rcpt-{cmd_id}",
+                "command_id": cmd_id,
+                "command": "CancelResearchExperiment",
+                "aggregate_id": str(experiment_id),
+                "aggregate_type": "ResearchExperiment",
+                "aggregate_version": new_version,
+                "status": "committed",
+                "owner": "ResearchWriteOwner",
+                "actor_id": clean_actor,
+                "tenant_id": clean_tenant or exp_tenant,
+                "idempotency_key": clean_key,
+                "request_hash": clean_hash,
+                "committed_at": timestamp,
+            }
+            updated["cancel_receipt"] = cancel_receipt
+            history = list(updated.get("command_history") or [])
+            history.append({
+                "command": "CancelResearchExperiment",
+                "command_id": cmd_id,
+                "actor_id": clean_actor,
+                "tenant_id": clean_tenant or exp_tenant,
+                "idempotency_key": clean_key,
+                "request_hash": clean_hash,
+                "recorded_at": timestamp,
+                "receipt": cancel_receipt,
+            })
+            updated["command_history"] = history
+
+            if hasattr(self._experiments_store, "compare_and_set"):
+                success, actual = self._experiments_store.compare_and_set(str(experiment_id), exp, updated)
+                if success:
+                    return self._project_experiment_detail(updated)
+                exp = actual if isinstance(actual, dict) else None
+                continue
+
+            if target_lock is not None and target_rows is not None:
+                if fail_flag:
+                    raise OSError("injected commit failure")
+                with target_lock:
+                    target_rows[str(experiment_id)] = copy.deepcopy(updated)
+                    return self._project_experiment_detail(updated)
+
+            self._experiments_store.put(str(experiment_id), updated)
+            return self._project_experiment_detail(updated)
+
+        raise RuntimeError(f"Failed to cancel experiment {experiment_id!r} after {max_retries} attempts")
 
     def retry_research_experiment(
         self,
@@ -1497,6 +1610,14 @@ class ResearchWriteOwner:
         exp = self._experiments_store.get(str(experiment_id))
         if exp is None or not isinstance(exp, dict):
             return None
+        exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+        clean_tenant = str(tenant_id).strip() if tenant_id else exp_tenant
+        if exp_tenant and tenant_id and str(tenant_id).strip() != exp_tenant:
+            raise ResearchTenantAuthorizationError(
+                f"Tenant {str(tenant_id).strip()!r} is not authorized to retry experiment belonging to tenant {exp_tenant!r}",
+                tenant_id=str(tenant_id).strip(),
+                expected_tenant=exp_tenant,
+            )
         status = str(exp.get("status") or "").strip().lower()
         if status not in self._RW04_RETRYABLE_STATUSES:
             return None
@@ -1628,21 +1749,61 @@ class ResearchWriteOwner:
         *,
         actor_id: Optional[str] = None,
         archived_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
-        exp = self._experiments_store.get(str(experiment_id))
-        if exp is None or not isinstance(exp, dict):
-            return None
-        status = str(exp.get("status") or "").strip().lower()
-        if status not in self._RW04_ARCHIVABLE_STATUSES:
-            return None
-        timestamp = archived_at or _utc_now_rfc3339()
-        exp["is_archived"] = True
-        exp["archived_at"] = timestamp
-        exp["archived_by"] = actor_id
-        exp["updated_at"] = timestamp
-        exp["allowedActions"] = self._rw04_allowed_actions(exp)
-        self._experiments_store.put(experiment_id, exp)
-        return self._project_experiment_detail(exp)
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        clean_actor = str(actor_id).strip() if actor_id else None
+
+        target_lock = getattr(self._experiments_store, "lock", None)
+        target_rows = getattr(self._experiments_store, "rows", None)
+        fail_flag = getattr(self._experiments_store, "fail", False)
+
+        exp = None
+        max_retries = 20
+        for attempt in range(max_retries):
+            if exp is None:
+                exp = self._experiments_store.get(str(experiment_id))
+            if exp is None or not isinstance(exp, dict):
+                return None
+            exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+            if exp_tenant and clean_tenant and clean_tenant != exp_tenant:
+                raise ResearchTenantAuthorizationError(
+                    f"Tenant {clean_tenant!r} is not authorized to archive experiment belonging to tenant {exp_tenant!r}",
+                    tenant_id=clean_tenant,
+                    expected_tenant=exp_tenant,
+                )
+            status = str(exp.get("status") or "").strip().lower()
+            if status not in self._RW04_ARCHIVABLE_STATUSES:
+                return None
+            if exp.get("is_archived"):
+                return self._project_experiment_detail(exp)
+            updated = copy.deepcopy(exp)
+            timestamp = archived_at or _utc_now_rfc3339()
+            updated["is_archived"] = True
+            updated["archived_at"] = timestamp
+            updated["archived_by"] = clean_actor
+            updated["updated_at"] = timestamp
+            updated["allowedActions"] = self._rw04_allowed_actions(updated)
+
+            if hasattr(self._experiments_store, "compare_and_set"):
+                success, actual = self._experiments_store.compare_and_set(str(experiment_id), exp, updated)
+                if success:
+                    return self._project_experiment_detail(updated)
+                exp = actual if isinstance(actual, dict) else None
+                continue
+
+            if target_lock is not None and target_rows is not None:
+                if fail_flag:
+                    raise OSError("injected commit failure")
+                with target_lock:
+                    target_rows[str(experiment_id)] = copy.deepcopy(updated)
+                    return self._project_experiment_detail(updated)
+
+            self._experiments_store.put(str(experiment_id), updated)
+            return self._project_experiment_detail(updated)
+
+        raise RuntimeError(f"Failed to archive experiment {experiment_id!r} after {max_retries} attempts")
 
     def invalidate_research_experiment(
         self,
@@ -1651,30 +1812,83 @@ class ResearchWriteOwner:
         reason: Optional[str] = None,
         actor_id: Optional[str] = None,
         invalidated_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
-        exp = self._experiments_store.get(str(experiment_id))
-        if exp is None or not isinstance(exp, dict):
-            return None
-        status = str(exp.get("status") or "").strip().lower()
-        if status in {"invalidated", "canceled"}:
-            return None
-        timestamp = invalidated_at or _utc_now_rfc3339()
-        exp["status"] = "invalidated"
-        exp["invalidated_at"] = timestamp
-        exp["invalidated_reason"] = reason or "Invalidated by operator"
-        exp["invalidated_by"] = actor_id
-        exp["updated_at"] = timestamp
-        exp["allowedActions"] = self._rw04_allowed_actions(exp)
-        self._experiments_store.put(experiment_id, exp)
-        return self._project_experiment_detail(exp)
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        clean_actor = str(actor_id).strip() if actor_id else None
 
-    def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        target_lock = getattr(self._experiments_store, "lock", None)
+        target_rows = getattr(self._experiments_store, "rows", None)
+        fail_flag = getattr(self._experiments_store, "fail", False)
+
+        exp = None
+        max_retries = 20
+        for attempt in range(max_retries):
+            if exp is None:
+                exp = self._experiments_store.get(str(experiment_id))
+            if exp is None or not isinstance(exp, dict):
+                return None
+            exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+            if exp_tenant and clean_tenant and clean_tenant != exp_tenant:
+                raise ResearchTenantAuthorizationError(
+                    f"Tenant {clean_tenant!r} is not authorized to invalidate experiment belonging to tenant {exp_tenant!r}",
+                    tenant_id=clean_tenant,
+                    expected_tenant=exp_tenant,
+                )
+            status = str(exp.get("status") or "").strip().lower()
+            if status in {"invalidated", "canceled"}:
+                return None
+            updated = copy.deepcopy(exp)
+            timestamp = invalidated_at or _utc_now_rfc3339()
+            updated["status"] = "invalidated"
+            updated["invalidated_at"] = timestamp
+            updated["invalidated_reason"] = reason or "Invalidated by operator"
+            updated["invalidated_by"] = clean_actor
+            updated["updated_at"] = timestamp
+            updated["allowedActions"] = self._rw04_allowed_actions(updated)
+
+            if hasattr(self._experiments_store, "compare_and_set"):
+                success, actual = self._experiments_store.compare_and_set(str(experiment_id), exp, updated)
+                if success:
+                    return self._project_experiment_detail(updated)
+                exp = actual if isinstance(actual, dict) else None
+                continue
+
+            if target_lock is not None and target_rows is not None:
+                if fail_flag:
+                    raise OSError("injected commit failure")
+                with target_lock:
+                    target_rows[str(experiment_id)] = copy.deepcopy(updated)
+                    return self._project_experiment_detail(updated)
+
+            self._experiments_store.put(str(experiment_id), updated)
+            return self._project_experiment_detail(updated)
+
+        raise RuntimeError(f"Failed to invalidate experiment {experiment_id!r} after {max_retries} attempts")
+
+    def get_research_experiment(
+        self,
+        experiment_id: Optional[str],
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         if not experiment_id:
             return None
         exp = self._experiments_store.get(str(experiment_id))
         if exp and isinstance(exp, dict) and not exp.get("is_committed", True):
             return None
-        return self._project_experiment_detail(exp) if isinstance(exp, dict) else None
+        if not isinstance(exp, dict):
+            return None
+        exp_tenant = str(exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        if exp_tenant and clean_tenant and clean_tenant != exp_tenant:
+            raise ResearchTenantAuthorizationError(
+                f"Tenant {clean_tenant!r} is not authorized to access experiment belonging to tenant {exp_tenant!r}",
+                tenant_id=clean_tenant,
+                expected_tenant=exp_tenant,
+            )
+        return self._project_experiment_detail(exp)
 
     def list_research_experiments(
         self,
@@ -1682,9 +1896,16 @@ class ResearchWriteOwner:
         ticket_id: Optional[str] = None,
         status: Optional[str] = None,
         include_archived: bool = False,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         experiments = self._experiments_store.list_all()
         experiments = [e for e in experiments if isinstance(e, dict) and e.get("is_committed", True)]
+        clean_tenant = str(tenant_id).strip() if tenant_id else None
+        if clean_tenant:
+            experiments = [
+                e for e in experiments
+                if isinstance(e, dict) and (str(e.get("tenant_id") or (e.get("launch_context") or {}).get("tenant_id") or "").strip() == clean_tenant)
+            ]
         if not include_archived:
             experiments = [e for e in experiments if not bool(e.get("is_archived", False))]
         if ticket_id:
