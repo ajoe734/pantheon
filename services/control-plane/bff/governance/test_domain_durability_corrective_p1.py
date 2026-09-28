@@ -2395,6 +2395,142 @@ def test_mounted_experiment_action_concurrent_conflict(tmp_path, monkeypatch):
     assert len(all_cmds) == 1
 
 
+def test_mounted_experiment_action_processor_execution_and_restart(tmp_path, monkeypatch):
+    """Processor-level mounted regression verifying end-to-end action execution and restart durability.
+
+    Covers SD4.4 canonical receipt persistence, version increments, restart-bound
+    CommandStore replay, and conflicting payload rejection across all mounted actions
+    (cancel, retry, archive, invalidate).
+    """
+    import asyncio
+    from services.control_plane.bff.command_adapters.registry import find_adapter
+    from services.control_plane.bff.command_adapters.service import process_command
+    from services.control_plane.bff.models import CommandStatus, CommandType
+    import services.research.write_owner as rwo_mod
+
+    client, main, identity, owner, store = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+
+    # Route adapter execution to the test in-memory write owner
+    monkeypatch.setattr(rwo_mod, "build_research_write_owner", lambda: owner)
+    exp_adapter = find_adapter(CommandType.EXPERIMENT_ACTION)
+    assert exp_adapter is not None
+    monkeypatch.setattr(exp_adapter, "_research_write_owner", owner)
+
+    # Create an initial experiment via mounted client
+    exp_res = client.post("/bff/experiments", json={"name": "processor-regression-test"})
+    assert exp_res.status_code == 201
+    eid = exp_res.json()["experiment_id"]
+
+    # 1. Action: cancel
+    cancel_path = f"/bff/experiments/{eid}/actions/cancel"
+    r_cancel = client.post(cancel_path, json={"reason": "operator cancel test"}, headers={"Idempotency-Key": "proc-cancel-key"})
+    assert r_cancel.status_code == 202
+    cmd_cancel_id = r_cancel.json()["data"]["command_id"]
+    assert store.get_command(cmd_cancel_id)["status"] == CommandStatus.SUBMITTED
+
+    # Process cancel command
+    asyncio.run(process_command(cmd_cancel_id, command_store=store))
+    cmd_cancel_rec = store.get_command(cmd_cancel_id)
+    assert cmd_cancel_rec["status"] == CommandStatus.EXECUTED
+    cancel_receipt = cmd_cancel_rec["result"]["domain_receipt"]
+    assert cancel_receipt["command_id"] == cmd_cancel_id
+    assert cancel_receipt["aggregate_id"] == eid
+    assert cancel_receipt["aggregate_type"] == "ResearchExperiment"
+    assert cancel_receipt["aggregate_version"] == 2
+    assert cancel_receipt["owner"] == "ResearchWriteOwner"
+    assert cancel_receipt["correlation_id"] == "proc-cancel-key"
+    assert cancel_receipt["event_id"].startswith("evt-")
+    assert cancel_receipt["committed_at"]
+
+    # 2. Action: retry (on canceled experiment)
+    retry_path = f"/bff/experiments/{eid}/actions/retry"
+    r_retry = client.post(retry_path, json={}, headers={"Idempotency-Key": "proc-retry-key"})
+    assert r_retry.status_code == 202
+    cmd_retry_id = r_retry.json()["data"]["command_id"]
+    assert store.get_command(cmd_retry_id)["status"] == CommandStatus.SUBMITTED
+
+    # Process retry command
+    asyncio.run(process_command(cmd_retry_id, command_store=store))
+    cmd_retry_rec = store.get_command(cmd_retry_id)
+    assert cmd_retry_rec["status"] == CommandStatus.EXECUTED
+    retry_receipt = cmd_retry_rec["result"]["domain_receipt"]
+    assert retry_receipt["command_id"] == cmd_retry_id
+    assert retry_receipt["owner"] == "ResearchWriteOwner"
+    assert retry_receipt["aggregate_type"] == "ResearchExperiment"
+    assert retry_receipt["aggregate_version"] == 1
+    assert retry_receipt["correlation_id"] == "proc-retry-key"
+    assert retry_receipt["event_id"].startswith("evt-")
+    assert retry_receipt["committed_at"]
+    new_eid = cmd_retry_rec["result"].get("new_experiment_id") or (cmd_retry_rec["result"].get("authoritative_readback") or {}).get("experiment_id")
+    assert new_eid and new_eid != eid
+
+    # 3. Action: archive (on canceled experiment eid)
+    archive_path = f"/bff/experiments/{eid}/actions/archive"
+    r_archive = client.post(archive_path, json={}, headers={"Idempotency-Key": "proc-archive-key"})
+    assert r_archive.status_code == 202
+    cmd_archive_id = r_archive.json()["data"]["command_id"]
+    assert store.get_command(cmd_archive_id)["status"] == CommandStatus.SUBMITTED
+
+    # Process archive command
+    asyncio.run(process_command(cmd_archive_id, command_store=store))
+    cmd_archive_rec = store.get_command(cmd_archive_id)
+    assert cmd_archive_rec["status"] == CommandStatus.EXECUTED
+    archive_receipt = cmd_archive_rec["result"]["domain_receipt"]
+    assert archive_receipt["command_id"] == cmd_archive_id
+    assert archive_receipt["aggregate_id"] == eid
+    assert archive_receipt["aggregate_type"] == "ResearchExperiment"
+    assert archive_receipt["aggregate_version"] == 3
+    assert archive_receipt["owner"] == "ResearchWriteOwner"
+    assert archive_receipt["correlation_id"] == "proc-archive-key"
+    assert archive_receipt["event_id"].startswith("evt-")
+    assert archive_receipt["committed_at"]
+
+    # 4. Action: invalidate (on new retry experiment new_eid, which is queued)
+    inv_path = f"/bff/experiments/{new_eid}/actions/invalidate"
+    r_inv = client.post(inv_path, json={"reason": "invalidate reason"}, headers={"Idempotency-Key": "proc-inv-key"})
+    assert r_inv.status_code == 202
+    cmd_inv_id = r_inv.json()["data"]["command_id"]
+    assert store.get_command(cmd_inv_id)["status"] == CommandStatus.SUBMITTED
+
+    # Process invalidate command
+    asyncio.run(process_command(cmd_inv_id, command_store=store))
+    cmd_inv_rec = store.get_command(cmd_inv_id)
+    assert cmd_inv_rec["status"] == CommandStatus.EXECUTED
+    inv_receipt = cmd_inv_rec["result"]["domain_receipt"]
+    assert inv_receipt["command_id"] == cmd_inv_id
+    assert inv_receipt["aggregate_id"] == new_eid
+    assert inv_receipt["aggregate_type"] == "ResearchExperiment"
+    assert inv_receipt["aggregate_version"] == 2
+    assert inv_receipt["owner"] == "ResearchWriteOwner"
+    assert inv_receipt["correlation_id"] == "proc-inv-key"
+    assert inv_receipt["event_id"].startswith("evt-")
+    assert inv_receipt["committed_at"]
+
+    # 5. Restart persistence & Idempotent replay:
+    restarted_store = CommandStore(str(tmp_path / "commands.jsonl"))
+    monkeypatch.setattr(main, "command_store", restarted_store)
+
+    # Replay cancel with identical payload
+    r_replay = client.post(cancel_path, json={"reason": "operator cancel test"}, headers={"Idempotency-Key": "proc-cancel-key"})
+    assert r_replay.status_code == 202
+    assert r_replay.json()["data"]["command_id"] == cmd_cancel_id
+    assert r_replay.json()["meta"]["idempotency"]["replayed"] is True
+
+    # Conflicting payload with same key returns 409
+    r_conflict = client.post(cancel_path, json={"reason": "conflicting reason"}, headers={"Idempotency-Key": "proc-cancel-key"})
+    assert r_conflict.status_code == 409
+
+    # Replay archive with identical payload
+    r_arch_replay = client.post(archive_path, json={}, headers={"Idempotency-Key": "proc-archive-key"})
+    assert r_arch_replay.status_code == 202
+    assert r_arch_replay.json()["data"]["command_id"] == cmd_archive_id
+    assert r_arch_replay.json()["meta"]["idempotency"]["replayed"] is True
+
+    # Conflicting archive payload with same key returns 409
+    r_arch_conflict = client.post(archive_path, json={"archived_by": "different"}, headers={"Idempotency-Key": "proc-archive-key"})
+    assert r_arch_conflict.status_code == 409
+
+
 def test_finalize_rejects_arbitrary_get_put_store_without_cas():
     """Verify _finalize_experiment_record fails closed on stores lacking conditional CAS authority.
 
@@ -2524,6 +2660,86 @@ def test_finalize_two_owners_shared_backend_preserves_concurrent_cancellation_vi
     assert persisted["status"] == "canceled", f"Expected status 'canceled', got {persisted}"
     assert persisted["is_committed"] is True, f"Expected is_committed=True, got {persisted}"
     assert final["version"] == 2 and final["status"] == "canceled" and final["is_committed"] is True
+
+
+def test_adapter_dispatch_argument_is_command_identity_all_actions(tmp_path, monkeypatch):
+    """Verify direct adapter dispatcher command_id is authoritative over body params across all 4 experiment actions."""
+    from services.control_plane.bff.command_adapters.experiment_adapter import ExperimentCommandAdapter
+
+    client, _, identity, owner, _ = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    adapter = ExperimentCommandAdapter(research_write_owner_factory=lambda: owner)
+
+    # 1. Action: cancel
+    e1 = client.post("/bff/experiments", json={"name": "identity-cancel"}).json()["experiment_id"]
+    rcpt_cancel = adapter.execute(
+        "trusted-cmd-cancel",
+        "ExperimentAction",
+        {
+            "action_id": "cancel",
+            "experiment_id": e1,
+            "command_id": "body-cmd-cancel",
+            "actor_id": identity.operator_id,
+            "tenant_id": identity.tenant_id,
+        },
+    )
+    assert rcpt_cancel["command_id"] == "trusted-cmd-cancel"
+    rec1 = owner._experiments_store.get(e1)
+    assert rec1["cancel_receipt"]["command_id"] == "trusted-cmd-cancel"
+    assert rec1["receipt"]["command_id"] == "trusted-cmd-cancel"
+    assert rec1["command_id"] == "trusted-cmd-cancel"
+
+    # 2. Action: retry (on canceled e1)
+    rcpt_retry = adapter.execute(
+        "trusted-cmd-retry",
+        "ExperimentAction",
+        {
+            "action_id": "retry",
+            "experiment_id": e1,
+            "command_id": "body-cmd-retry",
+            "actor_id": identity.operator_id,
+            "tenant_id": identity.tenant_id,
+        },
+    )
+    assert rcpt_retry["command_id"] == "trusted-cmd-retry"
+    e2 = rcpt_retry["new_experiment_id"]
+    rec2 = owner._experiments_store.get(e2)
+    assert rec2["retry_receipt"]["command_id"] == "trusted-cmd-retry"
+    assert rec2["receipt"]["command_id"] == "trusted-cmd-retry"
+    assert rec2["command_id"] == "trusted-cmd-retry"
+
+    # 3. Action: archive (on canceled e1)
+    rcpt_archive = adapter.execute(
+        "trusted-cmd-archive",
+        "ExperimentAction",
+        {
+            "action_id": "archive",
+            "experiment_id": e1,
+            "command_id": "body-cmd-archive",
+            "actor_id": identity.operator_id,
+            "tenant_id": identity.tenant_id,
+        },
+    )
+    assert rcpt_archive["command_id"] == "trusted-cmd-archive"
+    rec1_archived = owner._experiments_store.get(e1)
+    assert rec1_archived["archive_receipt"]["command_id"] == "trusted-cmd-archive"
+    assert rec1_archived["receipt"]["command_id"] == "trusted-cmd-archive"
+
+    # 4. Action: invalidate (on queued e2)
+    rcpt_invalidate = adapter.execute(
+        "trusted-cmd-invalidate",
+        "ExperimentAction",
+        {
+            "action_id": "invalidate",
+            "experiment_id": e2,
+            "command_id": "body-cmd-invalidate",
+            "actor_id": identity.operator_id,
+            "tenant_id": identity.tenant_id,
+        },
+    )
+    assert rcpt_invalidate["command_id"] == "trusted-cmd-invalidate"
+    rec2_invalidated = owner._experiments_store.get(e2)
+    assert rec2_invalidated["invalidate_receipt"]["command_id"] == "trusted-cmd-invalidate"
+    assert rec2_invalidated["receipt"]["command_id"] == "trusted-cmd-invalidate"
 
 
 

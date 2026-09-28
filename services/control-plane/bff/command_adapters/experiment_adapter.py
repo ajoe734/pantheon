@@ -31,6 +31,8 @@ from .base import (
     utc_now,
 )
 
+import uuid
+
 log = logging.getLogger(__name__)
 
 
@@ -78,7 +80,7 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
     ) -> Dict[str, Any]:
         action_id = str(params.get("action_id") or "").strip()
         experiment_id = str(
-            params.get("experiment_id") or params.get("entity_id") or ""
+            params.get("experiment_id") or params.get("entity_id") or params.get("target_id") or ""
         ).strip()
         normalized_action = action_id.strip().lower()
 
@@ -97,14 +99,16 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
                 downstream_status=503,
             )
 
+        trusted_command_id = str(command_id or "").strip() or str(params.get("command_id") or "").strip() or str(uuid.uuid4())
+
         if normalized_action == "cancel":
-            return self._execute_cancel(command_id, experiment_id, action_id, params, owner)
+            return self._execute_cancel(trusted_command_id, experiment_id, action_id, params, owner)
         if normalized_action == "retry":
-            return self._execute_retry(command_id, experiment_id, action_id, params, owner)
+            return self._execute_retry(trusted_command_id, experiment_id, action_id, params, owner)
         if normalized_action in {"archive", "archived"}:
-            return self._execute_archive(command_id, experiment_id, action_id, params, owner)
+            return self._execute_archive(trusted_command_id, experiment_id, action_id, params, owner)
         if normalized_action in {"invalidate", "invalidated"}:
-            return self._execute_invalidate(command_id, experiment_id, action_id, params, owner)
+            return self._execute_invalidate(trusted_command_id, experiment_id, action_id, params, owner)
         if normalized_action == "promote":
             raise ActionUnavailableError(
                 f"Experiment {experiment_id!r} promotion requires Governance review tokens and target registry verification "
@@ -146,8 +150,22 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
         params: Dict[str, Any],
         owner: Any,
     ) -> Dict[str, Any]:
+        actor_id = str(params.get("actor_id") or params.get("operator_id") or "operator")
+        tenant_id = params.get("tenant_id")
+        idempotency_key = params.get("idempotency_key")
+        request_hash = params.get("request_hash")
+        reason = str(params.get("reason") or "Canceled by operator")
         completed_at = params.get("completed_at") or utc_now()
-        result = owner.cancel_research_experiment(experiment_id, completed_at=completed_at)
+        result = owner.cancel_research_experiment(
+            experiment_id,
+            reason=reason,
+            actor_id=actor_id,
+            completed_at=completed_at,
+            tenant_id=tenant_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            command_id=command_id,
+        )
         if result is None:
             if hasattr(owner, "get_research_experiment") and owner.get_research_experiment(experiment_id) is None:
                 raise ActionUnavailableError(
@@ -170,6 +188,12 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
                 downstream_status=409,
             )
 
+        cancel_receipt = result.get("cancel_receipt") or result.get("receipt") or {}
+        agg_version = cancel_receipt.get("aggregate_version") or result.get("aggregate_version") or 1
+        event_id = cancel_receipt.get("event_id") or result.get("event_id") or f"evt-{command_id}"
+        correlation_id = cancel_receipt.get("correlation_id") or idempotency_key or command_id
+        committed_at = cancel_receipt.get("committed_at") or result.get("completed_at") or completed_at
+
         return build_domain_receipt(
             command_id=command_id,
             entity_type="Experiment",
@@ -177,12 +201,21 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             action_id=action_id,
             status=result.get("status") or "canceled",
             dispatch_path="research_write_owner.cancel_research_experiment",
-            domain_receipt=result,
+            domain_receipt=cancel_receipt or result,
+            aggregate_type="ResearchExperiment",
+            aggregate_id=experiment_id,
+            aggregate_version=agg_version,
+            event_id=event_id,
+            correlation_id=correlation_id,
+            owner="ResearchWriteOwner",
+            committed_at=committed_at,
             authoritative_readback={
                 "experiment_id": experiment_id,
                 "status": result.get("status"),
                 "completed_at": result.get("completed_at"),
                 "cancellation_fence": result.get("cancellation_fence"),
+                "canceled_at": result.get("canceled_at"),
+                "cancel_reason": result.get("cancel_reason") or reason,
             },
             extra={
                 "experiment_id": experiment_id,
@@ -198,14 +231,19 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
         params: Dict[str, Any],
         owner: Any,
     ) -> Dict[str, Any]:
-        actor_id = str(params.get("actor_id") or "operator")
+        actor_id = str(params.get("actor_id") or params.get("operator_id") or "operator")
+        tenant_id = params.get("tenant_id")
         idempotency_key = params.get("idempotency_key")
+        request_hash = params.get("request_hash")
         requested_at = params.get("requested_at") or params.get("completed_at") or utc_now()
         result = owner.retry_research_experiment(
             experiment_id,
             actor_id=actor_id,
             requested_at=requested_at,
             idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            tenant_id=tenant_id,
+            command_id=command_id,
         )
         if result is None:
             if hasattr(owner, "get_research_experiment") and owner.get_research_experiment(experiment_id) is None:
@@ -230,6 +268,12 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             )
 
         new_exp_id = result.get("experiment_id") or result.get("id")
+        receipt_dict = result.get("receipt") or {}
+        agg_version = receipt_dict.get("aggregate_version") or result.get("aggregate_version") or 1
+        event_id = receipt_dict.get("event_id") or result.get("event_id") or f"evt-{command_id}"
+        correlation_id = receipt_dict.get("correlation_id") or idempotency_key or command_id
+        committed_at = receipt_dict.get("committed_at") or requested_at
+
         return build_domain_receipt(
             command_id=command_id,
             entity_type="Experiment",
@@ -237,7 +281,14 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             action_id=action_id,
             status=result.get("status") or "queued",
             dispatch_path="research_write_owner.retry_research_experiment",
-            domain_receipt=result,
+            domain_receipt=receipt_dict or result,
+            aggregate_type="ResearchExperiment",
+            aggregate_id=experiment_id,
+            aggregate_version=agg_version,
+            event_id=event_id,
+            correlation_id=correlation_id,
+            owner="ResearchWriteOwner",
+            committed_at=committed_at,
             authoritative_readback={
                 "experiment_id": new_exp_id,
                 "status": result.get("status"),
@@ -261,12 +312,19 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
         params: Dict[str, Any],
         owner: Any,
     ) -> Dict[str, Any]:
-        actor_id = str(params.get("actor_id") or "operator")
+        actor_id = str(params.get("actor_id") or params.get("operator_id") or "operator")
+        tenant_id = params.get("tenant_id")
+        idempotency_key = params.get("idempotency_key")
+        request_hash = params.get("request_hash")
         archived_at = params.get("archived_at") or params.get("completed_at") or utc_now()
         result = owner.archive_research_experiment(
             experiment_id,
             actor_id=actor_id,
             archived_at=archived_at,
+            tenant_id=tenant_id,
+            command_id=command_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
         )
         if result is None:
             if hasattr(owner, "get_research_experiment") and owner.get_research_experiment(experiment_id) is None:
@@ -289,6 +347,12 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
                 downstream_status=409,
             )
 
+        archive_receipt = result.get("archive_receipt") or result.get("receipt") or {}
+        agg_version = archive_receipt.get("aggregate_version") or result.get("aggregate_version") or 1
+        event_id = archive_receipt.get("event_id") or result.get("event_id") or f"evt-{command_id}"
+        correlation_id = archive_receipt.get("correlation_id") or idempotency_key or command_id
+        committed_at = archive_receipt.get("committed_at") or result.get("archived_at") or archived_at
+
         return build_domain_receipt(
             command_id=command_id,
             entity_type="Experiment",
@@ -296,7 +360,14 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             action_id=action_id,
             status="archived",
             dispatch_path="research_write_owner.archive_research_experiment",
-            domain_receipt=result,
+            domain_receipt=archive_receipt or result,
+            aggregate_type="ResearchExperiment",
+            aggregate_id=experiment_id,
+            aggregate_version=agg_version,
+            event_id=event_id,
+            correlation_id=correlation_id,
+            owner="ResearchWriteOwner",
+            committed_at=committed_at,
             authoritative_readback={
                 "experiment_id": experiment_id,
                 "is_archived": True,
@@ -313,7 +384,10 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
         params: Dict[str, Any],
         owner: Any,
     ) -> Dict[str, Any]:
-        actor_id = str(params.get("actor_id") or "operator")
+        actor_id = str(params.get("actor_id") or params.get("operator_id") or "operator")
+        tenant_id = params.get("tenant_id")
+        idempotency_key = params.get("idempotency_key")
+        request_hash = params.get("request_hash")
         reason = str(params.get("reason") or "Invalidated by operator")
         invalidated_at = params.get("invalidated_at") or params.get("completed_at") or utc_now()
         result = owner.invalidate_research_experiment(
@@ -321,6 +395,10 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             reason=reason,
             actor_id=actor_id,
             invalidated_at=invalidated_at,
+            tenant_id=tenant_id,
+            command_id=command_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
         )
         if result is None:
             if hasattr(owner, "get_research_experiment") and owner.get_research_experiment(experiment_id) is None:
@@ -343,6 +421,12 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
                 downstream_status=409,
             )
 
+        invalidate_receipt = result.get("invalidate_receipt") or result.get("receipt") or {}
+        agg_version = invalidate_receipt.get("aggregate_version") or result.get("aggregate_version") or 1
+        event_id = invalidate_receipt.get("event_id") or result.get("event_id") or f"evt-{command_id}"
+        correlation_id = invalidate_receipt.get("correlation_id") or idempotency_key or command_id
+        committed_at = invalidate_receipt.get("committed_at") or result.get("invalidated_at") or invalidated_at
+
         return build_domain_receipt(
             command_id=command_id,
             entity_type="Experiment",
@@ -350,12 +434,19 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             action_id=action_id,
             status="invalidated",
             dispatch_path="research_write_owner.invalidate_research_experiment",
-            domain_receipt=result,
+            domain_receipt=invalidate_receipt or result,
+            aggregate_type="ResearchExperiment",
+            aggregate_id=experiment_id,
+            aggregate_version=agg_version,
+            event_id=event_id,
+            correlation_id=correlation_id,
+            owner="ResearchWriteOwner",
+            committed_at=committed_at,
             authoritative_readback={
                 "experiment_id": experiment_id,
                 "status": "invalidated",
                 "invalidated_at": result.get("invalidated_at"),
-                "invalidated_reason": result.get("invalidated_reason"),
+                "invalidated_reason": result.get("invalidated_reason") or reason,
             },
             extra={"experiment_id": experiment_id},
         )

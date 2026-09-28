@@ -655,3 +655,90 @@ def test_experiment_allowed_actions_truthfulness(isolated_write_owner: ResearchW
     assert c_detail["allowedActions"]["canArchive"] is True
     assert c_detail["allowedActions"]["canCancel"] is False
     assert c_detail["allowedActions"]["canRetry"] is False
+
+
+def test_experiment_adapter_dispatcher_command_id_authoritative_all_actions(
+    isolated_write_owner: ResearchWriteOwner,
+) -> None:
+    """Verify that dispatcher argument command_id is authoritative over body params across all 4 actions."""
+    adapter = ExperimentCommandAdapter(research_write_owner_factory=lambda: isolated_write_owner)
+
+    # 1. Action: cancel
+    exp1 = isolated_write_owner.create_research_experiment(
+        ticket_id="ticket-001",
+        experiment_name="Cancel authority check",
+        strategy_selector={"strategy_id": "s1"},
+        parameter_set={},
+        run_config={"stage": "backtest"},
+        launch_context={"tenant_id": "tenant-test"},
+    )
+    eid1 = exp1["experiment_id"]
+    rcpt_cancel = adapter.execute(
+        "trusted-cmd-cancel",
+        "ExperimentAction",
+        {
+            "action_id": "cancel",
+            "experiment_id": eid1,
+            "command_id": "body-cmd-cancel",
+            "actor_id": "operator-1",
+            "tenant_id": "tenant-test",
+        },
+    )
+    assert rcpt_cancel["command_id"] == "trusted-cmd-cancel"
+    rec1 = isolated_write_owner._experiments_store.get(eid1)
+    assert rec1["cancel_receipt"]["command_id"] == "trusted-cmd-cancel"
+    assert rec1["receipt"]["command_id"] == "trusted-cmd-cancel"
+    assert rec1["command_id"] == "trusted-cmd-cancel"
+
+    # 2. Action: retry (on canceled experiment)
+    rcpt_retry = adapter.execute(
+        "trusted-cmd-retry",
+        "ExperimentAction",
+        {
+            "action_id": "retry",
+            "experiment_id": eid1,
+            "command_id": "body-cmd-retry",
+            "actor_id": "operator-1",
+            "tenant_id": "tenant-test",
+        },
+    )
+    assert rcpt_retry["command_id"] == "trusted-cmd-retry"
+    eid2 = rcpt_retry["new_experiment_id"]
+    rec2 = isolated_write_owner._experiments_store.get(eid2)
+    assert rec2["retry_receipt"]["command_id"] == "trusted-cmd-retry"
+    assert rec2["receipt"]["command_id"] == "trusted-cmd-retry"
+    assert rec2["command_id"] == "trusted-cmd-retry"
+
+    # 3. Action: archive (on canceled experiment eid1)
+    rcpt_archive = adapter.execute(
+        "trusted-cmd-archive",
+        "ExperimentAction",
+        {
+            "action_id": "archive",
+            "experiment_id": eid1,
+            "command_id": "body-cmd-archive",
+            "actor_id": "operator-1",
+            "tenant_id": "tenant-test",
+        },
+    )
+    assert rcpt_archive["command_id"] == "trusted-cmd-archive"
+    rec1_archived = isolated_write_owner._experiments_store.get(eid1)
+    assert rec1_archived["archive_receipt"]["command_id"] == "trusted-cmd-archive"
+    assert rec1_archived["receipt"]["command_id"] == "trusted-cmd-archive"
+
+    # 4. Action: invalidate (on queued experiment eid2)
+    rcpt_invalidate = adapter.execute(
+        "trusted-cmd-invalidate",
+        "ExperimentAction",
+        {
+            "action_id": "invalidate",
+            "experiment_id": eid2,
+            "command_id": "body-cmd-invalidate",
+            "actor_id": "operator-1",
+            "tenant_id": "tenant-test",
+        },
+    )
+    assert rcpt_invalidate["command_id"] == "trusted-cmd-invalidate"
+    rec2_invalidated = isolated_write_owner._experiments_store.get(eid2)
+    assert rec2_invalidated["invalidate_receipt"]["command_id"] == "trusted-cmd-invalidate"
+    assert rec2_invalidated["receipt"]["command_id"] == "trusted-cmd-invalidate"

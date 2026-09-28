@@ -3,7 +3,7 @@
   "task_id": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
   "base_ref": "dev@24608d4c8e04767f658e77be466780b9e91f7525",
   "depends_on": "DOMAIN-WRITERS-001 (done), BFF-ROUTER-USECASE-CORRECTIVE-001 (done), GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 (done), JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 (done)",
-  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md §E; DOMAIN-WRITERS-001 corrective closure",
+  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md §E (canonical tracked docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md, SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa; restored at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md); DOMAIN-WRITERS-001 corrective closure",
   "defect_remediation": {
     "defect_1_dead_capital_write_routes": {
       "problem": "capital/router.py constructs CapitalService(get_read_store=..., get_capital_authority=...). Mounted create_capital_router without get_capital_authority caused CapitalAuthorityUnavailable 503 on 8 POST routes.",
@@ -280,6 +280,18 @@
     "defect_69_test_bff_test_architecture_decouple_main_import": {
       "problem": "services/control-plane/bff/governance/test_domain_durability_corrective_p1.py imported services.control_plane.bff.main, failing the architectural gate test_non_whitelisted_main_importers_is_live_scanned_and_bounded.",
       "remediation": "Decoupled test_domain_durability_corrective_p1.py from main.py by defining _gov_bff_action_command in command_adapters.service and delegating from main.py; replaced main import in test helper with SimpleNamespace holder."
+    },
+    "defect_70_experiment_adapter_direct_implementation_and_processor_regressions": {
+      "problem": "command_adapters/registry.py monkey-patched ExperimentCommandAdapter methods at module load time to work around previous artifact-scope boundaries; ResearchWriteOwner actions (cancel, retry, archive, invalidate) did not consistently receive the trusted admitted command ID, tenant_id, actor_id, idempotency_key, and request_hash, and lacked processor-level mounted execution and restart regressions verifying SD4.4 receipts and CAS version tracking.",
+      "remediation": "Replaced registry monkey patches with direct implementation in services/control-plane/bff/command_adapters/experiment_adapter.py under the approved artifact scope; cleanly forwarded trusted admitted command_id, tenant_id, actor_id, idempotency_key, and request_hash to ResearchWriteOwner for all mounted actions; preserved actual owner receipt identity and version increments for archive and invalidate; updated services/research/write_owner.py to record command IDs and perform idempotent replay checks; added test_mounted_experiment_action_processor_execution_and_restart in test_domain_durability_corrective_p1.py covering end-to-end command processor execution, restart durability, SD4.4 canonical receipt persistence, version increments, and conflicting payload 409 rejection."
+    },
+    "defect_71_experiment_adapter_dispatcher_command_id_authority": {
+      "problem": "services/control-plane/bff/command_adapters/experiment_adapter.py:102 gave params.command_id precedence over dispatcher command_id. Direct adapter invocation with trusted-command and params.command_id=body-command persisted body-command in ResearchWriteOwner receipts.",
+      "remediation": "Made dispatcher argument command_id authoritative over params.command_id in ExperimentCommandAdapter (trusted_command_id = str(command_id or '').strip() or str(params.get('command_id') or '').strip() or str(uuid.uuid4())). Added regression coverage for all four experiment actions (cancel, retry, archive, invalidate) in test_research_jobs_action_receipts.py and test_domain_durability_corrective_p1.py verifying trusted command ID persistence in both domain receipt and ResearchWriteOwner receipts."
+    },
+    "defect_72_commit_trailer_length_and_normative_plan_access": {
+      "problem": "Commit c6a39d5f8 subject length was 93 characters, exceeding the 72-character limit and causing the Commit trailers CI job to fail. Furthermore, the task-scoped /tmp reference for the normative Section E plan was expired.",
+      "remediation": "Shortened task commit subject line to ≤ 70 characters adhering to repository trailers gate. Restored reviewer access to the immutable normative Section E plan at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md matching tracked file docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md with verified SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa."
     }
   },
   "mutation_caller_inventory": {
@@ -319,8 +331,8 @@
         "POST /bff/experiments",
         "POST /bff/experiments/{experiment_id}/actions/{action_id}"
       ],
-      "selected_owner": "services/control-plane/bff/ports/research_knowledge_source.py (DefaultResearchKnowledgeSourcePort.create_research_experiment) and ResearchCommandAdapter",
-      "durability_mechanism": "Eliminated read_store.create_experiment_bff fallback; routed directly to typed port with CommandStore logging."
+      "selected_owner": "services/control-plane/bff/command_adapters/experiment_adapter.py (ExperimentCommandAdapter) and services/research/write_owner.py (ResearchWriteOwner)",
+      "durability_mechanism": "Eliminated read_store.create_experiment_bff fallback and registry monkey patches; routed directly to ExperimentCommandAdapter and ResearchWriteOwner with CommandStore logging, trusted identity forwarding, and canonical SD 4.4 receipts."
     },
     "job_logs": {
       "routes": [
@@ -913,6 +925,36 @@
         "result": "1 passed, 38 deselected, 2 warnings in 22.76s",
         "executed": 1,
         "collected": 1
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "101 passed, 9 warnings in 58.40s",
+        "executed": 101,
+        "collected": 101
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "33 passed, 3 warnings in 10.60s",
+        "executed": 33,
+        "collected": 33
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "67 passed, 3 warnings in 40.74s",
+        "executed": 67,
+        "collected": 67
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 services/control-plane/bff/smoke_test.py",
+        "result": "26 passed in 1.114s",
+        "executed": 26,
+        "collected": 26
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py -k \"test_non_whitelisted_main_importers_is_live_scanned_and_bounded\"",
+        "result": "1 passed, 38 deselected, 2 warnings in 22.95s",
+        "executed": 1,
+        "collected": 1
       }
     ]
   },
@@ -990,7 +1032,10 @@
     "defect_66_mounted_action_command_durability_and_actor_isolation_resolved": true,
     "defect_67_research_jobs_action_receipts_in_memory_cas_resolved": true,
     "defect_68_mounted_action_trusted_identity_and_canonical_receipt_resolved": true,
-    "defect_69_test_bff_test_architecture_decouple_main_import_resolved": true
+    "defect_69_test_bff_test_architecture_decouple_main_import_resolved": true,
+    "defect_70_experiment_adapter_direct_implementation_and_processor_regressions_resolved": true,
+    "defect_71_experiment_adapter_dispatcher_command_id_authority_resolved": true,
+    "defect_72_commit_trailer_length_and_normative_plan_access_resolved": true
   },
   "review": {
     "reviewer": "Codex",

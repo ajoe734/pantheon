@@ -1629,6 +1629,9 @@ class ResearchWriteOwner:
             updated["event_id"] = event_id
             updated["correlation_id"] = correlation_id
             updated["cancel_receipt"] = cancel_receipt
+            updated["receipt"] = cancel_receipt
+            updated["committed_at"] = timestamp
+            updated["command_id"] = cmd_id
             history = list(updated.get("command_history") or [])
             history.append({
                 "command": "CancelResearchExperiment",
@@ -1672,6 +1675,8 @@ class ResearchWriteOwner:
         idempotency_key: Optional[str] = None,
         request_hash: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         exp = self._experiments_store.get(str(experiment_id))
         if exp is None or not isinstance(exp, dict):
@@ -1697,6 +1702,7 @@ class ResearchWriteOwner:
         clean_hash = str(request_hash or "").strip() or None
         clean_tenant = str(tenant_id or exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
         clean_actor = str(actor_id or exp.get("created_by") or exp.get("actor_id") or (exp.get("launch_context") or {}).get("actor_id") or "").strip() or None
+        clean_cmd_id = str(command_id or kwargs.get("command_id") or "").strip() or None
 
         inflight_token = (clean_tenant, clean_actor, clean_key) if clean_key else None
         if inflight_token:
@@ -1746,8 +1752,35 @@ class ResearchWriteOwner:
                     idx += 1
                     continue
                 new_exp_id = cand_id
+                cmd_id = clean_cmd_id or f"cmd-{new_exp_id}"
+                event_id = f"evt-{cmd_id}"
+                correlation_id = clean_key or f"corr-{cmd_id}"
+                retry_receipt = {
+                    "receipt_id": f"rcpt-{cmd_id}",
+                    "command_id": cmd_id,
+                    "commandId": cmd_id,
+                    "aggregate_type": "ResearchExperiment",
+                    "aggregate_id": new_exp_id,
+                    "aggregate_version": 1,
+                    "event_id": event_id,
+                    "correlation_id": correlation_id,
+                    "status": "queued",
+                    "owner": "ResearchWriteOwner",
+                    "actor_id": clean_actor,
+                    "tenant_id": clean_tenant,
+                    "idempotency_key": clean_key,
+                    "request_hash": clean_hash,
+                    "committed_at": timestamp,
+                    "command": "RetryResearchExperiment",
+                }
                 new_record: Dict[str, Any] = {
                     "experiment_id": new_exp_id,
+                    "command_id": cmd_id,
+                    "create_command_id": cmd_id,
+                    "event_id": event_id,
+                    "correlation_id": correlation_id,
+                    "receipt": retry_receipt,
+                    "retry_receipt": retry_receipt,
                     "ticket_id": ticket_id or "",
                     "experiment_name": f"{exp.get('experiment_name', '')} (retry #{attempt_number})",
                     "attempt_number": attempt_number,
@@ -1772,6 +1805,18 @@ class ResearchWriteOwner:
                     "idempotency_key": clean_key,
                     "request_hash": clean_hash,
                     "is_committed": False if ticket_id else True,
+                    "command_history": [{
+                        "command": "RetryResearchExperiment",
+                        "command_id": cmd_id,
+                        "event_id": event_id,
+                        "correlation_id": correlation_id,
+                        "actor_id": clean_actor,
+                        "tenant_id": clean_tenant,
+                        "idempotency_key": clean_key,
+                        "request_hash": clean_hash,
+                        "recorded_at": timestamp,
+                        "receipt": retry_receipt,
+                    }],
                 }
                 new_record["allowedActions"] = self._rw04_allowed_actions(new_record)
                 inserted, existing_row = _atomic_insert_record(self._experiments_store, new_exp_id, new_record)
@@ -1816,10 +1861,16 @@ class ResearchWriteOwner:
         actor_id: Optional[str] = None,
         archived_at: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         clean_tenant = str(tenant_id).strip() if tenant_id else None
         clean_actor = str(actor_id).strip() if actor_id else None
+        clean_key = str(idempotency_key or kwargs.get("idempotency_key") or "").strip() or None
+        clean_hash = str(request_hash or kwargs.get("request_hash") or "").strip() or None
+        clean_cmd_id = str(command_id or kwargs.get("command_id") or "").strip() or None
 
         target_lock = getattr(self._experiments_store, "lock", None)
         target_rows = getattr(self._experiments_store, "rows", None)
@@ -1843,6 +1894,12 @@ class ResearchWriteOwner:
             if status not in self._RW04_ARCHIVABLE_STATUSES:
                 return None
             if exp.get("is_archived"):
+                if clean_key:
+                    for cmd in (exp.get("command_history") or []):
+                        if isinstance(cmd, dict) and cmd.get("idempotency_key") == clean_key:
+                            saved_hash = cmd.get("request_hash")
+                            if clean_hash and saved_hash and saved_hash != clean_hash:
+                                raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
                 return self._project_experiment_detail(exp)
             updated = copy.deepcopy(exp)
             timestamp = archived_at or _utc_now_rfc3339()
@@ -1856,9 +1913,7 @@ class ResearchWriteOwner:
             new_version = prev_version + 1
             updated["aggregate_version"] = new_version
 
-            clean_key = str(kwargs.get("idempotency_key") or "").strip() or None
-            clean_hash = str(kwargs.get("request_hash") or "").strip() or None
-            cmd_id = str(kwargs.get("command_id") or "").strip() or f"cmd-archive-{experiment_id}-{new_version}"
+            cmd_id = clean_cmd_id or f"cmd-archive-{experiment_id}-{new_version}"
             event_id = str(kwargs.get("event_id") or "").strip() or f"evt-{cmd_id}"
             correlation_id = clean_key or str(kwargs.get("correlation_id") or "").strip() or f"corr-{cmd_id}"
 
@@ -1926,10 +1981,16 @@ class ResearchWriteOwner:
         actor_id: Optional[str] = None,
         invalidated_at: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         clean_tenant = str(tenant_id).strip() if tenant_id else None
         clean_actor = str(actor_id).strip() if actor_id else None
+        clean_key = str(idempotency_key or kwargs.get("idempotency_key") or "").strip() or None
+        clean_hash = str(request_hash or kwargs.get("request_hash") or "").strip() or None
+        clean_cmd_id = str(command_id or kwargs.get("command_id") or "").strip() or None
 
         target_lock = getattr(self._experiments_store, "lock", None)
         target_rows = getattr(self._experiments_store, "rows", None)
@@ -1951,6 +2012,19 @@ class ResearchWriteOwner:
                 )
             status = str(exp.get("status") or "").strip().lower()
             if status in {"invalidated", "canceled"}:
+                if status == "invalidated" and exp.get("invalidate_receipt"):
+                    if clean_key:
+                        for cmd in (exp.get("command_history") or []):
+                            if isinstance(cmd, dict) and cmd.get("idempotency_key") == clean_key:
+                                saved_hash = cmd.get("request_hash")
+                                if clean_hash and saved_hash and saved_hash != clean_hash:
+                                    raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                        inv_rcpt = exp.get("invalidate_receipt") or {}
+                        if inv_rcpt.get("idempotency_key") == clean_key:
+                            saved_hash = inv_rcpt.get("request_hash")
+                            if clean_hash and saved_hash and saved_hash != clean_hash:
+                                raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                    return self._project_experiment_detail(exp)
                 return None
             updated = copy.deepcopy(exp)
             timestamp = invalidated_at or _utc_now_rfc3339()
@@ -1965,9 +2039,7 @@ class ResearchWriteOwner:
             new_version = prev_version + 1
             updated["aggregate_version"] = new_version
 
-            clean_key = str(kwargs.get("idempotency_key") or "").strip() or None
-            clean_hash = str(kwargs.get("request_hash") or "").strip() or None
-            cmd_id = str(kwargs.get("command_id") or "").strip() or f"cmd-invalidate-{experiment_id}-{new_version}"
+            cmd_id = clean_cmd_id or f"cmd-invalidate-{experiment_id}-{new_version}"
             event_id = str(kwargs.get("event_id") or "").strip() or f"evt-{cmd_id}"
             correlation_id = clean_key or str(kwargs.get("correlation_id") or "").strip() or f"corr-{cmd_id}"
 
@@ -1993,6 +2065,7 @@ class ResearchWriteOwner:
             updated["invalidate_receipt"] = invalidate_receipt
             updated["receipt"] = invalidate_receipt
             updated["committed_at"] = timestamp
+            updated["command_id"] = cmd_id
             history = list(updated.get("command_history") or [])
             history.append({
                 "command": "InvalidateResearchExperiment",
