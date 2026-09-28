@@ -66,6 +66,7 @@ from services.control_plane.bff.models import (
     EvidenceKind,
     OperatorIdentity,
     RedactedEvidenceRef,
+    fail_closed_redacted_refs,
     redact_evidence_refs,
 )
 from services.control_plane.bff.management_read_models.models import ManagementObservation
@@ -5644,18 +5645,29 @@ class ManagementService:
         else:
             page_items, next_page_token = _page_slice(evidence_refs, page_token, page_size)
 
-        capabilities = _capabilities_for_identity(identity)
+        try:
+            capabilities = _capabilities_for_identity(identity)
+        except Exception:
+            capabilities = None
         if redact_evidence_refs is not None:
             try:
                 processed_items, redacted_count = redact_evidence_refs(
                     identity,
                     list(page_items),
                     capabilities=capabilities,
+                    default_kind="artifact",
                 )
             except Exception:
-                processed_items, redacted_count = list(page_items), 0
+                # A raised redaction policy cannot verify any ref is safe to
+                # disclose, so it withholds all of them rather than falling
+                # back to the unredacted page.
+                processed_items, redacted_count = fail_closed_redacted_refs(
+                    list(page_items), default_kind="artifact"
+                )
         else:
-            processed_items, redacted_count = list(page_items), 0
+            processed_items, redacted_count = fail_closed_redacted_refs(
+                list(page_items), default_kind="artifact"
+            )
 
         public_items = [
             _management_evidence_public_item(item)

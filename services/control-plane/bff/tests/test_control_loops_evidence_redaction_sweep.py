@@ -604,7 +604,12 @@ def test_ooda_real_producer_list_redacts_for_low_capability_identity() -> None:
         market_ref = packet["observe"]["market_refs"][0]
         assert isinstance(market_ref, dict) and market_ref.get("redacted") is True
         assert market_ref["required_capability"] == "audit.read"
-        assert payload["meta"]["redacted_evidence_count"] == 11
+        # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: was 11 under the fail-open
+        # base function, which passed act.command_receipt_refs through
+        # unredacted because its kind (audit, like its broker_evidence_refs
+        # sibling) never resolved. Now 12: the command receipt is correctly
+        # gated on audit.read like the rest of the ActBundle.
+        assert payload["meta"]["redacted_evidence_count"] == 12
 
 
 def test_ooda_real_producer_detail_redacts_for_low_capability_identity() -> None:
@@ -630,7 +635,9 @@ def test_ooda_real_producer_detail_redacts_for_low_capability_identity() -> None
         market_ref = packet["observe"]["market_refs"][0]
         assert isinstance(market_ref, dict) and market_ref.get("redacted") is True
         assert market_ref["required_capability"] == "audit.read"
-        assert payload["meta"]["redacted_evidence_count"] == 11
+        # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: see the list-route test
+        # above for why this moved from 11 to 12.
+        assert payload["meta"]["redacted_evidence_count"] == 12
 
 
 def test_ooda_real_producer_list_and_detail_pass_through_for_full_capability_identity() -> None:
@@ -766,7 +773,12 @@ def test_ooda_persona_producer_list_redacts_for_low_capability_identity() -> Non
         risk_ref = packet["orient"]["risk_adjudication_ref"]
         assert isinstance(risk_ref, dict) and risk_ref.get("redacted") is True
         assert risk_ref.get("required_capability") == "policy.read"
-        assert payload["meta"]["redacted_evidence_count"] == 15
+        # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: was 15 under the fail-open
+        # base function, which passed act.command_receipt_refs (x2),
+        # act.rollback_refs, and act.safe_mode_refs through unredacted
+        # because their kind never resolved. Now 19: all four are correctly
+        # gated on audit.read like their broker_evidence_refs sibling.
+        assert payload["meta"]["redacted_evidence_count"] == 19
 
 
 def test_ooda_persona_producer_detail_redacts_for_low_capability_identity() -> None:
@@ -790,7 +802,9 @@ def test_ooda_persona_producer_detail_redacts_for_low_capability_identity() -> N
         risk_ref = packet["orient"]["risk_adjudication_ref"]
         assert isinstance(risk_ref, dict) and risk_ref.get("redacted") is True
         assert risk_ref.get("required_capability") == "policy.read"
-        assert payload["meta"]["redacted_evidence_count"] == 15
+        # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: see the list-route test
+        # above for why this moved from 15 to 19.
+        assert payload["meta"]["redacted_evidence_count"] == 19
 
 
 def test_ooda_persona_producer_list_and_detail_pass_through_for_full_capability_identity() -> None:

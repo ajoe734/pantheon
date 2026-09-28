@@ -4762,6 +4762,7 @@ def _pm12_public_quarter_evidence_refs(
         identity,
         quarter_evidence_refs,
         capabilities=capabilities,
+        default_kind="artifact",
     )
     return (
         [

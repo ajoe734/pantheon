@@ -1028,6 +1028,13 @@ def test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfac
     port = _Port()
     port.evidence_refs["evidence-detail"] = {
         "ref_id": "evidence-detail",
+        # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: explicit resolvable
+        # evidence_type so this ref's own detail projection is gated on a
+        # known capability (postmortem.read) rather than relying on the old
+        # fail-open bypass that disclosed source_document/linked_decisions/
+        # source_note_context/source_memory_context whenever the kind was
+        # unresolved (research/service.py's `if evidence_kind:` guard).
+        "evidence_type": "postmortem",
         "source_document": {"title": "Operator note", "source_type": "internal"},
         "link_type": "supporting_evidence",
         "credibility": {"tier": "primary", "verified": True, "reason": "reviewed"},
@@ -1083,7 +1090,12 @@ def test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfac
         "scope": {"type": "persona", "filter": "persona-1"},
     }
 
-    client = _client(port, capabilities=[])
+    # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: postmortem.read only, so the
+    # evidence-detail ref's own kind is authorized (proving a full-capability
+    # identity for its kind still sees the full projection) while the
+    # strategy_spec/research_note linked_decisions below remain gated on
+    # capabilities this identity does not hold.
+    client = _client(port, capabilities=["postmortem.read"])
 
     evidence = client.get("/api/v1/knowledge/evidence/evidence-detail")
     assert evidence.status_code == 200, evidence.text
@@ -1099,15 +1111,25 @@ def test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfac
     assert redacted_decision["required_capability"] == "strategy.view"
     assert redacted_decision["reason"] == "insufficient_capability"
     assert redacted_decision["redacted"] is True
-    assert evidence_payload["linked_decisions"][1] == {
-        "entity_type": "research_note", "entity_ref": "note-include",
-    }
+    # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: this decision's entity_type
+    # ("research_note") had no EvidenceKind mapping, so the old fail-open
+    # base function passed it through unchanged even with an empty
+    # capability set. It now resolves to the generic artifact capability
+    # (research/service.py's _ENTITY_TYPE_EVIDENCE_KIND) and is correctly
+    # withheld for this zero-capability identity, like the strategy_spec
+    # decision above it.
+    research_note_decision = evidence_payload["linked_decisions"][1]
+    assert research_note_decision["ref_id"] == "note-include"
+    assert research_note_decision["kind"] == "artifact"
+    assert research_note_decision["required_capability"] == "artifact.read"
+    assert research_note_decision["reason"] == "insufficient_capability"
+    assert research_note_decision["redacted"] is True
     assert evidence_payload["meta"] == {
         "snapshot_at": "2026-08-30T00:00:00Z",
         "surfaces": {
             "evidence_ref_detail": "ok", "resolved_link": "ok", "linked_decisions": "ok",
         },
-        "redacted_evidence_count": 1,
+        "redacted_evidence_count": 2,
     }
 
     blocked = client.get("/api/v1/knowledge/evidence/evidence-blocked")

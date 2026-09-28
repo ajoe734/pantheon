@@ -108,12 +108,19 @@ def test_retained_persona_requirement_projection_is_narrow_and_fresh() -> None:
 
 def test_retained_redaction_uses_model_policy_without_data_access() -> None:
     identity = OperatorIdentity(operator_id="op-read-store-delete", roles=["operator"])
+    # "raw_trace" is not a production evidence kind and has no known
+    # required_capability, so the fail-closed base policy must withhold it
+    # rather than pass it through, regardless of the caller's capabilities.
+    # (Cited update: BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001 reviewer-required
+    # correction -- the prior assertion encoded the old fail-open behaviour.)
     refs = [{"ref_id": "ev-1", "evidence_type": "raw_trace"}]
 
-    unchanged, unchanged_count = redact_evidence_refs(identity, refs)
-    assert unchanged == refs
-    assert unchanged is not refs
-    assert unchanged_count == 0
+    withheld, withheld_count = redact_evidence_refs(identity, refs)
+    assert withheld_count == 1
+    assert withheld[0]["ref_id"] == "ev-1"
+    assert withheld[0]["redacted"] is True
+    assert withheld[0]["required_capability"] == "unknown"
+    assert withheld[0]["reason"] == "unresolved_evidence_kind"
 
     required_capability = next(iter(EVIDENCE_CAPABILITY_MAP.values()))
     kind = next(

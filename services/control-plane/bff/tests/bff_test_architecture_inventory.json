@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 389,
+  "total_test_files": 390,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -98,7 +98,7 @@
   "layer_summary": {
     "adapter": 53,
     "application": 190,
-    "router": 115,
+    "router": 116,
     "composition": 19,
     "hosted": 12
   },
@@ -108,7 +108,7 @@
     "hosted": 1
   },
   "disposition_summary": {
-    "DECOUPLED": 323,
+    "DECOUPLED": 324,
     "MIGRATED": 45,
     "ALLOWLIST": 21
   },
@@ -2856,6 +2856,13 @@
       "imports_main": true,
       "disposition": "ALLOWLIST",
       "rationale": "Composition-root smoke test: proves main.py default wiring of auth_deps, session_lifecycle_store, and the logout guard by importing the real composition root in an isolated subprocess, matching the purpose of the other whole-app composition allowlist entries (smoke_test.py, test_bff_main_composition.py). Extracted out of auth/test_policy.py this generation so that file itself no longer needs to be in the allowlist."
+    },
+    {
+      "file": "tests/test_evidence_redaction_fail_closed.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001 regression: exercises the real models.redact_evidence_refs directly plus one real-router request per direct-caller surface (research/personas/assistant/management_read_models/governance routers) with a low-capability identity, a full-capability identity, and a capability-resolution failure; never imports main"
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,
