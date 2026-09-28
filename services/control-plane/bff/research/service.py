@@ -873,10 +873,15 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
                 return self._ks.get_research_experiment(exp_id)
         raise AttributeError("Research port operation 'get_experiment_bff' not implemented")
 
-    def list_experiments_bff(self, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_experiments_bff(
+        self, *, status: Optional[str] = None, tenant_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "list_experiments_bff"):
-            return self._read_surface.list_experiments_bff(status=status)
-        return self.list_research_experiments(status=status)
+            try:
+                return self._read_surface.list_experiments_bff(status=status, tenant_id=tenant_id)
+            except TypeError:
+                return self._read_surface.list_experiments_bff(status=status)
+        return self.list_research_experiments(status=status, tenant_id=tenant_id)
 
     def create_experiment_bff(
         self,

@@ -1084,6 +1084,26 @@ def create_runtime_router(
                         )
                     if existing_cmd.get("status") in ("executed", CommandStatus.EXECUTED.value) and existing_cmd.get("result"):
                         return existing_cmd["result"]
+                elif tenant_id is None:
+                    # This caller's tenant claim is unresolved (missing or
+                    # ambiguous). A tenant-scoped lookup correctly found no
+                    # record it may see, but the same operator/key pair may
+                    # already be durably bound to a *resolved* tenant. Fail
+                    # closed instead of silently admitting a second command
+                    # under an idempotency key someone else already proved
+                    # ownership of.
+                    foreign_conflict = cmd_store.get_command_by_idempotency_key(
+                        resolved_key, operator_id=operator_id, match_any_tenant=True
+                    )
+                    if foreign_conflict is not None:
+                        raise _bff_error(
+                            403,
+                            ErrorCode.FORBIDDEN,
+                            "Idempotency key already bound to a resolved tenant",
+                            f"Key {resolved_key!r} cannot be reused without an unambiguous tenant claim.",
+                            precondition_failed="tenant_unresolved",
+                            suggestion="Present an unambiguous tenant claim or use a new Idempotency-Key.",
+                        )
 
             if _GOV_BFF_IDEMPOTENCY is not None and not isinstance(_GOV_BFF_IDEMPOTENCY, _MissingRuntimeDependency) and scoped_cache_key:
                 existing = _GOV_BFF_IDEMPOTENCY.get(scoped_cache_key)

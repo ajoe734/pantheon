@@ -426,6 +426,7 @@ class CommandStore:
         *,
         operator_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        match_any_tenant: bool = False,
     ) -> Optional[Dict[str, Any]]:
         clean_operator_id = str(operator_id or "").strip()
         clean_tenant_id = str(tenant_id or "").strip()
@@ -440,10 +441,23 @@ class CommandStore:
                         continue
             if clean_operator_id and self._operator_id_from_command(cmd) != clean_operator_id:
                 continue
+            if match_any_tenant:
+                # Used only to detect that this operator/key pair is
+                # already durably bound to *some* tenant scope -- never to
+                # return a foreign tenant's record/result to the caller.
+                return cmd
+            cmd_tenant = self._tenant_id_from_command(cmd)
             if clean_tenant_id:
-                cmd_tenant = self._tenant_id_from_command(cmd)
                 if not cmd_tenant or cmd_tenant != clean_tenant_id:
                     continue
+            elif cmd_tenant:
+                # The caller's own tenant is unresolved (missing or
+                # ambiguous claims). Do not fall through to an
+                # unrestricted lookup: a stored command that does carry a
+                # tenant scope belongs to that tenant and must never be
+                # returned (and replayed) to a caller who failed to
+                # resolve one, even for the same operator/key.
+                continue
             return cmd
         return None
 
