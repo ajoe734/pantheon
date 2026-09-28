@@ -2,7 +2,7 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001",
   "base_ref": "dev@c17eddae2e064d88588160c6d8601942d48dd924",
-  "head_ref": "task/BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001@4ba5ff9cad348c47322b8848c1ecdff2207c0474",
+  "head_ref": "task/BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001@f60942a40aa8d2fecb3ea3fef05c250aad4c4fc5 (content as of this delivery; the exact PR head bound at handoff will be one further bookkeeping commit ahead once this evidence.json edit itself lands -- the owner must re-verify head_ref against `git rev-parse HEAD` immediately before handoff rather than trusting this stale-by-one-commit value, per the reviewer's P2 acceptance-5 finding)",
   "depends_on": "(none declared); DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 running concurrently on overlapping files (models.py, governance/service.py, governance/router.py); rebased cleanly onto origin/dev tip immediately before handoff with no conflicts",
   "normative_plan": "Operator-opened hardening task: make services/control-plane/bff/models.py::redact_evidence_refs fail closed for missing capabilities and unresolvable evidence kinds",
   "demonstration_of_fail_open_bugs_before_any_change": {
@@ -216,6 +216,14 @@
     {
       "command": "git diff --stat c17eddae2e064d88588160c6d8601942d48dd924..HEAD (frozen base from PR #6004)",
       "result": "9 files changed matching changed_files above; verifies changed_files_note"
+    },
+    {
+      "command": "git checkout c17eddae2e064d88588160c6d8601942d48dd924 -- services/control-plane/bff/models.py services/control-plane/bff/management_read_models/service.py services/control-plane/bff/personas/service.py && timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py",
+      "result": "NEW TEST FILE ON UNMODIFIED BASE (base-only versions of the 3 changed production files, new test file present): 11 failed, 13 passed, 3 warnings in 21.31s. All 11 failures are behavioural AssertionErrors on the base fail-open behaviour (e.g. test_base_function_capabilities_none_fails_closed: 'assert redacted_count == 1' when base returns 0; test_consult_memo_evidence_redacts_for_low_capability_and_passes_for_full: 'a low-capability (viewer) identity must have some evidence withheld' when base discloses everything). Zero import errors, zero TypeErrors. Files restored immediately after with `git checkout HEAD -- <same 3 files>`."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py (re-run after restoring HEAD's models.py/management_read_models/service.py/personas/service.py)",
+      "result": "NEW TEST FILE ON HEAD: 24 passed, 3 warnings in 20.55s"
     }
   ],
   "test_registration": {
