@@ -332,6 +332,10 @@
     "defect_82_cross_tenant_guarded_command_token_authorization_and_replay_durability": {
       "problem": "Independent exact-head review rejection of PR #5998 at commit 3a66288bd87669c87591c17c1ac71d879e39506e identified P1 acceptance 3 tenant authorization defect: (1) Tenant A creates a PauseRuntime confirmation token (POST /bff/confirm-tokens). Tenant B with the same operator_id submits POST /bff/v1/commands using that token and receives 202 Accepted instead of 403 Forbidden / 428 Precondition Required, consuming the token and creating unauthorized PauseRuntime and RedeemConfirmToken rows. (2) require_final_command_confirm_token and _record_bound_to_caller in preconditions.py checked only operator_id without binding caller tenant to token tenant. (3) Guarded-command admission passed tenant-unscoped token callbacks to preconditions and lacked tenant authorization revalidation inside store.serialized_transaction() prior to atomic command & redemption persistence. (4) CommandStore.get_command_by_idempotency_key did not evaluate params.get(\"idempotency_key\") as fallback, and submit_command_admission omitted tenant_id and idempotency_key from stored_params and audit_record, breaking post-restart tenant-scoped replay.",
       "remediation": "Bound token tenant ownership to authenticated caller tenant in _record_bound_to_caller and require_final_command_confirm_token in preconditions.py, raising 403 ErrorCode.FORBIDDEN (CONFIRM_TOKEN_TENANT_MISMATCH or CONFIRM_TOKEN_TENANT_MISSING) on foreign or missing caller tenant. In submit_command_admission, enforced upfront token tenant validation via check_confirm_token_tenant_authorization, scoped idempotency lookup by caller tenant, passed tenant-scoped callbacks (confirm_token_records, confirm_token_lifecycle_payload) into require_final_command_preconditions, and revalidated tenant authorization inside store.serialized_transaction() before atomic command and redemption persistence. Propagated clean caller tenant and idempotency key into stored_params and audit_record, attached tenant_id to confirmation_params in submit_command_with_confirm_token_redeem_if_no_active_target, and checked params.get(\"idempotency_key\") in CommandStore.get_command_by_idempotency_key. Committed mounted regression tests test_mounted_cross_tenant_guarded_command_token_authorization and test_mounted_cross_tenant_guarded_command_replay_isolation_and_restart in test_domain_durability_corrective_p1.py verifying cross-tenant token rejection without row creation or token consumption, same-tenant success, cross-tenant replay rejection, and post-restart durability."
+    },
+    "defect_83_domain_writer_identity_tenant_attribute_read": {
+      "problem": "Independent exact-head review rejection of PR #5998 at commit ff6f7c052cb66b4f5ee7f3d5de1e1a564899edd8 identified that production OperatorIdentity (models.py) carries the authenticated tenant only in identity.claims (a JWT claims dict); it has no top-level tenant_id/tenant attribute. command_adapters/service.py (11 call sites: check_confirm_token_tenant_authorization and every durable confirm-token/command admission, revalidation, and idempotency path) as well as capital/router.py, governance/service.py, runtime/router.py, and research/routes/experiments.py and tickets.py all resolved tenant via getattr(identity, 'tenant_id', None) or getattr(identity, 'tenant', None), which is always None for a real extract_identity_jwt identity. This silently disabled tenant ownership checking: an independently mounted reproducer using locally signed HS256 JWTs through the real extract_identity_jwt showed tenant A issuing a PauseRuntime confirm token and tenant B (same JWT subject) confirming/redeeming it via both POST /bff/command-confirmations/{token}/confirm and POST /bff/v1/commands, producing unauthorized durable PauseRuntime and RedeemConfirmToken rows. Also flagged: git diff --check against the frozen base exited 2 for added EOF blank lines in command_adapters/service.py:3170 and tests/test_research_jobs_action_receipts.py:813.",
+      "remediation": "Added a single canonical resolve_identity_tenant_id(identity) in auth/policy.py that reads identity.claims via the same claim path set bff_me_tenant_payload already uses (tenant_id, tenantId, tenant.id, tid, tenant), with a fallback to a direct attribute read for test doubles that model identity as a plain object. Replaced every getattr(identity, 'tenant_id', None) or getattr(identity, 'tenant', None) call site with this resolver: command_adapters/service.py (_resolve_identity_tenant now aliases the canonical resolver, 11 call sites plus the standalone _gov_bff_action_command helper), capital/router.py (_identity_tenant_id), governance/service.py (_identity_tenant_id), runtime/router.py (POST /bff/runtimes idempotency tenant scoping), and research/routes/common.py (new shared _identity_tenant_id used by experiments.py's 13 call sites and tickets.py's 4 call sites). Committed a mounted regression, test_signed_identity_tenant_cannot_consume_foreign_confirm_token in test_command_adapters_router.py, that issues and redeems confirm tokens through the real extract_identity_jwt with locally signed HS256 JWTs for two tenants sharing one JWT subject, parametrized over both durable-write routes (command-confirmations confirm and guarded POST /bff/v1/commands) and a service/CommandStore restart, asserting the cross-tenant redemption is rejected (403/404/428) and exactly one durable command row exists. Also stripped the trailing extra blank line from command_adapters/service.py and test_research_jobs_action_receipts.py so git diff --check exits 0."
     }
   },
   "mutation_caller_inventory": {
@@ -1139,6 +1143,34 @@
         "result": "14 passed, 3 warnings in 9.65s",
         "executed": 14,
         "collected": 14
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "result": "263 passed, 10 warnings in 148.66s",
+        "executed": 263,
+        "collected": 263
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/test_bff_auth_facade.py",
+        "result": "183 passed, 3 warnings in 71.65s",
+        "executed": 183,
+        "collected": 183
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "44 passed, 3 warnings in 12.49s",
+        "executed": 44,
+        "collected": 44
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
+        "result": "26 passed in 1.093s",
+        "executed": 26,
+        "collected": 26
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit 0 (frozen-base EOF blank-line violations at command_adapters/service.py:3170 and tests/test_research_jobs_action_receipts.py:813 resolved)"
       }
     ]
   },
@@ -1229,10 +1261,16 @@
     "defect_79_confirmation_concurrent_admission_revalidation_and_result_preservation_resolved": true,
     "defect_80_confirm_token_tenant_authorization_and_receipt_durability_and_projection_parity_resolved": true,
     "defect_81_confirm_token_tenant_isolation_collision_and_restart_durability_resolved": true,
-    "defect_82_cross_tenant_guarded_command_token_authorization_and_replay_durability_resolved": true
+    "defect_82_cross_tenant_guarded_command_token_authorization_and_replay_durability_resolved": true,
+    "defect_83_domain_writer_identity_tenant_attribute_read_resolved": true
   },
   "review": {
     "reviewer": "Codex",
-    "decision": "pending independent exact-head review"
+    "decision": "pending independent exact-head review",
+    "prior_rejection": {
+      "pr": 5998,
+      "rejected_head": "ff6f7c052cb66b4f5ee7f3d5de1e1a564899edd8",
+      "finding": "P1 acceptance 3 domain-writer identity.tenant_id/tenant attribute read defect (see defect_83_domain_writer_identity_tenant_attribute_read); resolved at the current head."
+    }
   }
 }
