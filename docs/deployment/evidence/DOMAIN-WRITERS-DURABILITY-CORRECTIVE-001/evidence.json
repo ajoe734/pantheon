@@ -324,6 +324,10 @@
     "defect_80_confirm_token_tenant_authorization_and_receipt_durability_and_projection_parity": {
       "problem": "Review of PR #5998 identified four defects: (1) Confirm tokens lacked tenant authorization checks on confirm, redeem, and status routes, allowing cross-tenant token operations instead of failing closed with 403 Forbidden (precondition_failed='tenant_mismatch'). (2) Confirmations via POST /bff/command-confirmations and POST /bff/command-confirmations/{token}/confirm lacked full SD 4.4 canonical receipt fields (command_id, aggregate_type, aggregate_id, aggregate_version, status, event_id, correlation_id, owner, committed_at) in foundation.receipt and durable result. (3) Confirmation route projection parity was broken on cross-route replay: replaying a key across the two routes returned the raw stored result of the prior route rather than projecting each public route's authoritative contract (flat schema for Route 1, {data, meta} envelope for Route 2). (4) Test isolation failure: _gov_bff_action_command treated command_store=None as unset, falling back to bff_main.command_store left over from earlier tests in the suite, causing test_mounted_experiment_action_failure_paths to return 202 instead of 503.",
       "remediation": "Enforced strict tenant authorization in check_confirm_token_tenant_authorization across get_confirm_token, redeem_confirm_token, delete_confirm_token, submit_command_confirmation, confirm_command_by_token, and get_command_confirmation_status, failing closed with 403 ErrorCode.FORBIDDEN (precondition_failed='tenant_mismatch') whenever clean_caller_tenant != token_tenant. Attached full SD 4.4 canonical receipt fields to foundation.receipt, result, and result['data'] in record_command_confirmation_redeem. Standardized public projections via _project_command_confirmation_flat_response and _project_command_confirmation_envelope_response, preserving route schema contracts unconditionally across restarts and cross-route replays while preserving original correlationId and snapshot_at metadata. Introduced _GOV_STORE_UNSET sentinel in _gov_bff_action_command so explicit command_store=None fails closed with 503 instead of falling back to bff_main.command_store. Added mounted negative cross-tenant coverage test_mounted_cross_tenant_confirm_tokens_negative_coverage in test_domain_durability_corrective_p1.py."
+    },
+    "defect_81_confirm_token_tenant_isolation_collision_and_restart_durability": {
+      "problem": "Independent review of PR #5998 identified: (1) services/control-plane/bff/command_adapters/service.py:596-630 scanned every tenant by token ID and overwrote token_tenant with the last matching row; create_confirm_token at 1616 admitted the same caller-supplied token ID in another tenant without protecting existing ownership. When tenant A created shared-token (201) and tenant B created shared-token (201) and confirmed it (202), tenant A GET /bff/confirm-tokens/shared-token returned 403 instead of 200. (2) git diff --check HEAD^ HEAD exited 2 for extra EOF blank lines at test_domain_durability_corrective_p1.py:3164. (3) service.py:784 contained an unused constant-false caller_correlation_id expression.",
+      "remediation": "Preserved original owner tenant in confirm_token_lifecycle_payload and prevented foreign tenant records from hijacking token status, expiry, or ownership. Enforced atomic collision rejection (409 Conflict) for duplicate confirm token creation in CommandStore.submit_terminal_command_if_no_active_target and submit_command_if_no_active_target under serialized_transaction, as well as upfront collision check in create_confirm_token. Removed unused caller_correlation_id expression at service.py:784. Fixed EOF blank lines in test_domain_durability_corrective_p1.py and committed mounted regression test test_mounted_cross_tenant_token_collision_and_restart_isolation covering sequential collision, atomic 409 rejection, concurrent racing across tenants, and post-restart ownership persistence."
     }
   },
   "mutation_caller_inventory": {
@@ -1095,6 +1099,24 @@
         "result": "259 passed, 5 warnings in 135.70s",
         "executed": 259,
         "collected": 259
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 120 /tmp/venv-bff-test/bin/python3 -m pytest -p services.control_plane.bff.conftest -q /tmp/test_domain_tenant_collision_review.py",
+        "result": "2 passed, 1 warning in 1.98s",
+        "executed": 2,
+        "collected": 2
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 180 /tmp/venv-bff-test/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "143 passed, 5 warnings in 75.85s",
+        "executed": 143,
+        "collected": 143
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 120 /tmp/venv-bff-test/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/test_bff_two_man_sign_race_contract.py",
+        "result": "17 passed, 3 warnings in 6.43s",
+        "executed": 17,
+        "collected": 17
       }
     ]
   },
@@ -1183,7 +1205,8 @@
     "defect_77_confirmation_process_local_replay_and_missing_owner_durability_resolved": true,
     "defect_78_research_action_unscoped_replay_receipt_borrowing_resolved": true,
     "defect_79_confirmation_concurrent_admission_revalidation_and_result_preservation_resolved": true,
-    "defect_80_confirm_token_tenant_authorization_and_receipt_durability_and_projection_parity_resolved": true
+    "defect_80_confirm_token_tenant_authorization_and_receipt_durability_and_projection_parity_resolved": true,
+    "defect_81_confirm_token_tenant_isolation_collision_and_restart_durability_resolved": true
   },
   "review": {
     "reviewer": "Codex",

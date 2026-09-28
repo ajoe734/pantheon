@@ -593,7 +593,7 @@ class CommandAdapterService:
         ).strip()
         return token_id or None
 
-    def confirm_token_lifecycle_payload(self, token_id: str) -> Dict[str, Any]:
+    def confirm_token_lifecycle_payload(self, token_id: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         status = "available"
         expires_at: Optional[datetime] = None
         latest_record: Optional[Dict[str, Any]] = None
@@ -603,20 +603,34 @@ class CommandAdapterService:
 
         for record in commands:
             target = record.get("target") if isinstance(record.get("target"), dict) else {}
+            t_type = target.get("type")
+            t_type_val = t_type.value if hasattr(t_type, "value") else str(t_type or "")
             if (
-                target.get("type") == ObjectType.CONFIRM_TOKEN.value
+                t_type_val in (ObjectType.CONFIRM_TOKEN.value, "confirm_token")
                 and str(target.get("id") or "") == token_id
             ):
                 rec_tenant = _extract_record_tenant(record)
-                if rec_tenant:
-                    token_tenant = rec_tenant
                 record_type = record.get("type")
-                if record_type == CommandType.CONFIRM_TOKEN_CREATE.value:
+                record_type_val = record_type.value if hasattr(record_type, "value") else str(record_type or "")
+
+                if record_type_val == CommandType.CONFIRM_TOKEN_CREATE.value:
+                    if token_tenant is None and rec_tenant:
+                        token_tenant = rec_tenant
+                    elif token_tenant is not None and rec_tenant and rec_tenant != token_tenant:
+                        continue
                     status = "created"
                     expires_at = self.confirm_token_expiry_from_record(record)
-                elif record_type == CommandType.CONFIRM_TOKEN_REDEEM.value:
+                    latest_record = record
+                    continue
+
+                if token_tenant is not None and rec_tenant and rec_tenant != token_tenant:
+                    continue
+                if rec_tenant and token_tenant is None:
+                    token_tenant = rec_tenant
+
+                if record_type_val == CommandType.CONFIRM_TOKEN_REDEEM.value:
                     status = "redeemed"
-                elif record_type == CommandType.CONFIRM_TOKEN_DELETE.value:
+                elif record_type_val == CommandType.CONFIRM_TOKEN_DELETE.value:
                     status = "deleted"
                 latest_record = record
                 continue
@@ -626,7 +640,9 @@ class CommandAdapterService:
                 and self._guarded_command_confirm_token_id(record) == token_id
             ):
                 rec_tenant = _extract_record_tenant(record)
-                if rec_tenant:
+                if token_tenant is not None and rec_tenant and rec_tenant != token_tenant:
+                    continue
+                if rec_tenant and token_tenant is None:
                     token_tenant = rec_tenant
                 status = "redeemed"
                 latest_record = record
@@ -781,7 +797,6 @@ class CommandAdapterService:
             or self._utc_now()
         )
 
-        caller_correlation_id = str(x_request_id if False else (correlation_id if correlation_id and x_request_id is not None else None) or "").strip() or None
         resp_correlation_id = (
             res_meta.get("correlationId")
             or res_meta.get("correlation_id")
@@ -1203,13 +1218,17 @@ class CommandAdapterService:
             active = None
 
         if active:
+            is_token = str(target_type).lower() in ("confirm_token", "objecttype.confirm_token")
+            msg = "Confirm token already exists" if is_token else "A command is already in flight for this target"
+            details = f"Confirm token {target_id!r} already exists" if is_token else f"Command {active['command_id']} is currently {active['status']}"
+            suggestion = "Use a different token ID or omit tokenId to let the system generate a unique token" if is_token else "Wait for the in-flight command to complete or time out before retrying"
             raise self._raise_error(
                 409,
                 ErrorCode.RESOURCE_CONFLICT,
-                "A command is already in flight for this target",
-                f"Command {active['command_id']} is currently {active['status']}",
+                msg,
+                details,
                 precondition_failed="concurrent_safety",
-                suggestion="Wait for the in-flight command to complete or time out before retrying",
+                suggestion=suggestion,
             )
 
         assert record is not None
@@ -1640,6 +1659,30 @@ class CommandAdapterService:
             hash_payload.pop("token_id", None)
         else:
             hash_payload["tokenId"] = token_id
+            token_state = self.confirm_token_lifecycle_payload(token_id)
+            if token_state.get("status") != "available":
+                clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+                caller_tenant = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+                clean_tenant = str(caller_tenant or "").strip() or None
+                store = self.command_store
+                is_replay = False
+                if clean_key and store is not None:
+                    stored_replay = store.get_command_by_idempotency_key(
+                        clean_key,
+                        operator_id=getattr(identity, "operator_id", None),
+                        tenant_id=clean_tenant,
+                    )
+                    if stored_replay is not None:
+                        is_replay = True
+                if not is_replay:
+                    raise self._raise_error(
+                        409,
+                        ErrorCode.RESOURCE_CONFLICT,
+                        "Confirm token already exists",
+                        f"Confirm token {token_id!r} already exists and cannot be created again",
+                        precondition_failed="concurrent_safety",
+                        suggestion="Use a different token ID or omit tokenId to let the system generate a unique token",
+                    )
 
         response = self.sem_command_response(
             command_type=CommandType.CONFIRM_TOKEN_CREATE,
@@ -1673,6 +1716,11 @@ class CommandAdapterService:
         content["data"]["tokenId"] = final_token_id
         content["data"]["id"] = final_token_id
         content["data"]["status"] = "created"
+        caller_tenant = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+        clean_tenant = str(caller_tenant or "").strip() or None
+        if clean_tenant:
+            content["data"]["tenant_id"] = clean_tenant
+            content["data"]["tenantId"] = clean_tenant
         return JSONResponse(status_code=201, content=content)
 
     def get_confirm_token(self, token_id: str, identity: OperatorIdentity) -> Dict[str, Any]:

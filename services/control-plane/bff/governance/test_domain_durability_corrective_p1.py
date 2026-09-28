@@ -3163,3 +3163,89 @@ def test_mounted_cross_tenant_confirm_tokens_negative_coverage(tmp_path):
     assert confirm_res_a.json()["data"]["status"] == "accepted"
 
 
+def test_mounted_cross_tenant_token_collision_and_restart_isolation(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+    from services.control_plane.bff.command_queue import CommandStore
+
+    path = str(tmp_path / "commands.jsonl")
+
+    # 1. Sequential collision: Tenant A creates token, Tenant B cannot hijack or recreate
+    store = CommandStore(path)
+    identity = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["operator"])
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(
+        command_store=store,
+        extract_identity=lambda authorization, **kwargs: identity,
+        check_read_surface_state=lambda: None,
+    ))
+    client = TestClient(app)
+
+    token_id = "shared-collision-token"
+    res1 = client.post("/bff/confirm-tokens", json={"tokenId": token_id, "ttlSeconds": 300}, headers={"Idempotency-Key": "issue-a"})
+    assert res1.status_code == 201, res1.text
+    assert res1.json()["data"]["tenant_id"] == "tenant-a"
+
+    # Tenant B tries to create the same token -> rejected with 409 Conflict
+    identity.operator_id = "actor-b"
+    identity.tenant_id = "tenant-b"
+    res2 = client.post("/bff/confirm-tokens", json={"tokenId": token_id, "ttlSeconds": 300}, headers={"Idempotency-Key": "issue-b"})
+    assert res2.status_code == 409, (res2.status_code, res2.text)
+    assert "already exists" in res2.text or "RESOURCE_CONFLICT" in res2.text
+
+    # Tenant B cannot confirm or hijack Tenant A's token
+    confirm_b = client.post(f"/bff/command-confirmations/{token_id}/confirm", json={"command_id": "command-b"}, headers={"Idempotency-Key": "confirm-b"})
+    assert confirm_b.status_code == 403, (confirm_b.status_code, confirm_b.text)
+    assert "tenant_mismatch" in confirm_b.text
+
+    # Tenant A still owns the token and reads back 200 with tenant-a
+    identity.operator_id = "actor-a"
+    identity.tenant_id = "tenant-a"
+    own = client.get(f"/bff/confirm-tokens/{token_id}")
+    assert own.status_code == 200, (own.status_code, own.text)
+    assert own.json()["data"]["tenant_id"] == "tenant-a"
+    assert own.json()["data"]["status"] == "created"
+
+    # 2. Concurrent same-token-id creation preserves tenant ownership after restart
+    def client_for(tenant):
+        t_identity = SimpleNamespace(operator_id="actor-" + tenant, tenant_id=tenant, roles=["operator"])
+        t_app = FastAPI()
+        t_app.include_router(create_command_adapters_router(
+            command_store=CommandStore(path),
+            extract_identity=lambda authorization, **kwargs: t_identity,
+            check_read_surface_state=lambda: None,
+        ))
+        return TestClient(t_app)
+
+    racing_clients = {tenant: client_for(tenant) for tenant in ("tenant-race-a", "tenant-race-b")}
+    barrier = Barrier(2)
+
+    def issue(tenant):
+        barrier.wait(timeout=10)
+        response = racing_clients[tenant].post(
+            "/bff/confirm-tokens",
+            json={"tokenId": "racing-token", "ttlSeconds": 300},
+            headers={"Idempotency-Key": "issue-" + tenant},
+        )
+        return tenant, response.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = dict(pool.map(issue, racing_clients))
+
+    assert set(results.values()) <= {201, 409}, results
+    assert 201 in results.values(), results
+    assert 409 in results.values(), results
+
+    # Re-mount fresh clients simulating server restart
+    for tenant, status in results.items():
+        restarted = client_for(tenant)
+        own_race = restarted.get("/bff/confirm-tokens/racing-token")
+        if status == 201:
+            assert own_race.status_code == 200, (results, tenant, own_race.text)
+            assert own_race.json()["data"]["tenant_id"] == tenant
+        else:
+            assert own_race.status_code in (403, 404), (results, tenant, own_race.text)

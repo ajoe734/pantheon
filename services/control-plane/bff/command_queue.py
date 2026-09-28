@@ -209,6 +209,19 @@ class CommandStore:
             active = self.get_active_commands_for_target(str(target_type), str(target_id))
             if active:
                 return None, active[0]
+            cmd_type_str = command_type.value if hasattr(command_type, "value") else str(command_type)
+            if (
+                cmd_type_str in (CommandType.CONFIRM_TOKEN_CREATE.value, "CreateConfirmToken")
+                and str(target_id).strip()
+            ):
+                for cmd in self._get_all_commands():
+                    cmd_target = cmd.get("target") if isinstance(cmd.get("target"), dict) else {}
+                    t_type_clean = str(cmd_target.get("type") or "").replace("_", "").lower()
+                    if (
+                        t_type_clean in ("confirmtoken", "objecttype.confirmtoken")
+                        and str(cmd_target.get("id") or "") == str(target_id)
+                    ):
+                        return None, cmd
             return self.submit_terminal_command(
                 command_id,
                 command_type,
@@ -247,6 +260,19 @@ class CommandStore:
             active = self.get_active_commands_for_target(str(target_type), str(target_id))
             if active:
                 return None, active[0]
+            cmd_type_str = command_type.value if hasattr(command_type, "value") else str(command_type)
+            if (
+                cmd_type_str in (CommandType.CONFIRM_TOKEN_CREATE.value, "CreateConfirmToken")
+                and str(target_id).strip()
+            ):
+                for cmd in self._get_all_commands():
+                    cmd_target = cmd.get("target") if isinstance(cmd.get("target"), dict) else {}
+                    t_type_clean = str(cmd_target.get("type") or "").replace("_", "").lower()
+                    if (
+                        t_type_clean in ("confirmtoken", "objecttype.confirmtoken")
+                        and str(cmd_target.get("id") or "") == str(target_id)
+                    ):
+                        return None, cmd
             return self.submit_command(
                 command_id,
                 command_type,
