@@ -562,10 +562,10 @@ merged only at the exact head that reviewer approved.
 | File                                       | Trigger                                                                 | Purpose                                                  |
 |--------------------------------------------|--------------------------------------------------------------------------|----------------------------------------------------------|
 | `.github/workflows/branch-ci.yml`          | push/PR on `task/**`, `hotfix/**`, `dev`, `publish/**`, `master`         | Trailer check + mirror guard + smoke acceptance gate     |
-| `.github/workflows/nightly-publish-cut.yml`| cron `0 * * * *` + `workflow_dispatch`                                    | Cut an immutable publish snapshot only; never dispatch deployment |
+| `.github/workflows/nightly-publish-cut.yml`| cron `0 * * * *` + `workflow_dispatch`                                    | Cut immutable snapshots and independently reconcile the exact dev FE/BFF pair |
 | `.github/workflows/publish-promote.yml`    | cron hourly + `release/v*` push + `workflow_dispatch`                    | Open `promote/<v>` PR after soak; auto-merge             |
 | `.github/workflows/master-release.yml`     | push on `master`                                                         | Tag `prod/<v>` on promote merges; tag hotfix merges      |
-| `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*`, push on `master`, and `workflow_dispatch`           | Fail-closed nonprod deploy with exact-pair admission before dev switch |
+| `.github/workflows/nonprod-deploy.yml`     | push on `master`, and exact-pair `workflow_dispatch`           | Fail-closed nonprod deploy with exact-pair admission before dev switch |
 
 ---
 

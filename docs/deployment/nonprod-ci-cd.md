@@ -28,7 +28,7 @@ Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
 | --- | --- | --- | --- |
 | Pantheon Stage 0 CI | `.github/workflows/stage-0-ci.yml` | PR, push, manual | changed target detection, baseline checks, focused verify, Docker build dry-run |
 | Publish images to Artifact Registry | `.github/workflows/gcp-deploy.yml` | manual | GitHub OIDC to GCP, Cloud Build, Artifact Registry tags, build manifest |
-| Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | manual dev release; `master` or manual staging | exact FE/BFF admission, VM checkout-to-commit, compensated FE/BFF switch, health/CORS smoke |
+| Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | hourly paired dev dispatch or manual dev; `master` or manual staging | exact FE/BFF admission, VM checkout-to-commit, compensated FE/BFF switch, health/CORS smoke |
 | Pantheon FE-BFF Integration Gate | `execute-plans:.github/workflows/pantheon-integration-gate.yml` | controller dispatch only for deployable artifacts; PR/push CI remains non-deploying | rebuild and smoke the exact FE SHA against the exact hosted BFF SHA |
 | Pantheon Dev FE Deploy | `execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml` | controller dispatch only | authenticate the exact gate artifact, probe the candidate, then atomically switch the hosted FE |
 
