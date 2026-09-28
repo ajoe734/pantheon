@@ -188,6 +188,14 @@
     "defect_46_smoke_concurrent_modification_rejected": {
       "problem": "test_concurrent_modification_rejected in services/control-plane/bff/smoke_test.py failed because CommandStore.update_status blocked re-submitting commands with FAILED status, preventing retry and returning 202 instead of 409.",
       "remediation": "Scoped terminal transition protection to completed terminal states (CommandStatus.EXECUTED), allowing failed command retry/re-queue while maintaining strict CAS against completed state regressions."
+    },
+    "defect_47_research_cas_exhaustion_preserves_concurrent_cancellation": {
+      "problem": "services/research/write_owner.py _finalize_experiment_record: after CAS retry loop exhausted, fallback unconditional get/put overwrote concurrent cancellations (status=canceled and cancellation_fence) to queued, and did not fail closed if the record disappeared.",
+      "remediation": "Wrapped fallback store.put with ConcurrentPreservingRecord to preserve store-side cancellation status and fence if cancellation occurred, and enforced fail-closed RuntimeError if record disappears before final write."
+    },
+    "defect_48_research_atomic_scoped_idempotency_across_midnight": {
+      "problem": "services/research/write_owner.py _atomic_insert_record bound only date-derived experiment_id in store check. Concurrent or synchronized clients across UTC midnight (23:59:59Z and 00:00:00Z) created two durable rows with different date prefixes (exp-YYYYMMDD-001) under the same idempotency key.",
+      "remediation": "Enforced database-atomic scoped idempotency binding unique_fields=('tenant_id', 'actor_id', 'idempotency_key') in _atomic_insert_record across store locks, insert_if_absent, and row scans, guaranteeing exactly 1 durable row across midnight transitions."
     }
   },
   "mutation_caller_inventory": {
@@ -538,6 +546,30 @@
         "result": "140 passed, 7 warnings in 79.67s",
         "executed": 140,
         "collected": 140
+      },
+      {
+        "command": "env PYTHONPATH=. timeout 90 .venv-pantheon/bin/python3 /tmp/domain_review_repro.py",
+        "result": "CAS_EXHAUSTION passed, MIDNIGHT_IDEMPOTENCY passed, exit 0",
+        "executed": 2,
+        "collected": 2
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m unittest services/control-plane/bff/smoke_test.py",
+        "result": "Ran 26 tests in 1.228s OK",
+        "executed": 26,
+        "collected": 26
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "61 passed, 10 warnings in 35.23s",
+        "executed": 61,
+        "collected": 61
+      },
+      {
+        "command": "env PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "142 passed, 9 warnings in 79.89s",
+        "executed": 142,
+        "collected": 142
       }
     ]
   },
@@ -592,7 +624,9 @@
     "defect_43_research_mounted_launch_scoped_idempotency_and_identity_resolved": true,
     "defect_44_research_real_database_cas_finalization_resolved": true,
     "defect_45_research_launch_operator_role_enforcement_resolved": true,
-    "defect_46_smoke_concurrent_modification_rejected_resolved": true
+    "defect_46_smoke_concurrent_modification_rejected_resolved": true,
+    "defect_47_research_cas_exhaustion_preserves_concurrent_cancellation_resolved": true,
+    "defect_48_research_atomic_scoped_idempotency_across_midnight_resolved": true
   },
   "review": {
     "reviewer": "Codex",

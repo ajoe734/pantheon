@@ -1309,3 +1309,84 @@ def test_production_serialization_preserves_concurrent_cancel():
     assert row["status"] == "canceled" and row.get("cancellation_fence"), evidence
 
 
+class ContendedConnection:
+    # Same get/put/CAS API as production; no exposed rows or process lock.
+    def __init__(self):
+        self.backend = CASStore()
+        self.conflicts = 0
+        self.before_put = None
+
+    def get(self, key):
+        return self.backend.get(key)
+
+    def list_all(self):
+        return self.backend.list_all()
+
+    def compare_and_set(self, key, expected, candidate, *, conn=None):
+        if expected is not None and self.conflicts < 6:
+            self.conflicts += 1
+            current = self.backend.get(key)
+            current["updated_at"] = f"concurrent-update-{self.conflicts}"
+            self.backend.put(key, current)
+            return False, current
+        return self.backend.compare_and_set(key, expected, candidate)
+
+    def put(self, key, value):
+        callback, self.before_put = self.before_put, None
+        if callback:
+            callback(key)
+        self.backend.put(key, value)
+
+
+def test_cas_exhaustion_preserves_concurrent_cancellation():
+    tickets, store = CASStore(), ContendedConnection()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    first, second = _full_research_client(tickets, store), _full_research_client(tickets, store)
+    body, headers = {"name": "review", "ticket_id": "ticket-1"}, {"Idempotency-Key": "review-cas-exhaustion"}
+    result = {}
+
+    def concurrent_completion_and_cancel(eid):
+        replay = second.post("/bff/experiments", json=body, headers=headers)
+        canceled = second.post(f"/api/v1/experiments/{eid}/cancel", json={"reason": "review"})
+        result.update(replay=replay.status_code, cancel=canceled.status_code, before_stale_put=store.get(eid)["status"])
+
+    store.before_put = concurrent_completion_and_cancel
+    response = first.post("/bff/experiments", json=body, headers=headers)
+    eid = response.json()["experiment_id"]
+    row = store.get(eid)
+    result.update(first=response.status_code, conflicts=store.conflicts, final_status=row["status"], final_fence=row.get("cancellation_fence"))
+    assert row["status"] == "canceled" and row.get("cancellation_fence"), result
+
+
+def test_midnight_scoped_idempotency_independent_of_date_prefix():
+    tickets, store = CASStore(), CASStore()
+    store.barrier = Barrier(2)
+
+    def client_at(timestamp):
+        owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=store, notes_store=AtomicIO())
+        app = FastAPI()
+        app.include_router(
+            create_research_router(
+                read_surface=DefaultResearchKnowledgeSourcePort(research_write_owner=owner),
+                extract_identity=lambda a: SimpleNamespace(operator_id="actor", tenant_id="tenant", roles=["admin"]),
+                require_read_role=lambda i: None,
+                require_operator_role=lambda i: None,
+                bff_error=lambda s, c, m, *a, **kw: HTTPException(s, detail=m),
+                utc_now=lambda: timestamp,
+            )
+        )
+        return TestClient(app, raise_server_exceptions=False)
+
+    clients = [client_at(t) for t in ("2026-09-27T23:59:59Z", "2026-09-28T00:00:00Z")]
+
+    def submit(c):
+        return c.post("/bff/experiments", json={"name": "review"}, headers={"Idempotency-Key": "same-key"})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, clients))
+    result = {"status": [r.status_code for r in responses], "ids": [r.json().get("experiment_id") for r in responses], "rows": len(store.rows)}
+    assert [r.status_code for r in responses] == [201, 201], result
+    assert len(set(result["ids"])) == 1, result
+    assert len(store.rows) == 1, result
+
+
