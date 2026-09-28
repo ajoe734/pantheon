@@ -145,6 +145,11 @@ components:
     paths:
       - .github/workflows/
       - scripts/deploy_nonprod_vm.sh
+      - scripts/auto_deploy_dev_pair.py
+      - scripts/test_auto_deploy_dev_pair.py
+      - scripts/cross_repo_release_controller.py
+      - scripts/test_cross_repo_release_controller.py
+      - docs/deployment/nonprod-ci-cd.md
       - scripts/run-acceptance.sh
       - scripts/test_run_acceptance.py
       - scripts/capture_dev_artifact_baseline.py

@@ -38,6 +38,14 @@ on:
         required: false
         default: "dev"
         type: string
+      frontend_profile:
+        description: "Persistent dev FE profile; automation preserves the accepted hosted profile."
+        required: false
+        default: read-only
+        type: choice
+        options:
+          - read-only
+          - operator-live
       allow_dirty:
         description: "Emergency only: allow dirty remote checkout"
         required: false
@@ -2395,6 +2403,7 @@ jobs:
         continue-on-error: true
         env:
           CROSS_REPO_RELEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          FRONTEND_PROFILE: ${{ inputs.frontend_profile || 'read-only' }}
           BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
           FRONTEND_SHA: ${{ needs.deploy-dev.outputs.frontend_sha }}
           PREVIOUS_BACKEND_SHA: ${{ needs.deploy-dev.outputs.previous_backend_sha }}
@@ -2420,6 +2429,7 @@ jobs:
             --compatibility-manifest-sha256 "${COMPATIBILITY_MANIFEST_SHA256}" \
             --controller-run-id "${GITHUB_RUN_ID}" \
             --evidence-out "${controller_evidence}" \
+            --candidate-profile "${FRONTEND_PROFILE}" \
             --candidate-out "${RELEASE_EVIDENCE_DIR}/release-candidate.json" \
             >"${controller_log}" 2>&1
           controller_status=$?
