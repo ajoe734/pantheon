@@ -1084,7 +1084,13 @@ class ResearchWriteOwner:
         exp_id = exp.get("experiment_id")
         cmd_id = exp.get("command_id") or f"cmd-{exp_id}"
         clean_key = exp.get("idempotency_key")
-        receipt = exp.get("cancel_receipt") if status == "canceled" and exp.get("cancel_receipt") else exp.get("receipt")
+        receipt = (
+            exp.get("archive_receipt") if exp.get("is_archived") and exp.get("archive_receipt") else (
+                exp.get("invalidate_receipt") if status == "invalidated" and exp.get("invalidate_receipt") else (
+                    exp.get("cancel_receipt") if status == "canceled" and exp.get("cancel_receipt") else exp.get("receipt")
+                )
+            )
+        )
         if not receipt or not isinstance(receipt, dict):
             receipt = {
                 "receipt_id": f"rcpt-{exp_id}",
@@ -1177,6 +1183,8 @@ class ResearchWriteOwner:
             "committed_at": exp.get("committed_at") or exp.get("queued_at") or _utc_now_rfc3339(),
             "receipt": receipt,
             "cancel_receipt": exp.get("cancel_receipt"),
+            "archive_receipt": exp.get("archive_receipt"),
+            "invalidate_receipt": exp.get("invalidate_receipt"),
             "command_history": list(exp.get("command_history") or []),
             "idempotency_key": clean_key,
             "tenant_id": exp.get("tenant_id"),
@@ -1844,6 +1852,53 @@ class ResearchWriteOwner:
             updated["updated_at"] = timestamp
             updated["allowedActions"] = self._rw04_allowed_actions(updated)
 
+            prev_version = int(exp.get("aggregate_version") or 1)
+            new_version = prev_version + 1
+            updated["aggregate_version"] = new_version
+
+            clean_key = str(kwargs.get("idempotency_key") or "").strip() or None
+            clean_hash = str(kwargs.get("request_hash") or "").strip() or None
+            cmd_id = str(kwargs.get("command_id") or "").strip() or f"cmd-archive-{experiment_id}-{new_version}"
+            event_id = str(kwargs.get("event_id") or "").strip() or f"evt-{cmd_id}"
+            correlation_id = clean_key or str(kwargs.get("correlation_id") or "").strip() or f"corr-{cmd_id}"
+
+            archive_receipt = {
+                "receipt_id": f"rcpt-{cmd_id}",
+                "command_id": cmd_id,
+                "command": "ArchiveResearchExperiment",
+                "aggregate_id": str(experiment_id),
+                "aggregate_type": "ResearchExperiment",
+                "aggregate_version": new_version,
+                "event_id": event_id,
+                "correlation_id": correlation_id,
+                "status": "committed",
+                "owner": "ResearchWriteOwner",
+                "actor_id": clean_actor,
+                "tenant_id": clean_tenant or exp_tenant,
+                "idempotency_key": clean_key,
+                "request_hash": clean_hash,
+                "committed_at": timestamp,
+            }
+            updated["event_id"] = event_id
+            updated["correlation_id"] = correlation_id
+            updated["archive_receipt"] = archive_receipt
+            updated["receipt"] = archive_receipt
+            updated["committed_at"] = timestamp
+            history = list(updated.get("command_history") or [])
+            history.append({
+                "command": "ArchiveResearchExperiment",
+                "command_id": cmd_id,
+                "event_id": event_id,
+                "correlation_id": correlation_id,
+                "actor_id": clean_actor,
+                "tenant_id": clean_tenant or exp_tenant,
+                "idempotency_key": clean_key,
+                "request_hash": clean_hash,
+                "recorded_at": timestamp,
+                "receipt": archive_receipt,
+            })
+            updated["command_history"] = history
+
             if hasattr(self._experiments_store, "compare_and_set"):
                 success, actual = self._experiments_store.compare_and_set(str(experiment_id), exp, updated)
                 if success:
@@ -1905,6 +1960,53 @@ class ResearchWriteOwner:
             updated["invalidated_by"] = clean_actor
             updated["updated_at"] = timestamp
             updated["allowedActions"] = self._rw04_allowed_actions(updated)
+
+            prev_version = int(exp.get("aggregate_version") or 1)
+            new_version = prev_version + 1
+            updated["aggregate_version"] = new_version
+
+            clean_key = str(kwargs.get("idempotency_key") or "").strip() or None
+            clean_hash = str(kwargs.get("request_hash") or "").strip() or None
+            cmd_id = str(kwargs.get("command_id") or "").strip() or f"cmd-invalidate-{experiment_id}-{new_version}"
+            event_id = str(kwargs.get("event_id") or "").strip() or f"evt-{cmd_id}"
+            correlation_id = clean_key or str(kwargs.get("correlation_id") or "").strip() or f"corr-{cmd_id}"
+
+            invalidate_receipt = {
+                "receipt_id": f"rcpt-{cmd_id}",
+                "command_id": cmd_id,
+                "command": "InvalidateResearchExperiment",
+                "aggregate_id": str(experiment_id),
+                "aggregate_type": "ResearchExperiment",
+                "aggregate_version": new_version,
+                "event_id": event_id,
+                "correlation_id": correlation_id,
+                "status": "committed",
+                "owner": "ResearchWriteOwner",
+                "actor_id": clean_actor,
+                "tenant_id": clean_tenant or exp_tenant,
+                "idempotency_key": clean_key,
+                "request_hash": clean_hash,
+                "committed_at": timestamp,
+            }
+            updated["event_id"] = event_id
+            updated["correlation_id"] = correlation_id
+            updated["invalidate_receipt"] = invalidate_receipt
+            updated["receipt"] = invalidate_receipt
+            updated["committed_at"] = timestamp
+            history = list(updated.get("command_history") or [])
+            history.append({
+                "command": "InvalidateResearchExperiment",
+                "command_id": cmd_id,
+                "event_id": event_id,
+                "correlation_id": correlation_id,
+                "actor_id": clean_actor,
+                "tenant_id": clean_tenant or exp_tenant,
+                "idempotency_key": clean_key,
+                "request_hash": clean_hash,
+                "recorded_at": timestamp,
+                "receipt": invalidate_receipt,
+            })
+            updated["command_history"] = history
 
             if hasattr(self._experiments_store, "compare_and_set"):
                 success, actual = self._experiments_store.compare_and_set(str(experiment_id), exp, updated)
