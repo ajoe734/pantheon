@@ -2355,7 +2355,11 @@ def test_mounted_experiment_action_failure_paths(tmp_path, monkeypatch):
         assert res_fail.status_code >= 500
 
     # Unconfigured command store returns 503
+    import sys
     monkeypatch.setattr(main, "command_store", None)
+    bff_main = sys.modules.get("services.control_plane.bff.main")
+    if bff_main is not None:
+        monkeypatch.setattr(bff_main, "command_store", None, raising=False)
     res_503 = client.post(valid_path, json={}, headers={"Idempotency-Key": "key-503"})
     assert res_503.status_code == 503
 
@@ -3076,4 +3080,86 @@ def test_unissued_token_prefix_stays_unknown(tmp_path, token):
         headers={"Idempotency-Key": "key"},
     )
     assert response.status_code == 404, response.text
+
+
+def test_mounted_cross_tenant_confirm_tokens_negative_coverage(tmp_path):
+    store = CommandStore(str(tmp_path / "commands.jsonl"))
+    identity_a = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["operator", "admin"])
+    identity_b = SimpleNamespace(operator_id="actor-b", tenant_id="tenant-b", roles=["operator", "admin"])
+
+    current_identity = [identity_a]
+
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(
+        command_store=store,
+        extract_identity=lambda authorization, **kwargs: current_identity[0],
+        check_read_surface_state=lambda: None,
+    ))
+    client = TestClient(app)
+
+    # 1. Issue confirm token under Tenant A
+    seed_res = client.post(
+        "/bff/confirm-tokens",
+        json={"tokenId": "cross-tenant-token-001", "ttlSeconds": 300},
+        headers={"Idempotency-Key": "seed-token-a"},
+    )
+    assert seed_res.status_code == 201, seed_res.text
+
+    # 2. Switch identity to Tenant B
+    current_identity[0] = identity_b
+
+    # Query token under Tenant B -> 403 Forbidden with tenant_mismatch
+    get_res = client.get("/bff/confirm-tokens/cross-tenant-token-001")
+    assert get_res.status_code == 403, (get_res.status_code, get_res.text)
+    assert "tenant_mismatch" in get_res.text
+
+    # Query confirmation status under Tenant B -> 403 Forbidden
+    status_res = client.get("/bff/command-confirmations/cross-tenant-token-001")
+    assert status_res.status_code == 403, (status_res.status_code, status_res.text)
+    assert "tenant_mismatch" in status_res.text
+
+    # Delete token under Tenant B -> 403 Forbidden
+    del_res = client.delete("/bff/confirm-tokens/cross-tenant-token-001")
+    assert del_res.status_code == 403, (del_res.status_code, del_res.text)
+    assert "tenant_mismatch" in del_res.text
+
+    # Confirm via Route 1 (/bff/command-confirmations) under Tenant B -> 403 Forbidden
+    r1_res = client.post(
+        "/bff/command-confirmations",
+        json={"confirm_token": "cross-tenant-token-001", "command_id": "cmd-tenant-b"},
+        headers={"Idempotency-Key": "b-confirm-r1"},
+    )
+    assert r1_res.status_code == 403, (r1_res.status_code, r1_res.text)
+    assert "tenant_mismatch" in r1_res.text
+
+    # Confirm via Route 2 (/bff/command-confirmations/{token}/confirm) under Tenant B -> 403 Forbidden
+    r2_res = client.post(
+        "/bff/command-confirmations/cross-tenant-token-001/confirm",
+        json={"command_id": "cmd-tenant-b"},
+        headers={"Idempotency-Key": "b-confirm-r2"},
+    )
+    assert r2_res.status_code == 403, (r2_res.status_code, r2_res.text)
+    assert "tenant_mismatch" in r2_res.text
+
+    # Redeem directly under Tenant B -> 403 Forbidden
+    redeem_res = client.post(
+        "/bff/confirm-tokens/cross-tenant-token-001/redeem",
+        headers={"Idempotency-Key": "b-redeem"},
+    )
+    assert redeem_res.status_code == 403, (redeem_res.status_code, redeem_res.text)
+    assert "tenant_mismatch" in redeem_res.text
+
+    # 3. Switch back to Tenant A -> confirms successfully
+    current_identity[0] = identity_a
+    get_res_a = client.get("/bff/confirm-tokens/cross-tenant-token-001")
+    assert get_res_a.status_code == 200, (get_res_a.status_code, get_res_a.text)
+
+    confirm_res_a = client.post(
+        "/bff/command-confirmations/cross-tenant-token-001/confirm",
+        json={"command_id": "cmd-tenant-a"},
+        headers={"Idempotency-Key": "a-confirm-success"},
+    )
+    assert confirm_res_a.status_code == 202, (confirm_res_a.status_code, confirm_res_a.text)
+    assert confirm_res_a.json()["data"]["status"] == "accepted"
+
 

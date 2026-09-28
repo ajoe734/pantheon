@@ -291,6 +291,32 @@ def _check_read_surface_state() -> Optional[StalenessWarning]:
     )
 
 
+def _extract_record_tenant(command: Dict[str, Any]) -> Optional[str]:
+    audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    for key in ("tenant_id", "tenant"):
+        value = str(audit.get(key) or "").strip()
+        if value:
+            return value
+
+    foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
+    record = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
+    if record.get("tenant_id"):
+        return str(record.get("tenant_id")).strip()
+
+    trace = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
+    tenant_ref = trace.get("tenant_ref") if isinstance(trace.get("tenant_ref"), dict) else {}
+    value = str(tenant_ref.get("tenant_id") or trace.get("tenant_id") or "").strip()
+    if value:
+        return value
+
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    for key in ("tenant_id", "tenant"):
+        val = str(params.get(key) or "").strip()
+        if val:
+            return val
+    return None
+
+
 # Single product owner of the governance action_kind -> ObjectType and
 # action_id -> CommandType mapping used by ``submit_governance_action``.
 # ``governance/router.py`` only ever submits action_kind="review" (from
@@ -509,18 +535,26 @@ class CommandAdapterService:
             audit=record.get("audit"),
         )
 
-    def confirm_token_records(self, token_id: str) -> List[Dict[str, Any]]:
+    def confirm_token_records(self, token_id: str, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
         store = self.command_store
         if store is None:
             return []
         commands = getattr(store, "_get_all_commands", lambda: [])()
-        return [
-            record
-            for record in commands
-            if isinstance(record.get("target"), dict)
-            and record["target"].get("type") == ObjectType.CONFIRM_TOKEN.value
-            and str(record["target"].get("id") or "") == token_id
-        ]
+        clean_tenant = str(tenant_id or "").strip() or None
+        results = []
+        for record in commands:
+            if not (
+                isinstance(record.get("target"), dict)
+                and record["target"].get("type") == ObjectType.CONFIRM_TOKEN.value
+                and str(record["target"].get("id") or "") == token_id
+            ):
+                continue
+            if clean_tenant is not None:
+                rec_tenant = _extract_record_tenant(record)
+                if rec_tenant and rec_tenant != clean_tenant:
+                    continue
+            results.append(record)
+        return results
 
     def confirm_token_expiry_from_record(self, record: Dict[str, Any]) -> Optional[datetime]:
         params = record.get("params") if isinstance(record.get("params"), dict) else {}
@@ -563,6 +597,7 @@ class CommandAdapterService:
         status = "available"
         expires_at: Optional[datetime] = None
         latest_record: Optional[Dict[str, Any]] = None
+        token_tenant: Optional[str] = None
         store = self.command_store
         commands = getattr(store, "_get_all_commands", lambda: [])() if store is not None else []
 
@@ -572,6 +607,9 @@ class CommandAdapterService:
                 target.get("type") == ObjectType.CONFIRM_TOKEN.value
                 and str(target.get("id") or "") == token_id
             ):
+                rec_tenant = _extract_record_tenant(record)
+                if rec_tenant:
+                    token_tenant = rec_tenant
                 record_type = record.get("type")
                 if record_type == CommandType.CONFIRM_TOKEN_CREATE.value:
                     status = "created"
@@ -587,6 +625,9 @@ class CommandAdapterService:
                 status == "created"
                 and self._guarded_command_confirm_token_id(record) == token_id
             ):
+                rec_tenant = _extract_record_tenant(record)
+                if rec_tenant:
+                    token_tenant = rec_tenant
                 status = "redeemed"
                 latest_record = record
 
@@ -602,6 +643,9 @@ class CommandAdapterService:
             "status": status,
             "expired": expired,
         }
+        if token_tenant is not None:
+            payload["tenant_id"] = token_tenant
+            payload["tenantId"] = token_tenant
         if expires_at is not None:
             payload["expiresAt"] = expires_at.isoformat().replace("+00:00", "Z")
             payload["expires_at"] = payload["expiresAt"]
@@ -609,6 +653,166 @@ class CommandAdapterService:
             payload["commandId"] = latest_record.get("command_id")
             payload["command_id"] = latest_record.get("command_id")
         return payload
+
+    def check_confirm_token_tenant_authorization(
+        self,
+        token_id: str,
+        identity: OperatorIdentity,
+        token_state: Optional[Dict[str, Any]] = None,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        if token_state is None:
+            token_state = self.confirm_token_lifecycle_payload(token_id)
+        token_tenant = token_state.get("tenant_id")
+        if not token_tenant:
+            return
+        caller_tenant = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+        clean_caller_tenant = str(caller_tenant or "").strip() or None
+        if clean_caller_tenant != token_tenant:
+            raise self._raise_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Confirm token tenant mismatch",
+                f"Confirm token {token_id!r} is bound to tenant {token_tenant!r} and cannot be confirmed or redeemed by {clean_caller_tenant!r}",
+                precondition_failed="tenant_mismatch",
+                suggestion="Use a confirm token issued within the caller's tenant scope",
+                correlation_id=correlation_id,
+            )
+
+    def _project_command_confirmation_flat_response(
+        self,
+        record: Dict[str, Any],
+        identity: OperatorIdentity,
+    ) -> Dict[str, Any]:
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        res = record.get("result") if isinstance(record.get("result"), dict) else {}
+        res_data = res.get("data") if isinstance(res.get("data"), dict) else {}
+
+        confirmation_id = (
+            params.get("confirmation_id")
+            or res.get("confirmation_id")
+            or res_data.get("confirmationId")
+            or res_data.get("confirmation_id")
+            or record.get("command_id")
+        )
+        cmd_id = (
+            params.get("command_id")
+            or res.get("command_id")
+            or res_data.get("commandId")
+            or res_data.get("command_id")
+        )
+        token = (
+            params.get("confirm_token")
+            or res.get("token")
+            or res.get("tokenId")
+            or res_data.get("tokenId")
+            or res_data.get("token")
+            or (record.get("target") or {}).get("id")
+        )
+        confirmed_at = (
+            params.get("confirmed_at")
+            or res.get("confirmed_at")
+            or res_data.get("confirmed_at")
+            or record.get("submitted_at")
+            or self._utc_now()
+        )
+        confirmed_by = (
+            params.get("confirmed_by")
+            or res.get("confirmed_by")
+            or (record.get("audit") or {}).get("actor")
+            or getattr(identity, "operator_id", None)
+            or "operator"
+        )
+
+        out = {
+            "confirmation_id": confirmation_id,
+            "command_id": cmd_id,
+            "token": token,
+            "tokenId": token,
+            "status": "accepted",
+            "lifecycleStatus": "redeemed",
+            "redeemed": True,
+            "confirmed_at": confirmed_at,
+            "confirmed_by": confirmed_by,
+        }
+        if isinstance(res, dict) and "staleness_warning" in res:
+            out["staleness_warning"] = res["staleness_warning"]
+        return out
+
+    def _project_command_confirmation_envelope_response(
+        self,
+        record: Dict[str, Any],
+        identity: OperatorIdentity,
+        correlation_id: str,
+        x_request_id: Optional[str] = None,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        res = record.get("result") if isinstance(record.get("result"), dict) else {}
+        res_data = res.get("data") if isinstance(res.get("data"), dict) else {}
+        res_meta = res.get("meta") if isinstance(res.get("meta"), dict) else {}
+
+        confirmation_id = (
+            params.get("confirmation_id")
+            or res_data.get("confirmationId")
+            or res_data.get("confirmation_id")
+            or res.get("confirmation_id")
+            or record.get("command_id")
+        )
+        cmd_id = (
+            params.get("command_id")
+            or res_data.get("commandId")
+            or res_data.get("command_id")
+            or res.get("command_id")
+        )
+        token = (
+            params.get("confirm_token")
+            or res_data.get("tokenId")
+            or res_data.get("token")
+            or res.get("tokenId")
+            or res.get("token")
+            or (record.get("target") or {}).get("id")
+        )
+        confirmed_at = (
+            params.get("confirmed_at")
+            or res_data.get("confirmed_at")
+            or res.get("confirmed_at")
+            or record.get("submitted_at")
+            or self._utc_now()
+        )
+
+        caller_correlation_id = str(x_request_id if False else (correlation_id if correlation_id and x_request_id is not None else None) or "").strip() or None
+        resp_correlation_id = (
+            res_meta.get("correlationId")
+            or res_meta.get("correlation_id")
+            or (record.get("audit") or {}).get("correlation_id")
+            or (record.get("foundation") or {}).get("receipt", {}).get("correlation_id")
+            or correlation_id
+            or params.get("idempotency_key")
+            or record.get("command_id")
+        )
+        resp_request_id = (
+            str(x_request_id or "").strip() or None
+            if x_request_id is not None
+            else res_meta.get("requestId")
+        )
+
+        return {
+            "data": {
+                "status": "accepted",
+                "commandId": cmd_id,
+                "confirmed_at": confirmed_at,
+                "tokenId": token,
+                "confirmationId": confirmation_id,
+            },
+            "meta": {
+                "snapshot_at": confirmed_at,
+                "dryRun": dry_run,
+                "correlationId": resp_correlation_id,
+                "requestId": resp_request_id,
+                "evidenceKind": "command.confirm",
+            },
+        }
 
     def raise_if_confirm_token_expired(self, token_id: str) -> None:
         state = self.confirm_token_lifecycle_payload(token_id)
@@ -624,9 +828,9 @@ class CommandAdapterService:
             details_extra={"tokenId": token_id, "expiresAt": state.get("expiresAt")},
         )
 
-    def latest_command_confirmation_payload(self, token_id: str) -> Dict[str, Any]:
+    def latest_command_confirmation_payload(self, token_id: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         confirmation: Dict[str, Any] = {}
-        for record in self.confirm_token_records(token_id):
+        for record in self.confirm_token_records(token_id, tenant_id=tenant_id):
             if record.get("type") != CommandType.CONFIRM_TOKEN_REDEEM.value:
                 continue
             params = record.get("params") if isinstance(record.get("params"), dict) else {}
@@ -683,6 +887,20 @@ class CommandAdapterService:
             )
             return existing_record
 
+        generated_command_id = f"cmd-confirm-{uuid.uuid4().hex[:16]}"
+        canonical_receipt = {
+            "command_id": command_id,
+            "commandId": command_id,
+            "aggregate_type": ObjectType.CONFIRM_TOKEN.value,
+            "aggregate_id": token_id,
+            "aggregate_version": 1,
+            "status": "executed",
+            "event_id": f"evt-{generated_command_id}",
+            "correlation_id": idempotency_key or command_id or generated_command_id,
+            "owner": "governance",
+            "committed_at": confirmed_at,
+        }
+
         foundation_ctx = {
             "idempotency_record": {
                 "idempotency_key": idempotency_key,
@@ -695,6 +913,7 @@ class CommandAdapterService:
                 "tenant_ref": {"tenant_id": clean_tenant_id} if clean_tenant_id else {},
                 "tenant_id": clean_tenant_id,
             },
+            "receipt": dict(canonical_receipt),
         }
         audit_ctx = {
             "actor": caller_op_id,
@@ -718,7 +937,39 @@ class CommandAdapterService:
             "idempotency_key": idempotency_key,
             "request_hash": request_hash,
         }
-        generated_command_id = f"cmd-confirm-{uuid.uuid4().hex[:16]}"
+
+        durable_result: Dict[str, Any] = {
+            **canonical_receipt,
+            "confirmation_id": confirmation_id,
+            "confirmationId": confirmation_id,
+            "command_id": command_id,
+            "commandId": command_id,
+            "token": token_id,
+            "tokenId": token_id,
+            "status": "executed",
+            "lifecycleStatus": "redeemed",
+            "redeemed": True,
+            "confirmed_at": confirmed_at,
+            "confirmed_by": caller_op_id,
+            "receipt": dict(canonical_receipt),
+            "data": {
+                "status": "accepted",
+                "commandId": command_id,
+                "command_id": command_id,
+                "confirmed_at": confirmed_at,
+                "tokenId": token_id,
+                "token": token_id,
+                "confirmationId": confirmation_id,
+                "confirmation_id": confirmation_id,
+                **canonical_receipt,
+            },
+        }
+        if result and isinstance(result, dict):
+            if "staleness_warning" in result:
+                durable_result["staleness_warning"] = result["staleness_warning"]
+            if "meta" in result:
+                durable_result["meta"] = result["meta"]
+
         if hasattr(store, "submit_terminal_command"):
             admitted = store.submit_terminal_command(
                 command_id=generated_command_id,
@@ -728,7 +979,7 @@ class CommandAdapterService:
                 params=params,
                 audit_context=audit_ctx,
                 foundation_context=foundation_ctx,
-                result=result,
+                result=durable_result,
             )
         else:
             admitted = store.submit_command(
@@ -739,7 +990,7 @@ class CommandAdapterService:
                 params=params,
                 audit_context=audit_ctx,
                 foundation_context=foundation_ctx,
-                result=result,
+                result=durable_result,
             )
         is_replayed = (admitted.get("command_id") != generated_command_id)
         if is_replayed:
@@ -755,8 +1006,8 @@ class CommandAdapterService:
             )
             return admitted
 
-        if not hasattr(store, "submit_terminal_command") and result is not None and admitted.get("command_id"):
-            store.update_status(admitted["command_id"], CommandStatus.EXECUTED, result=result)
+        if not hasattr(store, "submit_terminal_command") and admitted.get("command_id"):
+            store.update_status(admitted["command_id"], CommandStatus.EXECUTED, result=durable_result)
         return admitted
 
     def sem_command_response(
@@ -1277,6 +1528,7 @@ class CommandAdapterService:
         # worker in this seam marking the prior one terminal, so only the
         # approval action_kind uses the active-target admission guard.
         preconditions_checked = ["authentication", "authorization", "idempotency"]
+        tenant_val = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
         audit_record = {
             "operator_id": identity.operator_id,
             "roles_at_submission": list(getattr(identity, "roles", []) or []),
@@ -1285,13 +1537,14 @@ class CommandAdapterService:
             "timestamp": submitted_at,
             "idempotency_key": resolved_key,
             "request_hash": request_hash,
+            "tenant_id": tenant_val,
         }
         foundation_record = {
             "idempotency_record": {
                 "idempotency_key": resolved_key,
                 "request_hash": request_hash,
                 "operator_id": identity.operator_id,
-                "tenant_id": getattr(identity, "tenant_id", None),
+                "tenant_id": tenant_val,
                 "command_type": command_type.value if hasattr(command_type, "value") else str(command_type),
             }
         }
@@ -1303,7 +1556,7 @@ class CommandAdapterService:
                 command_type=command_type,
                 target=target,
                 submitted_at=submitted_at,
-                params={"action_id": action_id, **payload},
+                params={"action_id": action_id, "tenant_id": tenant_val, **payload},
                 audit_context=audit_record,
                 foundation_context=foundation_record,
             )
@@ -1323,7 +1576,7 @@ class CommandAdapterService:
                 command_type=command_type,
                 target=target,
                 submitted_at=submitted_at,
-                params={"action_id": action_id, **payload},
+                params={"action_id": action_id, "tenant_id": tenant_val, **payload},
                 audit_context=audit_record,
                 foundation_context=foundation_record,
             )
@@ -1424,9 +1677,11 @@ class CommandAdapterService:
 
     def get_confirm_token(self, token_id: str, identity: OperatorIdentity) -> Dict[str, Any]:
         self.check_read_role(identity)
+        token_state = self.confirm_token_lifecycle_payload(token_id)
+        self.check_confirm_token_tenant_authorization(token_id, identity, token_state=token_state)
         self.raise_if_confirm_token_expired(token_id)
         return {
-            "data": self.confirm_token_lifecycle_payload(token_id),
+            "data": token_state,
             "meta": {"contract": "BFF-LUV-SEM-002", "snapshot_at": self._utc_now()},
         }
 
@@ -1439,6 +1694,8 @@ class CommandAdapterService:
         x_idempotency_key: Optional[str] = None,
     ) -> JSONResponse:
         self.check_read_role(identity)
+        token_state = self.confirm_token_lifecycle_payload(token_id)
+        self.check_confirm_token_tenant_authorization(token_id, identity, token_state=token_state)
         self.raise_if_confirm_token_expired(token_id)
         response = self.sem_command_response(
             command_type=CommandType.CONFIRM_TOKEN_REDEEM,
@@ -1467,6 +1724,8 @@ class CommandAdapterService:
         x_idempotency_key: Optional[str] = None,
     ) -> JSONResponse:
         self.check_read_role(identity)
+        token_state = self.confirm_token_lifecycle_payload(token_id)
+        self.check_confirm_token_tenant_authorization(token_id, identity, token_state=token_state)
         response = self.sem_command_response(
             command_type=CommandType.CONFIRM_TOKEN_DELETE,
             target_type=ObjectType.CONFIRM_TOKEN,
@@ -1548,53 +1807,27 @@ class CommandAdapterService:
             )
 
         if existing is not None:
-            stored_hash = (
-                (existing.get("foundation") or {})
-                .get("idempotency_record", {})
-                .get("request_hash")
-            ) or (existing.get("audit") or {}).get("request_hash")
-            if stored_hash and stored_hash != req_hash:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key already used with a different payload",
-                    f"Key {resolved_key!r} is bound to a different confirmation request",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
-                )
-            if existing.get("result") and isinstance(existing["result"], dict):
-                return dict(existing["result"])
-            params = existing.get("params") or {}
-            reconstructed = {
-                "confirmation_id": params.get("confirmation_id") or existing.get("command_id"),
-                "command_id": original_command_id,
-                "token": confirm_token,
-                "tokenId": confirm_token,
-                "status": "accepted",
-                "lifecycleStatus": "redeemed",
-                "redeemed": True,
-                "confirmed_at": params.get("confirmed_at") or self._utc_now(),
-                "confirmed_by": params.get("confirmed_by") or identity.operator_id,
-            }
-            return reconstructed
+            self._revalidate_admitted_command_record(
+                existing,
+                resolved_key=resolved_key or "",
+                identity=identity,
+                command_type=CommandType.CONFIRM_TOKEN_REDEEM,
+                entity_type=ObjectType.CONFIRM_TOKEN,
+                target_id=confirm_token,
+                request_hash=req_hash,
+                server_generated_target=False,
+            )
+            return self._project_command_confirmation_flat_response(existing, identity=identity)
 
+        token_state = self.confirm_token_lifecycle_payload(confirm_token)
+        self.check_confirm_token_tenant_authorization(confirm_token, identity, token_state=token_state)
         self.raise_if_confirm_token_expired(confirm_token)
         staleness_warning = self.check_read_surface_state()
         confirmation_id = str(uuid.uuid4())
         confirmed_at = self._utc_now()
-        result = {
-            "confirmation_id": confirmation_id,
-            "command_id": original_command_id,
-            "token": confirm_token,
-            "tokenId": confirm_token,
-            "status": "accepted",
-            "lifecycleStatus": "redeemed",
-            "redeemed": True,
-            "confirmed_at": confirmed_at,
-            "confirmed_by": identity.operator_id,
-        }
+        initial_result: Dict[str, Any] = {}
         if staleness_warning is not None:
-            result["staleness_warning"] = {
+            initial_result["staleness_warning"] = {
                 "read_surface_state": staleness_warning.read_surface_state,
                 "message": staleness_warning.message,
             }
@@ -1606,21 +1839,26 @@ class CommandAdapterService:
             identity=identity,
             idempotency_key=resolved_key,
             request_hash=req_hash,
-            result=result,
+            result=initial_result,
         )
-        if admitted:
-            admitted_params = admitted.get("params") or {}
-            admitted_conf_id = admitted_params.get("confirmation_id")
-            if admitted_conf_id and admitted_conf_id != confirmation_id:
-                result["confirmation_id"] = admitted_conf_id
-            if admitted.get("result") and isinstance(admitted["result"], dict):
-                return dict(admitted["result"])
-        return result
+        return self._project_command_confirmation_flat_response(
+            admitted or {
+                "params": {
+                    "confirmation_id": confirmation_id,
+                    "command_id": original_command_id,
+                    "confirm_token": confirm_token,
+                    "confirmed_at": confirmed_at,
+                },
+                "result": initial_result,
+            },
+            identity=identity,
+        )
 
     def get_command_confirmation_status(self, token: str, identity: OperatorIdentity) -> Dict[str, Any]:
         self.check_read_role(identity)
-        self.raise_if_confirm_token_expired(token)
         token_state = self.confirm_token_lifecycle_payload(token)
+        self.check_confirm_token_tenant_authorization(token, identity, token_state=token_state)
+        self.raise_if_confirm_token_expired(token)
         confirmation = self.latest_command_confirmation_payload(token)
         return {
             "data": {
@@ -1697,6 +1935,7 @@ class CommandAdapterService:
                 correlation_id=correlation_id,
             )
 
+        self.check_confirm_token_tenant_authorization(token, identity, token_state=token_state)
         self.raise_if_confirm_token_expired(token)
 
         dry_run = _truthy_header(x_dry_run)
@@ -1759,27 +1998,16 @@ class CommandAdapterService:
                 request_hash=req_hash,
                 server_generated_target=False,
             )
-            if existing.get("result") and isinstance(existing["result"], dict):
-                return dict(existing["result"])
-            params = existing.get("params") or {}
-            saved_conf_id = params.get("confirmation_id") or existing.get("command_id")
-            saved_at = params.get("confirmed_at") or snapshot_at
-            return {
-                "data": {
-                    "status": "accepted",
-                    "commandId": command_id,
-                    "confirmed_at": saved_at,
-                    "tokenId": token,
-                    "confirmationId": saved_conf_id,
-                },
-                "meta": {
-                    "snapshot_at": saved_at,
-                    "dryRun": False,
-                    "correlationId": correlation_id,
-                    "requestId": str(x_request_id or "").strip() or None,
-                    "evidenceKind": "command.confirm",
-                },
-            }
+            out = self._project_command_confirmation_envelope_response(
+                existing,
+                identity=identity,
+                correlation_id=correlation_id,
+                x_request_id=x_request_id,
+                dry_run=False,
+            )
+            if response is not None and "meta" in out and "correlationId" in out["meta"]:
+                response.headers["X-Correlation-Id"] = out["meta"]["correlationId"]
+            return out
 
         result = {
             "data": {
@@ -1828,10 +2056,25 @@ class CommandAdapterService:
                 },
             )
 
-        if admitted and admitted.get("result") and isinstance(admitted["result"], dict):
-            return dict(admitted["result"])
-
-        return result
+        envelope_record = admitted or {
+            "params": {
+                "confirmation_id": result["data"]["confirmationId"],
+                "command_id": command_id,
+                "confirm_token": token,
+                "confirmed_at": snapshot_at,
+            },
+            "result": result,
+        }
+        out = self._project_command_confirmation_envelope_response(
+            envelope_record,
+            identity=identity,
+            correlation_id=correlation_id,
+            x_request_id=x_request_id,
+            dry_run=False,
+        )
+        if response is not None and "meta" in out and "correlationId" in out["meta"]:
+            response.headers["X-Correlation-Id"] = out["meta"]["correlationId"]
+        return out
 
     def submit_command_admission(
         self,
@@ -2465,6 +2708,8 @@ async def process_command(
 
 _process_command_stub = process_command
 
+_GOV_STORE_UNSET = object()
+
 
 def _gov_bff_action_command(
     entity_type: Any,
@@ -2475,7 +2720,7 @@ def _gov_bff_action_command(
     payload: Dict[str, Any],
     command_type: Any,
     *,
-    command_store: Optional[Any] = None,
+    command_store: Any = _GOV_STORE_UNSET,
 ) -> Dict[str, Any]:
     """Submit a governance/risk/research resource action through the command store."""
     payload = dict(payload or {})
@@ -2560,11 +2805,13 @@ def _gov_bff_action_command(
             },
         }
 
-    store = command_store
-    if store is None:
+    if command_store is _GOV_STORE_UNSET:
+        store = None
         bff_main = sys.modules.get("services.control_plane.bff.main")
         if bff_main is not None:
             store = getattr(bff_main, "command_store", None)
+    else:
+        store = command_store
 
     if store is None:
         raise HTTPException(

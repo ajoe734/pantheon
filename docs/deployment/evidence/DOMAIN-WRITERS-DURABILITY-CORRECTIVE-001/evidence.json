@@ -320,6 +320,10 @@
     "defect_79_confirmation_concurrent_admission_revalidation_and_result_preservation": {
       "problem": "command_adapters/service.py:725-736 record_command_confirmation_redeem unconditionally updated the admitted row using the losing request result, without revalidating the deduplicated command type/target/request hash. Both mounted POST /bff/command-confirmations and POST /bff/command-confirmations/{token}/confirm reproduced: concurrent same-key different-token requests returned 202/202 instead of 202/409 and overwrote the winning receipt; same-key identical requests returned the original confirmation ID but fresh CommandStore replay returned a different confirmation ID.",
       "remediation": "In command_queue.py, delegated submit_terminal_command to submit_command with status=CommandStatus.EXECUTED to atomically record complete executed commands without a crash window or separate update_status call. In record_command_confirmation_redeem, used submit_terminal_command, detected deduplicated admission (admitted.get('command_id') != generated_command_id), and revalidated the admitted row against the incoming tenant, operator, command type, target, and request hash via _revalidate_admitted_command_record (raising 409 IDEMPOTENCY_CONFLICT on mismatch). Bypassed store.update_status on replay, preserving the original canonical receipt and confirmation_id without overwriting it on disk. In confirm_command_by_token, preserved unknown-token 404 semantics without any prefix bypass, returned the admitted canonical result on replay, and published audit events only for initial executions. Integrated the 4 mounted seeded concurrency/restart regressions and unissued token prefix regressions into test_domain_durability_corrective_p1.py."
+    },
+    "defect_80_confirm_token_tenant_authorization_and_receipt_durability_and_projection_parity": {
+      "problem": "Review of PR #5998 identified four defects: (1) Confirm tokens lacked tenant authorization checks on confirm, redeem, and status routes, allowing cross-tenant token operations instead of failing closed with 403 Forbidden (precondition_failed='tenant_mismatch'). (2) Confirmations via POST /bff/command-confirmations and POST /bff/command-confirmations/{token}/confirm lacked full SD 4.4 canonical receipt fields (command_id, aggregate_type, aggregate_id, aggregate_version, status, event_id, correlation_id, owner, committed_at) in foundation.receipt and durable result. (3) Confirmation route projection parity was broken on cross-route replay: replaying a key across the two routes returned the raw stored result of the prior route rather than projecting each public route's authoritative contract (flat schema for Route 1, {data, meta} envelope for Route 2). (4) Test isolation failure: _gov_bff_action_command treated command_store=None as unset, falling back to bff_main.command_store left over from earlier tests in the suite, causing test_mounted_experiment_action_failure_paths to return 202 instead of 503.",
+      "remediation": "Enforced strict tenant authorization in check_confirm_token_tenant_authorization across get_confirm_token, redeem_confirm_token, delete_confirm_token, submit_command_confirmation, confirm_command_by_token, and get_command_confirmation_status, failing closed with 403 ErrorCode.FORBIDDEN (precondition_failed='tenant_mismatch') whenever clean_caller_tenant != token_tenant. Attached full SD 4.4 canonical receipt fields to foundation.receipt, result, and result['data'] in record_command_confirmation_redeem. Standardized public projections via _project_command_confirmation_flat_response and _project_command_confirmation_envelope_response, preserving route schema contracts unconditionally across restarts and cross-route replays while preserving original correlationId and snapshot_at metadata. Introduced _GOV_STORE_UNSET sentinel in _gov_bff_action_command so explicit command_store=None fails closed with 503 instead of falling back to bff_main.command_store. Added mounted negative cross-tenant coverage test_mounted_cross_tenant_confirm_tokens_negative_coverage in test_domain_durability_corrective_p1.py."
     }
   },
   "mutation_caller_inventory": {
@@ -1079,6 +1083,18 @@
         "result": "57 passed, 3 warnings in 32.75s",
         "executed": 57,
         "collected": 57
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q /tmp/test_domain_7daba0_independent_review.py",
+        "result": "4 passed, 1 warning in 2.05s",
+        "executed": 4,
+        "collected": 4
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 timeout 180 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_confirm_token_lifecycle.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/smoke_test.py",
+        "result": "259 passed, 5 warnings in 135.70s",
+        "executed": 259,
+        "collected": 259
       }
     ]
   },
@@ -1166,7 +1182,8 @@
     "defect_76_experiment_retry_crash_recovery_canonical_receipt_resolved": true,
     "defect_77_confirmation_process_local_replay_and_missing_owner_durability_resolved": true,
     "defect_78_research_action_unscoped_replay_receipt_borrowing_resolved": true,
-    "defect_79_confirmation_concurrent_admission_revalidation_and_result_preservation_resolved": true
+    "defect_79_confirmation_concurrent_admission_revalidation_and_result_preservation_resolved": true,
+    "defect_80_confirm_token_tenant_authorization_and_receipt_durability_and_projection_parity_resolved": true
   },
   "review": {
     "reviewer": "Codex",
