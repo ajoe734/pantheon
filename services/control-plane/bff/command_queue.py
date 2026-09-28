@@ -451,15 +451,8 @@ class CommandStore:
                             return False
 
                     target_status_val = status.value if hasattr(status, "value") else str(status)
-                    terminal_or_processing = {
-                        CommandStatus.PROCESSING.value,
-                        CommandStatus.EXECUTED.value,
-                        CommandStatus.FAILED.value,
-                    }
-                    if hasattr(CommandStatus, "CANCELLED"):
-                        terminal_or_processing.add(CommandStatus.CANCELLED.value)
-
-                    if target_status_val == CommandStatus.SUBMITTED.value and current_status in terminal_or_processing:
+                    terminal_completed = {CommandStatus.EXECUTED.value}
+                    if target_status_val == CommandStatus.SUBMITTED.value and current_status in terminal_completed:
                         return False
 
                     commands[i]["status"] = target_status_val

@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from copy import deepcopy
 from threading import Barrier, Event, Lock
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ from services.control_plane.bff.command_adapters.router import create_command_ad
 from services.control_plane.bff.deployment.router import create_deployment_router
 from services.control_plane.bff.research.router import create_research_experiments_router, create_research_router
 from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 from services.research.write_owner import ResearchWriteOwner
 
 PAYLOAD = {"plan_id": "review-plan", "decision": "approve", "memo": "isolated reviewer check"}
@@ -924,6 +926,11 @@ class CASStore(AtomicIO):
 class FailFinalCommit(CASStore):
     armed = True
 
+    def compare_and_set(self, key, expected, value, *, conn=None):
+        if self.armed and value.get("is_committed"):
+            raise OSError("independent injected final commit failure")
+        return super().compare_and_set(key, expected, value, conn=conn)
+
     def put(self, key, value):
         if self.armed and value.get("is_committed"):
             raise OSError("independent injected final commit failure")
@@ -1035,6 +1042,13 @@ class PausedFirstFinalCommit(CASStore):
         super().__init__()
         self.entered, self.release = Event(), Event()
         self.armed = True
+
+    def compare_and_set(self, key, expected, value, *, conn=None):
+        if self.armed and value.get("is_committed"):
+            self.armed = False
+            self.entered.set()
+            assert self.release.wait(timeout=15)
+        return super().compare_and_set(key, expected, value, conn=conn)
 
     def put(self, key, value):
         if self.armed and value.get("is_committed"):
@@ -1160,4 +1174,138 @@ def test_mounted_launch_honors_scoped_idempotency_and_isolation():
     assert isolated.status_code == 200, isolated.text
     assert isolated.json()["experiment_id"] != eid
     assert len(experiments.rows) == 2
+
+
+def test_launch_denies_read_only_actor():
+    tickets, experiments = CASStore(), CASStore()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments, notes_store=AtomicIO())
+    identity = SimpleNamespace(operator_id="reader", tenant_id="tenant", roles=["viewer"])
+
+    def deny_operator(i):
+        raise HTTPException(403, detail="operator role required")
+
+    app = FastAPI()
+    app.include_router(
+        create_research_router(
+            read_surface=DefaultResearchKnowledgeSourcePort(research_write_owner=owner),
+            extract_identity=lambda a: identity,
+            require_read_role=lambda i: None,
+            require_operator_role=deny_operator,
+            bff_error=lambda s, c, m, *a, **kw: HTTPException(s, detail=m),
+            utc_now=lambda: "2026-09-28T00:00:00Z",
+        )
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    control = client.post("/bff/experiments", json={"name": "denied"}, headers={"Idempotency-Key": "control"})
+    assert control.status_code == 403
+    payload = {
+        "ticket_id": "ticket-1",
+        "experiment_name": "isolated",
+        "strategy_selector": {},
+        "parameter_set": {},
+        "run_config": {
+            "dataset_ref": "isolated",
+            "time_range": {"start_at": "2026-01-01", "end_at": "2026-01-02"},
+            "execution_mode": "paper",
+            "requested_by": "reader",
+        },
+        "launch_context": {},
+    }
+    result = client.post("/api/v1/experiments/launch", json=payload, headers={"Idempotency-Key": "denied-launch"})
+    evidence = {"canonical_create": control.status_code, "launch": result.status_code, "durable_rows": len(experiments.rows)}
+    assert result.status_code == 403 and not experiments.rows, evidence
+
+
+class ProductionCASStore(CASStore):
+    table = '"research"."review_experiments"'
+    table_name = "research.review_experiments"
+    read_only = False
+    owner_service = "research-svc"
+
+    def __init__(self):
+        super().__init__()
+        self.entered, self.release = Event(), Event()
+        self.armed = True
+        self._cursor = []
+
+    @contextmanager
+    def _connect(self):
+        yield self
+
+    def execute(self, sql, params=None):
+        sql_clean = " ".join(sql.split())
+        if "UPDATE" in sql_clean:
+            encoded_cand, record_id, encoded_expected = params
+            cand = json.loads(encoded_cand)
+            expected = json.loads(encoded_expected)
+            if self.armed and cand.get("is_committed"):
+                self.armed = False
+                self.entered.set()
+                assert self.release.wait(15)
+            with self.lock:
+                curr = self.rows.get(record_id)
+                if curr == expected:
+                    self.rows[record_id] = deepcopy(cand)
+                    self._cursor = [(cand,)]
+                else:
+                    self._cursor = []
+        elif "SELECT payload FROM" in sql_clean:
+            record_id = params[0]
+            with self.lock:
+                curr = self.rows.get(record_id)
+                self._cursor = [(curr,)] if curr is not None else []
+        elif "INSERT INTO" in sql_clean:
+            record_id, encoded = params
+            cand = json.loads(encoded)
+            with self.lock:
+                if record_id not in self.rows:
+                    self.rows[record_id] = deepcopy(cand)
+                    self._cursor = [(cand,)]
+                else:
+                    self._cursor = []
+        return self
+
+    def fetchone(self):
+        return self._cursor[0] if getattr(self, "_cursor", None) else None
+
+    def fetchall(self):
+        return getattr(self, "_cursor", [])
+
+    compare_and_set = PostgresJsonOwnerStore.compare_and_set
+    _fetch_one = staticmethod(PostgresJsonOwnerStore._fetch_one)
+    _decode_payload = staticmethod(PostgresJsonOwnerStore._decode_payload)
+    _use_conn = PostgresJsonOwnerStore._use_conn
+
+
+def test_production_serialization_preserves_concurrent_cancel():
+    tickets, experiments = CASStore(), ProductionCASStore()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    client1 = _full_research_client(tickets, experiments)
+    client2 = _full_research_client(tickets, experiments)
+    body = {"name": "isolated", "ticket_id": "ticket-1"}
+    headers = {"Idempotency-Key": "prod-serialization-test"}
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(client1.post, "/bff/experiments", json=body, headers=headers)
+        assert experiments.entered.wait(10)
+        try:
+            replay = client2.post("/bff/experiments", json=body, headers=headers)
+            assert replay.status_code == 201, replay.text
+            eid = replay.json()["experiment_id"]
+            canceled = client2.post(f"/api/v1/experiments/{eid}/cancel", json={"reason": "isolated cancellation"})
+            assert canceled.status_code == 200, canceled.text
+            assert experiments.get(eid)["status"] == "canceled"
+        finally:
+            experiments.release.set()
+        first = pending.result(10)
+    row = experiments.get(eid)
+    evidence = {
+        "first": first.status_code,
+        "replay": replay.status_code,
+        "cancel": canceled.status_code,
+        "final_status": row["status"],
+        "final_fence": row.get("cancellation_fence"),
+    }
+    assert row["status"] == "canceled" and row.get("cancellation_fence"), evidence
+
 

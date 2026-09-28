@@ -171,11 +171,23 @@
     },
     "defect_42_research_delayed_final_commit_preserves_concurrent_cancellation": {
       "problem": "Replay could finalize while original final put was delayed; mounted cancel then returned 200 canceled, but original stale delayed put restored queued with cancellation_fence=null.",
-      "remediation": "Implemented atomic conditional finalization and readback via ConcurrentPreservingRecord in _finalize_experiment_record, ensuring delayed final puts merge concurrent cancellation status and fences."
+      "remediation": "Implemented atomic conditional database CAS finalization in _finalize_experiment_record, ensuring delayed final commits cannot overwrite concurrent cancellation status and fences."
     },
     "defect_43_research_mounted_launch_scoped_idempotency_and_identity": {
       "problem": "POST /api/v1/experiments/launch discarded authenticated identity and Idempotency-Key, creating distinct experiments across retries and restarts with null idempotency_key/tenant_id/actor_id.",
       "remediation": "Extracted authenticated operator_id, tenant_id, and Idempotency-Key in endpoint_launch_experiment, forwarded them through launch_experiment to create_research_experiment, and verified scoped idempotency, conflicting payload 409, and tenant isolation."
+    },
+    "defect_44_research_real_database_cas_finalization": {
+      "problem": "services/research/write_owner.py finalized via unconditional store.put and ConcurrentPreservingRecord deepcopy hooks rather than database CAS, risking stale state overwriting concurrent cancellations when combined with external JSON serialization.",
+      "remediation": "Replaced ConcurrentPreservingRecord deepcopy wrapper with atomic compare_and_set CAS retry loop in _finalize_experiment_record and added test_production_serialization_preserves_concurrent_cancel exercising true PostgresJsonOwnerStore.compare_and_set serialization and concurrent cancellation preservation."
+    },
+    "defect_45_research_launch_operator_role_enforcement": {
+      "problem": "POST /api/v1/experiments/launch invoked ctx.identity(request) with operator=False, allowing read-only viewer roles to launch durable experiments despite being denied on POST /bff/experiments.",
+      "remediation": "Enforced ctx.identity(request, operator=True) in endpoint_launch_experiment, ensuring viewer actors receive 403 Forbidden consistently across all research mutation entrypoints, verified by test_launch_denies_read_only_actor."
+    },
+    "defect_46_smoke_concurrent_modification_rejected": {
+      "problem": "test_concurrent_modification_rejected in services/control-plane/bff/smoke_test.py failed because CommandStore.update_status blocked re-submitting commands with FAILED status, preventing retry and returning 202 instead of 409.",
+      "remediation": "Scoped terminal transition protection to completed terminal states (CommandStatus.EXECUTED), allowing failed command retry/re-queue while maintaining strict CAS against completed state regressions."
     }
   },
   "mutation_caller_inventory": {
@@ -508,6 +520,24 @@
         "result": "138 passed, 8 warnings in 73.04s",
         "executed": 138,
         "collected": 138
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m unittest services/control-plane/bff/smoke_test.py",
+        "result": "Ran 26 tests in 1.407s OK",
+        "executed": 26,
+        "collected": 26
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "59 passed, 10 warnings in 32.26s",
+        "executed": 59,
+        "collected": 59
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "140 passed, 7 warnings in 79.67s",
+        "executed": 140,
+        "collected": 140
       }
     ]
   },
@@ -559,7 +589,10 @@
     "defect_40_research_ticket_link_cas_and_final_commit_recovery_resolved": true,
     "defect_41_research_uncommitted_admission_recovery_before_ticket_link_resolved": true,
     "defect_42_research_delayed_final_commit_preserves_concurrent_cancellation_resolved": true,
-    "defect_43_research_mounted_launch_scoped_idempotency_and_identity_resolved": true
+    "defect_43_research_mounted_launch_scoped_idempotency_and_identity_resolved": true,
+    "defect_44_research_real_database_cas_finalization_resolved": true,
+    "defect_45_research_launch_operator_role_enforcement_resolved": true,
+    "defect_46_smoke_concurrent_modification_rejected_resolved": true
   },
   "review": {
     "reviewer": "Codex",

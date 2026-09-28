@@ -268,7 +268,7 @@ def build_experiments_router(ctx: ResearchRouteContext) -> APIRouter:
         }
 
     async def endpoint_launch_experiment(request: Request, **_kwargs: Any) -> Dict[str, Any]:
-        identity = ctx.identity(request)
+        identity = ctx.identity(request, operator=True)
         idempotency_key = request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
         actor_id = (
             getattr(identity, "operator_id", None)
