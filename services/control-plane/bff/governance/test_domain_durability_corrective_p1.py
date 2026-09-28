@@ -2742,6 +2742,72 @@ def test_adapter_dispatch_argument_is_command_identity_all_actions(tmp_path, mon
     assert rec2_invalidated["receipt"]["command_id"] == "trusted-cmd-invalidate"
 
 
+@pytest.mark.parametrize("action_id", ["cancel", "retry", "archive", "invalidate"])
+@pytest.mark.parametrize("dispatcher_id", ["", "   ", None])
+@pytest.mark.parametrize("body_id", [None, "body-command-id-attempt"])
+def test_experiment_adapter_rejects_empty_whitespace_dispatcher_command_id(
+    tmp_path, monkeypatch, action_id, dispatcher_id, body_id
+):
+    """Negative regressions: reject empty/whitespace dispatcher command_id across all experiment actions,
+
+    both with and without body command_id, asserting no owner state or receipt changes.
+    """
+    from services.control_plane.bff.command_adapters.experiment_adapter import ExperimentCommandAdapter
+
+    client, _, identity, owner, _ = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    adapter = ExperimentCommandAdapter(research_write_owner_factory=lambda: owner)
+
+    # Prepare experiment in appropriate state for action
+    eid = client.post("/bff/experiments", json={"name": f"exp-{action_id}"}).json()["experiment_id"]
+
+    if action_id in {"retry", "archive"}:
+        # Both retry and archive require experiment in terminal state (e.g. canceled)
+        adapter.execute(
+            "setup-cancel-cmd",
+            "ExperimentAction",
+            {
+                "action_id": "cancel",
+                "experiment_id": eid,
+                "actor_id": identity.operator_id,
+                "tenant_id": identity.tenant_id,
+            },
+        )
+
+    # Snapshot owner state and store keys before attempting invalid dispatch
+    initial_exp = deepcopy(owner._experiments_store.get(eid))
+    initial_keys = set(owner._experiments_store.rows.keys())
+
+    params = {
+        "action_id": action_id,
+        "experiment_id": eid,
+        "actor_id": identity.operator_id,
+        "tenant_id": identity.tenant_id,
+    }
+    if body_id is not None:
+        params["command_id"] = body_id
+
+    with pytest.raises(ValueError, match="ExperimentAction requires a non-empty dispatcher command_id"):
+        adapter.execute(dispatcher_id, "ExperimentAction", params)
+
+    # Assert zero owner state or receipt changes
+    current_exp = owner._experiments_store.get(eid)
+    assert current_exp == initial_exp, f"Owner experiment record mutated for {action_id}!"
+    assert set(owner._experiments_store.rows.keys()) == initial_keys, f"Store keys changed for {action_id}!"
+    if action_id == "cancel":
+        assert current_exp["status"] == "queued"
+        assert "cancel_receipt" not in current_exp
+    elif action_id == "retry":
+        assert current_exp["status"] == "canceled"
+        assert "retry_receipt" not in current_exp
+    elif action_id == "archive":
+        assert current_exp.get("is_archived") is not True
+        assert "archive_receipt" not in current_exp
+    elif action_id == "invalidate":
+        assert current_exp["status"] == "queued"
+        assert "invalidate_receipt" not in current_exp
+
+
+
 
 
 

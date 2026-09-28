@@ -742,3 +742,72 @@ def test_experiment_adapter_dispatcher_command_id_authoritative_all_actions(
     rec2_invalidated = isolated_write_owner._experiments_store.get(eid2)
     assert rec2_invalidated["invalidate_receipt"]["command_id"] == "trusted-cmd-invalidate"
     assert rec2_invalidated["receipt"]["command_id"] == "trusted-cmd-invalidate"
+
+
+@pytest.mark.parametrize("action_id", ["cancel", "retry", "archive", "invalidate"])
+@pytest.mark.parametrize("dispatcher_id", ["", "   ", None])
+@pytest.mark.parametrize("body_id", [None, "body-command-id-attempt"])
+def test_experiment_adapter_dispatcher_command_id_empty_fails_closed_all_actions(
+    isolated_write_owner: ResearchWriteOwner,
+    action_id: str,
+    dispatcher_id: Optional[str],
+    body_id: Optional[str],
+) -> None:
+    """Verify that empty or whitespace dispatcher command_id raises ValueError and causes zero owner mutations."""
+    from copy import deepcopy
+
+    adapter = ExperimentCommandAdapter(research_write_owner_factory=lambda: isolated_write_owner)
+
+    exp = isolated_write_owner.create_research_experiment(
+        ticket_id="ticket-001",
+        experiment_name=f"Authority negative check {action_id}",
+        strategy_selector={"strategy_id": "s1"},
+        parameter_set={},
+        run_config={"stage": "backtest"},
+        launch_context={"tenant_id": "tenant-test"},
+    )
+    eid = exp["experiment_id"]
+
+    if action_id in {"retry", "archive"}:
+        adapter.execute(
+            "trusted-setup-cancel",
+            "ExperimentAction",
+            {
+                "action_id": "cancel",
+                "experiment_id": eid,
+                "actor_id": "operator-1",
+                "tenant_id": "tenant-test",
+            },
+        )
+
+    initial_exp = deepcopy(isolated_write_owner._experiments_store.get(eid))
+    initial_keys = set(isolated_write_owner._experiments_store.rows.keys())
+
+    params = {
+        "action_id": action_id,
+        "experiment_id": eid,
+        "actor_id": "operator-1",
+        "tenant_id": "tenant-test",
+    }
+    if body_id is not None:
+        params["command_id"] = body_id
+
+    with pytest.raises(ValueError, match="ExperimentAction requires a non-empty dispatcher command_id"):
+        adapter.execute(dispatcher_id, "ExperimentAction", params)
+
+    current_exp = isolated_write_owner._experiments_store.get(eid)
+    assert current_exp == initial_exp
+    assert set(isolated_write_owner._experiments_store.rows.keys()) == initial_keys
+    if action_id == "cancel":
+        assert current_exp["status"] == "queued"
+        assert "cancel_receipt" not in current_exp
+    elif action_id == "retry":
+        assert current_exp["status"] == "canceled"
+        assert "retry_receipt" not in current_exp
+    elif action_id == "archive":
+        assert current_exp.get("is_archived") is not True
+        assert "archive_receipt" not in current_exp
+    elif action_id == "invalidate":
+        assert current_exp["status"] == "queued"
+        assert "invalidate_receipt" not in current_exp
+

@@ -292,6 +292,10 @@
     "defect_72_commit_trailer_length_and_normative_plan_access": {
       "problem": "Commit c6a39d5f8 subject length was 93 characters, exceeding the 72-character limit and causing the Commit trailers CI job to fail. Furthermore, the task-scoped /tmp reference for the normative Section E plan was expired.",
       "remediation": "Shortened task commit subject line to ≤ 70 characters adhering to repository trailers gate. Restored reviewer access to the immutable normative Section E plan at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md matching tracked file docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md with verified SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa."
+    },
+    "defect_73_experiment_adapter_dispatcher_command_id_fail_closed": {
+      "problem": "services/control-plane/bff/command_adapters/experiment_adapter.py:102 accepted blank/whitespace dispatcher command_id by falling back to params.command_id or uuid.uuid4(), allowing experiment mutations without the trusted admitted command identity.",
+      "remediation": "Enforced strict fail-closed validation on dispatcher command_id (rejecting empty or whitespace IDs with ValueError before any owner mutation) and completely removed body-ID and generated-ID fallbacks. Added negative regressions for cancel/retry/archive/invalidate across empty/whitespace/None dispatcher IDs both with and without body command_id in test_domain_durability_corrective_p1.py and test_research_jobs_action_receipts.py, asserting zero owner state or receipt changes."
     }
   },
   "mutation_caller_inventory": {
@@ -955,6 +959,48 @@
         "result": "1 passed, 38 deselected, 2 warnings in 22.95s",
         "executed": 1,
         "collected": 1
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 PYTHONPATH=.:/tmp timeout 60 /tmp/venv-bff-test/bin/python3 -m pytest -p services.control_plane.bff.conftest -q /tmp/domain_adapter_missing_id_repro.py",
+        "result": "2 passed, 1 warning in 3.82s",
+        "executed": 2,
+        "collected": 2
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 PYTHONPATH=. timeout 60 /tmp/venv-bff-test/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py -k \"adapter_dispatch_argument_is_command_identity_all_actions or mounted_experiment_action_processor_execution_and_restart\"",
+        "result": "2 passed, 100 deselected, 1 warning in 3.22s",
+        "executed": 2,
+        "collected": 2
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 PYTHONPATH=. timeout 120 /tmp/venv-bff-test/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "126 passed, 5 warnings in 73.66s",
+        "executed": 126,
+        "collected": 126
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 PYTHONPATH=. timeout 60 /tmp/venv-bff-test/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "44 passed, 3 warnings in 10.61s",
+        "executed": 44,
+        "collected": 44
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 PYTHONPATH=. timeout 60 /tmp/venv-bff-test/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_command_adapters_router.py",
+        "result": "14 passed, 3 warnings in 5.06s",
+        "executed": 14,
+        "collected": 14
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 PYTHONPATH=. timeout 60 /tmp/venv-bff-test/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+        "result": "31 passed, 3 warnings in 22.13s",
+        "executed": 31,
+        "collected": 31
+      },
+      {
+        "command": "env BFF_READ_STORE_BOOTSTRAP=0 PYTHONPATH=. timeout 60 /tmp/venv-bff-test/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/smoke_test.py",
+        "result": "26 passed, 3 warnings in 17.30s",
+        "executed": 26,
+        "collected": 26
       }
     ]
   },
@@ -1035,7 +1081,8 @@
     "defect_69_test_bff_test_architecture_decouple_main_import_resolved": true,
     "defect_70_experiment_adapter_direct_implementation_and_processor_regressions_resolved": true,
     "defect_71_experiment_adapter_dispatcher_command_id_authority_resolved": true,
-    "defect_72_commit_trailer_length_and_normative_plan_access_resolved": true
+    "defect_72_commit_trailer_length_and_normative_plan_access_resolved": true,
+    "defect_73_experiment_adapter_dispatcher_command_id_fail_closed_resolved": true
   },
   "review": {
     "reviewer": "Codex",

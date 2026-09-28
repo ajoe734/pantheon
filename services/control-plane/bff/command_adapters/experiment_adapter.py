@@ -31,8 +31,6 @@ from .base import (
     utc_now,
 )
 
-import uuid
-
 log = logging.getLogger(__name__)
 
 
@@ -78,6 +76,10 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        trusted_command_id = str(command_id or "").strip()
+        if not trusted_command_id:
+            raise ValueError("ExperimentAction requires a non-empty dispatcher command_id.")
+
         action_id = str(params.get("action_id") or "").strip()
         experiment_id = str(
             params.get("experiment_id") or params.get("entity_id") or params.get("target_id") or ""
@@ -98,8 +100,6 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
                 retryable=True,
                 downstream_status=503,
             )
-
-        trusted_command_id = str(command_id or "").strip() or str(params.get("command_id") or "").strip() or str(uuid.uuid4())
 
         if normalized_action == "cancel":
             return self._execute_cancel(trusted_command_id, experiment_id, action_id, params, owner)
