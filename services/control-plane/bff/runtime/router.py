@@ -21,9 +21,22 @@ except (ImportError, ValueError):
     except (ImportError, ValueError):
         from models import CommandStatus, CommandType, ErrorCode, ObjectType
 
-from services.control_plane.bff.auth.policy import resolve_identity_tenant_id
-
 from .service import RuntimeRouterService, _MissingRuntimeDependency
+
+
+def _resolve_identity_tenant_id(identity: Any) -> str:
+    # ``OperatorIdentity`` carries tenant in ``identity.claims``, not a
+    # top-level ``tenant_id`` attribute; reading that attribute directly
+    # always returns None for a real JWT identity and silently disables
+    # tenant scoping for durable runtime idempotency lookups.
+    claims = getattr(identity, "claims", None)
+    if isinstance(claims, dict):
+        for key in ("tenant_id", "tenantId", "tenant"):
+            value = claims.get(key)
+            clean = str(value or "").strip()
+            if clean:
+                return clean
+    return str(getattr(identity, "tenant_id", "") or "").strip()
 
 
 def create_runtime_router(
@@ -1021,7 +1034,7 @@ def create_runtime_router(
         # ``OperatorIdentity`` carries tenant in ``identity.claims``, not a
         # top-level ``tenant_id`` attribute; use the canonical claims-aware
         # resolver so durable runtime idempotency lookups are tenant-scoped.
-        tenant_id = resolve_identity_tenant_id(identity) or ""
+        tenant_id = _resolve_identity_tenant_id(identity)
 
         cmd_store = (
             service.dependency("command_store", None)

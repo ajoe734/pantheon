@@ -736,29 +736,6 @@ def identity_claim_strings(identity: OperatorIdentity, paths: List[str]) -> List
     return dedupe_nonblank_strings(values)
 
 
-def resolve_identity_tenant_id(identity: Any) -> Optional[str]:
-    """Canonical authenticated-tenant resolver for domain command writers.
-
-    ``OperatorIdentity`` carries the verified JWT claims in
-    ``identity.claims``; it has no top-level ``tenant_id``/``tenant``
-    attribute. Every call site used to do
-    ``getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)``,
-    which always returned ``None`` for a real ``extract_identity_jwt``
-    identity and silently disabled tenant ownership/authorization checks.
-    Claim keys mirror ``bff_me_tenant_payload``'s default-tenant lookup.
-    """
-    claims = identity.claims if isinstance(getattr(identity, "claims", None), dict) else {}
-    if claims:
-        values = identity_claim_strings(identity, ["tenant_id", "tenantId", "tenant.id", "tid", "tenant"])
-        if values:
-            return values[0]
-    # Fallback for test doubles / callers that model identity as a plain
-    # object with a direct tenant attribute instead of JWT claims.
-    direct = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
-    clean = str(direct or "").strip()
-    return clean or None
-
-
 def bff_me_tenant_payload(
     identity: OperatorIdentity,
     *,

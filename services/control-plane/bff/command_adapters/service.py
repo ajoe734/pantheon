@@ -29,7 +29,6 @@ from fastapi.responses import JSONResponse
 
 try:
     from ..action_catalog import get_action_catalog, get_catalog_entry
-    from ..auth.policy import resolve_identity_tenant_id
     from ..models import (
         ActionCommandStatus,
         BffActionCatalogResponse,
@@ -50,7 +49,6 @@ try:
     )
 except (ImportError, ValueError):
     from action_catalog import get_action_catalog, get_catalog_entry
-    from auth.policy import resolve_identity_tenant_id  # type: ignore[no-redef]
     from models import (
         ActionCommandStatus,
         BffActionCatalogResponse,
@@ -293,14 +291,31 @@ def _check_read_surface_state() -> Optional[StalenessWarning]:
     )
 
 
-# Command-adapter callers previously did
-# ``getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)``,
-# which always returns None for a real ``extract_identity_jwt`` identity
-# (tenant lives in ``identity.claims``, not a top-level attribute) and
-# silently disabled every tenant ownership/authorization check below.
-# ``resolve_identity_tenant_id`` (auth/policy.py) is the canonical resolver
-# shared with every other domain writer.
-_resolve_identity_tenant = resolve_identity_tenant_id
+def _resolve_identity_tenant(identity: Any) -> Optional[str]:
+    """Resolve the authenticated tenant scope for a command-adapter caller.
+
+    ``OperatorIdentity`` (services/control-plane/bff/models.py) carries the
+    verified JWT claims in ``identity.claims``; it has no top-level
+    ``tenant_id``/``tenant`` attribute. Reading those attributes directly
+    (the prior implementation) always returned ``None`` for real
+    ``extract_identity_jwt`` identities, which silently disabled every
+    tenant ownership/authorization check below. Claim keys mirror the
+    canonical set in ``auth/policy.py`` (``bff_me_tenant_payload``).
+    """
+    claims = getattr(identity, "claims", None)
+    if isinstance(claims, dict):
+        for key in ("tenant_id", "tenantId", "tenant"):
+            value = claims.get(key)
+            if isinstance(value, dict):
+                value = value.get("id") or value.get("tenant_id") or value.get("value")
+            clean = str(value or "").strip()
+            if clean:
+                return clean
+    # Fallback for test doubles / callers that model identity as a plain
+    # object with a direct tenant attribute instead of JWT claims.
+    direct = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
+    clean_direct = str(direct or "").strip()
+    return clean_direct or None
 
 
 def _extract_record_tenant(command: Dict[str, Any]) -> Optional[str]:
