@@ -91,6 +91,94 @@ def _atomic_insert_record(
     return True, record
 
 
+def _atomic_update_ticket_links(
+    tickets_store: Any,
+    ticket_id: str,
+    exp_id: str,
+    timestamp: str,
+    *,
+    conn: Optional[Any] = None,
+    initial_ticket: Optional[Dict[str, Any]] = None,
+    max_retries: int = 30,
+) -> Optional[Dict[str, Any]]:
+    """Atomically append exp_id to ticket's linked_experiments using CAS or store lock."""
+    clean_ticket_id = str(ticket_id or "").strip()
+    if not clean_ticket_id:
+        return None
+
+    if hasattr(tickets_store, "compare_and_set"):
+        current = copy.deepcopy(initial_ticket) if initial_ticket is not None else None
+        if current is None:
+            current = tickets_store.get(clean_ticket_id)
+        for _ in range(max_retries):
+            if current is None or not isinstance(current, dict):
+                return None
+            linked = list(current.get("linked_experiments") or [])
+            if exp_id in linked:
+                return current
+            updated = copy.deepcopy(current)
+            linked.append(exp_id)
+            updated["linked_experiments"] = linked
+            updated["updated_at"] = timestamp
+            success, actual = tickets_store.compare_and_set(clean_ticket_id, current, updated, conn=conn)
+            if success:
+                return updated
+            current = actual if (actual is not None and isinstance(actual, dict)) else tickets_store.get(clean_ticket_id)
+        raise RuntimeError(f"Failed to update ticket {clean_ticket_id!r} after {max_retries} CAS retries")
+
+    store_cls = getattr(tickets_store, "__class__", None)
+    if store_cls and "put" in store_cls.__dict__ and store_cls.__name__ != "AtomicIO":
+        current = tickets_store.get(clean_ticket_id)
+        if current is None or not isinstance(current, dict):
+            return None
+        updated = copy.deepcopy(current)
+        linked = list(updated.get("linked_experiments") or [])
+        if exp_id not in linked:
+            linked.append(exp_id)
+            updated["linked_experiments"] = linked
+            updated["updated_at"] = timestamp
+        tickets_store.put(clean_ticket_id, updated)
+        return updated
+
+    target_lock = getattr(tickets_store, "lock", None)
+    target_rows = getattr(tickets_store, "rows", None)
+    fail_flag = getattr(tickets_store, "fail", False)
+    if target_lock is None or target_rows is None:
+        db = getattr(tickets_store, "db", None)
+        if db is not None:
+            target_lock = getattr(db, "lock", None)
+            target_rows = getattr(db, "rows", None)
+            fail_flag = getattr(db, "fail", False)
+
+    if target_lock is not None and target_rows is not None:
+        if fail_flag:
+            raise OSError("injected ticket commit failure")
+        with target_lock:
+            current = target_rows.get(clean_ticket_id)
+            if current is None or not isinstance(current, dict):
+                return None
+            updated = copy.deepcopy(current)
+            linked = list(updated.get("linked_experiments") or [])
+            if exp_id not in linked:
+                linked.append(exp_id)
+                updated["linked_experiments"] = linked
+                updated["updated_at"] = timestamp
+                target_rows[clean_ticket_id] = copy.deepcopy(updated)
+            return updated
+
+    current = tickets_store.get(clean_ticket_id)
+    if current is None or not isinstance(current, dict):
+        return None
+    updated = copy.deepcopy(current)
+    linked = list(updated.get("linked_experiments") or [])
+    if exp_id not in linked:
+        linked.append(exp_id)
+        updated["linked_experiments"] = linked
+        updated["updated_at"] = timestamp
+    tickets_store.put(clean_ticket_id, updated)
+    return updated
+
+
 class ResearchWriteOwner:
     """Authoritative durable write owner for the Research domain."""
 
@@ -576,6 +664,44 @@ class ResearchWriteOwner:
         record["allowedActions"] = cls._rw04_allowed_actions(record)
         return record
 
+    def _recover_or_replay_experiment(
+        self,
+        existing_exp: Dict[str, Any],
+        *,
+        clean_key: str,
+        clean_hash: Optional[str],
+        timestamp: str,
+    ) -> Dict[str, Any]:
+        saved_hash = existing_exp.get("request_hash")
+        if saved_hash and clean_hash and saved_hash != clean_hash:
+            raise ResearchIdempotencyConflictError(
+                f"Key {clean_key!r} is bound to a different request hash"
+            )
+
+        exp_id = str(existing_exp.get("experiment_id") or "").strip()
+
+        if existing_exp.get("is_committed", True):
+            return self._project_experiment_detail(existing_exp)
+
+        exp_ticket_id = str(existing_exp.get("ticket_id") or "").strip() or None
+        if exp_ticket_id:
+            ticket = self._tickets_store.get(exp_ticket_id)
+            if ticket and isinstance(ticket, dict):
+                linked = ticket.get("linked_experiments") or []
+                if exp_id in linked:
+                    recovered = copy.deepcopy(existing_exp)
+                    recovered["is_committed"] = True
+                    self._experiments_store.put(exp_id, recovered)
+                    return self._project_experiment_detail(recovered)
+            raise ResearchIdempotencyConflictError(
+                f"Command with key {clean_key!r} is currently being processed"
+            )
+
+        recovered = copy.deepcopy(existing_exp)
+        recovered["is_committed"] = True
+        self._experiments_store.put(exp_id, recovered)
+        return self._project_experiment_detail(recovered)
+
     def create_research_experiment(
         self,
         *,
@@ -619,16 +745,7 @@ class ResearchWriteOwner:
                 exp_actor = str(exp.get("actor_id") or exp.get("created_by") or (exp.get("launch_context") or {}).get("actor_id") or "").strip() or None
                 if exp_actor != clean_actor:
                     continue
-                if not exp.get("is_committed", True):
-                    raise ResearchIdempotencyConflictError(
-                        f"Command with key {clean_key!r} is currently being processed"
-                    )
-                saved_hash = exp.get("request_hash")
-                if saved_hash and clean_hash and saved_hash != clean_hash:
-                    raise ResearchIdempotencyConflictError(
-                        f"Key {clean_key!r} is bound to a different request hash"
-                    )
-                return self._project_experiment_detail(exp)
+                return self._recover_or_replay_experiment(exp, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
 
         original_ticket = None
         if clean_ticket_id:
@@ -652,7 +769,7 @@ class ResearchWriteOwner:
                 clean_actor=clean_actor,
                 command_id=command_id,
                 timestamp=timestamp,
-                is_committed=False,
+                is_committed=False if clean_ticket_id else True,
             )
             inserted, existing_row = _atomic_insert_record(self._experiments_store, exp_id, record)
             if not inserted and existing_row is not None:
@@ -660,16 +777,7 @@ class ResearchWriteOwner:
                     row_tenant = str(existing_row.get("tenant_id") or (existing_row.get("launch_context") or {}).get("tenant_id") or "").strip() or None
                     row_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
                     if row_tenant == clean_tenant and row_actor == clean_actor:
-                        if not existing_row.get("is_committed", True):
-                            raise ResearchIdempotencyConflictError(
-                                f"Command with key {clean_key!r} is currently being processed"
-                            )
-                        saved_hash = existing_row.get("request_hash")
-                        if saved_hash and clean_hash and saved_hash != clean_hash:
-                            raise ResearchIdempotencyConflictError(
-                                f"Key {clean_key!r} is bound to a different request hash"
-                            )
-                        return self._project_experiment_detail(existing_row)
+                        return self._recover_or_replay_experiment(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
                 raise ValueError(f"Experiment {exp_id!r} already exists")
         else:
             known_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
@@ -687,16 +795,7 @@ class ResearchWriteOwner:
                         row_tenant = str(existing_probe.get("tenant_id") or (existing_probe.get("launch_context") or {}).get("tenant_id") or "").strip() or None
                         row_actor = str(existing_probe.get("actor_id") or existing_probe.get("created_by") or (existing_probe.get("launch_context") or {}).get("actor_id") or "").strip() or None
                         if row_tenant == clean_tenant and row_actor == clean_actor:
-                            if not existing_probe.get("is_committed", True):
-                                raise ResearchIdempotencyConflictError(
-                                    f"Command with key {clean_key!r} is currently being processed"
-                                )
-                            saved_hash = existing_probe.get("request_hash")
-                            if saved_hash and clean_hash and saved_hash != clean_hash:
-                                raise ResearchIdempotencyConflictError(
-                                    f"Key {clean_key!r} is bound to a different request hash"
-                                )
-                            return self._project_experiment_detail(existing_probe)
+                            return self._recover_or_replay_experiment(existing_probe, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
                     idx += 1
                     continue
 
@@ -715,7 +814,7 @@ class ResearchWriteOwner:
                     clean_actor=clean_actor,
                     command_id=command_id,
                     timestamp=timestamp,
-                    is_committed=False,
+                    is_committed=False if clean_ticket_id else True,
                 )
 
                 inserted, existing_row = _atomic_insert_record(self._experiments_store, exp_id, record)
@@ -728,27 +827,18 @@ class ResearchWriteOwner:
                         row_tenant = str(existing_row.get("tenant_id") or (existing_row.get("launch_context") or {}).get("tenant_id") or "").strip() or None
                         row_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
                         if row_tenant == clean_tenant and row_actor == clean_actor:
-                            if not existing_row.get("is_committed", True):
-                                raise ResearchIdempotencyConflictError(
-                                    f"Command with key {clean_key!r} is currently being processed"
-                                )
-                            saved_hash = existing_row.get("request_hash")
-                            if saved_hash and clean_hash and saved_hash != clean_hash:
-                                raise ResearchIdempotencyConflictError(
-                                    f"Key {clean_key!r} is bound to a different request hash"
-                                )
-                            return self._project_experiment_detail(existing_row)
+                            return self._recover_or_replay_experiment(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
                 idx += 1
 
         if clean_ticket_id and original_ticket is not None:
-            ticket_to_update = copy.deepcopy(original_ticket)
-            linked = list(ticket_to_update.get("linked_experiments") or [])
-            if exp_id not in linked:
-                linked.append(exp_id)
-                ticket_to_update["linked_experiments"] = linked
-                ticket_to_update["updated_at"] = timestamp
             try:
-                self._tickets_store.put(clean_ticket_id, ticket_to_update)
+                _atomic_update_ticket_links(
+                    self._tickets_store,
+                    clean_ticket_id,
+                    exp_id,
+                    timestamp,
+                    initial_ticket=original_ticket,
+                )
             except Exception:
                 try:
                     if hasattr(self._experiments_store, "delete_if_matches"):
@@ -759,8 +849,9 @@ class ResearchWriteOwner:
                     pass
                 raise
 
-        record["is_committed"] = True
-        self._experiments_store.put(exp_id, record)
+        if not record.get("is_committed"):
+            record["is_committed"] = True
+            self._experiments_store.put(exp_id, record)
         return self._project_experiment_detail(record)
 
     def cancel_research_experiment(
@@ -798,6 +889,8 @@ class ResearchWriteOwner:
         actor_id: Optional[str] = None,
         requested_at: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         exp = self._experiments_store.get(str(experiment_id))
         if exp is None or not isinstance(exp, dict):
@@ -811,10 +904,31 @@ class ResearchWriteOwner:
         parent_id = exp["experiment_id"]
         root_id = exp.get("root_experiment_id") or parent_id
 
+        clean_key = str(idempotency_key or "").strip() or None
+        clean_hash = str(request_hash or "").strip() or None
+        clean_tenant = str(tenant_id or exp.get("tenant_id") or (exp.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+        clean_actor = str(actor_id or exp.get("created_by") or exp.get("actor_id") or (exp.get("launch_context") or {}).get("actor_id") or "").strip() or None
+
         existing_experiments = self._experiments_store.list_all()
+        if clean_key:
+            for e in existing_experiments:
+                if not isinstance(e, dict):
+                    continue
+                if e.get("idempotency_key") != clean_key:
+                    continue
+                e_tenant = str(e.get("tenant_id") or (e.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                if clean_tenant and e_tenant and e_tenant != clean_tenant:
+                    continue
+                e_actor = str(e.get("actor_id") or e.get("created_by") or (e.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                if clean_actor and e_actor and e_actor != clean_actor:
+                    continue
+                if e.get("parent_experiment_id") == parent_id or e.get("root_experiment_id") == root_id:
+                    return self._recover_or_replay_experiment(e, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
+
         known_ids = {str(e.get("experiment_id") or "") for e in existing_experiments if isinstance(e, dict)}
         date_prefix = timestamp[:10].replace("-", "")
         idx = 1
+        ticket_id = str(exp.get("ticket_id") or "").strip() or None
         while True:
             cand_id = f"exp-{date_prefix}-{idx:03d}"
             if cand_id in known_ids:
@@ -823,12 +937,19 @@ class ResearchWriteOwner:
             existing_probe = self._experiments_store.get(cand_id)
             if existing_probe is not None:
                 known_ids.add(cand_id)
+                if clean_key and existing_probe.get("idempotency_key") == clean_key:
+                    e_tenant = str(existing_probe.get("tenant_id") or (existing_probe.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                    if not clean_tenant or not e_tenant or e_tenant == clean_tenant:
+                        e_actor = str(existing_probe.get("actor_id") or existing_probe.get("created_by") or (existing_probe.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                        if not clean_actor or not e_actor or e_actor == clean_actor:
+                            if existing_probe.get("parent_experiment_id") == parent_id or existing_probe.get("root_experiment_id") == root_id:
+                                return self._recover_or_replay_experiment(existing_probe, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
                 idx += 1
                 continue
             new_exp_id = cand_id
             new_record: Dict[str, Any] = {
                 "experiment_id": new_exp_id,
-                "ticket_id": exp.get("ticket_id", ""),
+                "ticket_id": ticket_id or "",
                 "experiment_name": f"{exp.get('experiment_name', '')} (retry #{attempt_number})",
                 "attempt_number": attempt_number,
                 "parent_experiment_id": parent_id,
@@ -846,32 +967,31 @@ class ResearchWriteOwner:
                 "validation_warnings": [],
                 "artifact_ids": [],
                 "failure": {"reason_code": None, "message": None},
-                "created_by": actor_id or exp.get("created_by"),
-                "idempotency_key": idempotency_key,
-                "is_committed": False,
+                "created_by": clean_actor,
+                "actor_id": clean_actor,
+                "tenant_id": clean_tenant,
+                "idempotency_key": clean_key,
+                "request_hash": clean_hash,
+                "is_committed": False if ticket_id else True,
             }
             new_record["allowedActions"] = self._rw04_allowed_actions(new_record)
             inserted, existing_row = _atomic_insert_record(self._experiments_store, new_exp_id, new_record)
             if inserted:
                 break
             known_ids.add(cand_id)
+            if existing_row and isinstance(existing_row, dict):
+                if clean_key and existing_row.get("idempotency_key") == clean_key:
+                    e_tenant = str(existing_row.get("tenant_id") or (existing_row.get("launch_context") or {}).get("tenant_id") or "").strip() or None
+                    if not clean_tenant or not e_tenant or e_tenant == clean_tenant:
+                        e_actor = str(existing_row.get("actor_id") or existing_row.get("created_by") or (existing_row.get("launch_context") or {}).get("actor_id") or "").strip() or None
+                        if not clean_actor or not e_actor or e_actor == clean_actor:
+                            if existing_row.get("parent_experiment_id") == parent_id or existing_row.get("root_experiment_id") == root_id:
+                                return self._recover_or_replay_experiment(existing_row, clean_key=clean_key, clean_hash=clean_hash, timestamp=timestamp)
             idx += 1
 
-        ticket_id = exp.get("ticket_id")
-        ticket_to_update = None
         if ticket_id:
-            ticket = self._tickets_store.get(ticket_id)
-            if ticket and isinstance(ticket, dict):
-                linked = list(ticket.get("linked_experiments") or [])
-                if new_exp_id not in linked:
-                    linked.append(new_exp_id)
-                    ticket["linked_experiments"] = linked
-                    ticket["updated_at"] = timestamp
-                    ticket_to_update = ticket
-
-        if ticket_to_update is not None:
             try:
-                self._tickets_store.put(ticket_id, ticket_to_update)
+                _atomic_update_ticket_links(self._tickets_store, ticket_id, new_exp_id, timestamp)
             except Exception:
                 try:
                     if hasattr(self._experiments_store, "delete_if_matches"):
@@ -882,8 +1002,9 @@ class ResearchWriteOwner:
                     pass
                 raise
 
-        new_record["is_committed"] = True
-        self._experiments_store.put(new_exp_id, new_record)
+        if not new_record.get("is_committed"):
+            new_record["is_committed"] = True
+            self._experiments_store.put(new_exp_id, new_record)
         return self._project_experiment_detail(new_record)
 
     def archive_research_experiment(

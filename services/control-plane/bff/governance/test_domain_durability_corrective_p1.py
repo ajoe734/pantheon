@@ -911,5 +911,109 @@ def test_independent_owner_restart_replay_and_query_visibility():
     assert any(e["experiment_id"] == exp_id for e in items)
 
 
+class CASStore(AtomicIO):
+    def compare_and_set(self, key, expected, value, *, conn=None):
+        with self.lock:
+            current = self.rows.get(key)
+            if current != expected:
+                return False, deepcopy(current)
+            self.rows[key] = deepcopy(value)
+            return True, deepcopy(value)
 
 
+class FailFinalCommit(CASStore):
+    armed = True
+
+    def put(self, key, value):
+        if self.armed and value.get("is_committed"):
+            raise OSError("independent injected final commit failure")
+        super().put(key, value)
+
+
+class SnapshotTickets(CASStore):
+    barrier = None
+
+    def get(self, key):
+        snapshot = super().get(key)
+        if self.barrier:
+            self.barrier.wait(timeout=10)
+        return snapshot
+
+
+def test_final_commit_failure_is_recoverable_after_restart():
+    tickets, experiments = CASStore(), FailFinalCommit()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    client = _atomic_research_client(tickets, experiments, "tenant")
+    body = {"name": "experiment", "ticket_id": "ticket-1"}
+    headers = {"Idempotency-Key": "key"}
+    first = client.post("/bff/experiments", json=body, headers=headers)
+    experiments.armed = False
+    restarted = _atomic_research_client(tickets, experiments, "tenant")
+    retry = restarted.post("/bff/experiments", json=body, headers=headers)
+    evidence = {
+        "first": first.status_code,
+        "retry": retry.status_code,
+        "retry_body": retry.text,
+        "links": tickets.get("ticket-1")["linked_experiments"],
+        "rows": [(k, v["is_committed"]) for k, v in experiments.rows.items()],
+    }
+    assert first.status_code >= 500
+    assert retry.status_code == 201, evidence
+
+
+def test_concurrent_experiments_preserve_both_ticket_links():
+    tickets, experiments = SnapshotTickets(), CASStore()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    tickets.barrier = Barrier(2)
+    clients = [_atomic_research_client(tickets, experiments, "tenant") for _ in range(2)]
+
+    def submit(i):
+        return clients[i].post(
+            "/bff/experiments",
+            json={"name": f"experiment-{i}", "ticket_id": "ticket-1"},
+            headers={"Idempotency-Key": f"key-{i}"},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, range(2)))
+    tickets.barrier = None
+    ids = {r.json().get("experiment_id") for r in responses}
+    links = tickets.get("ticket-1")["linked_experiments"]
+    evidence = {
+        "statuses": [r.status_code for r in responses],
+        "experiment_ids": sorted(ids),
+        "ticket_links": links,
+    }
+    assert [r.status_code for r in responses] == [201, 201], evidence
+    assert len(ids) == 2 and ids == set(links), evidence
+
+
+def test_retry_experiment_final_commit_failure_and_recovery():
+    tickets, experiments = CASStore(), FailFinalCommit()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    client = _atomic_research_client(tickets, experiments, "tenant")
+    experiments.armed = False
+    init_res = client.post(
+        "/bff/experiments",
+        json={"name": "exp-failed", "ticket_id": "ticket-1"},
+        headers={"Idempotency-Key": "init-key"},
+    )
+    assert init_res.status_code == 201
+    exp_id = init_res.json()["experiment_id"]
+    failed_exp = experiments.rows[exp_id]
+    failed_exp["status"] = "failed"
+    experiments.put(exp_id, failed_exp)
+
+    experiments.armed = True
+    owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments, notes_store=AtomicIO())
+    with pytest.raises(OSError):
+        owner.retry_research_experiment(exp_id, actor_id="actor", idempotency_key="retry-key")
+
+    experiments.armed = False
+    restarted_owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments, notes_store=AtomicIO())
+    retried = restarted_owner.retry_research_experiment(exp_id, actor_id="actor", idempotency_key="retry-key")
+    assert retried is not None
+    new_id = retried["experiment_id"]
+    assert experiments.rows[new_id]["is_committed"] is True
+    assert retried["attempt_number"] == 2
+    assert new_id in tickets.get("ticket-1")["linked_experiments"]
