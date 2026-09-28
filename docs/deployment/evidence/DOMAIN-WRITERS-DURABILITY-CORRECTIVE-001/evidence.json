@@ -336,6 +336,10 @@
     "defect_83_domain_writer_identity_tenant_attribute_read": {
       "problem": "Independent exact-head review rejection of PR #5998 at commit ff6f7c052cb66b4f5ee7f3d5de1e1a564899edd8 identified that production OperatorIdentity (models.py) carries the authenticated tenant only in identity.claims (a JWT claims dict); it has no top-level tenant_id/tenant attribute. command_adapters/service.py (11 call sites: check_confirm_token_tenant_authorization and every durable confirm-token/command admission, revalidation, and idempotency path) as well as capital/router.py, governance/service.py, runtime/router.py, and research/routes/experiments.py and tickets.py all resolved tenant via getattr(identity, 'tenant_id', None) or getattr(identity, 'tenant', None), which is always None for a real extract_identity_jwt identity. This silently disabled tenant ownership checking: an independently mounted reproducer using locally signed HS256 JWTs through the real extract_identity_jwt showed tenant A issuing a PauseRuntime confirm token and tenant B (same JWT subject) confirming/redeeming it via both POST /bff/command-confirmations/{token}/confirm and POST /bff/v1/commands, producing unauthorized durable PauseRuntime and RedeemConfirmToken rows. Also flagged: git diff --check against the frozen base exited 2 for added EOF blank lines in command_adapters/service.py:3170 and tests/test_research_jobs_action_receipts.py:813.",
       "remediation": "Inlined a claims-first tenant resolver directly in each in-scope call site (no shared helper outside this task's artifact contract): command_adapters/service.py's _resolve_identity_tenant (11 call sites plus the standalone _gov_bff_action_command helper), capital/router.py's _identity_tenant_id, governance/service.py's _identity_tenant_id, runtime/router.py's new _resolve_identity_tenant_id (POST /bff/runtimes idempotency tenant scoping), and research/routes/common.py's _identity_tenant_id shared by experiments.py's 13 call sites and tickets.py's 4 call sites. Each resolver reads identity.claims for tenant_id/tenantId/tenant before falling back to a direct attribute read for test doubles, replacing the prior getattr(identity, 'tenant_id', None) or getattr(identity, 'tenant', None) pattern that always returned None for a real extract_identity_jwt identity. (An earlier attempt centralized this in a new auth/policy.py function, but auth/policy.py is outside this task's declared artifact contract and the governed handoff command correctly rejected that delivery; the inlined approach keeps every changed file within services/control-plane/bff/{command_adapters,capital,governance,runtime,research}/**.) Committed a mounted regression, test_signed_identity_tenant_cannot_consume_foreign_confirm_token in test_command_adapters_router.py, that issues and redeems confirm tokens through the real extract_identity_jwt with locally signed HS256 JWTs for two tenants sharing one JWT subject, parametrized over both durable-write routes (command-confirmations confirm and guarded POST /bff/v1/commands) and a service/CommandStore restart, asserting the cross-tenant redemption is rejected (403/404/428) and exactly one durable command row exists. Also stripped the trailing extra blank line from command_adapters/service.py and test_research_jobs_action_receipts.py so git diff --check exits 0."
+    },
+    "defect_84_domain_writer_tenant_guard_fail_open_on_none": {
+      "problem": "Independent exact-head review REJECT for PR #5998 at fdb75d96dcfc9434afe58af8a039a9d42e8fad98. resolve_identity_tenant() (fixed by defect_83) correctly returns None for a missing or ambiguous signed JWT tenant claim, but every consumer still guarded tenant mismatch with a truthiness check on the CALLER tenant (for example `if clean_tenant and exp_tenant and clean_tenant != exp_tenant`), so a None caller tenant short-circuited the guard instead of being treated as a mismatch against a tenant-bound record. Reproducer /tmp/test_domain_writer_missing_scope_review.py (real signed HS256 JWTs through mounted create_research_router -> ReadSurfacePorts -> DefaultResearchKnowledgeSourcePort -> ResearchWriteOwner) showed a tenant-A ticket and queued experiment readable by an operator with absent or ambiguous tenant claims, and POST /api/v1/experiments/{id}/cancel returning 200 with a committed cancel receipt attributing actor_id=actor-tenant-b against tenant_id=tenant-a. 4 of 6 parametrized cases failed (absent/ambiguous claim shape x service reconstruction).",
+      "remediation": "Rewrote every in-scope fail-open guard from `if caller_tenant and record_tenant and caller_tenant != record_tenant` to `if record_tenant and caller_tenant != record_tenant`, so a tenant-bound record now rejects a None/empty caller while an untenanted record stays unrestricted (guards already shaped that way were left untouched): research/service.py (ticket detail, patch, experiment detail x2, require_experiment, cancel_experiment_api -- 6 sites) and services/research/write_owner.py (matching ticket/experiment detail, patch, cancel, archive, invalidate -- 6 sites). Also closed the same fail-open shape in the four list endpoints that skipped their tenant filter entirely (`if clean_tenant: ... filter ...`) when the caller tenant was unresolved, disclosing every tenant's tickets/experiments: research/service.py's list_research_tickets_api/list_experiments_bff/list_experiments_api/list legacy-experiments paths and write_owner.py's list_research_tickets/list_research_experiments, via a shared _tenant_scope_allows(record_tenant, caller_tenant) helper (record with no tenant always visible; tenant-bound record only visible to the matching caller, including when caller is None). personas/service.py:2353's directory-snapshot filter had the identical shape and was fixed the same way. command_adapters/strategy_adapter.py's registry readback tenant check exempted any caller claiming the literal tenant \"unscoped\" from verification regardless of the record's real owner_tenant; rewrote it to only exempt an untenanted or literally \"unscoped\" *record*, never an unscoped caller claim. runtime/router.py's _resolve_identity_tenant_id no longer coerces an unresolved tenant to \"\", which had reused \"\" as a shared idempotency-cache scope segment for every unresolved-tenant caller under the same operator. Fixing the guards exposed two composed-port methods that never threaded tenant_id at all -- ReadSurfacePorts.get_experiment_bff and ReadSurfacePorts.get_research_experiment (services/control-plane/bff/ports/read_surface_ports.py), and ResearchPortWiring's matching passthroughs in research/service.py -- previously harmless only because the fail-open guard downstream never enforced the mismatch either way; added tenant_id passthrough with a TypeError fallback for legacy port shapes so genuine same-tenant reads/actions (ticket patch, experiment cancel/archive/invalidate) keep working now that the guard fails closed, and fixed patch_research_ticket to pass the caller's own resolved tenant into its ticket fetch instead of fetching unscoped and relying on a second, separately computed check. Out-of-scope guards with the identical fail-open shape exist in agora/operational_readiness.py, agora/servant/router.py, assistant/management_service.py, and auth/handlers.py; per task brief these are reported through governed coordination, not edited here."
     }
   },
   "mutation_caller_inventory": {
@@ -1212,6 +1216,46 @@
       {
         "command": "git diff --check",
         "result": "exit 0"
+      },
+      {
+        "command": "timeout 60s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q /tmp/test_domain_writer_missing_scope_review.py --tb=short",
+        "result": "6 passed, 1 warning in 5.26s (reviewer's exact missing-scope reproducer, previously 4 failed/2 passed)",
+        "executed": 6,
+        "collected": 6
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q /tmp/test_domain_writer_tid_review.py",
+        "result": "4 passed, 1 warning in 2.80s (post fail-closed-guard fix)",
+        "executed": 4,
+        "collected": 4
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "145 passed, 5 warnings in 85.54s",
+        "executed": 145,
+        "collected": 145
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "result": "164 passed, 3 warnings in 75.67s",
+        "executed": 164,
+        "collected": 164
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "227 passed, 3 warnings in 88.84s",
+        "executed": 227,
+        "collected": 227
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
+        "result": "26 passed in 1.113s",
+        "executed": 26,
+        "collected": 26
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit 0"
       }
     ]
   },
@@ -1303,7 +1347,8 @@
     "defect_80_confirm_token_tenant_authorization_and_receipt_durability_and_projection_parity_resolved": true,
     "defect_81_confirm_token_tenant_isolation_collision_and_restart_durability_resolved": true,
     "defect_82_cross_tenant_guarded_command_token_authorization_and_replay_durability_resolved": true,
-    "defect_83_domain_writer_identity_tenant_attribute_read_resolved": true
+    "defect_83_domain_writer_identity_tenant_attribute_read_resolved": true,
+    "defect_84_domain_writer_tenant_guard_fail_open_on_none_resolved": true
   },
   "review": {
     "reviewer": "Codex",
@@ -1319,6 +1364,18 @@
       "rejected_head": "462e694dec157b357c945d14b25786f9a1fec718",
       "finding": "P1 acceptance 3: the inlined per-file tenant resolvers (command_adapters/service.py:307, capital/router.py, governance/service.py, runtime/router.py, research/routes/common.py) only recognised tenant_id/tenantId/tenant claims, while auth/policy.py:739-759's bff_me_tenant_payload already recognises tid, org_id, organization.id, tenant_ids, and tenantIds. A real signed HS256 identity using tid (or the other unrecognised shapes) resolved to None in every domain writer, so check_confirm_token_tenant_authorization treated the caller as tenant-missing rather than correctly scoping and rejecting the foreign tenant -- before and after service/store restart, on both POST /bff/command-confirmations/{token}/confirm and POST /bff/v1/commands. Reproduced by /tmp/test_domain_writer_tid_review.py (copy of test_signed_identity_tenant_cannot_consume_foreign_confirm_token with the JWT claim/assertion changed from tenant_id to tid): 4 failed before the fix.",
       "fix": "Replaced the five duplicated per-file resolvers with a single canonical resolve_identity_tenant() in command_adapters/service.py (still inside the declared artifact contract), built on auth.policy.identity_claim_strings (imported, not edited -- auth/policy.py is unchanged and out of scope) over the full claim-path set auth/policy.py already recognises: tenant_id, tenantId, tenant.id, tid, org_id, organization.id, tenant_ids, tenantIds. Nested claim objects (for example {\"tenant\": {\"id\": ...}}) resolve through identity_claim_strings' key extraction instead of being stringified wholesale. The resolver fails closed (returns None) both when no recognised tenant claim is present and when the claims resolve to more than one distinct tenant, then falls back to a direct identity.tenant_id/tenant attribute only when no claims were matched (preserving the existing stub-identity test contract in test_domain_durability_corrective_p1.py, whose SimpleNamespace doubles carry an empty claims={} alongside a direct tenant_id attribute). capital/router.py, governance/service.py, runtime/router.py, and research/routes/common.py now import this single function instead of keeping their own copies. test_command_adapters_router.py's real-signed-JWT mounted regression (test_signed_identity_tenant_cannot_consume_foreign_confirm_token) is now parametrized over every supported claim shape plus an absent-claim case and an ambiguous-claim case (8 real shapes + absent + ambiguous, x2 routes x2 restart = 48 cases), and a new companion test_signed_identity_same_tenant_confirm_token_idempotency_key_replays proves legitimate same-tenant Idempotency-Key replay still returns the original durable result (not a second command row) across 3 claim shapes x restart."
+    },
+    "third_rejection_and_fix": {
+      "pr": 5998,
+      "rejected_head": "fdb75d96dcfc9434afe58af8a039a9d42e8fad98",
+      "finding": "See defect_84_domain_writer_tenant_guard_fail_open_on_none.problem above (verbatim independent review verdict).",
+      "fix": "See defect_84_domain_writer_tenant_guard_fail_open_on_none.remediation above.",
+      "out_of_scope_guards_reported_not_edited": [
+        "agora/operational_readiness.py",
+        "agora/servant/router.py",
+        "assistant/management_service.py",
+        "auth/handlers.py"
+      ]
     }
   }
 }
