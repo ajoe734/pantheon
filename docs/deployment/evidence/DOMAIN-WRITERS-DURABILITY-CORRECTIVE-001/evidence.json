@@ -275,7 +275,7 @@
     },
     "defect_68_mounted_action_trusted_identity_and_canonical_receipt": {
       "problem": "Raw body params admitted instead of binding validated URL target/action and authenticated execution identity (tenant_id, actor_id, idempotency_key, request_hash, command_id). Foreign body experiment_id canceled cross-tenant experiment; normal body reason='review' failed because target.id was not projected into experiment_id; durable row had result=null lacking canonical SD4.4 receipt.",
-      "remediation": "Projected target.id into experiment_id, rejected mismatched body experiment_id/entity_id in _resolve_execution_params_for_record, bound authenticated execution identities, forwarded identity params in ExperimentCommandAdapter, and atomically persisted canonical SD4.4 receipt into CommandStore.submit_command."
+      "remediation": "Projected target.id into experiment_id, rejected mismatched body experiment_id/entity_id in _resolve_execution_params_for_record, bound authenticated execution identities, forwarded identity params and canonical SD4.4 receipts via ExperimentCommandAdapter in command_adapters.registry under task artifact contract, and atomically persisted canonical receipt into CommandStore.submit_command."
     },
     "defect_69_test_bff_test_architecture_decouple_main_import": {
       "problem": "services/control-plane/bff/governance/test_domain_durability_corrective_p1.py imported services.control_plane.bff.main, failing the architectural gate test_non_whitelisted_main_importers_is_live_scanned_and_bounded.",
