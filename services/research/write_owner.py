@@ -41,6 +41,21 @@ class ResearchTicketLifecycleConflictError(ValueError):
         self.message = message
         self.reason = reason or message
         self.precondition_failed = precondition_failed
+class ResearchTenantAuthorizationError(PermissionError):
+    """Raised when an operation is attempted across tenant boundaries."""
+
+    def __init__(
+        self,
+        message: str = "Cross-tenant access forbidden",
+        *,
+        tenant_id: Optional[str] = None,
+        expected_tenant: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.tenant_id = tenant_id
+        self.expected_tenant = expected_tenant
+
 
 
 def _utc_now_rfc3339() -> str:
@@ -420,7 +435,14 @@ class ResearchWriteOwner:
         }
 
     @classmethod
-    def _replay_ticket_create(cls, ticket: Dict[str, Any]) -> Dict[str, Any]:
+    def _replay_ticket_create(cls, ticket: Dict[str, Any], cmd: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if cmd and isinstance(cmd, dict) and cmd.get("result"):
+            return copy.deepcopy(cmd["result"])
+        if ticket.get("create_result") and isinstance(ticket["create_result"], dict):
+            return copy.deepcopy(ticket["create_result"])
+        for c in (ticket.get("command_history") or []):
+            if isinstance(c, dict) and c.get("command") == "CreateResearchTicket" and c.get("result"):
+                return copy.deepcopy(c["result"])
         result = cls._project_ticket_detail(ticket)
         create_receipt = ticket.get("create_receipt")
         if not create_receipt and ticket.get("command_history"):
@@ -433,17 +455,36 @@ class ResearchWriteOwner:
             result["command_id"] = create_receipt.get("command_id") or result.get("command_id")
             result["commandId"] = result["command_id"]
             result["aggregate_version"] = create_receipt.get("aggregate_version", 1)
+            result["event_id"] = create_receipt.get("event_id") or f"evt-{result.get('ticket_id')}"
+            result["correlation_id"] = create_receipt.get("correlation_id") or result.get("correlation_id")
+            result["status"] = create_receipt.get("status") or "open"
+            result["allowedActions"] = cls._ticket_allowed_actions(result["status"])
+            result["closed_at"] = None
+            result["archived_at"] = None
+            result["updated_at"] = ticket.get("created_at") or result.get("updated_at")
+            if ticket.get("lifecycle_history"):
+                result["lifecycle_history"] = [copy.deepcopy(ticket["lifecycle_history"][0])]
         return result
 
     @classmethod
     def _replay_ticket_patch(cls, ticket: Dict[str, Any], cmd: Dict[str, Any]) -> Dict[str, Any]:
+        if cmd and isinstance(cmd, dict) and cmd.get("result"):
+            res = copy.deepcopy(cmd["result"])
+            if cmd.get("idempotency_key"):
+                res["idempotency_key"] = cmd["idempotency_key"]
+            return res
         result = cls._project_ticket_detail(ticket)
-        patch_receipt = cmd.get("receipt")
+        patch_receipt = cmd.get("receipt") if isinstance(cmd, dict) else None
         if patch_receipt and isinstance(patch_receipt, dict):
             result["receipt"] = copy.deepcopy(patch_receipt)
             result["command_id"] = patch_receipt.get("command_id") or result.get("command_id")
             result["commandId"] = result["command_id"]
             result["aggregate_version"] = patch_receipt.get("aggregate_version", result.get("aggregate_version", 1))
+            result["event_id"] = patch_receipt.get("event_id") or result.get("event_id")
+            result["correlation_id"] = patch_receipt.get("correlation_id") or result.get("correlation_id")
+            if patch_receipt.get("status"):
+                result["status"] = patch_receipt["status"]
+                result["allowedActions"] = cls._ticket_allowed_actions(patch_receipt["status"])
         if cmd.get("idempotency_key"):
             result["idempotency_key"] = cmd["idempotency_key"]
         return result
@@ -527,8 +568,11 @@ class ResearchWriteOwner:
             "request_hash": clean_hash,
             "tenant_id": clean_tenant,
             "actor_id": clean_actor,
-            "command_history": [create_command_entry] if clean_key else [],
+            "command_history": [create_command_entry],
         }
+        create_result = cls._project_ticket_detail(record)
+        record["create_result"] = copy.deepcopy(create_result)
+        create_command_entry["result"] = copy.deepcopy(create_result)
         return record
 
     def create_research_ticket(
@@ -596,7 +640,7 @@ class ResearchWriteOwner:
                                 if clean_hash and saved_hash and saved_hash != clean_hash:
                                     raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
                                 if cmd.get("command") == "CreateResearchTicket":
-                                    return self._replay_ticket_create(t)
+                                    return self._replay_ticket_create(t, cmd)
                                 raise ResearchIdempotencyConflictError("Idempotency key reused for different command")
 
             if ticket_id:
@@ -630,7 +674,7 @@ class ResearchWriteOwner:
                                 raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
                             return self._replay_ticket_create(existing_row)
                     raise ValueError(f"Ticket {tid!r} already exists")
-                return self._project_ticket_detail(record)
+                return copy.deepcopy(record.get("create_result") or self._project_ticket_detail(record))
 
             existing_tickets = self._tickets_store.list_all()
             date_prefix = timestamp[:10].replace("-", "")
@@ -676,7 +720,7 @@ class ResearchWriteOwner:
                     unique_fields=("tenant_id", "actor_id", "idempotency_key") if clean_key else (),
                 )
                 if inserted:
-                    return self._project_ticket_detail(record)
+                    return copy.deepcopy(record.get("create_result") or self._project_ticket_detail(record))
 
                 known_ids.add(tid)
                 if existing_row and isinstance(existing_row, dict):
@@ -732,6 +776,14 @@ class ResearchWriteOwner:
             if current is None or not isinstance(current, dict):
                 return None
 
+            current_tenant = str(current.get("tenant_id") or "").strip() or None
+            if current_tenant and clean_tenant != current_tenant:
+                raise ResearchTenantAuthorizationError(
+                    f"Tenant {clean_tenant!r} is not authorized to access ticket belonging to tenant {current_tenant!r}",
+                    tenant_id=clean_tenant,
+                    expected_tenant=current_tenant,
+                )
+
             clean_actor = str(actor_id or "").strip() or str(current.get("owner") or "system")
 
             if clean_key:
@@ -756,6 +808,9 @@ class ResearchWriteOwner:
                         saved_hash = current.get("request_hash")
                         if clean_hash and saved_hash and saved_hash != clean_hash:
                             raise ResearchIdempotencyConflictError("Idempotency key reused with different request payload")
+                        if (current.get("receipt") or {}).get("command") == "PatchResearchTicket":
+                            return self._replay_ticket_patch(current, current)
+                        raise ResearchIdempotencyConflictError("Idempotency key reused for different command")
 
             allowed_actions = self._ticket_allowed_actions(current.get("status"))
             current_status = str(current.get("status") or "").strip().lower()
@@ -873,6 +928,10 @@ class ResearchWriteOwner:
             updated["event_id"] = patch_receipt["event_id"]
             updated["correlation_id"] = patch_receipt["correlation_id"]
 
+            patch_result = self._project_ticket_detail(updated)
+            if clean_key:
+                patch_result["idempotency_key"] = clean_key
+
             patch_command_entry = {
                 "command_id": cmd_id,
                 "command": "PatchResearchTicket",
@@ -883,6 +942,7 @@ class ResearchWriteOwner:
                 "aggregate_version": new_version,
                 "receipt": patch_receipt,
                 "timestamp": timestamp,
+                "result": copy.deepcopy(patch_result),
             }
             cmd_history = list(updated.get("command_history") or [])
             cmd_history.append(patch_command_entry)
@@ -891,10 +951,7 @@ class ResearchWriteOwner:
             if hasattr(self._tickets_store, "compare_and_set"):
                 success, actual = self._tickets_store.compare_and_set(str(ticket_id), current, updated)
                 if success:
-                    res = self._project_ticket_detail(updated)
-                    if clean_key:
-                        res["idempotency_key"] = clean_key
-                    return res
+                    return copy.deepcopy(patch_result)
                 continue
 
             if target_lock is not None and target_rows is not None:
@@ -902,16 +959,10 @@ class ResearchWriteOwner:
                     raise OSError("injected commit failure")
                 with target_lock:
                     target_rows[str(ticket_id)] = copy.deepcopy(updated)
-                    res = self._project_ticket_detail(updated)
-                    if clean_key:
-                        res["idempotency_key"] = clean_key
-                    return res
+                    return copy.deepcopy(patch_result)
 
             self._tickets_store.put(str(ticket_id), updated)
-            res = self._project_ticket_detail(updated)
-            if clean_key:
-                res["idempotency_key"] = clean_key
-            return res
+            return copy.deepcopy(patch_result)
 
         raise RuntimeError(f"Failed to update ticket {ticket_id!r} after {max_retries} attempts")
 

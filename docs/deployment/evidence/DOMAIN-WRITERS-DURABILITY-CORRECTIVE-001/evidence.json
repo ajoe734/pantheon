@@ -236,6 +236,14 @@
     "defect_58_research_wiring_explicit_typed_signatures": {
       "problem": "Architecture test test_five_domain_routers_have_no_direct_store_access failed because ResearchPortWiring.create_research_ticket and patch_research_ticket used generic **kwargs forwarding, violating AST wiring rules in test_bff_test_architecture.py.",
       "remediation": "Updated ResearchKnowledgeSourcePort, DefaultResearchKnowledgeSourcePort, and ResearchPortWiring create_research_ticket and patch_research_ticket with explicit typed signatures and parameter dispatch, eliminating generic **kwargs forwarding."
+    },
+    "defect_59_research_tickets_tenant_authorization_on_fresh_cas_snapshot": {
+      "problem": "write_owner.py:731-735 read ticket by ID without verifying authenticated tenant matches canonical tenant on each CAS snapshot before replay or mutation; cross-tenant PATCH returned 200 and mutated foreign tickets instead of rejecting with 403 Forbidden without writes.",
+      "remediation": "Added ResearchTenantAuthorizationError and enforced tenant authorization check against current.get('tenant_id') at the top of the CAS retry loop in ResearchWriteOwner.patch_research_ticket and fast-path validation in BFF research service patch_research_ticket, cleanly mapped to HTTP 403 Forbidden without modifying foreign tickets."
+    },
+    "defect_60_research_tickets_replay_canonical_identity_after_subsequent_mutation": {
+      "problem": "write_owner.py:423-449 replayed create/patch commands by projecting current ticket state and overwriting only receipt/command_id/version; subsequent mutations contaminated replayed responses across restarts (replay of create returned version 1 with create receipt but patched title/event/correlation; replay of patch 1 returned version 2 with mismatched event_id).",
+      "remediation": "Preserved original canonical projected detail in create_result and patch_command_entry['result']. Updated _replay_ticket_create and _replay_ticket_patch to replay the exact canonical admitted command result with full aggregate/event/correlation/status synchronization, guaranteeing idempotent replays preserve original command identity across arbitrary subsequent mutations and process restarts."
     }
   },
   "mutation_caller_inventory": {
@@ -677,6 +685,24 @@
         "result": "passed, mode='smoke' complete (stage0-validate, stage0-baseline, dev-paper-diagnostics-failure-path all passed)",
         "executed": 161,
         "collected": 161
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py",
+        "result": "78 passed, 5 warnings in 46.01s",
+        "executed": 78,
+        "collected": 78
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "159 passed, 8 warnings in 94.28s",
+        "executed": 159,
+        "collected": 159
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q /tmp/test_domain_review_c57_independent.py",
+        "result": "3 passed in 1.48s",
+        "executed": 3,
+        "collected": 3
       }
     ]
   },
@@ -743,7 +769,9 @@
     "defect_55_research_tickets_write_owner_unavailable_503_resolved": true,
     "defect_56_research_ticket_patch_replay_before_lifecycle_check_resolved": true,
     "defect_57_research_ticket_patch_cas_conflict_snapshot_revalidation_resolved": true,
-    "defect_58_research_wiring_explicit_typed_signatures_resolved": true
+    "defect_58_research_wiring_explicit_typed_signatures_resolved": true,
+    "defect_59_research_tickets_tenant_authorization_on_fresh_cas_snapshot_resolved": true,
+    "defect_60_research_tickets_replay_canonical_identity_after_subsequent_mutation_resolved": true
   },
   "review": {
     "reviewer": "Codex",

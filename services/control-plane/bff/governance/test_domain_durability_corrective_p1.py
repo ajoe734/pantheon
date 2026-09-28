@@ -1420,12 +1420,14 @@ def test_midnight_scoped_idempotency_independent_of_date_prefix():
     assert len(store.rows) == 1, result
 
 
-def _research_ticket_client(tickets, role="admin", utc_now=None):
+def _research_ticket_client(tickets, role="admin", utc_now=None, identity=None):
     owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=CASStore(), notes_store=AtomicIO())
-    identity = SimpleNamespace(operator_id="actor", tenant_id="tenant", roles=[role])
+    if identity is None:
+        identity = SimpleNamespace(operator_id="actor", tenant_id="tenant", roles=[role])
 
     def require_operator(i):
-        if "admin" not in getattr(i, "roles", []):
+        roles = set(getattr(i, "roles", []) or [])
+        if not roles.intersection({"admin", "operator", "approver", "reviewer"}):
             raise HTTPException(403, detail="operator required")
 
     app = FastAPI()
@@ -1659,4 +1661,70 @@ def test_cas_conflict_rechecks_lifecycle():
     assert result.status_code == 409 and canonical['title'] == TICKET_BODY['title'], {'http': result.status_code, 'title': canonical['title'], 'state': canonical['status'], 'version': canonical['aggregate_version']}
 
 
+def test_patch_replay_canonical_identity_after_later_patch():
+    tickets = CASStore()
+    client = _research_ticket_client(tickets)
+    created = client.post('/api/v1/research/tickets', json=TICKET_BODY, headers={'Idempotency-Key': 'create'})
+    path = '/api/v1/research/tickets/' + created.json()['ticket_id']
+    original = client.patch(path, json={'title': 'first'}, headers={'Idempotency-Key': 'first'}).json()
+    latest = client.patch(path, json={'title': 'second'}, headers={'Idempotency-Key': 'second'}).json()
+    replay = _research_ticket_client(tickets).patch(path, json={'title': 'first'}, headers={'Idempotency-Key': 'first'})
+    assert replay.status_code == 200
+    data = replay.json()
+    assert data['event_id'] == data['receipt']['event_id'], {'original': original, 'latest': latest, 'replay': data}
+    assert data == original
 
+
+def test_create_replay_canonical_identity_after_patch():
+    tickets = CASStore()
+    client = _research_ticket_client(tickets)
+    original = client.post('/api/v1/research/tickets', json=TICKET_BODY, headers={'Idempotency-Key': 'create'}).json()
+    path = '/api/v1/research/tickets/' + original['ticket_id']
+    changed = client.patch(path, json={'title': 'changed'}, headers={'Idempotency-Key': 'patch'})
+    assert changed.status_code == 200
+    replay = _research_ticket_client(tickets).post('/api/v1/research/tickets', json=TICKET_BODY, headers={'Idempotency-Key': 'create'}).json()
+    assert replay['event_id'] == replay['receipt']['event_id'], {'original': original, 'replay': replay}
+    assert replay == original
+
+
+def test_ticket_patch_rejects_foreign_tenant():
+    tickets = CASStore()
+    identity_a = SimpleNamespace(operator_id='actor-a', tenant_id='tenant-a', roles=['operator'])
+    client_a = _research_ticket_client(tickets, identity=identity_a)
+    original = client_a.post('/api/v1/research/tickets', json=TICKET_BODY, headers={'Idempotency-Key': 'create'})
+    assert original.status_code == 200
+    tid = original.json()['ticket_id']
+    identity_b = SimpleNamespace(operator_id='actor-b', tenant_id='tenant-b', roles=['operator'])
+    client_b = _research_ticket_client(tickets, identity=identity_b)
+    response = client_b.patch('/api/v1/research/tickets/' + tid, json={'title': 'foreign tenant mutation'}, headers={'Idempotency-Key': 'foreign'})
+    assert response.status_code in (403, 404), {'status': response.status_code, 'body': response.json(), 'persisted': tickets.get(tid)}
+    assert tickets.get(tid)['title'] == TICKET_BODY['title']
+
+
+def test_restart_replay_preserves_canonical_identity_after_subsequent_mutation():
+    tickets = CASStore()
+    client = _research_ticket_client(tickets)
+    created = client.post('/api/v1/research/tickets', json=TICKET_BODY, headers={'Idempotency-Key': 'create'}).json()
+    tid = created['ticket_id']
+    path = f'/api/v1/research/tickets/{tid}'
+
+    patch1 = client.patch(path, json={'title': 'patch-1'}, headers={'Idempotency-Key': 'patch-1'}).json()
+    patch2 = client.patch(path, json={'title': 'patch-2', 'status': 'in_progress'}, headers={'Idempotency-Key': 'patch-2'}).json()
+
+    # Simulate fresh cold-restarted owner/client
+    fresh_client = _research_ticket_client(tickets)
+
+    # Replay create
+    replay_create = fresh_client.post('/api/v1/research/tickets', json=TICKET_BODY, headers={'Idempotency-Key': 'create'}).json()
+    assert replay_create['aggregate_version'] == 1
+    assert replay_create['title'] == TICKET_BODY['title']
+    assert replay_create['status'] == 'open'
+    assert replay_create['event_id'] == replay_create['receipt']['event_id']
+    assert replay_create == created
+
+    # Replay patch 1
+    replay_patch1 = fresh_client.patch(path, json={'title': 'patch-1'}, headers={'Idempotency-Key': 'patch-1'}).json()
+    assert replay_patch1['aggregate_version'] == 2
+    assert replay_patch1['title'] == 'patch-1'
+    assert replay_patch1['event_id'] == replay_patch1['receipt']['event_id']
+    assert replay_patch1 == patch1

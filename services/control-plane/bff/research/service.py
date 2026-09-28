@@ -46,12 +46,16 @@ try:
     from services.research.write_owner import (
         ResearchIdempotencyConflictError,
         ResearchTicketLifecycleConflictError,
+        ResearchTenantAuthorizationError,
     )
 except (ImportError, ValueError):
     class ResearchIdempotencyConflictError(ValueError):  # type: ignore[no-redef]
         pass
 
     class ResearchTicketLifecycleConflictError(ValueError):  # type: ignore[no-redef]
+        pass
+
+    class ResearchTenantAuthorizationError(PermissionError):  # type: ignore[no-redef]
         pass
 
 log = logging.getLogger(__name__)
@@ -956,6 +960,14 @@ class ResearchRouterService:
                 getattr(exc, "message", None) or "Research ticket is not editable in its current lifecycle state",
                 getattr(exc, "reason", None) or str(exc),
                 precondition_failed=getattr(exc, "precondition_failed", None) or "allowedActions.canEdit",
+            )
+        except ResearchTenantAuthorizationError as exc:
+            self._raise_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Cross-tenant access forbidden",
+                str(exc),
+                precondition_failed="cross_tenant",
             )
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
@@ -3171,6 +3183,17 @@ class ResearchRouterService:
             ticket = port.get_research_ticket(ticket_id)
         if not ticket:
             self._not_found("Research ticket", ticket_id)
+
+        ticket_tenant = str(ticket.get("tenant_id") or "").strip() or None
+        clean_tenant = str(tenant_id or "").strip() or None
+        if ticket_tenant and clean_tenant != ticket_tenant:
+            self._raise_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Cross-tenant access forbidden",
+                f"Tenant {clean_tenant!r} cannot modify research ticket {ticket_id!r} belonging to tenant {ticket_tenant!r}",
+                precondition_failed="cross_tenant",
+            )
 
         allowed_fields = {"status", "title", "description", "priority", "owner"}
         unknown_fields = sorted(set(payload) - allowed_fields)
