@@ -152,6 +152,14 @@
     "defect_37_research_experiment_ticket_link_atomic_rollback": {
       "problem": "services/research/write_owner.py committed ticket linked_experiments before experiment persistence; injected experiment put OSError returned 503 but left a dangling ticket link and no experiment/receipt.",
       "remediation": "Committed experiment persistence before ticket link update, and added rollback cleanup ensuring ticket linked_experiments remains unmodified if experiment storage fails."
+    },
+    "defect_38_research_independent_store_isolation_and_atomic_allocation": {
+      "problem": "services/research/write_owner.py relied on process-local threading.RLock and _admitted_keys on store instances, coupled with check-then-UPSERT ID allocation. Distinct ResearchWriteOwner instances sharing a common store or database produced duplicate experiment IDs across tenants, or failed to detect 409 Conflict across independent store connections.",
+      "remediation": "Eliminated process-local _admission_lock and _admitted_keys. Implemented database-scoped atomic insert (_atomic_insert_record) leveraging native CAS/insert_if_absent and database locks in store test doubles. Scoped experiment ID allocation through atomic absent-check insertion, guaranteeing store isolation and cross-tenant uniqueness."
+    },
+    "defect_39_research_two_phase_admission_and_atomic_rollback": {
+      "problem": "services/research/write_owner.py admitted and committed experiments before ticket link update, exposing in-flight admissions to concurrent replays returning 201 before transaction completion. Downstream ticket storage failure then deleted the experiment via compensation, leaving zero durable rows behind an accepted 201 receipt.",
+      "remediation": "Implemented two-phase admission marking newly inserted experiments is_committed = False until downstream ticket links persist, only then setting is_committed = True. Concurrent replays observing uncommitted experiments raise 409 Conflict. Query methods exclude uncommitted records. On ticket failure, compensation removes the uncommitted record, leaving zero phantom receipts."
     }
   },
   "mutation_caller_inventory": {
@@ -442,6 +450,18 @@
         "result": "128 passed, 5 warnings in 75.91s",
         "executed": 128,
         "collected": 128
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q /tmp/test_domain_review_fff998.py",
+        "result": "3 passed, 2 warnings in 2.91s",
+        "executed": 3,
+        "collected": 3
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/research/test_router.py",
+        "result": "132 passed, 6 warnings in 71.90s",
+        "executed": 132,
+        "collected": 132
       }
     ]
   },
@@ -487,7 +507,9 @@
     "defect_34_research_mounted_durability_and_idempotency_scope_resolved": true,
     "defect_35_confirm_token_tenant_scoped_replay_resolved": true,
     "defect_36_research_experiment_atomic_admission_and_id_collision_resolved": true,
-    "defect_37_research_experiment_ticket_link_atomic_rollback_resolved": true
+    "defect_37_research_experiment_ticket_link_atomic_rollback_resolved": true,
+    "defect_38_research_independent_store_isolation_and_atomic_allocation_resolved": true,
+    "defect_39_research_two_phase_admission_and_atomic_rollback_resolved": true
   },
   "review": {
     "reviewer": "Codex",

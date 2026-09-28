@@ -1,6 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from threading import Barrier, Lock
+from threading import Barrier, Event, Lock
 from types import SimpleNamespace
 from unittest.mock import patch
 import inspect
@@ -708,6 +708,69 @@ class AtomicIO:
         with self.lock:
             self.rows[key] = deepcopy(value)
 
+    def delete_if_matches(self, key, expected):
+        with self.lock:
+            if self.rows.get(key) == expected:
+                del self.rows[key]
+                return True
+            return False
+
+    def delete(self, key):
+        with self.lock:
+            return self.rows.pop(key, None)
+
+
+class IndependentConnectionStore:
+    """Distinct owner-store instances sharing SQL-like committed rows, no shared Python admission state."""
+
+    def __init__(self, db, list_barrier=None, get_barrier=None):
+        self.db = db
+        self.list_barrier = list_barrier
+        self.get_barrier = get_barrier
+        self.probed = False
+
+    def list_all(self):
+        snapshot = self.db.list_all()
+        if self.list_barrier:
+            self.list_barrier.wait(timeout=10)
+        return snapshot
+
+    def get(self, key):
+        snapshot = self.db.get(key)
+        if self.get_barrier and not self.probed:
+            self.probed = True
+            self.get_barrier.wait(timeout=10)
+        return snapshot
+
+    def put(self, key, value):
+        self.db.put(key, value)
+
+    def delete_if_matches(self, key, expected):
+        with self.db.lock:
+            if self.db.rows.get(key) == expected:
+                del self.db.rows[key]
+                return True
+            return False
+
+    def delete(self, key):
+        with self.db.lock:
+            return self.db.rows.pop(key, None)
+
+
+class BlockFailTickets(AtomicIO):
+    def __init__(self):
+        super().__init__()
+        self.entered = Event()
+        self.release = Event()
+        self.armed = False
+
+    def put(self, key, value):
+        if self.armed:
+            self.entered.set()
+            assert self.release.wait(timeout=10)
+            raise OSError("injected ticket storage failure")
+        return super().put(key, value)
+
 
 def _atomic_research_client(tickets, experiments, tenant):
     owner = ResearchWriteOwner(tickets_store=tickets, experiments_store=experiments, notes_store=AtomicIO())
@@ -761,6 +824,92 @@ def test_experiment_failure_rolls_back_ticket_link():
     evidence = {"status": response.status_code, "ticket": tickets.rows, "experiments": experiments.rows}
     assert response.status_code >= 500
     assert tickets.get("ticket-1")["linked_experiments"] == [], evidence
+
+
+@pytest.mark.parametrize("different_tenants", [False, True])
+def test_independent_owners_share_database(different_tenants):
+    tickets, db = AtomicIO(), AtomicIO()
+    listed, probed = Barrier(2), Barrier(2)
+    clients = [
+        _atomic_research_client(tickets, IndependentConnectionStore(db, listed, probed), "tenant-" + str(i if different_tenants else 0))
+        for i in range(2)
+    ]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(
+            pool.map(
+                lambda i: clients[i].post(
+                    "/bff/experiments",
+                    json={"name": "experiment-" + str(i)},
+                    headers={"Idempotency-Key": "key"},
+                ),
+                range(2),
+            )
+        )
+    statuses = [r.status_code for r in responses]
+    evidence = {"statuses": statuses, "ids": [r.json().get("experiment_id") for r in responses], "rows": db.rows}
+    if different_tenants:
+        assert statuses == [201, 201] and len(db.rows) == 2, evidence
+    else:
+        assert sorted(statuses) == [201, 409], evidence
+
+
+def test_retry_does_not_accept_before_ticket_transaction_commits():
+    tickets, db = BlockFailTickets(), AtomicIO()
+    tickets.put("ticket-1", {"ticket_id": "ticket-1", "linked_experiments": []})
+    tickets.armed = True
+    client = _atomic_research_client(tickets, IndependentConnectionStore(db), "tenant")
+    request = lambda: client.post(
+        "/bff/experiments",
+        json={"name": "experiment", "ticket_id": "ticket-1"},
+        headers={"Idempotency-Key": "key"},
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(request)
+        assert tickets.entered.wait(timeout=10)
+        replay = request()
+        tickets.release.set()
+        failed = first.result(timeout=10)
+    evidence = {
+        "first_status": failed.status_code,
+        "replay_status": replay.status_code,
+        "durable_experiments": db.rows,
+        "ticket": tickets.rows,
+    }
+    assert not (replay.status_code == 201 and not db.rows), evidence
+    assert failed.status_code >= 500, evidence
+    assert replay.status_code == 409, evidence
+    assert len(db.rows) == 0, evidence
+
+
+def test_independent_owner_restart_replay_and_query_visibility():
+    tickets, db = AtomicIO(), AtomicIO()
+    client1 = _atomic_research_client(tickets, IndependentConnectionStore(db), "tenant-1")
+    r1 = client1.post("/bff/experiments", json={"name": "experiment-alpha"}, headers={"Idempotency-Key": "key-alpha"})
+    assert r1.status_code == 201
+    exp_id = r1.json()["experiment_id"]
+
+    # New client simulating separate process / restart with independent store wrapping same db
+    client2 = _atomic_research_client(tickets, IndependentConnectionStore(db), "tenant-1")
+    # Replay with same body returns 201 with same experiment_id
+    r2 = client2.post("/bff/experiments", json={"name": "experiment-alpha"}, headers={"Idempotency-Key": "key-alpha"})
+    assert r2.status_code == 201
+    assert r2.json()["experiment_id"] == exp_id
+    assert len(db.rows) == 1
+
+    # Replay with conflicting body returns 409
+    r3 = client2.post("/bff/experiments", json={"name": "experiment-beta"}, headers={"Idempotency-Key": "key-alpha"})
+    assert r3.status_code == 409
+
+    # Querying experiment by ID and list
+    r_get = client2.get(f"/bff/experiments/{exp_id}")
+    assert r_get.status_code == 200
+    assert r_get.json()["data"]["experiment_id"] == exp_id
+
+    r_list = client2.get("/bff/experiments")
+    assert r_list.status_code == 200
+    items = r_list.json().get("items") or r_list.json().get("data") or []
+    assert any(e["experiment_id"] == exp_id for e in items)
+
 
 
 
