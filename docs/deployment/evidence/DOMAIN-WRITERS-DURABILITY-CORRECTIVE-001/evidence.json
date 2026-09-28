@@ -3,7 +3,7 @@
   "task_id": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
   "base_ref": "dev@24608d4c8e04767f658e77be466780b9e91f7525",
   "depends_on": "DOMAIN-WRITERS-001 (done), BFF-ROUTER-USECASE-CORRECTIVE-001 (done), GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 (done), JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 (done)",
-  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md \u00a7E (canonical tracked docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md, SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa; restored at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md); DOMAIN-WRITERS-001 corrective closure",
+  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md §E (canonical tracked docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md, SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa; restored at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md); DOMAIN-WRITERS-001 corrective closure",
   "defect_remediation": {
     "defect_1_dead_capital_write_routes": {
       "problem": "capital/router.py constructs CapitalService(get_read_store=..., get_capital_authority=...). Mounted create_capital_router without get_capital_authority caused CapitalAuthorityUnavailable 503 on 8 POST routes.",
@@ -291,7 +291,7 @@
     },
     "defect_72_commit_trailer_length_and_normative_plan_access": {
       "problem": "Commit c6a39d5f8 subject length was 93 characters, exceeding the 72-character limit and causing the Commit trailers CI job to fail. Furthermore, the task-scoped /tmp reference for the normative Section E plan was expired.",
-      "remediation": "Shortened task commit subject line to \u2264 70 characters adhering to repository trailers gate. Restored reviewer access to the immutable normative Section E plan at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md matching tracked file docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md with verified SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa."
+      "remediation": "Shortened task commit subject line to ≤ 70 characters adhering to repository trailers gate. Restored reviewer access to the immutable normative Section E plan at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md matching tracked file docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md with verified SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa."
     },
     "defect_73_experiment_adapter_dispatcher_command_id_fail_closed": {
       "problem": "services/control-plane/bff/command_adapters/experiment_adapter.py:102 accepted blank/whitespace dispatcher command_id by falling back to params.command_id or uuid.uuid4(), allowing experiment mutations without the trusted admitted command identity.",
@@ -476,7 +476,8 @@
       "services/control-plane/bff/runtime/router.py",
       "services/control-plane/bff/runtime/service.py",
       "services/control-plane/bff/tests/test_command_adapters_router.py",
-      "services/research/write_owner.py"
+      "services/research/write_owner.py",
+      "services/control-plane/bff/research/routes/common.py"
     ],
     "artifact_scope_boundary": "core/app_factory.py is preserved byte-identical to base dev commit because core/app_factory.py falls outside this task's declared artifact contract. Capital and governance routers encapsulate their durable store and authority resolution entirely within their domain-scoped boundaries.",
     "read_surface_invariants_preserved": "ReadSurfacePorts in services/control-plane/bff/ports/read_surface_ports.py is completely unmodified and maintains zero mutation methods, adhering strictly to RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE.",
@@ -1183,6 +1184,34 @@
         "result": "227 passed, 3 warnings in 81.78s (post scope-correction inlining)",
         "executed": 227,
         "collected": 227
+      },
+      {
+        "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q /tmp/test_domain_writer_tid_review.py",
+        "result": "4 passed, 1 warning in 3.01s (reviewer's exact tid reproducer, previously 4 failed)",
+        "executed": 4,
+        "collected": 4
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/governance/test_domain_durability_corrective_p1.py services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "result": "309 passed, 8 warnings in 163.81s (post tid/claim-shape fix; 267 baseline + 42 new tenant-claim-shape/replay cases)",
+        "executed": 309,
+        "collected": 309
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "result": "227 passed, 3 warnings in 84.94s (post tid/claim-shape fix)",
+        "executed": 227,
+        "collected": 227
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
+        "result": "26 passed in 1.111s (post tid/claim-shape fix)",
+        "executed": 26,
+        "collected": 26
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit 0"
       }
     ]
   },
@@ -1284,6 +1313,12 @@
       "rejected_head": "ff6f7c052cb66b4f5ee7f3d5de1e1a564899edd8",
       "finding": "P1 acceptance 3 domain-writer identity.tenant_id/tenant attribute read defect (see defect_83_domain_writer_identity_tenant_attribute_read); resolved at the current head.",
       "scope_correction": "First DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 handoff attempt after this fix (head 58f46efe7dc6f86b554397c27679459cd346ee21, then f95c742d45b5a96c160a55a1a3606904415179b5 after a dev merge) was rejected by the governed handoff command itself for touching services/control-plane/bff/auth/policy.py, which is outside this task's artifact contract. Reverted that file and inlined the resolver logic in-scope; see defect_83 remediation."
+    },
+    "second_rejection": {
+      "pr": 5998,
+      "rejected_head": "462e694dec157b357c945d14b25786f9a1fec718",
+      "finding": "P1 acceptance 3: the inlined per-file tenant resolvers (command_adapters/service.py:307, capital/router.py, governance/service.py, runtime/router.py, research/routes/common.py) only recognised tenant_id/tenantId/tenant claims, while auth/policy.py:739-759's bff_me_tenant_payload already recognises tid, org_id, organization.id, tenant_ids, and tenantIds. A real signed HS256 identity using tid (or the other unrecognised shapes) resolved to None in every domain writer, so check_confirm_token_tenant_authorization treated the caller as tenant-missing rather than correctly scoping and rejecting the foreign tenant -- before and after service/store restart, on both POST /bff/command-confirmations/{token}/confirm and POST /bff/v1/commands. Reproduced by /tmp/test_domain_writer_tid_review.py (copy of test_signed_identity_tenant_cannot_consume_foreign_confirm_token with the JWT claim/assertion changed from tenant_id to tid): 4 failed before the fix.",
+      "fix": "Replaced the five duplicated per-file resolvers with a single canonical resolve_identity_tenant() in command_adapters/service.py (still inside the declared artifact contract), built on auth.policy.identity_claim_strings (imported, not edited -- auth/policy.py is unchanged and out of scope) over the full claim-path set auth/policy.py already recognises: tenant_id, tenantId, tenant.id, tid, org_id, organization.id, tenant_ids, tenantIds. Nested claim objects (for example {\"tenant\": {\"id\": ...}}) resolve through identity_claim_strings' key extraction instead of being stringified wholesale. The resolver fails closed (returns None) both when no recognised tenant claim is present and when the claims resolve to more than one distinct tenant, then falls back to a direct identity.tenant_id/tenant attribute only when no claims were matched (preserving the existing stub-identity test contract in test_domain_durability_corrective_p1.py, whose SimpleNamespace doubles carry an empty claims={} alongside a direct tenant_id attribute). capital/router.py, governance/service.py, runtime/router.py, and research/routes/common.py now import this single function instead of keeping their own copies. test_command_adapters_router.py's real-signed-JWT mounted regression (test_signed_identity_tenant_cannot_consume_foreign_confirm_token) is now parametrized over every supported claim shape plus an absent-claim case and an ambiguous-claim case (8 real shapes + absent + ambiguous, x2 routes x2 restart = 48 cases), and a new companion test_signed_identity_same_tenant_confirm_token_idempotency_key_replays proves legitimate same-tenant Idempotency-Key replay still returns the original durable result (not a second command row) across 3 claim shapes x restart."
     }
   }
 }

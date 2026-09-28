@@ -26,21 +26,14 @@ except (ImportError, ValueError):
 
 from ..service import ResearchNotFoundError, ResearchRouterService, ResearchValidationError
 
+try:
+    from services.control_plane.bff.command_adapters.service import resolve_identity_tenant
+except (ImportError, ValueError):
+    from ...command_adapters.service import resolve_identity_tenant
+
 
 def _identity_tenant_id(identity: Any) -> Optional[str]:
-    # ``OperatorIdentity`` carries tenant in ``identity.claims``, not a
-    # top-level ``tenant_id``/``tenant`` attribute; reading those attributes
-    # directly always returns None for a real JWT identity and silently
-    # disables tenant scoping on these research routes.
-    claims = getattr(identity, "claims", None)
-    if isinstance(claims, dict):
-        for key in ("tenant_id", "tenantId", "tenant"):
-            value = claims.get(key)
-            clean = str(value or "").strip()
-            if clean:
-                return clean
-    direct = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
-    return str(direct).strip() if direct else None
+    return resolve_identity_tenant(identity)
 
 PageSlice = Callable[[List[Dict[str, Any]], Optional[str], int], Tuple[List[Dict[str, Any]], Optional[str]]]
 SnapshotMeta = Callable[[str], Dict[str, Any]]

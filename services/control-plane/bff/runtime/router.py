@@ -21,22 +21,19 @@ except (ImportError, ValueError):
     except (ImportError, ValueError):
         from models import CommandStatus, CommandType, ErrorCode, ObjectType
 
+try:
+    from ..command_adapters.service import resolve_identity_tenant
+except (ImportError, ValueError):
+    try:
+        from services.control_plane.bff.command_adapters.service import resolve_identity_tenant
+    except (ImportError, ValueError):
+        from command_adapters.service import resolve_identity_tenant
+
 from .service import RuntimeRouterService, _MissingRuntimeDependency
 
 
 def _resolve_identity_tenant_id(identity: Any) -> str:
-    # ``OperatorIdentity`` carries tenant in ``identity.claims``, not a
-    # top-level ``tenant_id`` attribute; reading that attribute directly
-    # always returns None for a real JWT identity and silently disables
-    # tenant scoping for durable runtime idempotency lookups.
-    claims = getattr(identity, "claims", None)
-    if isinstance(claims, dict):
-        for key in ("tenant_id", "tenantId", "tenant"):
-            value = claims.get(key)
-            clean = str(value or "").strip()
-            if clean:
-                return clean
-    return str(getattr(identity, "tenant_id", "") or "").strip()
+    return resolve_identity_tenant(identity) or ""
 
 
 def create_runtime_router(

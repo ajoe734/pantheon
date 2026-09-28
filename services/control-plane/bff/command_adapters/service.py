@@ -67,6 +67,13 @@ except (ImportError, ValueError):
         TargetObject,
         utc_now,
     )
+try:
+    from ..auth.policy import identity_claim_strings
+except (ImportError, ValueError):
+    try:
+        from services.control_plane.bff.auth.policy import identity_claim_strings
+    except (ImportError, ValueError):
+        from auth.policy import identity_claim_strings
 from .base import ActionUnavailableError
 from .contracts import (
     _FINAL_COMMAND_ROUTE,
@@ -291,28 +298,58 @@ def _check_read_surface_state() -> Optional[StalenessWarning]:
     )
 
 
-def _resolve_identity_tenant(identity: Any) -> Optional[str]:
-    """Resolve the authenticated tenant scope for a command-adapter caller.
+# Canonical claim paths for authenticated tenant scope, shared by every
+# domain-writer caller (command adapters, capital, governance, runtime,
+# research). Mirrors the set ``auth/policy.py``'s ``bff_me_tenant_payload``
+# already recognises so a real signed JWT resolves identically for reads
+# and writes.
+IDENTITY_TENANT_CLAIM_PATHS: Tuple[str, ...] = (
+    "tenant_id",
+    "tenantId",
+    "tenant.id",
+    "tid",
+    "org_id",
+    "organization.id",
+    "tenant_ids",
+    "tenantIds",
+)
+
+
+def resolve_identity_tenant(identity: Any) -> Optional[str]:
+    """Resolve the single authenticated tenant scope for a domain writer.
 
     ``OperatorIdentity`` (services/control-plane/bff/models.py) carries the
     verified JWT claims in ``identity.claims``; it has no top-level
     ``tenant_id``/``tenant`` attribute. Reading those attributes directly
     (the prior implementation) always returned ``None`` for real
     ``extract_identity_jwt`` identities, which silently disabled every
-    tenant ownership/authorization check below. Claim keys mirror the
-    canonical set in ``auth/policy.py`` (``bff_me_tenant_payload``).
+    tenant ownership/authorization check below.
+
+    This is the single canonical resolver for every in-scope domain writer;
+    it is imported by ``capital/router.py``, ``governance/service.py``,
+    ``runtime/router.py``, and ``research/routes/common.py`` instead of each
+    module keeping its own copy. It delegates claim extraction to
+    ``auth.policy.identity_claim_strings`` so nested claim objects (for
+    example ``{"tenant": {"id": "..."}}``) are never stringified wholesale,
+    and fails closed (returns ``None``) both when no tenant claim is present
+    and when the claims resolve to more than one distinct tenant -- an
+    ambiguous identity must not silently bind to an arbitrary tenant.
     """
     claims = getattr(identity, "claims", None)
-    if isinstance(claims, dict):
-        for key in ("tenant_id", "tenantId", "tenant"):
-            value = claims.get(key)
-            if isinstance(value, dict):
-                value = value.get("id") or value.get("tenant_id") or value.get("value")
-            clean = str(value or "").strip()
-            if clean:
-                return clean
+    if isinstance(claims, dict) and claims:
+        values = identity_claim_strings(identity, list(IDENTITY_TENANT_CLAIM_PATHS))
+        if len(values) == 1:
+            return values[0]
+        if len(values) > 1:
+            # Ambiguous: the claims name more than one distinct tenant.
+            # Fail closed rather than silently picking one or falling back
+            # to a direct attribute a stub identity might also carry.
+            return None
+        # No recognised tenant claim in a non-empty claims dict: fall
+        # through to the direct-attribute fallback below.
     # Fallback for test doubles / callers that model identity as a plain
-    # object with a direct tenant attribute instead of JWT claims.
+    # object with a direct tenant attribute instead of JWT claims (or with
+    # an empty ``claims`` dict alongside one).
     direct = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
     clean_direct = str(direct or "").strip()
     return clean_direct or None
@@ -715,7 +752,7 @@ class CommandAdapterService:
         if token_state.get("status") == "available":
             return
         token_tenant = token_state.get("tenant_id")
-        caller_tenant = _resolve_identity_tenant(identity)
+        caller_tenant = resolve_identity_tenant(identity)
         clean_caller_tenant = str(caller_tenant or "").strip() or None
 
         if token_tenant or clean_caller_tenant:
@@ -933,7 +970,7 @@ class CommandAdapterService:
                 "CommandStore is not configured; refusing to accept unpersisted confirmation",
                 precondition_failed="command_store_unconfigured",
             )
-        tenant_id = _resolve_identity_tenant(identity)
+        tenant_id = resolve_identity_tenant(identity)
         clean_tenant_id = str(tenant_id or "").strip() or None
         caller_op_id = getattr(identity, "operator_id", None) or "operator"
 
@@ -1117,7 +1154,7 @@ class CommandAdapterService:
             hash_body["target_id"] = target_id
         request_hash = _stable_json_hash(hash_body)
 
-        tenant_id = _resolve_identity_tenant(identity)
+        tenant_id = resolve_identity_tenant(identity)
         clean_tenant_id = str(tenant_id or "").strip() or None
         caller_op_id = getattr(identity, "operator_id", None)
         expected_cmd = command_type.value if hasattr(command_type, "value") else str(command_type)
@@ -1385,7 +1422,7 @@ class CommandAdapterService:
             )
 
         saved_tenant = idem_rec.get("tenant_id") or audit.get("tenant_id") or (record.get("params") or {}).get("tenant_id")
-        caller_tenant = _resolve_identity_tenant(identity)
+        caller_tenant = resolve_identity_tenant(identity)
         if saved_tenant != caller_tenant:
             raise self._raise_error(
                 409,
@@ -1550,7 +1587,7 @@ class CommandAdapterService:
             existing_cmd = store.get_command_by_idempotency_key(
                 resolved_key,
                 operator_id=identity.operator_id,
-                tenant_id=_resolve_identity_tenant(identity),
+                tenant_id=resolve_identity_tenant(identity),
             )
         if existing_cmd is not None:
             self._revalidate_governance_admitted_record(
@@ -1602,7 +1639,7 @@ class CommandAdapterService:
         # worker in this seam marking the prior one terminal, so only the
         # approval action_kind uses the active-target admission guard.
         preconditions_checked = ["authentication", "authorization", "idempotency"]
-        tenant_val = _resolve_identity_tenant(identity)
+        tenant_val = resolve_identity_tenant(identity)
         audit_record = {
             "operator_id": identity.operator_id,
             "roles_at_submission": list(getattr(identity, "roles", []) or []),
@@ -1717,7 +1754,7 @@ class CommandAdapterService:
             token_state = self.confirm_token_lifecycle_payload(token_id)
             if token_state.get("status") != "available":
                 clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-                caller_tenant = _resolve_identity_tenant(identity)
+                caller_tenant = resolve_identity_tenant(identity)
                 clean_tenant = str(caller_tenant or "").strip() or None
                 store = self.command_store
                 is_replay = False
@@ -1764,14 +1801,14 @@ class CommandAdapterService:
                     stored = store.get_command_by_idempotency_key(
                         clean_key,
                         operator_id=getattr(identity, "operator_id", None),
-                        tenant_id=_resolve_identity_tenant(identity),
+                        tenant_id=resolve_identity_tenant(identity),
                     )
                     if stored:
                         final_token_id = str(stored.get("target", {}).get("id") or token_id)
         content["data"]["tokenId"] = final_token_id
         content["data"]["id"] = final_token_id
         content["data"]["status"] = "created"
-        caller_tenant = _resolve_identity_tenant(identity)
+        caller_tenant = resolve_identity_tenant(identity)
         clean_tenant = str(caller_tenant or "").strip() or None
         if clean_tenant:
             content["data"]["tenant_id"] = clean_tenant
@@ -1897,7 +1934,7 @@ class CommandAdapterService:
             )
 
         req_hash = _stable_json_hash({"command_id": original_command_id, "confirm_token": confirm_token})
-        tenant_id = _resolve_identity_tenant(identity)
+        tenant_id = resolve_identity_tenant(identity)
         clean_tenant_id = str(tenant_id or "").strip() or None
         caller_op_id = getattr(identity, "operator_id", None) or "operator"
 
@@ -2078,7 +2115,7 @@ class CommandAdapterService:
             )
 
         req_hash = _stable_json_hash({"command_id": command_id, "confirm_token": token})
-        tenant_id = _resolve_identity_tenant(identity)
+        tenant_id = resolve_identity_tenant(identity)
         clean_tenant_id = str(tenant_id or "").strip() or None
         caller_op_id = getattr(identity, "operator_id", None) or "operator"
 
@@ -2249,7 +2286,7 @@ class CommandAdapterService:
                 precondition_failed="command_store_unconfigured",
             )
 
-        caller_tenant = _resolve_identity_tenant(identity)
+        caller_tenant = resolve_identity_tenant(identity)
         clean_caller_tenant = str(caller_tenant or "").strip() or None
         token_id_param = str(x_confirm_token or payload.get("confirm_token") or payload.get("confirmToken") or "").strip()
         if token_id_param:
@@ -2953,7 +2990,7 @@ def _gov_bff_action_command(
         )
 
     op_id = str(getattr(identity, "operator_id", None) or getattr(identity, "actor", None) or "").strip() or "unknown"
-    ten_id = _resolve_identity_tenant(identity)
+    ten_id = resolve_identity_tenant(identity)
     owner_name = "ResearchWriteOwner" if ent_type_str.lower() in ("experiment", "researchexperiment") else ent_type_str
 
     durable = None

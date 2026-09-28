@@ -35,6 +35,7 @@ from ..models import (
     safe_redact_scalar_ref,
     EVIDENCE_CAPABILITY_MAP,
 )
+from ..command_adapters.service import resolve_identity_tenant
 
 
 class ApprovalQueueReaderPort(Protocol):
@@ -150,22 +151,6 @@ class GovernanceAuthorityUnavailable(RuntimeError):
 
 def _identity_operator_id(identity: Any) -> str:
     return str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator")
-
-
-def _identity_tenant_id(identity: Any) -> Optional[str]:
-    # ``OperatorIdentity`` carries tenant in ``identity.claims``, not a
-    # top-level ``tenant_id``/``tenant`` attribute; reading those attributes
-    # directly always returns None for a real JWT identity and silently
-    # disables tenant scoping for durable governance writes.
-    claims = getattr(identity, "claims", None)
-    if isinstance(claims, dict):
-        for key in ("tenant_id", "tenantId", "tenant"):
-            value = claims.get(key)
-            clean = str(value or "").strip()
-            if clean:
-                return clean
-    val = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
-    return str(val).strip() if val else None
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -463,7 +448,7 @@ class GovernanceService:
         cmd = self.command_store.get_command_by_idempotency_key(
             idempotency_key,
             operator_id=_identity_operator_id(identity),
-            tenant_id=_identity_tenant_id(identity),
+            tenant_id=resolve_identity_tenant(identity),
         )
         if cmd is not None:
             foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
@@ -532,7 +517,7 @@ class GovernanceService:
             from ..models import CommandType, ObjectType, TargetObject
             cmd_type = CommandType.APPROVE_DECISION if decision == "approve" else CommandType.REJECT_DECISION
             operator_id = _identity_operator_id(identity)
-            tenant_id = _identity_tenant_id(identity)
+            tenant_id = resolve_identity_tenant(identity)
             audit_context = {
                 "operator_id": operator_id,
                 "correlation_id": correlation_id,

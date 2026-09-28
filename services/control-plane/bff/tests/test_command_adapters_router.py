@@ -867,10 +867,53 @@ def test_main_app_command_confirmation_degraded_read_surface_regression() -> Non
             os.environ["BFF_READ_SURFACE_STATE"] = orig_env
 
 
+# Every claim path ``resolve_identity_tenant`` (services/control-plane/bff/
+# command_adapters/service.py) recognises, mirroring auth/policy.py's
+# ``bff_me_tenant_payload`` claim set. Each entry builds the JWT claim
+# fragment for one authenticated tenant-claim shape.
+_TENANT_CLAIM_SHAPES: Dict[str, Any] = {
+    "tenant_id": lambda tenant: {"tenant_id": tenant},
+    "tenantId": lambda tenant: {"tenantId": tenant},
+    "tenant.id": lambda tenant: {"tenant": {"id": tenant}},
+    "tid": lambda tenant: {"tid": tenant},
+    "org_id": lambda tenant: {"org_id": tenant},
+    "organization.id": lambda tenant: {"organization": {"id": tenant}},
+    "tenant_ids": lambda tenant: {"tenant_ids": [tenant]},
+    "tenantIds": lambda tenant: {"tenantIds": [tenant]},
+    # Pseudo-shapes exercising the two fail-closed paths in
+    # ``resolve_identity_tenant``: no recognised tenant claim at all, and
+    # two recognised claims that disagree (an identity must not silently
+    # bind to an arbitrary one of several distinct tenant claims).
+    "absent": lambda tenant: {},
+    "ambiguous": lambda tenant: {"tenant_id": tenant, "tid": f"{tenant}-ambiguous-alt"},
+}
+
+
+def _encode_tenant_identity(
+    *, secret: str, sub: str, tenant: str, claim_shape: str, issuer: str, audience: str
+) -> str:
+    import time
+
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    now = int(time.time())
+    claims = {
+        "sub": sub,
+        "roles": ["operator"],
+        **_TENANT_CLAIM_SHAPES[claim_shape](tenant),
+        "iss": issuer,
+        "aud": audience,
+        "iat": now - 10,
+        "exp": now + 300,
+    }
+    return encode_jwt_hs256(claims, secret=secret)
+
+
+@pytest.mark.parametrize("claim_shape", sorted(_TENANT_CLAIM_SHAPES))
 @pytest.mark.parametrize("restart", [False, True])
 @pytest.mark.parametrize("route", ["confirmation", "guarded"])
 def test_signed_identity_tenant_cannot_consume_foreign_confirm_token(
-    tmp_path, monkeypatch, restart, route
+    tmp_path, monkeypatch, restart, route, claim_shape
 ) -> None:
     """Regression: a real, signed OperatorIdentity JWT must scope confirm
     tokens by tenant. ``CommandAdapterService`` previously resolved the
@@ -880,15 +923,24 @@ def test_signed_identity_tenant_cannot_consume_foreign_confirm_token(
     (tenant lives in ``identity.claims``, not a top-level attribute). That
     bug silently disabled ``check_confirm_token_tenant_authorization``, so a
     caller from tenant B with the same JWT subject as tenant A could confirm
-    or redeem a confirm token tenant A issued. Uses real signed HS256 JWTs
-    through the production ``extract_identity_jwt`` (not a test identity
-    stub) against both durable-write routes, with and without service/store
-    reconstruction (restart), to prove the durable rejection survives
-    process restart.
-    """
-    import time
+    or redeem a confirm token tenant A issued.
 
-    from services.runtime_auth_inbound import encode_jwt_hs256
+    A follow-up defect narrowed the fix to only ``tenant_id``/``tenantId``/
+    ``tenant`` claims, so a real ``tid`` (or ``org_id``/``organization.id``/
+    ``tenant_ids``/``tenantIds``) identity still resolved to ``None`` and
+    fell through the same "tenant missing" 403, masking the correct 403 for
+    the wrong reason -- and, more importantly, was silently fail-open for
+    any caller shape the resolver did not special-case. ``claim_shape`` is
+    parametrized over every claim path the canonical resolver supports,
+    plus a caller with no recognised tenant claim at all (``absent``) and a
+    caller whose claims name two distinct tenants (``ambiguous``), both of
+    which must also fail closed rather than silently pick one.
+
+    Uses real signed HS256 JWTs through the production
+    ``extract_identity_jwt`` (not a test identity stub) against both
+    durable-write routes, with and without service/store reconstruction
+    (restart), to prove the durable rejection survives process restart.
+    """
     from services.control_plane.bff.auth.policy import extract_identity_jwt
     from services.control_plane.bff.command_adapters.service import CommandAdapterService
 
@@ -899,24 +951,16 @@ def test_signed_identity_tenant_cannot_consume_foreign_confirm_token(
     monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "tenant-identity-regression")
     monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
 
-    def headers(tenant: str, idempotency_key: str) -> Dict[str, str]:
-        now = int(time.time())
-        token = encode_jwt_hs256(
-            {
-                "sub": "same-actor",
-                "roles": ["operator"],
-                "tenant_id": tenant,
-                "iss": "tenant-identity-regression",
-                "aud": "tenant-identity-regression",
-                "iat": now - 10,
-                "exp": now + 300,
-            },
+    def headers(tenant: str, idempotency_key: str, *, shape: str = "tenant_id") -> Dict[str, str]:
+        token = _encode_tenant_identity(
             secret=secret,
+            sub="same-actor",
+            tenant=tenant,
+            claim_shape=shape,
+            issuer="tenant-identity-regression",
+            audience="tenant-identity-regression",
         )
-        auth = "Bearer " + token
-        identity = extract_identity_jwt(auth)
-        assert identity.claims["tenant_id"] == tenant
-        return {"Authorization": auth, "Idempotency-Key": idempotency_key}
+        return {"Authorization": "Bearer " + token, "Idempotency-Key": idempotency_key}
 
     command_path = str(tmp_path / "commands.jsonl")
 
@@ -949,7 +993,7 @@ def test_signed_identity_tenant_cannot_consume_foreign_confirm_token(
     if restart:
         mounted = client()
 
-    foreign_headers = headers("tenant-b", "foreign-submit")
+    foreign_headers = headers("tenant-b", "foreign-submit", shape=claim_shape)
     if route == "confirmation":
         foreign = mounted.post(
             "/bff/command-confirmations/tenant-a-token/confirm",
@@ -979,4 +1023,78 @@ def test_signed_identity_tenant_cannot_consume_foreign_confirm_token(
     }
     assert foreign.status_code in (403, 404, 428), evidence
     assert len(records) == 1, evidence
+
+
+@pytest.mark.parametrize("claim_shape", ["tenant_id", "tid", "tenant.id"])
+@pytest.mark.parametrize("restart", [False, True])
+def test_signed_identity_same_tenant_confirm_token_idempotency_key_replays(
+    tmp_path, monkeypatch, restart, claim_shape
+) -> None:
+    """Companion to the foreign-tenant rejection above: the legitimate
+    tenant replaying its own ``Idempotency-Key`` for the confirm-token
+    issue route must still return the original durable result rather than
+    raise a conflict or create a second command row, across the same
+    real-JWT tenant-claim shapes and across a service/store restart. This
+    guards against a resolver fix that starts requiring a stronger match
+    (for example both claim value and shape) than the durable idempotency
+    record was actually keyed on.
+    """
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff.command_adapters.service import CommandAdapterService
+
+    secret = "test-tenant-identity-replay-secret"
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "tenant-identity-replay")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "tenant-identity-replay")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+    def headers(idempotency_key: str) -> Dict[str, str]:
+        token = _encode_tenant_identity(
+            secret=secret,
+            sub="same-actor",
+            tenant="tenant-a",
+            claim_shape=claim_shape,
+            issuer="tenant-identity-replay",
+            audience="tenant-identity-replay",
+        )
+        return {"Authorization": "Bearer " + token, "Idempotency-Key": idempotency_key}
+
+    command_path = str(tmp_path / "commands.jsonl")
+
+    def client() -> TestClient:
+        service = CommandAdapterService(
+            command_store=CommandStore(command_path),
+            extract_identity=extract_identity_jwt,
+            check_read_surface_state=lambda: None,
+            process_command_task=lambda command_id: None,
+        )
+        app = FastAPI()
+        app.include_router(create_command_adapters_router(service=service))
+        return TestClient(app)
+
+    mounted = client()
+    payload = {
+        "tokenId": "tenant-a-replay-token",
+        "ttlSeconds": 300,
+        "command": "PauseRuntime",
+        "target_type": "Runtime",
+        "target_id": "isolated-runtime",
+        "operator_id": "same-actor",
+    }
+    first = mounted.post("/bff/confirm-tokens", headers=headers("replay-key"), json=payload)
+    assert first.status_code == 201, first.text
+
+    if restart:
+        mounted = client()
+
+    replay = mounted.post("/bff/confirm-tokens", headers=headers("replay-key"), json=payload)
+    assert replay.status_code == first.status_code, replay.text
+    assert replay.json().get("tokenId") == first.json().get("tokenId")
+
+    records = CommandStore(command_path)._get_all_commands()
+    assert len(records) == 1, {
+        "response_status": replay.status_code,
+        "rows": [record["type"] for record in records],
+    }
 

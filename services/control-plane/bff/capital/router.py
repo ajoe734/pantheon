@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.command_adapters.service import resolve_identity_tenant
 
 from .service import (
     CapitalAuthorityUnavailable,
@@ -83,22 +84,6 @@ def _default_bff_error(status_code: int, code: Any, message: str, reason: Option
 
 def _identity_id(identity: Any) -> str:
     return str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator-1")
-
-
-def _identity_tenant_id(identity: Any) -> Optional[str]:
-    # ``OperatorIdentity`` carries tenant in ``identity.claims``, not a
-    # top-level ``tenant_id``/``tenant`` attribute; reading those attributes
-    # directly always returns None for a real JWT identity and silently
-    # disables tenant scoping for durable capital writes.
-    claims = getattr(identity, "claims", None)
-    if isinstance(claims, dict):
-        for key in ("tenant_id", "tenantId", "tenant"):
-            value = claims.get(key)
-            clean = str(value or "").strip()
-            if clean:
-                return clean
-    direct = getattr(identity, "tenant_id", None) or getattr(identity, "tenant", None)
-    return str(direct).strip() if direct else None
 
 
 def _resolve_idempotency_key(
@@ -332,7 +317,7 @@ def create_capital_router(
         if not name:
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital pool name is required", "name must be a non-empty string")
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("create_pool", payload, actor_id=_identity_id(identity), tenant_id=_identity_tenant_id(identity), key=key)
+        result, replayed = _idempotent_write("create_pool", payload, actor_id=_identity_id(identity), tenant_id=resolve_identity_tenant(identity), key=key)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 5. BFF Capital Pool detail.
@@ -355,7 +340,7 @@ def create_capital_router(
         require_operator_role(identity)
         _pool_or_error(pool_id)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("patch_pool", payload, actor_id=_identity_id(identity), tenant_id=_identity_tenant_id(identity), key=key, target_id=pool_id)
+        result, replayed = _idempotent_write("patch_pool", payload, actor_id=_identity_id(identity), tenant_id=resolve_identity_tenant(identity), key=key, target_id=pool_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 7. Capital pool action command.
@@ -374,7 +359,7 @@ def create_capital_router(
         if not str(action_id).strip():
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital pool action is required")
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("pool_action", {**payload, "action_id": action_id}, actor_id=_identity_id(identity), tenant_id=_identity_tenant_id(identity), key=key, target_id=pool_id)
+        result, replayed = _idempotent_write("pool_action", {**payload, "action_id": action_id}, actor_id=_identity_id(identity), tenant_id=resolve_identity_tenant(identity), key=key, target_id=pool_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 8. Evaluate one policy snapshot before a rebalance proposal is admitted.
@@ -405,7 +390,7 @@ def create_capital_router(
             raise bff_error(403, ErrorCode.FORBIDDEN, "Rebalance approval requires approver authority")
         _rebalance_or_error(rebalance_id)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("approve_rebalance", payload, actor_id=_identity_id(identity), tenant_id=_identity_tenant_id(identity), key=key, target_id=rebalance_id)
+        result, replayed = _idempotent_write("approve_rebalance", payload, actor_id=_identity_id(identity), tenant_id=resolve_identity_tenant(identity), key=key, target_id=rebalance_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 10. Record a second distinct rebalance signature through the owner.
@@ -421,7 +406,7 @@ def create_capital_router(
         require_operator_role(identity)
         _rebalance_or_error(rebalance_id)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("sign_rebalance", payload, actor_id=_identity_id(identity), tenant_id=_identity_tenant_id(identity), key=key, target_id=rebalance_id)
+        result, replayed = _idempotent_write("sign_rebalance", payload, actor_id=_identity_id(identity), tenant_id=resolve_identity_tenant(identity), key=key, target_id=rebalance_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 11. Rebalance list.
@@ -459,7 +444,7 @@ def create_capital_router(
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "capital_pool_id is required")
         _pool_or_error(pool_id)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("create_rebalance", payload, actor_id=_identity_id(identity), tenant_id=_identity_tenant_id(identity), key=key)
+        result, replayed = _idempotent_write("create_rebalance", payload, actor_id=_identity_id(identity), tenant_id=resolve_identity_tenant(identity), key=key)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 13. Apply an already admitted rebalance proposal through the capital owner.
@@ -475,7 +460,7 @@ def create_capital_router(
         require_operator_role(identity)
         _rebalance_or_error(rebalance_id)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("apply_rebalance", payload, actor_id=_identity_id(identity), tenant_id=_identity_tenant_id(identity), key=key, target_id=rebalance_id)
+        result, replayed = _idempotent_write("apply_rebalance", payload, actor_id=_identity_id(identity), tenant_id=resolve_identity_tenant(identity), key=key, target_id=rebalance_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 14. Rebalance detail.
@@ -505,7 +490,7 @@ def create_capital_router(
         if not str(action_id).strip():
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Rebalance action is required")
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("rebalance_action", {**payload, "action_id": action_id}, actor_id=_identity_id(identity), tenant_id=_identity_tenant_id(identity), key=key, target_id=rebalance_id)
+        result, replayed = _idempotent_write("rebalance_action", {**payload, "action_id": action_id}, actor_id=_identity_id(identity), tenant_id=resolve_identity_tenant(identity), key=key, target_id=rebalance_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     def _portfolio_or_error() -> List[Dict[str, Any]]:
@@ -661,7 +646,7 @@ def create_capital_router(
         require_operator_role(identity)
         _rebalance_or_error(rebalance_id)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("patch_rebalance", payload, actor_id=_identity_id(identity), tenant_id=_identity_tenant_id(identity), key=key, target_id=rebalance_id)
+        result, replayed = _idempotent_write("patch_rebalance", payload, actor_id=_identity_id(identity), tenant_id=resolve_identity_tenant(identity), key=key, target_id=rebalance_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     return router
