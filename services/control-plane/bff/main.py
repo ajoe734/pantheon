@@ -116,6 +116,10 @@ from .models import (
     utc_now,
 )
 from .command_queue import CommandStore
+try:
+    from .action_catalog import get_catalog_entry
+except (ImportError, ValueError):
+    from action_catalog import get_catalog_entry
 
 try:
     from . import assistant_conversation_store as _acs_mod
@@ -6933,18 +6937,50 @@ def _gov_bff_action_command(
             meta=_command_response_dry_run_meta(resolved_key),
         )
         return result.model_dump(mode="json")
-    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-    if existing is not None:
-        if existing.get("request_hash") != request_hash:
+
+    if command_store is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Command store is unavailable",
+            "CommandStore is not configured",
+            precondition_failed="command_store_unconfigured",
+        )
+
+    op_id = str(getattr(identity, "operator_id", None) or "").strip() or "unknown"
+    ten_id = str(getattr(identity, "tenant_id", None) or "").strip() or None
+
+    durable = command_store.get_command_by_idempotency_key(
+        resolved_key,
+        operator_id=op_id,
+        tenant_id=ten_id,
+    )
+    if durable is not None:
+        durable_idempotency = (durable.get("foundation") or {}).get("idempotency_record") or {}
+        durable_audit = durable.get("audit") or {}
+        stored_hash = (
+            durable_idempotency.get("request_hash")
+            or durable_audit.get("request_hash")
+            or (durable.get("params") or {}).get("request_hash")
+        )
+        if stored_hash and stored_hash != request_hash:
             raise _bff_error(
                 409,
                 ErrorCode.IDEMPOTENCY_CONFLICT,
                 "Idempotency key was already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
+                f"Key {resolved_key!r} is bound to command {durable.get('command_id')}",
                 precondition_failed="idempotency_conflict",
                 suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
             )
-        return existing["result"]
+        replay = _project_final_command_response(
+            command_id=str(durable["command_id"]),
+            command=CommandType(str(durable["type"])),
+            accepted_at=str(durable.get("submitted_at") or utc_now()),
+            status=CommandStatus(str(durable.get("status") or CommandStatus.SUBMITTED.value)),
+            staleness_warning=None,
+            meta=_command_response_durable_meta(resolved_key, replayed=True),
+        )
+        return replay.model_dump(mode="json") if hasattr(replay, "model_dump") else replay
 
     staleness_warning = _check_read_surface_state()
     catalog_entry = get_catalog_entry(command_type.value)
@@ -6964,8 +7000,9 @@ def _gov_bff_action_command(
         metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
     )
     audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
+        "operator_id": op_id,
+        "tenant_id": ten_id,
+        "roles_at_submission": getattr(identity, "roles", []),
         "action_id": action_id,
         "preconditions_checked": ["authentication", "authorization", "idempotency"],
         "timestamp": submitted_at,
@@ -6990,7 +7027,7 @@ def _gov_bff_action_command(
         "audit_action": audit_action.to_dict(),
     }
     audit_record["foundation"] = foundation_ctx
-    command_store.submit_command(
+    record = command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
         target=target,
@@ -6999,15 +7036,36 @@ def _gov_bff_action_command(
         audit_context=audit_record,
         foundation_context=foundation_ctx,
     )
+    admitted_command_id = str((record or {}).get("command_id") or command_id)
+    admitted_submitted_at = str((record or {}).get("submitted_at") or submitted_at)
+    admitted_status = CommandStatus(str((record or {}).get("status") or CommandStatus.SUBMITTED.value))
+    is_replayed = admitted_command_id != command_id
+    if is_replayed and isinstance(record, dict):
+        durable_idempotency = (record.get("foundation") or {}).get("idempotency_record") or {}
+        durable_audit = record.get("audit") or {}
+        stored_hash = (
+            durable_idempotency.get("request_hash")
+            or durable_audit.get("request_hash")
+            or (record.get("params") or {}).get("request_hash")
+        )
+        if stored_hash and stored_hash != request_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different payload",
+                f"Key {resolved_key!r} is bound to command {admitted_command_id}",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
     result = _project_final_command_response(
-        command_id=command_id,
+        command_id=admitted_command_id,
         command=command_type,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
+        accepted_at=admitted_submitted_at,
+        status=admitted_status,
         staleness_warning=staleness_warning,
+        meta=_command_response_durable_meta(resolved_key, replayed=is_replayed) if is_replayed else None,
     )
     res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": res_dict}
     return res_dict
 
 def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> Optional[str]:

@@ -47,17 +47,45 @@ class _InMemoryOwnerStore:
     """In-memory stand-in for PostgresJsonOwnerStore used for isolated tests."""
 
     def __init__(self) -> None:
-        self._data: Dict[str, Dict[str, Any]] = {}
+        import threading
+        self.rows: Dict[str, Dict[str, Any]] = {}
+        self.lock = threading.Lock()
+
+    @property
+    def _data(self) -> Dict[str, Dict[str, Any]]:
+        return self.rows
+
+    @_data.setter
+    def _data(self, val: Dict[str, Dict[str, Any]]) -> None:
+        self.rows = val
 
     def put(self, record_id: str, payload: Dict[str, Any]) -> None:
-        self._data[record_id] = json.loads(json.dumps(payload))
+        with self.lock:
+            self.rows[record_id] = json.loads(json.dumps(payload))
 
     def get(self, record_id: str) -> Optional[Dict[str, Any]]:
-        record = self._data.get(record_id)
-        return json.loads(json.dumps(record)) if record else None
+        with self.lock:
+            record = self.rows.get(record_id)
+            return json.loads(json.dumps(record)) if record else None
 
     def list_all(self, *, conn: Optional[Any] = None) -> List[Dict[str, Any]]:
-        return [json.loads(json.dumps(v)) for v in self._data.values()]
+        with self.lock:
+            return [json.loads(json.dumps(v)) for v in self.rows.values()]
+
+    def compare_and_set(
+        self,
+        key: str,
+        expected: Dict[str, Any],
+        value: Dict[str, Any],
+        *,
+        conn: Optional[Any] = None,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        with self.lock:
+            current = self.rows.get(key)
+            if current != expected:
+                return False, json.loads(json.dumps(current)) if current is not None else None
+            self.rows[key] = json.loads(json.dumps(value))
+            return True, json.loads(json.dumps(value))
 
 
 # =============================================================================

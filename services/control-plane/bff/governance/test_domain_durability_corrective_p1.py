@@ -2251,5 +2251,151 @@ def test_mounted_legacy_cancel_must_fail_closed_before_mutation():
     assert result.status_code >= 500 and row["status"] == "queued", "Incompatible owner silently accepted cancellation without authenticated actor/key/hash"
 
 
+def _make_mounted_experiment_action_client(tmp_path, monkeypatch, identity=None, owner=None, store=None):
+    from services.control_plane.bff import main
+    from services.control_plane.bff.models import CommandType, ObjectType
+    if store is None:
+        store = CommandStore(str(tmp_path / "commands.jsonl"))
+    monkeypatch.setattr(main, "command_store", store)
+    monkeypatch.setattr(main, "_request_dry_run_requested", lambda: False)
+    monkeypatch.setattr(main, "_check_read_surface_state", lambda: None)
+    if identity is None:
+        identity = SimpleNamespace(operator_id="actor-a", tenant_id="tenant-a", roles=["admin", "operator"], claims={}, token_kind="stub")
+    if owner is None:
+        owner = ResearchWriteOwner(tickets_store=CASStore(), experiments_store=CASStore(), notes_store=AtomicIO())
+    reads = ReadSurfacePorts(research_knowledge_source=DefaultResearchKnowledgeSourcePort(research_write_owner=owner))
+
+    def require_op(i):
+        roles = getattr(i, "roles", [])
+        if "operator" not in roles and "admin" not in roles:
+            raise HTTPException(403, detail="Forbidden: operator role required")
+
+    app = FastAPI()
+    app.include_router(create_research_router(
+        read_surface=reads,
+        extract_identity=lambda auth: identity,
+        require_read_role=lambda i: None,
+        require_operator_role=require_op,
+        bff_error=lambda s, c, m, *a, **kw: HTTPException(s, detail=m),
+        utc_now=lambda: "2026-09-28T00:00:00Z",
+        submit_experiment_action=lambda entity_type, entity_id, action_id, key, ident, payload: main._gov_bff_action_command(
+            ObjectType.EXPERIMENT, entity_id, action_id, key, ident, payload, CommandType.EXPERIMENT_ACTION
+        ),
+    ))
+    return TestClient(app, raise_server_exceptions=False), main, identity, owner, store
+
+
+def test_mounted_experiment_action_actor_scope_and_restart(tmp_path, monkeypatch):
+    client, main, identity, owner, store = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    exp = client.post("/bff/experiments", json={"name": "scoped-action-test"}).json()
+    path = f"/bff/experiments/{exp['experiment_id']}/actions/cancel"
+
+    # Actor-A submits action
+    res_a = client.post(path, json={"reason": "actor-a cancel"}, headers={"Idempotency-Key": "shared-action-key"})
+    assert res_a.status_code == 202
+    cmd_a = res_a.json()["data"]["command_id"]
+
+    # Actor-B submits same key -> must get a distinct command_id (actor isolation)
+    identity.operator_id = "actor-b"
+    res_b = client.post(path, json={"reason": "actor-b cancel"}, headers={"Idempotency-Key": "shared-action-key"})
+    assert res_b.status_code == 202
+    cmd_b = res_b.json()["data"]["command_id"]
+    assert cmd_a != cmd_b, "Distinct actors must not share or replay identical command IDs"
+
+    # Simulate restart: new CommandStore, switch back to Actor-A
+    identity.operator_id = "actor-a"
+    monkeypatch.setattr(main, "command_store", CommandStore(str(tmp_path / "commands.jsonl")))
+    replay_a = client.post(path, json={"reason": "actor-a cancel"}, headers={"Idempotency-Key": "shared-action-key"})
+    assert replay_a.status_code == 202
+    cmd_replay = replay_a.json()["data"]["command_id"]
+    assert cmd_replay == cmd_a, "Restarted replay must return original durable command_id"
+
+    # Verify CommandStore only contains 2 commands (one for actor-a, one for actor-b)
+    all_cmds = main.command_store._get_all_commands()
+    assert len(all_cmds) == 2
+    assert {c["command_id"] for c in all_cmds} == {cmd_a, cmd_b}
+
+
+def test_mounted_experiment_action_idempotency_conflict(tmp_path, monkeypatch):
+    client, main, identity, owner, store = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    exp = client.post("/bff/experiments", json={"name": "conflict-action-test"}).json()
+    path = f"/bff/experiments/{exp['experiment_id']}/actions/cancel"
+
+    res1 = client.post(path, json={"reason": "initial payload"}, headers={"Idempotency-Key": "same-action-key"})
+    assert res1.status_code == 202
+
+    res_conflict = client.post(path, json={"reason": "conflicting payload"}, headers={"Idempotency-Key": "same-action-key"})
+    assert res_conflict.status_code == 409
+    assert "Idempotency key was already used with a different payload" in res_conflict.text
+
+
+def test_mounted_experiment_action_negative_auth(tmp_path, monkeypatch):
+    client, main, identity, owner, store = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    exp = client.post("/bff/experiments", json={"name": "auth-action-test"}).json()
+    path = f"/bff/experiments/{exp['experiment_id']}/actions/cancel"
+
+    identity.roles = ["viewer"]
+    res_forbidden = client.post(path, json={}, headers={"Idempotency-Key": "unauth-key"})
+    assert res_forbidden.status_code == 403
+
+
+def test_mounted_experiment_action_failure_paths(tmp_path, monkeypatch):
+    client, main, identity, owner, store = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    exp = client.post("/bff/experiments", json={"name": "failure-action-test"}).json()
+    valid_path = f"/bff/experiments/{exp['experiment_id']}/actions/cancel"
+
+    # Nonexistent experiment returns 404
+    res_404 = client.post("/bff/experiments/exp-missing-99999/actions/cancel", json={}, headers={"Idempotency-Key": "key-404"})
+    assert res_404.status_code == 404
+
+    # Storage failure (OSError) on submit_command fails closed
+    with patch.object(main.command_store, "submit_command", side_effect=OSError("disk full")):
+        res_fail = client.post(valid_path, json={}, headers={"Idempotency-Key": "key-disk-fail"})
+        assert res_fail.status_code >= 500
+
+    # Unconfigured command store returns 503
+    monkeypatch.setattr(main, "command_store", None)
+    res_503 = client.post(valid_path, json={}, headers={"Idempotency-Key": "key-503"})
+    assert res_503.status_code == 503
+
+
+def test_mounted_experiment_action_concurrent_conflict(tmp_path, monkeypatch):
+    client, main, identity, owner, store = _make_mounted_experiment_action_client(tmp_path, monkeypatch)
+    exp = client.post("/bff/experiments", json={"name": "concurrent-action-test"}).json()
+    path = f"/bff/experiments/{exp['experiment_id']}/actions/cancel"
+
+    original = main.command_store.get_command_by_idempotency_key
+    barrier = Barrier(2)
+    lock = Lock()
+    counter = {"n": 0}
+
+    def interleaved_lookup(*args, **kwargs):
+        result = original(*args, **kwargs)
+        with lock:
+            counter["n"] += 1
+            first_pair = counter["n"] <= 2
+        if first_pair:
+            barrier.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(main.command_store, "get_command_by_idempotency_key", interleaved_lookup)
+
+    def submit(reason):
+        return client.post(path, json={"reason": reason}, headers={"Idempotency-Key": "concurrent-key"})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a = pool.submit(submit, "reason-one")
+        b = pool.submit(submit, "reason-two")
+        responses = [a.result(timeout=20), b.result(timeout=20)]
+
+    assert sorted(r.status_code for r in responses) == [202, 409], (
+        f"Concurrent conflicting payloads must yield [202, 409], got {[r.status_code for r in responses]}"
+    )
+    all_cmds = main.command_store._get_all_commands()
+    assert len(all_cmds) == 1
+
+
+
+
 
 
