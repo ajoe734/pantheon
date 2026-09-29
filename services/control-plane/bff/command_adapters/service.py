@@ -2430,8 +2430,14 @@ class CommandAdapterService:
                 validate_capital_authority_target_binding(effective_cmd)
             validate_paper_runtime_authority_target_binding(cmd)
             ensure_live_broker_scope_allowed(cmd, payload)
+            if effective_cmd is not cmd:
+                ensure_live_broker_scope_allowed(effective_cmd, payload)
             validate_drawer_runtime_target(cmd)
+            if effective_cmd is not cmd:
+                validate_drawer_runtime_target(effective_cmd)
             validate_final_command_target_type(cmd)
+            if effective_cmd is not cmd:
+                validate_final_command_target_type(effective_cmd)
             # A generic wrapper command (RuntimeAction, ReviewAction, ...)
             # must never be admitted under its own (deliberately weak)
             # catalog entry once action_id names a distinct canonical

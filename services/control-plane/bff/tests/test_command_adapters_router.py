@@ -3145,3 +3145,363 @@ def test_no_raw_confirm_token_param_reads_remain_in_executors_and_adapters():
                     continue
                 offenders.append(f"{path.name}:{lineno}: {line.strip()}")
     assert not offenders, offenders
+
+
+# --------------------------------------------------------------------------- #
+# Wrapper -> canonical command parity, every (wrapper, action_id) pair
+# (DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 independent review REJECT at PR
+# #5998 head 45bf8c93f: PersonaAction with params.action_id=AdvanceLifecycle
+# bypassed the canonical approval/confirm-token preconditions).
+# --------------------------------------------------------------------------- #
+
+_WP_ROLES = [
+    "operator", "admin", "approver", "reviewer", "runtime_operator", "persona_operator",
+    "live_owner_approver", "incident_commander", "deployment_operator", "capital_operator",
+]
+
+
+def _wp_inventory_pairs():
+    pairs = []
+    for wrapper, aliases in sorted(runtime_adapter.wrapper_canonical_inventory().items()):
+        for alias, canonical in sorted(aliases.items()):
+            pairs.append((wrapper, alias, canonical))
+    return pairs
+
+
+# Direct commands whose target type is not derivable from the catalog.
+_WP_TARGET_TYPE_OVERRIDES = {"HardRollback": "Runtime", "ExecuteRollback": "Runtime"}
+
+
+def _wp_target_for(canonical: str):
+    from services.control_plane.bff.command_adapters.preconditions import _FINAL_COMMAND_TARGET_TYPES
+    from services.control_plane.bff.models import CommandType
+
+    forced = _FINAL_COMMAND_TARGET_TYPES.get(CommandType(canonical))
+    entry = get_catalog_entry(canonical)
+    target_type = forced.value if forced is not None else (entry.entity_type if entry is not None else "Runtime")
+    target_type = _WP_TARGET_TYPE_OVERRIDES.get(canonical, target_type)
+    if canonical.startswith("HumanGate"):
+        return target_type, "approval:wp-1"
+    return target_type, "wp-" + target_type.lower() + "-1"
+
+
+_WP_EXTRA_PARAMS: Dict[str, Dict[str, Any]] = {
+    "ActivateKillSwitch": {"activate": True, "scope": "all"},
+    "ApproveDeployment": {"approval_decision": "approve"},
+    "ApprovePool": {"memo": "approve pool for wrapper parity"},
+    "ApproveRollback": {"rollback_id": "rb-wp"},
+    "RejectRollback": {"rollback_id": "rb-wp", "rejection_reason": "wrapper parity"},
+    "EmergencyContainment": {"action": "freeze", "trigger": "hard_risk_breach", "evidence_refs": ["ev-wp"]},
+    "EscalateDiff": {"escalation_reason": "wrapper parity", "plan_id": "wp-deploymentplan-1"},
+    "ExecuteRollback": {"rollback_target_type": "runtime", "rollback_to_version": "v1", "target_id": "wp-runtime-1"},
+    "HumanGateExtendTtl": {"ttl_seconds": 300},
+    "HardRollback": {"target_artifact_id": "art-wp", "rollback_to_version": "v1"},
+    "IssueRiskOff": {"reduce_exposure_pct": 10},
+    "IssueSafeMode": {"safe_mode_level": "soft"},
+    "RecordSponsorDecision": {"committee_id": "c-wp", "rationale_ref": "r-wp", "sponsor_decision": "approved"},
+    "RejectDecision": {"rejection_reason": "wrapper parity"},
+    "RequestApprovalRevision": {"revision_notes": "wrapper parity"},
+    "RemediateSentinelIntervention": {"remediation_action": "resolve"},
+}
+
+
+class _WrapperParityHarness:
+    """Signed-JWT mounted /bff/v1/commands over a durable CommandStore, with
+    only downstream HTTP transports and read-store lookups stubbed."""
+
+    def __init__(self, tmp_path, monkeypatch, canonical, roles):
+        secret = "wrapper-parity-secret"
+        aud = "wrapper-parity"
+        monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://wrapper-parity.invalid")
+        monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", "http://wrapper-parity-capital.invalid")
+        monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", "http://wrapper-parity-governance.invalid")
+        monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+        monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+        monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", aud)
+        monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", aud)
+        monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+        self.secret, self.aud, self.roles = secret, aud, roles
+        self.canonical = canonical
+        self.target_type, self.target_id = _wp_target_for(canonical)
+        self.calls: List[Dict[str, Any]] = []
+        binding = {
+            "runtime_id": self.target_id,
+            "binding_id": "bind-wp",
+            "deployment_mode": "paper",
+            "status": "active",
+            "metadata": {"tenant_id": "tenant-a"},
+        }
+        self.approved = True
+        canonical_name = canonical
+        harness = self
+
+        def approval(_):
+            if not harness.approved:
+                return None
+            return {
+                "outcome": "approved",
+                "command": canonical_name,
+                "target": {"type": harness.target_type, "id": harness.target_id},
+            }
+
+        read_store_stub = SimpleNamespace(
+            get_approval_decision=approval,
+            get_persona=lambda pid: {"persona_id": pid},
+            get_runtime_binding_by_runtime_id=lambda rid: dict(binding) if rid == self.target_id else None,
+            get_runtime_binding=lambda bid: dict(binding) if bid == "bind-wp" else None,
+        )
+
+        def fake_http(url, payload=None, **kwargs):
+            if payload is not None:
+                kwargs["payload"] = payload
+            self.calls.append({"url": url, "method": kwargs.get("method"), "payload": kwargs.get("payload")})
+            return {"status": "accepted", "audit_id": "audit-wp"}
+
+        self.command_path = str(tmp_path / "commands.jsonl")
+        self.store = CommandStore(self.command_path)
+        service = CommandAdapterService(
+            command_store=self.store,
+            extract_identity=extract_identity_jwt,
+            check_read_surface_state=lambda: None,
+            process_command_task=lambda command_id: None,
+            get_read_store=lambda: read_store_stub,
+        )
+        app = FastAPI()
+        app.include_router(create_command_adapters_router(service=service))
+        from services.control_plane.bff.control_loops.router import create_control_loops_router
+
+        app.include_router(
+            create_control_loops_router(
+                extract_identity=extract_identity_jwt,
+                submit_final_command_admission=service.submit_command_admission,
+                submit_sem_command=service.sem_command_response,
+            )
+        )
+        self.client = TestClient(app)
+        monkeypatch.setattr(command_executor, "_post_json", fake_http)
+        from services.control_plane.bff.command_adapters import (
+            capital_adapter,
+            deployment_adapter,
+            governance_adapter,
+            incident_adapter,
+            persona_adapter,
+        )
+
+        for module in (runtime_adapter, capital_adapter, deployment_adapter, governance_adapter, incident_adapter, persona_adapter):
+            monkeypatch.setattr(module, "http_request_json", fake_http)
+        monkeypatch.setattr(runtime_adapter, "_get_read_store", lambda: read_store_stub)
+        # RecordSponsorDecision admission reads a committee read projection;
+        # stub that read-only projection (never the admission logic itself).
+        from services.control_plane.bff.governance.service import GovernanceService
+
+        monkeypatch.setattr(
+            GovernanceService,
+            "committee_projection",
+            lambda *a, **k: {
+                "meta": {"surfaces": {"committee_board": "available"}},
+                "allowedActions": {"canRecordSponsorDecision": True},
+            },
+        )
+
+    def jwt(self, actor, roles=None):
+        now = int(time.time())
+        return encode_jwt_hs256(
+            {"sub": actor, "roles": roles or self.roles, "iss": self.aud, "aud": self.aud, "iat": now - 10, "exp": now + 300, "tenant_id": "tenant-a", "mfa_verified": True},
+            secret=self.secret,
+        )
+
+    def issue_token(self, token_id, actor):
+        issued = self.client.post(
+            "/bff/confirm-tokens",
+            headers={"Authorization": "Bearer " + self.jwt(actor), "Idempotency-Key": "issue-" + token_id},
+            json={
+                "tokenId": token_id,
+                "ttlSeconds": 300,
+                "command": self.canonical,
+                "target_type": self.target_type,
+                "target_id": self.target_id,
+                "operator_id": actor,
+            },
+        )
+        assert issued.status_code == 201, issued.text
+
+    def sign_two_man(self, signature_id, actor):
+        for signer in (actor, "second-wp-operator"):
+            signed = self.client.post(
+                f"/bff/v5/interventions/{signature_id}/two-man-sign",
+                headers={"Authorization": "Bearer " + self.jwt(signer), "Idempotency-Key": f"sign-{signature_id}-{signer}"},
+                json={
+                    "twoManSignatureId": signature_id,
+                    "command": self.canonical,
+                    "target": {"type": self.target_type, "id": self.target_id},
+                    "reason": "wrapper parity evidence",
+                },
+            )
+            assert signed.status_code == 202, signed.text
+
+    def base_params(self):
+        params: Dict[str, Any] = {
+            "target_state": "paper_owner",
+            "persona_id": self.target_id,
+            "runtime_id": self.target_id,
+            "pool_id": self.target_id,
+            "rebalance_id": self.target_id,
+            "deployment_plan_id": self.target_id,
+            "intervention_id": self.target_id,
+            "alert_id": self.target_id,
+            "decision_id": self.target_id,
+            "gate_id": self.target_id,
+            "human_gate_item_id": self.target_id,
+        }
+        # A ReviewAction wrapper must carry the HumanGate decision itself
+        # (direct HumanGate* commands derive it from the command name).
+        decisions = {
+            "HumanGateApprove": "approve",
+            "HumanGateReject": "reject",
+            "HumanGateRequestMoreEvidence": "request_more_evidence",
+            "HumanGateRevoke": "revoke",
+            "HumanGateExtendTtl": "extend_ttl",
+        }
+        if self.canonical in decisions:
+            params["decision"] = decisions[self.canonical]
+        params.update(_WP_EXTRA_PARAMS.get(self.canonical, {}))
+        return params
+
+    def seed_rebalance_evidence(self, actor, signature_id, decision_id, *, with_approval):
+        """ApprovedApply consumes trusted server-managed rebalance evidence
+        rows (RebalanceApproval/RebalanceTwoManSign), which only the
+        authenticated capital evidence routes may produce; seed the same
+        durable rows those routes write."""
+        producer = "bff.rebalance-evidence.v1"
+        binding = {"command": self.canonical, "target": {"type": self.target_type, "id": self.target_id}}
+
+        def row(kind, params):
+            return {
+                "command_id": f"seed-{kind}-{signature_id}",
+                "type": kind,
+                "status": "executed",
+                "operator_id": actor,
+                "params": {**binding, **params},
+                "target": {"type": self.target_type, "id": self.target_id},
+                "foundation": {"trusted_evidence_producer": producer},
+                "audit": {"trusted_evidence_producer": producer},
+            }
+
+        if with_approval:
+            self.store._save_command(row("RebalanceApproval", {"approval_decision_id": decision_id, "outcome": "approved"}))
+        self.store._save_command(
+            row(
+                "RebalanceTwoManSign",
+                {"two_man_signature_id": signature_id, "first_operator_id": actor, "second_operator_id": "second-wp-operator"},
+            )
+        )
+
+
+def _wp_run(tmp_path, monkeypatch, *, wrapper, alias, canonical, mode, restart, roles=None):
+    """Submit ``canonical`` directly (wrapper None) or as ``wrapper`` with
+    ``params.action_id=alias``; return the observable outcome."""
+    entry = get_catalog_entry(canonical)
+    harness = _WrapperParityHarness(
+        tmp_path, monkeypatch, canonical, ["operator"] if mode == "operator_only" else (roles or _WP_ROLES)
+    )
+    actor = "wp-actor"
+    tag = f"{wrapper or 'direct'}-{alias or canonical}-{mode}-{restart}"
+    token_id = "wp-token-" + tag
+    params = harness.base_params()
+    headers = {"Authorization": "Bearer " + harness.jwt(actor), "Idempotency-Key": "cmd-" + tag}
+
+    if getattr(entry, "requires_confirm_token", False):
+        harness.issue_token(token_id, actor)
+        if mode == "missing_token":
+            pass
+        elif mode == "invalid_token":
+            headers["X-Confirm-Token"] = "wp-token-does-not-exist"
+        else:
+            headers["X-Confirm-Token"] = token_id
+    if getattr(entry, "requires_approval", False) and mode != "missing_approval":
+        params["approval_decision_id"] = "approval-wp"
+    if mode == "missing_approval":
+        harness.approved = False
+    if getattr(entry, "requires_two_man", False):
+        signature_id = "tms-wp-" + tag
+        if canonical == "ApprovedApply":
+            harness.seed_rebalance_evidence(actor, signature_id, "approval-wp", with_approval=mode != "missing_approval")
+        else:
+            harness.sign_two_man(signature_id, actor)
+        params["two_man_signature_id"] = signature_id
+
+    submitted = wrapper or canonical
+    if wrapper:
+        params["action_id"] = alias
+    response = harness.client.post(
+        "/bff/v1/commands",
+        headers=headers,
+        json={
+            "command": submitted,
+            "target": {"type": harness.target_type, "id": harness.target_id},
+            "params": params,
+            "audit_context": {"reason": "wrapper parity regression"},
+        },
+    )
+    rows = [row for row in harness.store._get_all_commands() if row["type"] == submitted]
+    store = CommandStore(harness.command_path) if restart else harness.store
+    if restart:
+        rows = [row for row in store._get_all_commands() if row["type"] == submitted]
+    for row in rows:
+        asyncio.run(process_command(row["command_id"], command_store=store))
+    final = store.get_command(rows[0]["command_id"]) if rows else {}
+    return {
+        "status_code": response.status_code,
+        "rows": len(rows),
+        "final_status": final.get("status"),
+        "calls": len(harness.calls),
+        "token_forwarded": [
+            "bound" if c["payload"].get("confirm_token") == token_id else c["payload"].get("confirm_token")
+            for c in harness.calls
+            if isinstance(c.get("payload"), dict) and c["payload"].get("confirm_token")
+        ],
+        "detail": response.text[:300],
+    }
+
+
+def _wp_modes(canonical):
+    entry = get_catalog_entry(canonical)
+    modes = ["accepted", "operator_only"]
+    if getattr(entry, "requires_confirm_token", False):
+        modes += ["missing_token", "invalid_token"]
+    if getattr(entry, "requires_approval", False):
+        modes.append("missing_approval")
+    return modes
+
+
+_WP_CASES = [
+    (wrapper, alias, canonical, mode)
+    for wrapper, alias, canonical in _wp_inventory_pairs()
+    for mode in _wp_modes(canonical)
+]
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("wrapper,alias,canonical,mode", _WP_CASES)
+def test_wrapper_alias_admission_matches_direct_canonical_command(tmp_path, monkeypatch, wrapper, alias, canonical, mode, restart):
+    direct = _wp_run(tmp_path / "direct", monkeypatch, wrapper=None, alias=None, canonical=canonical, mode=mode, restart=restart) if (tmp_path / "direct").mkdir() is None else None
+    wrapped = _wp_run(tmp_path / "wrapped", monkeypatch, wrapper=wrapper, alias=alias, canonical=canonical, mode=mode, restart=restart) if (tmp_path / "wrapped").mkdir() is None else None
+    evidence = {"direct": direct, "wrapped": wrapped}
+    # Identical admission outcome and durable-row effect ...
+    assert wrapped["status_code"] == direct["status_code"], evidence
+    assert wrapped["rows"] == direct["rows"], evidence
+    if mode not in {"accepted", "operator_only"}:
+        # ... and a negative case never leaves a durable row or dispatches.
+        assert direct["status_code"] >= 400, evidence
+        assert wrapped["rows"] == 0 and wrapped["calls"] == 0, evidence
+    if mode == "accepted":
+        if canonical in {"RebalanceApproval", "RebalanceTwoManSign"}:
+            assert direct["status_code"] == 403, evidence
+        else:
+            assert direct["status_code"] == 202, evidence
+    if direct["status_code"] == 202 and wrapper in runtime_adapter.DISPATCH_RESOLVED_WRAPPERS:
+        # Execution runs the canonical command's own executor: the same
+        # terminal status, dispatch count, and bound token reach the owner.
+        assert wrapped["final_status"] == direct["final_status"], evidence
+        assert wrapped["calls"] == direct["calls"], evidence
+        assert wrapped["token_forwarded"] == direct["token_forwarded"], evidence
