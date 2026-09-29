@@ -2090,7 +2090,7 @@
       }
     ],
     "other_admission_rewritten_fields": "approval_decision_id/approval_ref and two_man_signature_id: executors already read the canonical names (two_man_signature_id accepted by StartRuntime executor/adapter); no reader of a removed pre-canonical alias found. HumanGate aliases resolved via resolve_effective_action (prior rounds).",
-    "parametrized_mounted_test": "services/control-plane/bff/tests/test_confirm_token_canonical_inventory.py: StartRuntime, RestartPaperRuntime, RestartTelemetryBridge, StartPaperMonitoringSession, ProbeTelemetryIngest (direct + RuntimeAction wrapped) and AdvanceLifecycle (direct), each before/after CommandStore restart, real confirm token + two-man/approval evidence; plus static no-raw-read guard",
+    "parametrized_mounted_test": "services/control-plane/bff/tests/test_command_adapters_router.py::test_mounted_confirm_token_reaches_every_executor: StartRuntime, RestartPaperRuntime, RestartTelemetryBridge, StartPaperMonitoringSession, ProbeTelemetryIngest (direct + RuntimeAction wrapped) and AdvanceLifecycle (direct), each before/after CommandStore restart, real confirm token + two-man/approval evidence; plus static no-raw-read guard",
     "test_result": "23 passed; with old runtime_adapter._execute_start reader restored: 3 failed (StartRuntime wrapped x2 restart modes + static guard)",
     "regression_batch": "321 passed, 2 subtests passed (inventory, command_adapters_router, aud_002_audit_action_write_engine, management_domain_actions)",
     "grep_search": "grep -rnE 'params(\\.get\\(|\\[)\\s*[\"']confirm_token[\"']' command_executor.py command_adapters/*.py => only base.py canonical_confirm_token"
