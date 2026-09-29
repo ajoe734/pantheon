@@ -1387,7 +1387,10 @@ def test_signed_identity_runtime_action_repair_alias_requires_effective_confirm_
             json={
                 "tokenId": f"repair-token-{action}",
                 "ttlSeconds": 300,
-                "command": "RuntimeAction",
+                # Bound to the effective canonical command (what
+                # submit_command_admission validates the wrapper against),
+                # not the literal "RuntimeAction" wrapper name.
+                "command": action,
                 "target_type": "Runtime",
                 "target_id": "rt-repair-review",
                 "operator_id": "runtime-repair-review-actor",

@@ -2272,21 +2272,17 @@ class CommandAdapterService:
             validate_drawer_runtime_target(cmd)
             validate_final_command_target_type(cmd)
             # A generic wrapper command (RuntimeAction, ReviewAction, ...)
-            # must never be admitted when action_id names something the
-            # adapter does not actually dispatch -- that would accept a
-            # command durably only to fail (or be silently misrouted) at
-            # execution time. require_final_command_preconditions below
-            # runs the same resolution to gate confirm_token/approval/
-            # two-man evidence against the *effective* canonical entry;
-            # the per-command validators in self._validators are keyed by
-            # each canonical command's own param shape (e.g. PauseRuntime
-            # expects pause_action, PausePaperRuntime expects runtime_id)
-            # which differs from the wrapper's action_id/entity_id shape,
-            # so routing this lookup through the effective command would
-            # reject well-formed wrapper requests; that reconciliation is
-            # tracked as a separate follow-up (see evidence.json) and is
-            # not part of this fail-closed admission gate.
-            if resolve_effective_action(cmd.command.value, params=cmd.params).status == "unknown":
+            # must never be admitted under its own (deliberately weak)
+            # catalog entry once action_id names a distinct canonical
+            # command -- that would let a caller dispatch a high-risk
+            # canonical action (RestartPaperRuntime, ApproveDecision, ...)
+            # while only satisfying the wrapper's own confirm/approval/
+            # two-man gates. An action_id the adapter does not actually
+            # dispatch must fail closed here, before durable admission,
+            # rather than accept a command that can only fail (or be
+            # silently misrouted) at execution time.
+            effective_action = resolve_effective_action(cmd.command.value, params=cmd.params)
+            if effective_action.status == "unknown":
                 raise self._raise_error(
                     422,
                     ErrorCode.VALIDATION_FAILED,
@@ -2295,6 +2291,19 @@ class CommandAdapterService:
                     precondition_failed="action_id",
                     suggestion="Submit a recognized action_id, or use the dedicated canonical command directly",
                 )
+            # The per-command validators in self._validators are keyed by
+            # each canonical command's own param shape (e.g. PauseRuntime
+            # expects pause_action, PausePaperRuntime expects runtime_id/
+            # entity_id populated from target.id by stored_command_params,
+            # which itself keys off the literal cmd.command and only runs
+            # after this validator call) which differs from the wrapper's
+            # action_id/entity_id shape, so routing this specific lookup
+            # through the effective command would reject well-formed
+            # wrapper requests with a spurious "missing runtime_id"; that
+            # reconciliation is tracked as a separate follow-up (see
+            # evidence.json) and intentionally stays out of this fail-
+            # closed admission gate and the confirm_token/approval/two-man
+            # gate below.
             validator = self._validators.get(cmd.command)
             if validator:
                 validator(cmd.params, identity)
@@ -2377,9 +2386,31 @@ class CommandAdapterService:
                 deprecation=response_deprecation,
             )
 
+        # require_final_command_preconditions (preconditions.py, out of this
+        # task's artifact contract and therefore never edited directly)
+        # gates confirm_token/approval/two-man evidence off get_catalog_
+        # entry(cmd.command.value). For a generic wrapper whose action_id
+        # resolved to a distinct canonical command above, pass a shallow
+        # copy of cmd with .command swapped to that canonical CommandType
+        # so the existing, unmodified precondition logic validates against
+        # the *effective* action's own (stronger) catalog entry instead of
+        # the wrapper's -- without needing to touch preconditions.py at
+        # all. A confirm token must then be issued for that same effective
+        # command name to bind (see BFF_COMMAND_API_CONTRACT.md's confirm-
+        # token binding rules), which is a tighter, more correct scope than
+        # binding to the generic wrapper name.
+        precondition_cmd = cmd
+        if effective_action.status == "canonical" and effective_action.effective_command_id:
+            try:
+                precondition_cmd = cmd.model_copy(
+                    update={"command": CommandType(effective_action.effective_command_id)}
+                )
+            except ValueError:
+                precondition_cmd = cmd
+
         try:
             precondition_evidence = require_final_command_preconditions(
-                cmd=cmd,
+                cmd=precondition_cmd,
                 payload=payload,
                 confirm_token=x_confirm_token,
                 identity=identity,
