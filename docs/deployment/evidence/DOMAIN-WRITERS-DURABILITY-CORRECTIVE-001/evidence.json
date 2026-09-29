@@ -2795,7 +2795,7 @@
   "review_54a01_receipt_remediation": {
     "finding": "Direct AdvanceLifecycle in command_executor.py discarded the canonical PersonaCommandAdapter receipt (aggregate_type/id/version, event_id, correlation_id, owner, committed_at).",
     "fix": "_execute_advance_lifecycle now spreads the full adapter receipt and layers public compat fields on top.",
-    "regression": "services/control-plane/bff/tests/test_direct_advance_lifecycle_canonical_receipt.py (mounted signed-JWT, real PersistentPersonaOwner; direct+wrapped x warm+restart) => 4 passed",
+    "regression": "services/control-plane/bff/personas/test_direct_advance_lifecycle_canonical_receipt.py (mounted signed-JWT, real PersistentPersonaOwner; direct+wrapped x warm+restart) => 4 passed",
     "bounded_verification": "test_command_adapters_router.py -k 'lifecycle or persona or Persona' => 70 passed. The unfiltered router+read_surface+governance run exceeded the 10-minute bound and is NOT counted as passed."
   }
 }
