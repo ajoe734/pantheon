@@ -1704,3 +1704,172 @@ def test_signed_identity_runtime_action_repair_alias_requires_effective_confirm_
         assert calls == [], evidence
         assert final.get("status") != "executed", evidence
 
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize(
+    "roles,mfa_verified",
+    [
+        (["operator"], False),
+        (["operator", "admin"], False),
+        (["operator", "admin"], True),
+    ],
+    ids=["operator-only", "admin-no-mfa", "admin-with-mfa"],
+)
+def test_signed_identity_issue_safe_mode_requires_effective_role_and_mfa_parity(
+    tmp_path, monkeypatch, restart, wrapped, roles, mfa_verified
+) -> None:
+    """Regression for the DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001
+    independent review REJECT at PR #5998 head
+    00850b1c2be3dab1ecc62909bbc48b90a44951ae: ``submit_command_admission``
+    resolved the effective action for a generic wrapper (``resolve_
+    effective_action``) but then looked up ``self._validators`` using the
+    outer, literal wrapper command type instead of the effective canonical
+    one -- so ``RuntimeAction`` with ``action_id=IssueSafeMode`` bypassed
+    ``IssueSafeMode``'s own registered validator (admin role + MFA
+    required) entirely, since ``RuntimeAction`` has no validator entry of
+    its own. A mounted signed-JWT ``POST /bff/v1/commands`` wrapped as
+    ``RuntimeAction`` dispatched exactly like a caller with a fully
+    authorized direct ``IssueSafeMode`` submission, for an operator-only
+    identity and for an admin identity without MFA.
+
+    Drives a real signed-JWT mounted admission through the durable
+    ``CommandStore`` and ``process_command`` executor (only the downstream
+    ``RuntimeManagerClient`` transport is stubbed) for both the wrapped
+    (``RuntimeAction``) and direct (``IssueSafeMode``) command spelling,
+    across every role/MFA shape and a ``CommandStore`` restart. Every
+    unauthorized shape must return 403 with zero durable admission and zero
+    downstream dispatch, matching the direct command exactly; the fully
+    authorized admin+MFA shape must dispatch identically for both
+    spellings.
+    """
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from services.control_plane.bff import command_executor
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff.command_adapters import runtime_adapter
+    from services.control_plane.bff.command_adapters.service import (
+        CommandAdapterService,
+        process_command,
+    )
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "test-issue-safe-mode-role-mfa-parity-secret"
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "issue-safe-mode-role-mfa-parity")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "issue-safe-mode-role-mfa-parity")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+    now = int(time.time())
+    claims: Dict[str, Any] = {
+        "sub": "issue-safe-mode-parity-actor",
+        "roles": roles,
+        "tenant_id": "tenant-a",
+        "iss": "issue-safe-mode-role-mfa-parity",
+        "aud": "issue-safe-mode-role-mfa-parity",
+        "iat": now - 10,
+        "exp": now + 300,
+    }
+    if mfa_verified:
+        claims["mfa_verified"] = True
+    token = encode_jwt_hs256(claims, secret=secret)
+
+    read_store_stub = SimpleNamespace(
+        get_runtime_binding_by_runtime_id=lambda rid: (
+            {"runtime_id": rid, "capital_pool_id": "pool-parity-review", "metadata": {"tenant_id": "tenant-a"}}
+            if rid == "pool-parity-review"
+            else None
+        ),
+    )
+
+    command_path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(command_path)
+    service = CommandAdapterService(
+        command_store=store,
+        extract_identity=extract_identity_jwt,
+        check_read_surface_state=lambda: None,
+        process_command_task=lambda command_id: None,
+        get_read_store=lambda: read_store_stub,
+    )
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=service))
+    client = TestClient(app)
+
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Idempotency-Key": f"issue-safe-mode-parity-{wrapped}-{restart}-{roles}-{mfa_verified}",
+    }
+    issue_headers = dict(headers)
+    issue_headers["Idempotency-Key"] = issue_headers["Idempotency-Key"] + "-issue"
+    issued = client.post(
+        "/bff/confirm-tokens",
+        headers=issue_headers,
+        json={
+            "tokenId": f"issue-safe-mode-parity-token-{wrapped}-{restart}-{roles}-{mfa_verified}",
+            "ttlSeconds": 300,
+            "command": "IssueSafeMode",
+            "target_type": "Runtime",
+            "target_id": "pool-parity-review",
+            "operator_id": "issue-safe-mode-parity-actor",
+        },
+    )
+    assert issued.status_code == 201, issued.text
+    headers["X-Confirm-Token"] = f"issue-safe-mode-parity-token-{wrapped}-{restart}-{roles}-{mfa_verified}"
+
+    calls: List[Dict[str, Any]] = []
+
+    def advance(pool_id, target_state, **kwargs):
+        calls.append({"pool_id": pool_id, "target_state": target_state, **kwargs})
+        return {"safe_mode_state": target_state, "status": "executed"}
+
+    monkeypatch.setattr(
+        runtime_adapter, "_get_runtime_manager_client", lambda: SimpleNamespace(advance_safe_mode=advance)
+    )
+    monkeypatch.setattr(
+        command_executor, "_runtime_manager_client", lambda: SimpleNamespace(advance_safe_mode=advance)
+    )
+
+    response = client.post(
+        "/bff/v1/commands",
+        headers=headers,
+        json={
+            "command": "RuntimeAction" if wrapped else "IssueSafeMode",
+            "target": {"type": "Runtime", "id": "pool-parity-review"},
+            "params": {
+                "action_id": "IssueSafeMode",
+                "capital_pool_id": "pool-parity-review",
+                "safe_mode_level": "soft",
+            },
+            "audit_context": {"reason": "issue safe mode role/MFA parity regression"},
+        },
+    )
+
+    rows = [r for r in store._get_all_commands() if r["type"] in ("RuntimeAction", "IssueSafeMode")]
+    if restart:
+        store = CommandStore(command_path)
+    for row in rows:
+        asyncio.run(process_command(row["command_id"], command_store=store, read_store=read_store_stub))
+    final_statuses = [store.get_command(r["command_id"])["status"] for r in rows]
+    evidence = {
+        "wrapped": wrapped,
+        "restart": restart,
+        "roles": roles,
+        "mfa_verified": mfa_verified,
+        "response_status": response.status_code,
+        "calls": calls,
+        "final_statuses": final_statuses,
+    }
+
+    if roles == ["operator", "admin"] and mfa_verified:
+        assert response.status_code == 202, evidence
+        assert len(calls) == 1, evidence
+        assert final_statuses == ["executed"], evidence
+    else:
+        assert response.status_code == 403, evidence
+        assert calls == [], evidence
+        assert rows == [], evidence
+

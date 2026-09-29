@@ -94,6 +94,25 @@ _DRAWER_RUNTIME_COMMANDS = {
     CommandType.ISSUE_SAFE_MODE,
 }
 
+# Canonical commands whose registered self._validators entry resolves
+# target/binding state from params shaped only by stored_command_params
+# (which runs *after* validator dispatch and keys off the literal, not
+# effective, command). Routing these two through the effective command
+# for validator purposes reopens the "missing/mismatched runtime_id"
+# regression recorded under DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001's
+# defect_89 (see evidence.json): PausePaperRuntime/ResumePaperRuntime's
+# validator resolves entity_id/runtime_id, but the RuntimeAction wrapper's
+# generic pause/resume aliases target a RuntimeBinding id, not a runtime
+# id, and only RuntimeCommandAdapter's own execution-time resolution (not
+# stored_command_params) knows how to reconcile that. Their confirm_token/
+# approval/tenant enforcement is already routed through the effective
+# command via precondition_cmd below and RuntimeCommandAdapter's own
+# tenant check (defect_88); only the role-gated self._validators lookup
+# stays keyed to the literal wrapper command for these two.
+_VALIDATOR_EFFECTIVE_ACTION_EXCLUDED = frozenset(
+    {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
+)
+
 _TWO_MAN_EVIDENCE_FIELDS = (
     "twoManSignatureId",
     "two_man_signature_id",
@@ -2291,20 +2310,31 @@ class CommandAdapterService:
                     precondition_failed="action_id",
                     suggestion="Submit a recognized action_id, or use the dedicated canonical command directly",
                 )
-            # The per-command validators in self._validators are keyed by
-            # each canonical command's own param shape (e.g. PauseRuntime
-            # expects pause_action, PausePaperRuntime expects runtime_id/
-            # entity_id populated from target.id by stored_command_params,
-            # which itself keys off the literal cmd.command and only runs
-            # after this validator call) which differs from the wrapper's
-            # action_id/entity_id shape, so routing this specific lookup
-            # through the effective command would reject well-formed
-            # wrapper requests with a spurious "missing runtime_id"; that
-            # reconciliation is tracked as a separate follow-up (see
-            # evidence.json) and intentionally stays out of this fail-
-            # closed admission gate and the confirm_token/approval/two-man
-            # gate below.
-            validator = self._validators.get(cmd.command)
+            # A generic wrapper command must gate admission against the
+            # *effective* canonical command's own validator (roles/MFA/
+            # param shape), never its own deliberately weak entry -- the
+            # same principle already applied to require_final_command_
+            # preconditions below. PausePaperRuntime/ResumePaperRuntime
+            # are excluded (see _VALIDATOR_EFFECTIVE_ACTION_EXCLUDED):
+            # their confirm_token/approval/tenant enforcement is already
+            # routed through the effective command elsewhere, and their
+            # validator resolves target/binding state from a param shape
+            # the wrapper cannot supply at this point in admission.
+            effective_validator_command = cmd.command
+            if (
+                effective_action.status == "canonical"
+                and effective_action.effective_command_id
+            ):
+                try:
+                    candidate_command = CommandType(effective_action.effective_command_id)
+                except ValueError:
+                    candidate_command = None
+                if (
+                    candidate_command is not None
+                    and candidate_command not in _VALIDATOR_EFFECTIVE_ACTION_EXCLUDED
+                ):
+                    effective_validator_command = candidate_command
+            validator = self._validators.get(effective_validator_command)
             if validator:
                 validator(cmd.params, identity)
         except HTTPException as exc:
