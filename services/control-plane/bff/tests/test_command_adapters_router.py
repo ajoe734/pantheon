@@ -3505,3 +3505,80 @@ def test_wrapper_alias_admission_matches_direct_canonical_command(tmp_path, monk
         assert wrapped["final_status"] == direct["final_status"], evidence
         assert wrapped["calls"] == direct["calls"], evidence
         assert wrapped["token_forwarded"] == direct["token_forwarded"], evidence
+
+
+def test_adapters_never_fabricate_confirmation_or_two_man_evidence(monkeypatch):
+    from services.control_plane.bff.command_adapters import capital_adapter, incident_adapter, persona_adapter
+    from services.control_plane.bff.command_adapters.registry import dispatch_domain_command
+
+    calls: List[Any] = []
+
+    def fake_http(url, payload=None, **kwargs):
+        calls.append(url)
+        return {"status": "accepted"}
+
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://no-fabrication.invalid")
+    monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", "http://no-fabrication-capital.invalid")
+    for module in (capital_adapter, incident_adapter, persona_adapter):
+        monkeypatch.setattr(module, "http_request_json", fake_http)
+
+    for command, params in (
+        ("PersonaAction", {"action_id": "AdvanceLifecycle", "persona_id": "p-1", "target_state": "paper_owner"}),
+        ("PersonaAction", {"action_id": "EmergencyContainment", "persona_id": "p-1"}),
+        ("IncidentAction", {"action_id": "remediate", "intervention_id": "i-1"}),
+        ("RiskAlertAction", {"action_id": "remediate", "intervention_id": "i-1"}),
+        ("CapitalPoolAction", {"action_id": "EmergencyContainment", "entity_id": "p-1", "entity_type": "Persona"}),
+    ):
+        with pytest.raises(ValueError):
+            dispatch_domain_command("cmd-1", command, dict(params))
+    assert calls == []
+
+
+def test_non_wrapper_commands_never_dispatch_on_smuggled_action_id(monkeypatch):
+    """``params.action_id`` is caller metadata on a dedicated command; it must
+    never select a different, gated command inside the adapter."""
+    from services.control_plane.bff.command_adapters import capital_adapter, incident_adapter, persona_adapter
+    from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+    from services.control_plane.bff.command_adapters.registry import dispatch_domain_command
+
+    calls: List[Any] = []
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://smuggle.invalid")
+    monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", "http://smuggle-capital.invalid")
+    for module in (capital_adapter, incident_adapter, persona_adapter):
+        monkeypatch.setattr(module, "http_request_json", lambda url, **kw: calls.append(url) or {})
+
+    smuggled = (
+        ("AlertAcknowledge", {"action_id": "remediate", "intervention_id": "i-1", "two_man_signature_id": "s"}),
+        ("V5InterventionAction", {"action_id": "remediate", "intervention_id": "i-1", "two_man_signature_id": "s"}),
+        ("Observe", {"action_id": "AdvanceLifecycle", "persona_id": "p-1", "confirm_token": "t", "target_state": "paper_owner"}),
+    )
+    for command, params in smuggled:
+        try:
+            result = dispatch_domain_command("cmd-1", command, params)
+        except ActionUnavailableError:
+            continue
+        assert result.get("action_id") not in {"RemediateSentinelIntervention", "AdvanceLifecycle"}, result
+    assert calls == []
+
+
+def test_wrapper_inventory_covers_every_adapter_action_alias():
+    """Every alias a wrapper's adapter can dispatch to a gated direct command
+    is in the single wrapper table admission resolves through."""
+    inventory = runtime_adapter.wrapper_canonical_inventory()
+    assert set(inventory) == {
+        "RuntimeAction", "ReviewAction", "PersonaAction", "CapitalPoolAction",
+        "RebalanceAction", "DeploymentAction", "IncidentAction", "RiskAlertAction",
+    }
+    for wrapper in runtime_adapter.DISPATCH_RESOLVED_WRAPPERS:
+        assert wrapper in runtime_adapter.GENERIC_WRAPPER_COMMANDS
+        for alias, canonical in inventory[wrapper].items():
+            assert runtime_adapter.resolve_effective_action(wrapper, {"action_id": alias}).effective_command_id == canonical
+            assert runtime_adapter.resolve_wrapper_dispatch(wrapper, {"action_id": alias}) == canonical
+    forbidden = ("lifecycle-confirm", "sig-ops-containment", "sig-sentinel-remed", "sig-emergency-ops")
+    offenders = [
+        f"{path.name}: {token}"
+        for path in sorted((_CT_INV_BFF_DIR / "command_adapters").glob("*.py"))
+        for token in forbidden
+        if token in path.read_text()
+    ]
+    assert not offenders, offenders
