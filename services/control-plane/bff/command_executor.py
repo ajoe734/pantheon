@@ -1318,7 +1318,11 @@ def _execute_advance_lifecycle(
         command_id, persona_id, dict(params), auth_token=auth_token, mfa_token=mfa_token
     )
     body = receipt.get("domain_receipt") or {}
+    # Keep the complete canonical adapter receipt (aggregate identity/version,
+    # event/correlation ids, owner, committed_at) and layer the public
+    # compatibility fields on top.
     return {
+        **receipt,
         "command_id": command_id,
         "status": "accepted",
         "persona_id": body.get("persona_id", persona_id),
