@@ -94,24 +94,23 @@ _DRAWER_RUNTIME_COMMANDS = {
     CommandType.ISSUE_SAFE_MODE,
 }
 
-# Canonical commands whose registered self._validators entry resolves
-# target/binding state from params shaped only by stored_command_params
-# (which runs *after* validator dispatch and keys off the literal, not
-# effective, command). Routing these two through the effective command
-# for validator purposes reopens the "missing/mismatched runtime_id"
-# regression recorded under DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001's
-# defect_89 (see evidence.json): PausePaperRuntime/ResumePaperRuntime's
-# validator resolves entity_id/runtime_id, but the RuntimeAction wrapper's
-# generic pause/resume aliases target a RuntimeBinding id, not a runtime
-# id, and only RuntimeCommandAdapter's own execution-time resolution (not
-# stored_command_params) knows how to reconcile that. Their confirm_token/
-# approval/tenant enforcement is already routed through the effective
-# command via precondition_cmd below and RuntimeCommandAdapter's own
-# tenant check (defect_88); only the role-gated self._validators lookup
-# stays keyed to the literal wrapper command for these two.
-_VALIDATOR_EFFECTIVE_ACTION_EXCLUDED = frozenset(
-    {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
-)
+# PausePaperRuntime/ResumePaperRuntime's registered self._validators entry
+# (_validate_pause_paper_runtime/_validate_resume_paper_runtime) resolves
+# target/binding state from params["runtime_id"], which stored_command_params
+# only populates from cmd.target.id *after* validator dispatch, and only for
+# the literal PausePaperRuntime/ResumePaperRuntime command -- never for the
+# RuntimeAction wrapper. A prior round therefore excluded this pair from
+# effective-command validator routing entirely
+# (defect_93_generic_wrapper_validator_effective_action_bypass_closed), which
+# left RuntimeAction's pause/resume aliases with no role check at admission
+# at all (RuntimeAction has no self._validators entry of its own): a
+# same-tenant caller holding only a read role could pause/resume a
+# non-paper-stage or foreign-tenant binding that the canonical command would
+# refuse. Fixed here by building the canonical validator param shape for the
+# effective command explicitly (see _paper_runtime_validator_params below)
+# instead of excluding the pair: every wrapper row now runs exactly the
+# canonical validator with canonical params, the same as a direct
+# submission.
 
 _TWO_MAN_EVIDENCE_FIELDS = (
     "twoManSignatureId",
@@ -2236,6 +2235,59 @@ class CommandAdapterService:
             response.headers["X-Correlation-Id"] = out["meta"]["correlationId"]
         return out
 
+    def _resolve_wrapper_paper_runtime_id(self, cmd: "OperatorCommand") -> str:
+        """Resolve a generic wrapper's Runtime target to the runtime id
+        PausePaperRuntime's/ResumePaperRuntime's own validator keys its
+        lookups on. RuntimeAction's pause/resume aliases target a
+        RuntimeBinding id, not a runtime id (only RuntimeCommandAdapter's
+        own execution-time resolution previously reconciled that); the
+        literal PausePaperRuntime/ResumePaperRuntime action_id spelling
+        already targets a runtime id directly. Try resolving target.id as a
+        RuntimeBinding id first; fall back to treating it as an already-
+        resolved runtime id when no such binding exists.
+        """
+        target_id = str(cmd.target.id or "").strip()
+        store = self.read_store
+        if target_id and store is not None and hasattr(store, "get_runtime_binding"):
+            try:
+                binding = store.get_runtime_binding(target_id)
+            except Exception:
+                binding = None
+            if binding:
+                resolved = (
+                    binding.get("runtime_id") or binding.get("runtimeId")
+                    if isinstance(binding, dict)
+                    else getattr(binding, "runtime_id", getattr(binding, "runtimeId", None))
+                )
+                resolved = str(resolved or "").strip()
+                if resolved:
+                    return resolved
+        return target_id
+
+    def _effective_command_validator_params(
+        self, cmd: "OperatorCommand", canonical_command: "CommandType"
+    ) -> Dict[str, Any]:
+        """Build the canonical param shape a generic wrapper's effective
+        command validator needs, mirroring the normalization
+        stored_command_params applies for that canonical command directly.
+        Every wrapper row must run exactly the canonical validator with
+        canonical params (DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001).
+        """
+        params = dict(cmd.params)
+        if canonical_command in (CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME):
+            runtime_id = self._resolve_wrapper_paper_runtime_id(cmd)
+            params.pop("verified_binding", None)
+            params.pop("verified_binding_id", None)
+            params.pop("verified_runtime_binding_id", None)
+            params.pop("runtimeId", None)
+            params.pop("entityId", None)
+            params["runtime_id"] = runtime_id
+            params["entity_id"] = runtime_id
+            params["entity_type"] = "Runtime"
+            params["action_id"] = canonical_command.value
+            params["actionId"] = canonical_command.value
+        return params
+
     def submit_command_admission(
         self,
         *,
@@ -2314,13 +2366,14 @@ class CommandAdapterService:
             # *effective* canonical command's own validator (roles/MFA/
             # param shape), never its own deliberately weak entry -- the
             # same principle already applied to require_final_command_
-            # preconditions below. PausePaperRuntime/ResumePaperRuntime
-            # are excluded (see _VALIDATOR_EFFECTIVE_ACTION_EXCLUDED):
-            # their confirm_token/approval/tenant enforcement is already
-            # routed through the effective command elsewhere, and their
-            # validator resolves target/binding state from a param shape
-            # the wrapper cannot supply at this point in admission.
+            # preconditions below. Every wrapper row runs exactly the
+            # canonical validator with canonical params; for
+            # PausePaperRuntime/ResumePaperRuntime specifically, the wrapper
+            # cannot supply the canonical validator's param shape as-is (see
+            # _paper_runtime_validator_params), so that shape is built
+            # explicitly here instead of excluding the pair from validation.
             effective_validator_command = cmd.command
+            validator_params = cmd.params
             if (
                 effective_action.status == "canonical"
                 and effective_action.effective_command_id
@@ -2329,14 +2382,15 @@ class CommandAdapterService:
                     candidate_command = CommandType(effective_action.effective_command_id)
                 except ValueError:
                     candidate_command = None
-                if (
-                    candidate_command is not None
-                    and candidate_command not in _VALIDATOR_EFFECTIVE_ACTION_EXCLUDED
-                ):
+                if candidate_command is not None:
                     effective_validator_command = candidate_command
+                    if candidate_command != cmd.command:
+                        validator_params = self._effective_command_validator_params(
+                            cmd, candidate_command
+                        )
             validator = self._validators.get(effective_validator_command)
             if validator:
-                validator(cmd.params, identity)
+                validator(validator_params, identity)
         except HTTPException as exc:
             raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
 

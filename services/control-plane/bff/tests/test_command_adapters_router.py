@@ -1307,6 +1307,360 @@ def test_signed_identity_runtime_pause_resume_requires_owner_tenant(
         assert final.get("status") != "executed", evidence
 
 
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize(
+    "identity_roles,expect_denied",
+    [
+        (["viewer"], True),
+        (["operator"], False),
+    ],
+)
+@pytest.mark.parametrize(
+    "action",
+    ["PausePaperRuntime", "ResumePaperRuntime", "pause", "resume"],
+)
+def test_signed_identity_runtime_action_pause_resume_requires_effective_role_parity(
+    tmp_path, monkeypatch, restart, action, identity_roles, expect_denied
+) -> None:
+    """Regression for the DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 independent
+    review REJECT at PR #5998 exact head 0cc437dc27bca5acd95d6e33109b09842123a522
+    (manifest 7dd37f4a56b941878ebcf063e40b9aa446e0588b): ``_VALIDATOR_EFFECTIVE_
+    ACTION_EXCLUDED`` excluded PausePaperRuntime/ResumePaperRuntime from
+    effective-command validator routing entirely. ``RuntimeAction`` has no
+    ``self._validators`` entry of its own, so every RuntimeAction spelling of
+    pause/resume (the literal canonical action_id and every bare alias) got
+    no role check at admission at all: a mounted same-tenant signed-JWT
+    caller holding only a read role (``viewer``) could create a genuine
+    confirm token (read-role permitted) and then durably admit and dispatch
+    a wrapped pause/resume that the direct canonical command would have
+    refused with 403 for lacking ``operator``/``admin`` (pause) or
+    ``operator``/``approver``/``admin`` (resume).
+
+    Drives a real signed-JWT mounted admission through the durable
+    ``CommandStore`` and ``process_command`` executor for a genuine paper
+    binding, across a ``CommandStore`` restart, asserting the missing-role
+    identity gets zero downstream dispatch and the operator-role identity
+    (which every canonical pause/resume command accepts) still executes,
+    for both the literal canonical action_id spelling and the bare
+    pause/resume aliases RuntimeAction dispatches to the same canonical
+    command.
+    """
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff.command_adapters import runtime_adapter
+    from services.control_plane.bff.command_adapters.service import (
+        CommandAdapterService,
+        process_command,
+    )
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "test-runtime-pause-resume-role-secret"
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://runtime-pause-resume-role-review.invalid")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "runtime-pause-resume-role-review")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "runtime-pause-resume-role-review")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+    now = int(time.time())
+    token = encode_jwt_hs256(
+        {
+            "sub": "runtime-role-review-actor",
+            "roles": identity_roles,
+            "tenant_id": "tenant-a",
+            "iss": "runtime-pause-resume-role-review",
+            "aud": "runtime-pause-resume-role-review",
+            "iat": now - 10,
+            "exp": now + 300,
+        },
+        secret=secret,
+    )
+
+    binding = {
+        "runtime_id": "rt-role-review",
+        "binding_id": "bind-role-review",
+        "deployment_mode": "paper",
+        "status": "active",
+        "metadata": {"tenant_id": "tenant-a"},
+    }
+    calls: List[Dict[str, Any]] = []
+    is_resume = action in ("ResumePaperRuntime", "resume")
+
+    def fake_http(url, **kwargs):
+        calls.append({"url": url, "method": kwargs.get("method"), "payload": kwargs.get("payload")})
+        binding["status"] = "active" if is_resume else "paused"
+        return {
+            "status": "executed",
+            "status_after": binding["status"],
+            "binding_id": "bind-role-review",
+            "runtime_id": "rt-role-review",
+        }
+
+    effective_command = "ResumePaperRuntime" if is_resume else "PausePaperRuntime"
+    target_id = "rt-role-review" if action in ("PausePaperRuntime", "ResumePaperRuntime") else "bind-role-review"
+    approval_id = "runtime-pause-resume-role-approval"
+    approvals = {
+        approval_id: {
+            "outcome": "approved",
+            "command": effective_command,
+            "target": {"type": "Runtime", "id": target_id},
+        }
+    }
+    read_store_stub = SimpleNamespace(
+        get_runtime_binding_by_runtime_id=lambda rid: dict(binding) if rid == "rt-role-review" else None,
+        get_runtime_binding=lambda bid: dict(binding) if bid == "bind-role-review" else None,
+        get_approval_decision=lambda decision_id: dict(approvals.get(decision_id) or {}) or None,
+    )
+
+    command_path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(command_path)
+    service = CommandAdapterService(
+        command_store=store,
+        extract_identity=extract_identity_jwt,
+        check_read_surface_state=lambda: None,
+        process_command_task=lambda command_id: None,
+        get_read_store=lambda: read_store_stub,
+    )
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=service))
+    client = TestClient(app)
+
+    monkeypatch.setattr(runtime_adapter, "_get_read_store", lambda: read_store_stub)
+    monkeypatch.setattr(
+        runtime_adapter,
+        "_get_runtime_manager_client",
+        lambda: SimpleNamespace(get=lambda bid: dict(binding), list_all=lambda: [dict(binding)]),
+    )
+    monkeypatch.setattr(runtime_adapter, "http_request_json", fake_http)
+
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Idempotency-Key": f"runtime-pause-resume-role-{'-'.join(identity_roles)}-{action}-{restart}",
+    }
+    params: Dict[str, Any] = {"action_id": action}
+    issue_headers = dict(headers)
+    issue_headers["Idempotency-Key"] = f"runtime-pause-resume-role-issue-{'-'.join(identity_roles)}-{action}-{restart}"
+    issued = client.post(
+        "/bff/confirm-tokens",
+        headers=issue_headers,
+        json={
+            "tokenId": f"pause-resume-role-token-{'-'.join(identity_roles)}-{action}",
+            "ttlSeconds": 300,
+            "command": effective_command,
+            "target_type": "Runtime",
+            "target_id": target_id,
+            "operator_id": "runtime-role-review-actor",
+        },
+    )
+    assert issued.status_code == 201, issued.text
+    headers["X-Confirm-Token"] = f"pause-resume-role-token-{'-'.join(identity_roles)}-{action}"
+    if is_resume:
+        params["approvalId"] = approval_id
+
+    response = client.post(
+        "/bff/v1/commands",
+        headers=headers,
+        json={
+            "command": "RuntimeAction",
+            "target": {"type": "Runtime", "id": target_id},
+            "params": params,
+            "audit_context": {"reason": "runtime pause/resume role authorization regression"},
+        },
+    )
+
+    rows = store._get_all_commands()
+    runtime_action_rows = [row for row in rows if row["type"] == "RuntimeAction"]
+    if restart:
+        store = CommandStore(command_path)
+    for row in rows:
+        asyncio.run(process_command(row["command_id"], command_store=store))
+    final = store.get_command(runtime_action_rows[0]["command_id"]) if runtime_action_rows else {}
+    evidence = {
+        "identity_roles": identity_roles,
+        "restart": restart,
+        "action": action,
+        "response_status": response.status_code,
+        "calls": calls,
+        "status": final.get("status"),
+        "error": final.get("error"),
+    }
+
+    if expect_denied:
+        assert response.status_code == 403, evidence
+        assert calls == [], evidence
+        assert final.get("status") != "executed", evidence
+    else:
+        assert response.status_code == 202, evidence
+        assert len(calls) == 1, evidence
+        assert final.get("status") == "executed", evidence
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize(
+    "action",
+    ["PausePaperRuntime", "ResumePaperRuntime", "pause", "resume"],
+)
+def test_signed_identity_runtime_action_pause_resume_requires_effective_paper_stage(
+    tmp_path, monkeypatch, restart, action
+) -> None:
+    """Regression for the same DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001
+    exclusion as
+    ``test_signed_identity_runtime_action_pause_resume_requires_effective_role_parity``:
+    with PausePaperRuntime/ResumePaperRuntime excluded from effective-
+    command validator routing, ``_validate_pause_paper_runtime``'s/
+    ``_validate_resume_paper_runtime``'s ``required_bindings=["paper"]``
+    stage check (which refuses a non-paper-stage binding) never ran for the
+    ``RuntimeAction`` wrapper either. Drives a real signed-JWT mounted
+    same-tenant, operator-role admission through the durable ``CommandStore``
+    and ``process_command`` executor against a binding whose
+    ``deployment_mode`` is ``canary`` (not ``paper``), across a
+    ``CommandStore`` restart, for both the literal canonical action_id
+    spelling and the bare pause/resume aliases.
+    """
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff.command_adapters import runtime_adapter
+    from services.control_plane.bff.command_adapters.service import (
+        CommandAdapterService,
+        process_command,
+    )
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "test-runtime-pause-resume-stage-secret"
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://runtime-pause-resume-stage-review.invalid")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "runtime-pause-resume-stage-review")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "runtime-pause-resume-stage-review")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+    now = int(time.time())
+    token = encode_jwt_hs256(
+        {
+            "sub": "runtime-stage-review-actor",
+            "roles": ["operator"],
+            "tenant_id": "tenant-a",
+            "iss": "runtime-pause-resume-stage-review",
+            "aud": "runtime-pause-resume-stage-review",
+            "iat": now - 10,
+            "exp": now + 300,
+        },
+        secret=secret,
+    )
+
+    binding = {
+        "runtime_id": "rt-stage-review",
+        "binding_id": "bind-stage-review",
+        "deployment_mode": "canary",
+        "status": "active",
+        "metadata": {"tenant_id": "tenant-a"},
+    }
+    calls: List[Dict[str, Any]] = []
+    is_resume = action in ("ResumePaperRuntime", "resume")
+
+    def fake_http(url, **kwargs):
+        calls.append({"url": url, "method": kwargs.get("method"), "payload": kwargs.get("payload")})
+        return {"status": "executed", "binding_id": "bind-stage-review", "runtime_id": "rt-stage-review"}
+
+    effective_command = "ResumePaperRuntime" if is_resume else "PausePaperRuntime"
+    target_id = "rt-stage-review" if action in ("PausePaperRuntime", "ResumePaperRuntime") else "bind-stage-review"
+    approval_id = "runtime-pause-resume-stage-approval"
+    approvals = {
+        approval_id: {
+            "outcome": "approved",
+            "command": effective_command,
+            "target": {"type": "Runtime", "id": target_id},
+        }
+    }
+    read_store_stub = SimpleNamespace(
+        get_runtime_binding_by_runtime_id=lambda rid: dict(binding) if rid == "rt-stage-review" else None,
+        get_runtime_binding=lambda bid: dict(binding) if bid == "bind-stage-review" else None,
+        get_approval_decision=lambda decision_id: dict(approvals.get(decision_id) or {}) or None,
+    )
+
+    command_path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(command_path)
+    service = CommandAdapterService(
+        command_store=store,
+        extract_identity=extract_identity_jwt,
+        check_read_surface_state=lambda: None,
+        process_command_task=lambda command_id: None,
+        get_read_store=lambda: read_store_stub,
+    )
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=service))
+    client = TestClient(app)
+
+    monkeypatch.setattr(runtime_adapter, "_get_read_store", lambda: read_store_stub)
+    monkeypatch.setattr(
+        runtime_adapter,
+        "_get_runtime_manager_client",
+        lambda: SimpleNamespace(get=lambda bid: dict(binding), list_all=lambda: [dict(binding)]),
+    )
+    monkeypatch.setattr(runtime_adapter, "http_request_json", fake_http)
+
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Idempotency-Key": f"runtime-pause-resume-stage-{action}-{restart}",
+    }
+    params: Dict[str, Any] = {"action_id": action}
+    issue_headers = dict(headers)
+    issue_headers["Idempotency-Key"] = f"runtime-pause-resume-stage-issue-{action}-{restart}"
+    issued = client.post(
+        "/bff/confirm-tokens",
+        headers=issue_headers,
+        json={
+            "tokenId": f"pause-resume-stage-token-{action}",
+            "ttlSeconds": 300,
+            "command": effective_command,
+            "target_type": "Runtime",
+            "target_id": target_id,
+            "operator_id": "runtime-stage-review-actor",
+        },
+    )
+    assert issued.status_code == 201, issued.text
+    headers["X-Confirm-Token"] = f"pause-resume-stage-token-{action}"
+    if is_resume:
+        params["approvalId"] = approval_id
+
+    response = client.post(
+        "/bff/v1/commands",
+        headers=headers,
+        json={
+            "command": "RuntimeAction",
+            "target": {"type": "Runtime", "id": target_id},
+            "params": params,
+            "audit_context": {"reason": "runtime pause/resume paper-stage regression"},
+        },
+    )
+
+    rows = store._get_all_commands()
+    runtime_action_rows = [row for row in rows if row["type"] == "RuntimeAction"]
+    if restart:
+        store = CommandStore(command_path)
+    for row in rows:
+        asyncio.run(process_command(row["command_id"], command_store=store))
+    final = store.get_command(runtime_action_rows[0]["command_id"]) if runtime_action_rows else {}
+    evidence = {
+        "restart": restart,
+        "action": action,
+        "response_status": response.status_code,
+        "calls": calls,
+        "status": final.get("status"),
+        "error": final.get("error"),
+    }
+
+    assert response.status_code == 422, evidence
+    assert calls == [], evidence
+    assert final.get("status") != "executed", evidence
+
+
 @pytest.mark.parametrize("evidence_shape", ["missing", "invalid", "valid"])
 @pytest.mark.parametrize("restart", [False, True])
 @pytest.mark.parametrize(

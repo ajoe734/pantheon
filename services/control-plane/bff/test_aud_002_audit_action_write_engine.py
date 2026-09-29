@@ -69,7 +69,27 @@ def _isolated_audit_client(*, allow_fallback: bool) -> Iterator[TestClient]:
     del allow_fallback
     with tempfile.TemporaryDirectory() as td:
         store = CommandStore(os.path.join(td, "commands.jsonl"))
-        reads = create_in_memory_read_surface_ports()
+        # DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001: PausePaperRuntime's
+        # canonical validator (now correctly gated for the RuntimeAction
+        # wrapper too, see command_adapters/service.py's
+        # _effective_command_validator_params) resolves the target runtime
+        # binding at admission, so a genuine binding must exist for
+        # runtime-042. "pantheon-dev" matches the default tenant
+        # bff_me_tenant_payload resolves for an identity carrying no tenant
+        # claim, so this stays a same-tenant positive fixture.
+        reads = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs={
+                "runtime_bindings": [
+                    {
+                        "runtime_id": "runtime-042",
+                        "binding_id": "runtime-042-binding",
+                        "deployment_mode": "paper",
+                        "status": "active",
+                        "metadata": {"tenant_id": "pantheon-dev"},
+                    }
+                ]
+            }
+        )
         _current_command_store = store
 
         service = CommandAdapterService(
