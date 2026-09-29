@@ -279,24 +279,27 @@ def resolve_effective_action(
     resolved_per_selector = {
         name: action_id_resolver(value) for name, value in selectors.items()
     }
-    canonical_ids = {
-        r.effective_command_id for r in resolved_per_selector.values() if r.status == "canonical"
-    }
-    if len(canonical_ids) > 1:
-        return EffectiveAction(None, "conflict", None)
 
-    literal_spellings = {value.lower() for value in selectors.values()}
-    if not canonical_ids and len(literal_spellings) > 1:
-        # No selector aliases to a distinct canonical command, but the raw
-        # spellings still disagree (e.g. two different generic-only verbs) --
-        # still ambiguous about which action is being requested.
+    # Every present selector must resolve compatibly -- the same status
+    # *and* the same effective command id. A selector that fails to
+    # resolve to anything the adapter dispatches (``unknown``) while a
+    # companion selector resolves to a real canonical command is exactly
+    # as contradictory as two selectors naming two different canonical
+    # commands: filtering the unresolvable selector out and accepting
+    # whichever selector happened to resolve (DOMAIN-WRITERS-DURABILITY-
+    # CORRECTIVE-001 P2) let a caller redeem/validate a strong canonical
+    # confirm_token against one selector while a disagreeing, unresolvable
+    # selector was persisted and later reached execution instead. Two
+    # selectors that both resolve (generic_ok or canonical) but to
+    # different effective command ids are likewise a conflict even when
+    # neither status is ``unknown``.
+    distinct_resolutions = {
+        (r.status, r.effective_command_id) for r in resolved_per_selector.values()
+    }
+    if len(distinct_resolutions) > 1:
         return EffectiveAction(None, "conflict", None)
 
     agreed_raw = next(iter(selectors.values()))
-    if canonical_ids:
-        return EffectiveAction(next(iter(canonical_ids)), "canonical", agreed_raw)
-    # All present selectors share one literal spelling; every selector's
-    # resolution is therefore identical (generic_ok/unknown) -- use any one.
     only_resolution = next(iter(resolved_per_selector.values()))
     return EffectiveAction(only_resolution.effective_command_id, only_resolution.status, agreed_raw)
 

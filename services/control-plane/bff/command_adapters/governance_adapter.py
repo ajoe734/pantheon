@@ -69,17 +69,34 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("decision_id") or params.get("gate_id") or params.get("committee_id") or params.get("review_id") or params.get("entity_id") or "").strip()
 
-        if command_type == "ApproveDecision" or action_id.lower() in {"approve", "approvedecision"}:
+        # ``action_id`` only names the *dispatched* action for the generic
+        # ``ReviewAction`` wrapper (or an unrecognized/empty command_type
+        # from a direct/unit-test caller that never went through admission's
+        # effective-action freeze). Every other command_type here is its own
+        # distinct canonical command with fixed semantics; its ``action_id``
+        # may carry unrelated caller-supplied UI/audit metadata (persisted
+        # verbatim by ``stored_command_params`` for commands outside the
+        # wrapper set) that must never override which endpoint gets
+        # dispatched (DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 P1: a
+        # RequestReview command carrying an unrelated top-level
+        # ``action=approve`` was dispatched as ApproveDecision -- with no
+        # approver role or approval evidence -- because this elif chain
+        # matched the approve branch's action_id fallback before ever
+        # reaching RequestReview's own branch).
+        normalized_command_type = str(command_type or "").strip()
+        is_generic_wrapper = normalized_command_type in ("", "ReviewAction")
+
+        if command_type == "ApproveDecision" or (is_generic_wrapper and action_id.lower() in {"approve", "approvedecision"}):
             return self._execute_decision_action(command_id, entity_id, "approve", params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "RejectDecision" or action_id.lower() in {"reject", "rejectdecision"}:
+        elif command_type == "RejectDecision" or (is_generic_wrapper and action_id.lower() in {"reject", "rejectdecision"}):
             return self._execute_decision_action(command_id, entity_id, "reject", params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "RequestApprovalRevision" or action_id.lower() in {"requestrevision", "requestapprovalrevision", "request-revision"}:
+        elif command_type == "RequestApprovalRevision" or (is_generic_wrapper and action_id.lower() in {"requestrevision", "requestapprovalrevision", "request-revision"}):
             return self._execute_decision_action(command_id, entity_id, "request-revision", params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type.startswith("HumanGate") or action_id.lower().startswith("humangate"):
+        elif command_type.startswith("HumanGate") or (is_generic_wrapper and action_id.lower().startswith("humangate")):
             return self._execute_human_gate_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "RecordSponsorDecision" or action_id.lower() in {"recordsponsordecision", "sponsor-decision"}:
+        elif command_type == "RecordSponsorDecision" or (is_generic_wrapper and action_id.lower() in {"recordsponsordecision", "sponsor-decision"}):
             return self._execute_sponsor_decision(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ReviewAction", "RequestReview"} or action_id.lower() in {"requestreview", "review"}:
+        elif command_type in {"ReviewAction", "RequestReview"} or (is_generic_wrapper and action_id.lower() in {"requestreview", "review"}):
             return self._execute_review_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
