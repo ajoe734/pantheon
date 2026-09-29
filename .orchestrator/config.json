@@ -869,6 +869,16 @@
       "enabled": false,
       "url_env": "PANTHEON_ORCHESTRATOR_SYNC_URL",
       "secret_env": "PANTHEON_ORCHESTRATOR_SYNC_SECRET"
+    },
+    "diff_budget": {
+      "enabled": true,
+      "change_classes": [
+        "refactor",
+        "simplify",
+        "corrective"
+      ],
+      "default_net_prod_line_budget": 0,
+      "evidence_max_added_lines": 400
     }
   }
 }

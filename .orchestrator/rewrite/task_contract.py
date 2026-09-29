@@ -422,6 +422,10 @@ def validate_handoff_pr_delivery_binding(
         repository_id=repository_id,
         pr_files=pr_files,
     )
+    # scripts/git is on sys.path via _github_review_bridge_module above.
+    import diff_budget
+
+    diff_budget.enforce_handoff(task, config, pr_files)
 
     try:
         github_review_bridge.revalidate_pull_request_snapshot(
@@ -767,9 +771,12 @@ def requires_pr_delivery_binding(task: Mapping[str, Any]) -> bool:
     """Whether the current task contract requires a pull-request delivery.
 
     Historical ``source_ref`` and ``github`` fields are provenance, never a
-    future delivery identity.
+    future delivery identity.  A task with a ``change_class`` needs a PR so its
+    diff budget can be measured.
     """
 
+    if str(task.get("change_class") or "").strip():
+        return True
     required_artifacts = task.get("required_artifacts")
     if not isinstance(required_artifacts, list):
         return False

@@ -67,6 +67,28 @@ class WakeupMessageRoleGuardrailTests(unittest.TestCase):
         self.assertIn("不得只因 current dev 在線性前進後顯示 BEHIND 就 reopen", message)
         self.assertIn("衝突、head/branch/manifest 已變，或 base 非線性倒退／分歧", message)
 
+    def test_review_dispatch_shows_diff_budget_command(self) -> None:
+        self.event["reason"] = "review_ready_dispatch"
+        self.event["task"].update(
+            {
+                "change_class": "refactor",
+                "net_prod_line_budget": -100,
+                "delivery_binding": {"base_sha": "b" * 40, "head_sha": "c" * 40},
+            }
+        )
+        message = watch_events.render_wakeup_message(self.config, self.event, "Antigravity")
+        self.assertIn(
+            f"diff_budget.py --base {'b' * 40} --head {'c' * 40} --change-class refactor --budget -100",
+            message,
+        )
+
+    def test_owner_dispatch_states_line_budget(self) -> None:
+        self.event["reason"] = "owned_in_progress_dispatch"
+        self.event["task"].update({"status": "in_progress", "change_class": "simplify"})
+        message = watch_events.render_wakeup_message(self.config, self.event, "Antigravity")
+        self.assertIn("change_class=simplify", message)
+        self.assertIn("淨行數上限 採設定預設值", message)
+
     def test_finalize_dispatch_identifies_owner(self) -> None:
         self.event["reason"] = "owned_finalize_dispatch"
         message = watch_events.render_wakeup_message(
