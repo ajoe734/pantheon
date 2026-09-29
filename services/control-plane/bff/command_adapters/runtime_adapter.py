@@ -83,29 +83,34 @@ _RUNTIME_ACTION_CANONICAL_ALIASES: Dict[str, str] = {
     "activatekillswitch": "ActivateKillSwitch",
     "killswitch": "ActivateKillSwitch",
     "issueriskoff": "IssueRiskOff",
-}
-
-# Pause/resume aliases (``pause``, ``pauseruntime``, ``pauseexecution``,
-# ``pausepaperruntime``, ``resume``, ``unpause``, ``resumepaperruntime``)
-# are deliberately NOT remapped to PauseRuntime/PausePaperRuntime/
-# ResumePaperRuntime's own confirm_token/approval catalog entries here.
-# RuntimeCommandAdapter._execute_pause already independently re-derives the
-# verified RuntimeBinding and enforces the admission-stamped-tenant check
-# for every pause/resume shape (fixed under DOMAIN-WRITERS-DURABILITY-
-# CORRECTIVE-001's prior round and re-verified here); layering the
-# canonical confirm_token/approval gate on top requires the wrapper to also
-# accept ResumePaperRuntime's requires_approval=True evidence, which is a
-# larger, separately-scoped reconciliation (see evidence.json residual
-# note) and must not be rushed into this fail-closed admission gate
-# alongside the concretely reproduced repair-action defects.
-_RUNTIME_ACTION_GENERIC_ONLY = {
-    "resume",
-    "unpause",
-    "pause",
-    "pauseruntime",
-    "pauseexecution",
-    "pausepaperruntime",
-    "resumepaperruntime",
+    # Pause/resume aliases (pause_resume_confirm_token_residual_gap, closed
+    # under DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001). RuntimeAction's own
+    # catalog entry deliberately has requires_confirm_token=False so it can
+    # carry weaker actions (ProbeTelemetryIngest, IssueRiskOff, ...); a
+    # caller who wraps a pause/resume action_id in RuntimeAction must be
+    # gated by the same confirm_token/approval evidence a direct
+    # PausePaperRuntime/ResumePaperRuntime submission requires, or the
+    # wrapper becomes a strictly weaker way to reach the same effect.
+    # ``pause``/``pauseruntime``/``pauseexecution`` are gated at the
+    # PausePaperRuntime confirm_token level (requires_confirm_token=True,
+    # the strictest of PauseRuntime/PauseExecution's own entries) and
+    # ``resume``/``unpause`` at the ResumePaperRuntime confirm_token+
+    # approval level, matching this module's own
+    # ``generic_wrapper_parity_audit`` grouping of these aliases: there is
+    # no dedicated canonical ResumeRuntime CommandType for a plain
+    # "resume"/"unpause" to bind a confirm token to, so ResumePaperRuntime's
+    # entry is the only applicable stronger gate. RuntimeCommandAdapter.
+    # _execute_pause's execution-time routing (is_canonical_paper) is
+    # unaffected: this only changes which catalog entry durable admission
+    # validates confirm_token/approval evidence against, not which
+    # downstream branch the adapter dispatches to.
+    "pause": "PausePaperRuntime",
+    "pauseruntime": "PausePaperRuntime",
+    "pauseexecution": "PausePaperRuntime",
+    "pausepaperruntime": "PausePaperRuntime",
+    "resume": "ResumePaperRuntime",
+    "unpause": "ResumePaperRuntime",
+    "resumepaperruntime": "ResumePaperRuntime",
 }
 
 
@@ -117,8 +122,6 @@ def _resolve_runtime_action(params: Dict[str, Any]) -> EffectiveAction:
     canonical = _RUNTIME_ACTION_CANONICAL_ALIASES.get(lowered)
     if canonical:
         return EffectiveAction(canonical, "canonical")
-    if lowered in _RUNTIME_ACTION_GENERIC_ONLY:
-        return EffectiveAction(None, "generic_ok")
     return EffectiveAction(None, "unknown")
 
 

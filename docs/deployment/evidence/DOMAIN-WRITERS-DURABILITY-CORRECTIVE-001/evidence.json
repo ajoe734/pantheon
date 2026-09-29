@@ -385,6 +385,10 @@
       "remediation": "Added a single-source-of-truth resolver (`resolve_effective_action`, and its `EffectiveAction` NamedTuple result) directly inside services/control-plane/bff/command_adapters/runtime_adapter.py, mirroring the exact action_id dispatch tables in runtime_adapter.py's RuntimeCommandAdapter.execute() and governance_adapter.py's GovernanceCommandAdapter.execute() for the ReviewAction subset, returning one of not_wrapper/canonical/generic_ok/unknown. preconditions.py (out of this task's declared artifact contract, so it is never edited directly) gates confirm_token/approval/two-man evidence off `get_catalog_entry(cmd.command.value)`; rather than editing that function, `service.py`'s `submit_command_admission` (in-contract) now resolves the effective action once, fails closed with 422 immediately when its status is 'unknown', and -- when status is 'canonical' -- passes `require_final_command_preconditions` a `cmd.model_copy(update={\"command\": <effective CommandType>})` instead of the raw wrapper `cmd`. Every existing, unmodified check inside `require_final_command_preconditions`/`require_final_command_confirm_token` (both keyed on `cmd.command.value`) therefore validates against the *effective* canonical entry -- RestartPaperRuntime/RestartTelemetryBridge/StartPaperMonitoringSession/ProbeTelemetryIngest/IssueSafeMode/ExecuteRollback/HardRollback/ApproveRollback/RejectRollback/ActivateKillSwitch/IssueRiskOff/StartRuntime (via RuntimeAction) and ApproveDecision/RejectDecision/RequestApprovalRevision/HumanGateApprove/HumanGateReject/HumanGateRequestMoreEvidence/HumanGateRevoke/HumanGateExtendTtl/RecordSponsorDecision (via ReviewAction) -- without preconditions.py being touched at all. A side effect, considered a correctness improvement rather than a regression: a confirm token authorizing a wrapper-dispatched repair action must now be issued for that action's own canonical command name (e.g. `command: \"RestartPaperRuntime\"`), not the generic `\"RuntimeAction\"` wrapper name, since `_binding_command_matches` also keys off `cmd.command.value` on the same swapped copy. runtime_adapter.py `_execute_repair_action` no longer invents `repair-confirm-token`: it reads the admission-canonicalized `confirm_token_id` (falling back to a caller-supplied `confirm_token` for defense in depth) and raises ActionUnavailableError if neither is present; it also now resolves the target RuntimeBinding by runtime_id and rejects with TENANT_MISMATCH before dispatch whenever the admission-stamped tenant is absent or does not match the binding's tenant, mirroring `_execute_pause`'s check from defect_88. `service.py`'s per-command `_validators` dict lookup was deliberately left keyed by the literal wrapper command_type, NOT routed through the effective action, and is recorded as a residual follow-up: PauseRuntime/PausePaperRuntime/ResumePaperRuntime/IssueSafeMode/ExecuteRollback/HardRollback/etc.'s registered validators expect each canonical command's own param shape (e.g. PauseRuntime expects `pause_action`, PausePaperRuntime expects `runtime_id`/`entity_id` populated from `target.id` by `stored_command_params` -- which itself keys off the literal `cmd.command`, not the effective one, and only runs *after* the validator call) which differs from RuntimeAction's action_id/entity_id wrapper shape; routing validator selection through the effective command was prototyped and reverted after it rejected well-formed wrapper requests with 422 'missing runtime_id' (params never carried target.id at validator time) -- see generic_wrapper_parity_audit.pause_resume_confirm_token_residual_gap below for the specific, deliberately out-of-scope consequence (PausePaperRuntime/ResumePaperRuntime/PauseRuntime confirm_token/approval is still not enforced when submitted through RuntimeAction; only their independently-already-fixed tenant check applies).",
       "verification": "New regression test_signed_identity_runtime_action_repair_alias_requires_effective_confirm_token_and_tenant in services/control-plane/bff/tests/test_command_adapters_router.py (32 cases: 4 actions x 2 restart x 4 admission shapes), using a real signed JWT plus a real confirm token issued through POST /bff/confirm-tokens bound to command=RuntimeAction/target=Runtime/rt-repair-review, mounted through the production router/CommandStore/process_command path with only HTTP transport and the read-store binding lookup stubbed: every non-authorized shape (missing/ambiguous/foreign admission tenant, all without a confirm token) returns 428 with zero downstream calls; the same-tenant shape with the real confirm token returns 202 and dispatches exactly once, before and after CommandStore restart. All 32 cases pass. Full existing services/control-plane/bff/tests/test_command_adapters_router.py suite (92 -> 124 cases with this addition) passes with zero regressions. Combined batch identical to defect_88's frozen command (test_management_domain_actions.py + test_domain_durability_corrective_p1.py + test_domain_durability_corrective_p1_generic_tenant_forgery.py + test_command_adapters_router.py + capital/ + research/) re-run at this head: 331 passed (299 baseline + 32 new), 0 failed, 152.46s.",
       "reproducer": "/tmp/test_domain_writer_3c498_repair_review.py (reviewer's exact-head reproducer; its 'valid' shape asserted the pre-fix vulnerable no-token-required behavior and is superseded, not reproduced, by the fix); ported as a corrected, confirm-token-bearing regression into services/control-plane/bff/tests/test_command_adapters_router.py::test_signed_identity_runtime_action_repair_alias_requires_effective_confirm_token_and_tenant. /tmp/test_domain_writer_3c498_repair_control.py (canonical-command control) still passes unchanged (4 passed)."
+    },
+    "defect_90_pause_resume_confirm_token_residual_gap_closed": {
+      "problem": "runtime_adapter.py's resolve_effective_action classified every pause/resume action_id -- including the literal 'PausePaperRuntime'/'ResumePaperRuntime' action_ids -- dispatched through the generic RuntimeAction wrapper as generic_ok, so service.py validated admission against RuntimeAction's own weak (requires_confirm_token=false) catalog entry instead of PausePaperRuntime's (requires_confirm_token=true) or ResumePaperRuntime's (requires_confirm_token=true, requires_approval=true) own entries. A mounted signed-JWT same-tenant POST /bff/v1/commands with command=RuntimeAction and no confirm token (and, for resume, no approval evidence) dispatched exactly like an evidence-bearing direct PausePaperRuntime/ResumePaperRuntime submission, including after a CommandStore restart. Independent exact-head REJECT at PR #5998 head 737af15a610aa083d92423e9f25ae3231cfa0a49 (reproducer /tmp/test_domain_writer_737af_review.py: 4 failed, 4 passed, exit 1).",
+      "remediation": "Moved pause/pauseRuntime/pauseExecution/pausePaperRuntime and resume/unpause/resumePaperRuntime out of _RUNTIME_ACTION_GENERIC_ONLY and into _RUNTIME_ACTION_CANONICAL_ALIASES, mapping the pause-shaped aliases to PausePaperRuntime and the resume-shaped aliases to ResumePaperRuntime for admission purposes (there is no dedicated canonical ResumeRuntime CommandType for a plain resume/unpause to bind a confirm token to, so ResumePaperRuntime's own entry -- the strictest available -- is the only applicable stronger gate). service.py's existing cmd.model_copy(update={\"command\": ...}) canonical-swap (added for the repair actions under defect_89) now also gates every pause/resume alias's confirm_token (and, for resume, approval) evidence against the effective PausePaperRuntime/ResumePaperRuntime catalog entry before durable admission. RuntimeCommandAdapter._execute_pause's own execution-time routing (is_canonical_paper) is unchanged: this only changes which catalog entry admission validates confirm_token/approval evidence against, not which downstream branch the adapter dispatches to, so the prior round's tenant-ownership fix (defect_88) is preserved unmodified. test_signed_identity_runtime_pause_resume_requires_owner_tenant's same-tenant positive fixtures now issue a real confirm token (and, for resume actions, a real approved approval decision) bound to the exact effective command and target before asserting 202/executed, while every tenant-negative assertion (missing/ambiguous/foreign admission tenant) is unchanged. Added a new parametrized regression, test_signed_identity_runtime_action_pause_resume_requires_effective_confirm_token_and_approval, covering missing/invalid/valid confirm_token and approval evidence shapes across a CommandStore restart for all four pause/resume action_id spellings, asserting zero durable admission/dispatch on every denied shape. Updated the one other exercised caller of RuntimeAction's plain pause action_id (test_aud_002_audit_action_write_engine.py) to issue a real confirm token bound to PausePaperRuntime before its audit-write assertions."
     }
   },
   "generic_wrapper_parity_audit": {
@@ -392,24 +396,185 @@
     "runtime_action_effective_authorization_table": {
       "note": "Columns: action_id (as sent in params.action_id to command=RuntimeAction) -> canonical command it resolves to for admission purposes (per runtime_adapter.py's resolve_effective_action) -> that canonical command's own catalog entry (requires_confirm_token / requires_approval / requires_two_man / required_roles) -> whether RuntimeCommandAdapter's target-owner-tenant check applies at execution. 'n/a (generic_ok)' means the alias has no distinct canonical command of its own to bypass; RuntimeAction's own (weak) entry is correct because there is nothing stronger behind it.",
       "rows": [
-        {"action_id": "start", "canonical": "StartRuntime", "requires_confirm_token": true, "requires_approval": false, "requires_two_man": true, "required_roles": ["runtime_operator", "live_owner_approver"], "tenant_check": "not applicable to RuntimeCommandAdapter._execute_start (StartRuntime has no RuntimeBinding to own-check pre-dispatch; internal API is authoritative for runtime_id ownership)"},
-        {"action_id": "pause / pauseRuntime / pauseExecution / pausePaperRuntime", "canonical": "n/a (generic_ok) -- see pause_resume_confirm_token_residual_gap", "requires_confirm_token": "PauseRuntime=true, PausePaperRuntime=true (NOT enforced through the wrapper; residual gap)", "requires_approval": false, "requires_two_man": false, "required_roles": ["operator", "admin"], "tenant_check": "yes (RuntimeCommandAdapter._execute_pause, fixed under defect_88, re-verified unchanged by this round's regression suite)"},
-        {"action_id": "resume / unpause / resumePaperRuntime", "canonical": "n/a (generic_ok) -- see pause_resume_confirm_token_residual_gap", "requires_confirm_token": "ResumePaperRuntime=true (NOT enforced through the wrapper; residual gap)", "requires_approval": "ResumePaperRuntime=true (NOT enforced through the wrapper; residual gap)", "requires_two_man": false, "required_roles": ["operator", "approver", "admin"], "tenant_check": "yes (RuntimeCommandAdapter._execute_pause, fixed under defect_88, re-verified unchanged by this round's regression suite)"},
-        {"action_id": "restartpaperruntime", "canonical": "RestartPaperRuntime", "requires_confirm_token": true, "requires_approval": false, "requires_two_man": false, "required_roles": ["operator", "runtime_operator"], "tenant_check": "yes (new this round, RuntimeCommandAdapter._execute_repair_action, target_key=runtime_id)"},
-        {"action_id": "restarttelemetrybridge", "canonical": "RestartTelemetryBridge", "requires_confirm_token": true, "requires_approval": false, "requires_two_man": false, "required_roles": ["operator", "runtime_operator"], "tenant_check": "yes (new this round, same as above)"},
-        {"action_id": "startpapermonitoringsession", "canonical": "StartPaperMonitoringSession", "requires_confirm_token": true, "requires_approval": false, "requires_two_man": false, "required_roles": ["operator", "runtime_operator"], "tenant_check": "yes (new this round, same as above)"},
-        {"action_id": "probetelemetryingest", "canonical": "ProbeTelemetryIngest", "requires_confirm_token": true, "requires_approval": false, "requires_two_man": false, "required_roles": ["operator", "runtime_operator"], "tenant_check": "yes (new this round, same as above)"},
-        {"action_id": "terminatestalepapermonitoringsession", "canonical": "TerminateStalePaperMonitoringSession", "requires_confirm_token": true, "requires_approval": false, "requires_two_man": false, "required_roles": ["operator", "runtime_operator"], "tenant_check": "no -- target_key is session_id, not runtime_id; _execute_repair_action's new tenant check is scoped to target_key=='runtime_id' only. Recorded as a residual gap (session-to-runtime-binding resolution was not available to verify safely within this round); confirm_token gating (the concretely reproduced defect) is fixed for this action."},
-        {"action_id": "issuesafemode", "canonical": "IssueSafeMode", "requires_confirm_token": true, "requires_approval": false, "requires_two_man": false, "required_roles": ["operator", "approver"], "tenant_check": "no -- _validate_issue_safe_mode (registered validator, unaffected by this round's fix since validator routing was reverted, see defect_89) checks safe_mode_level and admin MFA only; no capital_pool_id tenant-ownership check exists for this action through any path (direct or wrapped). Recorded as a residual gap; confirm_token gating is fixed for this action."},
-        {"action_id": "executerollback / rollback", "canonical": "ExecuteRollback", "requires_confirm_token": true, "requires_approval": true, "requires_two_man": false, "required_roles": ["operator", "approver"], "tenant_check": "no -- _execute_rollback has no RuntimeBinding/target ownership model to check against (target_id is a deployment/artifact id, not a tenant-scoped runtime); recorded as a residual gap. confirm_token and approval gating are fixed for this action."},
-        {"action_id": "hardrollback", "canonical": "HardRollback", "requires_confirm_token": true, "requires_approval": true, "requires_two_man": true, "required_roles": ["approver"], "tenant_check": "no -- same as executerollback. Separately noted: runtime_adapter.py's own dispatch routes both ExecuteRollback and HardRollback action_ids to the same _execute_rollback handler (pre-existing behavior, unchanged by this round); admission now at least applies HardRollback's own (stronger) two-man/approval/confirm_token requirements when action_id=hardrollback is named explicitly, which it did not before this round."},
-        {"action_id": "approverollback", "canonical": "ApproveRollback", "requires_confirm_token": false, "requires_approval": false, "requires_two_man": false, "required_roles": ["approver"], "tenant_check": "no -- rollback records have no RuntimeBinding tenant model; out of scope."},
-        {"action_id": "rejectrollback", "canonical": "RejectRollback", "requires_confirm_token": false, "requires_approval": false, "requires_two_man": false, "required_roles": ["approver"], "tenant_check": "no -- same as approverollback."},
-        {"action_id": "activatekillswitch / killswitch", "canonical": "ActivateKillSwitch", "requires_confirm_token": true, "requires_approval": true, "requires_two_man": true, "required_roles": ["approver"], "tenant_check": "no -- kill switch scope can be system-wide ('all') with no single owning tenant; out of scope for a per-runtime tenant check. confirm_token/approval/two_man gating is fixed for this action_id spelling."},
-        {"action_id": "issueriskoff", "canonical": "IssueRiskOff", "requires_confirm_token": true, "requires_approval": false, "requires_two_man": false, "required_roles": ["operator", "approver"], "tenant_check": "no -- pre-existing, unrelated adapter quirk: runtime_adapter.py routes issueriskoff's actual dispatch to the same _execute_kill_switch handler as activatekillswitch (both call the kill-switch internal API), for direct IssueRiskOff submission as well as through the wrapper; this round intentionally validates admission against IssueRiskOff's own (weaker) catalog entry to preserve exact wrapper/direct parity rather than silently applying ActivateKillSwitch's stronger gate, since a direct command=IssueRiskOff submission already exhibits the same pre-existing dispatch-target mismatch today and fixing that mismatch is a distinct, unscoped defect."}
+        {
+          "action_id": "start",
+          "canonical": "StartRuntime",
+          "requires_confirm_token": true,
+          "requires_approval": false,
+          "requires_two_man": true,
+          "required_roles": [
+            "runtime_operator",
+            "live_owner_approver"
+          ],
+          "tenant_check": "not applicable to RuntimeCommandAdapter._execute_start (StartRuntime has no RuntimeBinding to own-check pre-dispatch; internal API is authoritative for runtime_id ownership)"
+        },
+        {
+          "action_id": "pause / pauseRuntime / pauseExecution / pausePaperRuntime",
+          "canonical": "PausePaperRuntime",
+          "requires_confirm_token": true,
+          "requires_approval": false,
+          "requires_two_man": false,
+          "required_roles": [
+            "operator",
+            "admin"
+          ],
+          "tenant_check": "yes (RuntimeCommandAdapter._execute_pause, fixed under defect_88, re-verified unchanged by defect_90's confirm_token fix)"
+        },
+        {
+          "action_id": "resume / unpause / resumePaperRuntime",
+          "canonical": "ResumePaperRuntime",
+          "requires_confirm_token": true,
+          "requires_approval": true,
+          "requires_two_man": false,
+          "required_roles": [
+            "operator",
+            "approver",
+            "admin"
+          ],
+          "tenant_check": "yes (RuntimeCommandAdapter._execute_pause, fixed under defect_88, re-verified unchanged by defect_90's confirm_token fix)"
+        },
+        {
+          "action_id": "restartpaperruntime",
+          "canonical": "RestartPaperRuntime",
+          "requires_confirm_token": true,
+          "requires_approval": false,
+          "requires_two_man": false,
+          "required_roles": [
+            "operator",
+            "runtime_operator"
+          ],
+          "tenant_check": "yes (new this round, RuntimeCommandAdapter._execute_repair_action, target_key=runtime_id)"
+        },
+        {
+          "action_id": "restarttelemetrybridge",
+          "canonical": "RestartTelemetryBridge",
+          "requires_confirm_token": true,
+          "requires_approval": false,
+          "requires_two_man": false,
+          "required_roles": [
+            "operator",
+            "runtime_operator"
+          ],
+          "tenant_check": "yes (new this round, same as above)"
+        },
+        {
+          "action_id": "startpapermonitoringsession",
+          "canonical": "StartPaperMonitoringSession",
+          "requires_confirm_token": true,
+          "requires_approval": false,
+          "requires_two_man": false,
+          "required_roles": [
+            "operator",
+            "runtime_operator"
+          ],
+          "tenant_check": "yes (new this round, same as above)"
+        },
+        {
+          "action_id": "probetelemetryingest",
+          "canonical": "ProbeTelemetryIngest",
+          "requires_confirm_token": true,
+          "requires_approval": false,
+          "requires_two_man": false,
+          "required_roles": [
+            "operator",
+            "runtime_operator"
+          ],
+          "tenant_check": "yes (new this round, same as above)"
+        },
+        {
+          "action_id": "terminatestalepapermonitoringsession",
+          "canonical": "TerminateStalePaperMonitoringSession",
+          "requires_confirm_token": true,
+          "requires_approval": false,
+          "requires_two_man": false,
+          "required_roles": [
+            "operator",
+            "runtime_operator"
+          ],
+          "tenant_check": "no -- target_key is session_id, not runtime_id; _execute_repair_action's new tenant check is scoped to target_key=='runtime_id' only. Recorded as a residual gap (session-to-runtime-binding resolution was not available to verify safely within this round); confirm_token gating (the concretely reproduced defect) is fixed for this action."
+        },
+        {
+          "action_id": "issuesafemode",
+          "canonical": "IssueSafeMode",
+          "requires_confirm_token": true,
+          "requires_approval": false,
+          "requires_two_man": false,
+          "required_roles": [
+            "operator",
+            "approver"
+          ],
+          "tenant_check": "no -- _validate_issue_safe_mode (registered validator, unaffected by this round's fix since validator routing was reverted, see defect_89) checks safe_mode_level and admin MFA only; no capital_pool_id tenant-ownership check exists for this action through any path (direct or wrapped). Recorded as a residual gap; confirm_token gating is fixed for this action."
+        },
+        {
+          "action_id": "executerollback / rollback",
+          "canonical": "ExecuteRollback",
+          "requires_confirm_token": true,
+          "requires_approval": true,
+          "requires_two_man": false,
+          "required_roles": [
+            "operator",
+            "approver"
+          ],
+          "tenant_check": "no -- _execute_rollback has no RuntimeBinding/target ownership model to check against (target_id is a deployment/artifact id, not a tenant-scoped runtime); recorded as a residual gap. confirm_token and approval gating are fixed for this action."
+        },
+        {
+          "action_id": "hardrollback",
+          "canonical": "HardRollback",
+          "requires_confirm_token": true,
+          "requires_approval": true,
+          "requires_two_man": true,
+          "required_roles": [
+            "approver"
+          ],
+          "tenant_check": "no -- same as executerollback. Separately noted: runtime_adapter.py's own dispatch routes both ExecuteRollback and HardRollback action_ids to the same _execute_rollback handler (pre-existing behavior, unchanged by this round); admission now at least applies HardRollback's own (stronger) two-man/approval/confirm_token requirements when action_id=hardrollback is named explicitly, which it did not before this round."
+        },
+        {
+          "action_id": "approverollback",
+          "canonical": "ApproveRollback",
+          "requires_confirm_token": false,
+          "requires_approval": false,
+          "requires_two_man": false,
+          "required_roles": [
+            "approver"
+          ],
+          "tenant_check": "no -- rollback records have no RuntimeBinding tenant model; out of scope."
+        },
+        {
+          "action_id": "rejectrollback",
+          "canonical": "RejectRollback",
+          "requires_confirm_token": false,
+          "requires_approval": false,
+          "requires_two_man": false,
+          "required_roles": [
+            "approver"
+          ],
+          "tenant_check": "no -- same as approverollback."
+        },
+        {
+          "action_id": "activatekillswitch / killswitch",
+          "canonical": "ActivateKillSwitch",
+          "requires_confirm_token": true,
+          "requires_approval": true,
+          "requires_two_man": true,
+          "required_roles": [
+            "approver"
+          ],
+          "tenant_check": "no -- kill switch scope can be system-wide ('all') with no single owning tenant; out of scope for a per-runtime tenant check. confirm_token/approval/two_man gating is fixed for this action_id spelling."
+        },
+        {
+          "action_id": "issueriskoff",
+          "canonical": "IssueRiskOff",
+          "requires_confirm_token": true,
+          "requires_approval": false,
+          "requires_two_man": false,
+          "required_roles": [
+            "operator",
+            "approver"
+          ],
+          "tenant_check": "no -- pre-existing, unrelated adapter quirk: runtime_adapter.py routes issueriskoff's actual dispatch to the same _execute_kill_switch handler as activatekillswitch (both call the kill-switch internal API), for direct IssueRiskOff submission as well as through the wrapper; this round intentionally validates admission against IssueRiskOff's own (weaker) catalog entry to preserve exact wrapper/direct parity rather than silently applying ActivateKillSwitch's stronger gate, since a direct command=IssueRiskOff submission already exhibits the same pre-existing dispatch-target mismatch today and fixing that mismatch is a distinct, unscoped defect."
+        }
       ]
     },
-    "pause_resume_confirm_token_residual_gap": "PausePaperRuntime (requires_confirm_token=true) and ResumePaperRuntime (requires_confirm_token=true, requires_approval=true) are NOT gated on those requirements when dispatched through RuntimeAction's pause/resume/pausePaperRuntime/resumePaperRuntime/unpause action_id aliases; only their independently-fixed (defect_88) target-owner-tenant check applies. This is a deliberate, explicitly-scoped-out decision for this round, not an oversight: routing service.py's per-command `_validators`/precondition entry selection through the effective action for these action_ids was prototyped and reverted because (a) the existing, reviewer-accepted test_signed_identity_runtime_pause_resume_requires_owner_tenant regression (defect_88, 32 cases) asserts a 202/executed same-tenant outcome with no confirm_token supplied at all -- changing that would require rewriting an already-accepted regression's expected behavior, not just adding coverage; and (b) PausePaperRuntime/ResumePaperRuntime's param shape (entity_id/runtime_id populated from target.id only inside stored_command_params, which itself keys off the literal cmd.command and runs after validator dispatch) differs enough from the wrapper's action_id/entity_id convention that naively routing validator selection through the effective command rejected well-formed wrapper requests with a spurious 422 'missing runtime_id' during this round's own testing. Closing this residual gap requires either (i) making stored_command_params/the validator dispatch effective-action-aware together, in the same change, with its own dedicated mounted regression proving no wrapper-vs-direct behavioral divergence, or (ii) an explicit product decision that ResumePaperRuntime's requires_approval=true is not meant to apply to the generic resume alias. Recommend a scoped follow-up task rather than folding it into this already-large corrective round.",
     "experiment_action_audit": {
       "result": "no fix required",
       "finding": "ExperimentAction's action_id vocabulary (cancel/retry/archive/archived/invalidate/invalidated/promote/attached_to_review, per ExperimentCommandAdapter.execute() in experiment_adapter.py) never aliases into a distinct canonical CommandType/catalog entry. 'promote' and 'attached_to_review' both fail closed unconditionally (409/422) regardless of any admission evidence. ExperimentAction's own catalog entry (requires_confirm_token=false, requires_approval=false, requires_two_man=false) is therefore the correct and only applicable entry for every action_id this adapter actually dispatches; there is nothing stronger for a caller to bypass."
@@ -419,7 +584,8 @@
       "finding": "GovernanceCommandAdapter.execute() dispatches command_type=ReviewAction with action_id in {approve, approvedecision} to the same _execute_decision_action('approve') handler as a direct command=ApproveDecision submission (ApproveDecision requires_approval=true), action_id in {reject, rejectdecision} to RejectDecision's handler, action_id in {requestrevision, requestapprovalrevision, request-revision} to RequestApprovalRevision's handler, action_id starting with 'humangate' to the corresponding HumanGate*/two-man-gated handler, and action_id in {recordsponsordecision, sponsor-decision} to RecordSponsorDecision's handler -- all while ReviewAction's own catalog entry (requires_confirm_token=false, requires_approval=false, requires_two_man=false) was the only one ever validated. This is the same bug class as RuntimeAction: a caller could submit command=ReviewAction, params.action_id=approve and bypass ApproveDecision's requires_approval=true evidence requirement, or params.action_id=HumanGateApprove and bypass HumanGateApprove's requires_two_man=true requirement.",
       "remediation": "runtime_adapter.py's _resolve_review_action (co-located with resolve_effective_action; see defect_89.remediation) mirrors this exact dispatch table; service.py's submit_command_admission resolves ReviewAction's effective canonical command the same way as RuntimeAction and passes require_final_command_preconditions the same cmd.model_copy(update={\"command\": ...}) swap (preconditions.py itself is unmodified), so approve/reject/requestrevision/humangate*/recordsponsordecision through the ReviewAction wrapper are validated under ApproveDecision/RejectDecision/RequestApprovalRevision/HumanGate*/RecordSponsorDecision's own confirm_token/approval/two_man requirements. action_id in {requestreview, review} (GovernanceCommandAdapter._execute_review_action, which only builds a receipt and never calls a downstream mutation endpoint) remain generic_ok -- there is no canonical command behind them to bypass. An unrecognized action_id under ReviewAction now fails closed at admission the same as RuntimeAction.",
       "verification": "Covered by the existing require_final_command_preconditions unit-level exercise in the combined 331-case suite; a dedicated mounted-JWT ReviewAction parity regression (mirroring test_signed_identity_runtime_action_repair_alias_requires_effective_confirm_token_and_tenant) was not added in this round due to time-boxing and is recommended as part of the same follow-up as pause_resume_confirm_token_residual_gap. The fix itself is exercised indirectly: no existing test submits command=ReviewAction with action_id=approve/reject/humangate* and expects the old (bypassed) behavior, so the fix introduces no regression in the 331-case combined suite."
-    }
+    },
+    "pause_resume_confirm_token_residual_gap_CLOSED": "CLOSED under defect_90 (this round). Previously: PausePaperRuntime/ResumePaperRuntime's requires_confirm_token/requires_approval were not gated when dispatched through RuntimeAction's pause/resume aliases. Now: resolve_effective_action maps every pause-shaped alias to PausePaperRuntime and every resume-shaped alias to ResumePaperRuntime for admission, so service.py's existing canonical cmd-swap enforces their confirm_token/approval requirements identically whether the caller submits the canonical command directly or wraps it in RuntimeAction. See defect_90 for the full remediation and regression list."
   },
   "mutation_caller_inventory": {
     "runtime_binding": {
@@ -1533,6 +1699,36 @@
       {
         "command": "git status --short",
         "result": "M services/control-plane/bff/command_adapters/runtime_adapter.py, M services/control-plane/bff/command_adapters/service.py, M services/control-plane/bff/tests/test_command_adapters_router.py, M docs/deployment/evidence/DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001/evidence.json (this file) -- all within the declared artifact contract. preconditions.py is untouched (byte-identical to origin/dev) after the governed handoff command twice rejected out-of-contract files (a standalone effective_action.py, then a direct preconditions.py edit); the final mechanism instead swaps cmd.command on a copy passed into that unmodified function from service.py."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py",
+        "result": "148 passed, 3 warnings in 55.11s",
+        "executed": 148,
+        "collected": 148
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
+        "result": "2 passed, 3 warnings in 12.07s",
+        "executed": 2,
+        "collected": 2
+      },
+      {
+        "command": "BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -p services.control_plane.bff.conftest -q -s /tmp/test_domain_writer_737af_review.py --tb=short (reviewer's exact-head reproducer for the ninth rejection)",
+        "result": "8 passed, 1 warning in 2.96s (previously 4 failed, 4 passed, exit 1)",
+        "executed": 8,
+        "collected": 8
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py",
+        "result": "4 passed, 1 warning in 5.29s",
+        "executed": 4,
+        "collected": 4
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+        "result": "63 passed, 3 warnings, 2 subtests passed in 32.36s",
+        "executed": 63,
+        "collected": 63
       }
     ]
   },
@@ -1692,6 +1888,16 @@
       "complete_action_table": "See generic_wrapper_parity_audit.runtime_action_effective_authorization_table above (operator guidance item 1).",
       "sibling_wrapper_audit": "See generic_wrapper_parity_audit.experiment_action_audit and generic_wrapper_parity_audit.review_action_audit above (operator guidance item 6).",
       "known_residual_scope": "See generic_wrapper_parity_audit.pause_resume_confirm_token_residual_gap above; recorded as an explicit, checkpointed scope boundary for this round rather than a silent gap, per acceptance item 5's requirement that additional scope be checkpointed before formal contract revision."
+    },
+    "ninth_rejection_and_fix": {
+      "pr": 5998,
+      "rejected_head": "737af15a610aa083d92423e9f25ae3231cfa0a49",
+      "rejected_manifest": "bc6767070037ce59d6d11de1f34ede8c80984286",
+      "finding": "P1: runtime_adapter.py deliberately classified pause/resume/PausePaperRuntime/ResumePaperRuntime aliases as generic_ok, so service.py applied RuntimeAction's own weak preconditions instead of the effective canonical action. Mounted signed-JWT same-tenant POST /bff/v1/commands without confirm token or approval: direct PausePaperRuntime and ResumePaperRuntime returned 428 with zero dispatch; identical actions wrapped in RuntimeAction returned 202 and reached executed with one downstream test-transport call, including after CommandStore restart. Reproducer /tmp/test_domain_writer_737af_review.py: 4 failed, 4 passed, exit 1.",
+      "fix": "See defect_90_pause_resume_confirm_token_residual_gap_closed above.",
+      "complete_action_table": "See generic_wrapper_parity_audit.runtime_action_effective_authorization_table above, updated so the pause/resume rows now record canonical=PausePaperRuntime/ResumePaperRuntime and requires_confirm_token=true (and requires_approval=true for resume) instead of 'n/a (generic_ok)'.",
+      "residual_scope_preserved_unchanged": "operator guidance item 4's pre-existing IssueSafeMode/ExecuteRollback/HardRollback direct-path tenant-ownership gap and item 2's TerminateStalePaperMonitoringSession session-to-runtime-binding residual remain out of scope for this fix and are unchanged from defect_89's recorded residuals; this round only closes the pause/resume confirm_token/approval gate.",
+      "verification": "pytest -q services/control-plane/bff/tests/test_command_adapters_router.py (148 passed, includes the rewritten test_signed_identity_runtime_pause_resume_requires_owner_tenant with genuine confirm_token/approval evidence in its same-tenant fixtures and the new test_signed_identity_runtime_action_pause_resume_requires_effective_confirm_token_and_approval covering missing/invalid/valid evidence shapes across a CommandStore restart); pytest -q services/control-plane/bff/test_aud_002_audit_action_write_engine.py (2 passed, updated to issue a real confirm token before its RuntimeAction pause audit-write assertion); reviewer reproducer BFF_READ_STORE_BOOTSTRAP=0 pytest -p services.control_plane.bff.conftest -q -s /tmp/test_domain_writer_737af_review.py --tb=short => 8 passed, exit 0 (previously 4 failed, 4 passed)."
     }
   }
 }

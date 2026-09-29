@@ -193,9 +193,33 @@ def _command_event(events: list[dict], command_id: str) -> dict:
 
 def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
     with _isolated_audit_client(allow_fallback=True) as client:
+        # DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001: RuntimeAction's "pause"
+        # action_id now resolves to PausePaperRuntime's own
+        # requires_confirm_token=True catalog entry for admission (it is no
+        # longer a confirm-token-free "generic_ok" bypass), so a real
+        # confirm token bound to that effective command/target is required
+        # before this audit-write proof can dispatch.
+        issued = client.post(
+            "/bff/confirm-tokens",
+            headers={**HEADERS, "Idempotency-Key": "aud-002-runtime-pause-issue"},
+            json={
+                "tokenId": "aud-002-pause-token",
+                "ttlSeconds": 300,
+                "command": "PausePaperRuntime",
+                "target_type": "Runtime",
+                "target_id": "runtime-042",
+                "operator_id": "op-aud-002",
+            },
+        )
+        assert issued.status_code == 201, issued.text
+
         response = client.post(
             "/bff/v1/commands",
-            headers={**HEADERS, "Idempotency-Key": "aud-002-runtime-pause"},
+            headers={
+                **HEADERS,
+                "Idempotency-Key": "aud-002-runtime-pause",
+                "X-Confirm-Token": "aud-002-pause-token",
+            },
             json={
                 "command": "RuntimeAction",
                 "target": {"type": "Runtime", "id": "runtime-042"},
@@ -212,7 +236,7 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
         assert response.status_code == 202, response.text
         command_id = response.json()["data"]["receipt_id"]
 
-        records = command_store._get_all_commands()
+        records = [row for row in command_store._get_all_commands() if row.get("type") == "RuntimeAction"]
         assert len(records) == 1
         foundation = records[0]["foundation"]
         assert foundation["audit_action"]["action_type"] == "bff.command.accepted"
