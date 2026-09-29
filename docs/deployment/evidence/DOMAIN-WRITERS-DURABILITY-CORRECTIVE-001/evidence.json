@@ -2094,5 +2094,634 @@
     "test_result": "23 passed; with old runtime_adapter._execute_start reader restored: 3 failed (StartRuntime wrapped x2 restart modes + static guard)",
     "regression_batch": "321 passed, 2 subtests passed (inventory, command_adapters_router, aud_002_audit_action_write_engine, management_domain_actions)",
     "grep_search": "grep -rnE 'params(\\.get\\(|\\[)\\s*[\"']confirm_token[\"']' command_executor.py command_adapters/*.py => only base.py canonical_confirm_token"
+  },
+  "wrapper_effective_action_inventory": {
+    "defect_class": "independent review REJECT at PR #5998 head 45bf8c93f (P1): PersonaAction params.action_id=AdvanceLifecycle bypassed the canonical approval/confirm-token preconditions (direct 428, wrapped 202 + fabricated confirm_token=lifecycle-confirm). Same systemic gap as the RuntimeAction/ReviewAction rounds, on every other wrapper.",
+    "single_source": "services/control-plane/bff/command_adapters/runtime_adapter.py::_WRAPPER_SPECS + wrapper_canonical_inventory() + resolve_wrapper_dispatch(); admission (service.py submit_command_admission via resolve_effective_action) and the persona/capital/deployment/incident adapters resolve through the same table. Aliases are normalized (lower-case, '-'/'_' removed).",
+    "wrappers_inventoried": [
+      "CapitalPoolAction",
+      "DeploymentAction",
+      "IncidentAction",
+      "PersonaAction",
+      "RebalanceAction",
+      "ReviewAction",
+      "RiskAlertAction",
+      "RuntimeAction"
+    ],
+    "wrappers_with_no_gated_alias_reviewed": {
+      "ExperimentAction": "vocabulary cancel/retry/archive/invalidate/promote never aliases to a direct CommandType",
+      "JobAction": "research jobs port; no direct gated command",
+      "StrategyAction/RankingFormulaAction/RankingAction": "command_contract owner actions; none map to a gated direct CommandType",
+      "EvolutionProgramAction": "program actions; no direct gated CommandType",
+      "ToolAction/McpServerAction/SkillAction/Agora*Action": "capability/agora actions; no direct gated CommandType",
+      "V5InterventionAction/SentinelFindingStatus/SentinelRemediation*/DecideV5Intervention": "non-wrapper commands: adapter now dispatches on command type only, so params.action_id=remediate can no longer reach RemediateSentinelIntervention"
+    },
+    "vocabulary_policy": {
+      "RuntimeAction/ReviewAction/DeploymentAction": "closed: unrecognized action_id rejected 422 before durable admission",
+      "PersonaAction/CapitalPoolAction/RebalanceAction/IncidentAction/RiskAlertAction": "open: non-canonical action ids are wrapper-only generic actions (no gated direct command to bypass); gated aliases always resolve canonical"
+    },
+    "canonical_gates": {
+      "RestartPaperRuntime": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "PausePaperRuntime": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "ApproveRollback": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "StartRuntime": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": true,
+        "requires_two_man": true
+      },
+      "ActivateKillSwitch": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": true,
+        "requires_two_man": true
+      },
+      "StartPaperMonitoringSession": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "HardRollback": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": true,
+        "requires_two_man": true
+      },
+      "IssueSafeMode": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "ProbeTelemetryIngest": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "TerminateStalePaperMonitoringSession": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "ExecuteRollback": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "RejectRollback": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "ResumePaperRuntime": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "IssueRiskOff": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "RestartTelemetryBridge": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "RejectDecision": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "HumanGateRequestMoreEvidence": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "HumanGateExtendTtl": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "HumanGateRevoke": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": true
+      },
+      "RecordSponsorDecision": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "ApproveDecision": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "HumanGateApprove": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": true
+      },
+      "HumanGateReject": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": true
+      },
+      "RequestApprovalRevision": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "Observe": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "EmergencyContainment": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": true,
+        "requires_two_man": true
+      },
+      "Demote": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "PromoteCandidate": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "AdvanceLifecycle": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": true,
+        "requires_two_man": false
+      },
+      "ApprovePool": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "RebalanceTwoManSign": {
+        "catalog_entry": false,
+        "note": "server-managed evidence command; direct and wrapped admission both 403 trusted_evidence_producer"
+      },
+      "ApprovedApply": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": true,
+        "requires_two_man": true
+      },
+      "RebalanceApproval": {
+        "catalog_entry": false,
+        "note": "server-managed evidence command; direct and wrapped admission both 403 trusted_evidence_producer"
+      },
+      "CreateDeployment": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "ApproveDeployment": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "PatchDeployment": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "EscalateDiff": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      },
+      "RemediateSentinelIntervention": {
+        "catalog_entry": true,
+        "requires_approval": true,
+        "requires_confirm_token": true,
+        "requires_two_man": true
+      },
+      "AlertAcknowledge": {
+        "catalog_entry": true,
+        "requires_approval": false,
+        "requires_confirm_token": false,
+        "requires_two_man": false
+      }
+    },
+    "mapping_table": [
+      {
+        "wrapper": "CapitalPoolAction",
+        "action_id_alias": "approve",
+        "canonical_direct_command": "ApprovePool"
+      },
+      {
+        "wrapper": "CapitalPoolAction",
+        "action_id_alias": "approvepool",
+        "canonical_direct_command": "ApprovePool"
+      },
+      {
+        "wrapper": "CapitalPoolAction",
+        "action_id_alias": "containment",
+        "canonical_direct_command": "EmergencyContainment"
+      },
+      {
+        "wrapper": "CapitalPoolAction",
+        "action_id_alias": "emergencycontainment",
+        "canonical_direct_command": "EmergencyContainment"
+      },
+      {
+        "wrapper": "DeploymentAction",
+        "action_id_alias": "approve",
+        "canonical_direct_command": "ApproveDeployment"
+      },
+      {
+        "wrapper": "DeploymentAction",
+        "action_id_alias": "approvedeployment",
+        "canonical_direct_command": "ApproveDeployment"
+      },
+      {
+        "wrapper": "DeploymentAction",
+        "action_id_alias": "create",
+        "canonical_direct_command": "CreateDeployment"
+      },
+      {
+        "wrapper": "DeploymentAction",
+        "action_id_alias": "createdeployment",
+        "canonical_direct_command": "CreateDeployment"
+      },
+      {
+        "wrapper": "DeploymentAction",
+        "action_id_alias": "escalatediff",
+        "canonical_direct_command": "EscalateDiff"
+      },
+      {
+        "wrapper": "DeploymentAction",
+        "action_id_alias": "patch",
+        "canonical_direct_command": "PatchDeployment"
+      },
+      {
+        "wrapper": "DeploymentAction",
+        "action_id_alias": "patchdeployment",
+        "canonical_direct_command": "PatchDeployment"
+      },
+      {
+        "wrapper": "DeploymentAction",
+        "action_id_alias": "update",
+        "canonical_direct_command": "PatchDeployment"
+      },
+      {
+        "wrapper": "IncidentAction",
+        "action_id_alias": "acknowledge",
+        "canonical_direct_command": "AlertAcknowledge"
+      },
+      {
+        "wrapper": "IncidentAction",
+        "action_id_alias": "alertacknowledge",
+        "canonical_direct_command": "AlertAcknowledge"
+      },
+      {
+        "wrapper": "IncidentAction",
+        "action_id_alias": "remediate",
+        "canonical_direct_command": "RemediateSentinelIntervention"
+      },
+      {
+        "wrapper": "IncidentAction",
+        "action_id_alias": "remediatesentinelintervention",
+        "canonical_direct_command": "RemediateSentinelIntervention"
+      },
+      {
+        "wrapper": "PersonaAction",
+        "action_id_alias": "advancelifecycle",
+        "canonical_direct_command": "AdvanceLifecycle"
+      },
+      {
+        "wrapper": "PersonaAction",
+        "action_id_alias": "containment",
+        "canonical_direct_command": "EmergencyContainment"
+      },
+      {
+        "wrapper": "PersonaAction",
+        "action_id_alias": "demote",
+        "canonical_direct_command": "Demote"
+      },
+      {
+        "wrapper": "PersonaAction",
+        "action_id_alias": "emergencycontainment",
+        "canonical_direct_command": "EmergencyContainment"
+      },
+      {
+        "wrapper": "PersonaAction",
+        "action_id_alias": "observe",
+        "canonical_direct_command": "Observe"
+      },
+      {
+        "wrapper": "PersonaAction",
+        "action_id_alias": "promote",
+        "canonical_direct_command": "PromoteCandidate"
+      },
+      {
+        "wrapper": "PersonaAction",
+        "action_id_alias": "promotecandidate",
+        "canonical_direct_command": "PromoteCandidate"
+      },
+      {
+        "wrapper": "RebalanceAction",
+        "action_id_alias": "apply",
+        "canonical_direct_command": "ApprovedApply"
+      },
+      {
+        "wrapper": "RebalanceAction",
+        "action_id_alias": "approve",
+        "canonical_direct_command": "RebalanceApproval"
+      },
+      {
+        "wrapper": "RebalanceAction",
+        "action_id_alias": "approverebalance",
+        "canonical_direct_command": "RebalanceApproval"
+      },
+      {
+        "wrapper": "RebalanceAction",
+        "action_id_alias": "containment",
+        "canonical_direct_command": "EmergencyContainment"
+      },
+      {
+        "wrapper": "RebalanceAction",
+        "action_id_alias": "emergencycontainment",
+        "canonical_direct_command": "EmergencyContainment"
+      },
+      {
+        "wrapper": "RebalanceAction",
+        "action_id_alias": "sign",
+        "canonical_direct_command": "RebalanceTwoManSign"
+      },
+      {
+        "wrapper": "RebalanceAction",
+        "action_id_alias": "signrebalance",
+        "canonical_direct_command": "RebalanceTwoManSign"
+      },
+      {
+        "wrapper": "RebalanceAction",
+        "action_id_alias": "twomansign",
+        "canonical_direct_command": "RebalanceTwoManSign"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "approve",
+        "canonical_direct_command": "ApproveDecision"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "approvedecision",
+        "canonical_direct_command": "ApproveDecision"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "humangateapprove",
+        "canonical_direct_command": "HumanGateApprove"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "humangateextendttl",
+        "canonical_direct_command": "HumanGateExtendTtl"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "humangatereject",
+        "canonical_direct_command": "HumanGateReject"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "humangaterequestmoreevidence",
+        "canonical_direct_command": "HumanGateRequestMoreEvidence"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "humangaterevoke",
+        "canonical_direct_command": "HumanGateRevoke"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "recordsponsordecision",
+        "canonical_direct_command": "RecordSponsorDecision"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "reject",
+        "canonical_direct_command": "RejectDecision"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "rejectdecision",
+        "canonical_direct_command": "RejectDecision"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "request-revision",
+        "canonical_direct_command": "RequestApprovalRevision"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "requestapprovalrevision",
+        "canonical_direct_command": "RequestApprovalRevision"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "requestrevision",
+        "canonical_direct_command": "RequestApprovalRevision"
+      },
+      {
+        "wrapper": "ReviewAction",
+        "action_id_alias": "sponsor-decision",
+        "canonical_direct_command": "RecordSponsorDecision"
+      },
+      {
+        "wrapper": "RiskAlertAction",
+        "action_id_alias": "acknowledge",
+        "canonical_direct_command": "AlertAcknowledge"
+      },
+      {
+        "wrapper": "RiskAlertAction",
+        "action_id_alias": "alertacknowledge",
+        "canonical_direct_command": "AlertAcknowledge"
+      },
+      {
+        "wrapper": "RiskAlertAction",
+        "action_id_alias": "remediate",
+        "canonical_direct_command": "RemediateSentinelIntervention"
+      },
+      {
+        "wrapper": "RiskAlertAction",
+        "action_id_alias": "remediatesentinelintervention",
+        "canonical_direct_command": "RemediateSentinelIntervention"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "activatekillswitch",
+        "canonical_direct_command": "ActivateKillSwitch"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "approverollback",
+        "canonical_direct_command": "ApproveRollback"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "executerollback",
+        "canonical_direct_command": "ExecuteRollback"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "hardrollback",
+        "canonical_direct_command": "HardRollback"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "issueriskoff",
+        "canonical_direct_command": "IssueRiskOff"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "issuesafemode",
+        "canonical_direct_command": "IssueSafeMode"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "killswitch",
+        "canonical_direct_command": "ActivateKillSwitch"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "pause",
+        "canonical_direct_command": "PausePaperRuntime"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "pauseexecution",
+        "canonical_direct_command": "PausePaperRuntime"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "pausepaperruntime",
+        "canonical_direct_command": "PausePaperRuntime"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "pauseruntime",
+        "canonical_direct_command": "PausePaperRuntime"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "probetelemetryingest",
+        "canonical_direct_command": "ProbeTelemetryIngest"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "rejectrollback",
+        "canonical_direct_command": "RejectRollback"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "restartpaperruntime",
+        "canonical_direct_command": "RestartPaperRuntime"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "restarttelemetrybridge",
+        "canonical_direct_command": "RestartTelemetryBridge"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "resume",
+        "canonical_direct_command": "ResumePaperRuntime"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "resumepaperruntime",
+        "canonical_direct_command": "ResumePaperRuntime"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "rollback",
+        "canonical_direct_command": "ExecuteRollback"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "start",
+        "canonical_direct_command": "StartRuntime"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "startpapermonitoringsession",
+        "canonical_direct_command": "StartPaperMonitoringSession"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "terminatestalepapermonitoringsession",
+        "canonical_direct_command": "TerminateStalePaperMonitoringSession"
+      },
+      {
+        "wrapper": "RuntimeAction",
+        "action_id_alias": "unpause",
+        "canonical_direct_command": "ResumePaperRuntime"
+      }
+    ],
+    "admission_parity": "For a canonical result admission runs the canonical validator, confirm-token/approval/two-man preconditions (require_final_command_preconditions with the effective command), server-managed rebalance-evidence rejection, capital authority binding, target-type, drawer-runtime and live-broker-scope checks against the effective command, before any durable row.",
+    "removed_fabricated_evidence": [
+      "persona_adapter._execute_advance_lifecycle default confirm_token 'lifecycle-confirm'",
+      "persona_adapter._execute_emergency_containment default two_man_signature_id 'sig-ops-containment'",
+      "capital_adapter._execute_containment default 'sig-emergency-ops'",
+      "incident_adapter._execute_remediate_sentinel default 'sig-sentinel-remed'"
+    ],
+    "adapter_dispatch_rule": "A dispatch-resolved wrapper dispatches the canonical command admission resolved; every other command dispatches on its own command type only and never on params.action_id metadata.",
+    "tests": [
+      "test_command_adapters_router.py::test_wrapper_alias_admission_matches_direct_canonical_command (every (wrapper, alias) pair x {accepted, operator_only, missing_token, invalid_token, missing_approval} x {no restart, CommandStore restart}; mounted signed-JWT /bff/v1/commands, direct vs wrapped status code and durable-row parity, negatives leave no row and no dispatch)",
+      "test_adapters_never_fabricate_confirmation_or_two_man_evidence",
+      "test_non_wrapper_commands_never_dispatch_on_smuggled_action_id",
+      "test_wrapper_inventory_covers_every_adapter_action_alias"
+    ]
   }
 }

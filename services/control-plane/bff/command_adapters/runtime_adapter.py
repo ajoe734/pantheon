@@ -223,7 +223,7 @@ _EMERGENCY_CONTAINMENT_ALIASES = {
 }
 
 # Every wrapper below dispatches through this table only: its adapter
-# (persona/capital/deployment/incident) and ``command_executor.execute_command``
+# (persona/capital/deployment/incident)
 # resolve the action through ``resolve_wrapper_dispatch`` instead of keeping a
 # private action_id switch, so a wrapped action can never reach a gated
 # canonical command that admission did not resolve and gate as that command.
@@ -237,6 +237,9 @@ _WRAPPER_SPECS: Dict[str, _WrapperSpec] = {
             "promotecandidate": "PromoteCandidate",
             "demote": "Demote",
         },
+        # An unrecognized persona action is not admission-gated (no direct
+        # command to bypass); the adapter refuses it at execution.
+        open_vocabulary=True,
     ),
     "CapitalPoolAction": _WrapperSpec(
         canonical={
@@ -330,7 +333,7 @@ for _wrapper_name, _wrapper_spec in _WRAPPER_SPECS.items():
     _RESOLVERS[_wrapper_name] = _make_wrapper_resolver(_ACTION_ID_RESOLVERS[_wrapper_name])
 
 # Wrappers whose dispatch is resolved through ``resolve_wrapper_dispatch``
-# (adapter + executor), in addition to RuntimeAction/ReviewAction which keep
+# (adapters), in addition to RuntimeAction/ReviewAction which keep
 # their own audited dispatch tables.
 DISPATCH_RESOLVED_WRAPPERS = frozenset(_WRAPPER_SPECS)
 
@@ -349,7 +352,7 @@ def wrapper_canonical_inventory() -> Dict[str, Dict[str, str]]:
 
 
 def resolve_wrapper_dispatch(command_type: str, params: Optional[Dict[str, Any]]) -> Optional[str]:
-    """Command an adapter/executor must dispatch for ``command_type``.
+    """Command an adapter must dispatch for ``command_type``.
 
     A dispatch-resolved wrapper returns the canonical direct command its
     ``params.action_id`` names, ``command_type`` itself when the action is

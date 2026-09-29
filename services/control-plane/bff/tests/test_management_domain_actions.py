@@ -602,10 +602,13 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "entity_id": "persona-alpha",
                 "action_id": "AdvanceLifecycle",
                 "target_state": "paper_owner",
+                # admission-validated confirmation (never defaulted by the adapter)
+                "confirm_token_id": "confirm-persona-adv-01",
             },
         )
 
         self.assertEqual(result["status"], "accepted")
+        self.assertEqual(mock_http.call_args.kwargs["payload"]["confirm_token"], "confirm-persona-adv-01")
         self.assertEqual(result["authoritative_readback"]["current_state"], "paper_owner")
 
     @patch("services.control_plane.bff.command_adapters.governance_adapter.http_request_json")

@@ -605,6 +605,18 @@ in this mapping table:
    admitted directly through `/bff/v1/commands` and no `source_route`
    reconciliation is produced.
 
+9. **Generic wrapper effective action** — A wrapper command (`RuntimeAction`,
+   `ReviewAction`, `PersonaAction`, `CapitalPoolAction`, `RebalanceAction`,
+   `DeploymentAction`, `IncidentAction`, `RiskAlertAction`) that names an action
+   with a dedicated direct command (for example `PersonaAction` +
+   `action_id=AdvanceLifecycle`) is admitted as that direct command: same
+   validator, confirm-token/approval/two-man preconditions, server-managed
+   evidence rejection and target checks, before any durable row. The
+   alias-to-command table is `runtime_adapter.wrapper_canonical_inventory()`
+   (mirrored in the task evidence). Adapters never default or synthesize a
+   confirmation, approval or two-man signature, and a non-wrapper command never
+   dispatches on `params.action_id`.
+
 ---
 
 ## 9. Verification

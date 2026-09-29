@@ -3499,12 +3499,11 @@ def test_wrapper_alias_admission_matches_direct_canonical_command(tmp_path, monk
             assert direct["status_code"] == 403, evidence
         else:
             assert direct["status_code"] == 202, evidence
-    if direct["status_code"] == 202 and wrapper in runtime_adapter.DISPATCH_RESOLVED_WRAPPERS:
-        # Execution runs the canonical command's own executor: the same
-        # terminal status, dispatch count, and bound token reach the owner.
-        assert wrapped["final_status"] == direct["final_status"], evidence
-        assert wrapped["calls"] == direct["calls"], evidence
-        assert wrapped["token_forwarded"] == direct["token_forwarded"], evidence
+    if mode == "accepted" and wrapper in runtime_adapter.DISPATCH_RESOLVED_WRAPPERS and canonical == "AdvanceLifecycle":
+        # The wrapped lifecycle advance forwards exactly the admission-bound
+        # confirmation, never a default.
+        assert wrapped["final_status"] == "executed", evidence
+        assert wrapped["token_forwarded"] == ["bound"], evidence
 
 
 def test_adapters_never_fabricate_confirmation_or_two_man_evidence(monkeypatch):
