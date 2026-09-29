@@ -83,41 +83,36 @@ _RUNTIME_ACTION_CANONICAL_ALIASES: Dict[str, str] = {
     "activatekillswitch": "ActivateKillSwitch",
     "killswitch": "ActivateKillSwitch",
     "issueriskoff": "IssueRiskOff",
-    # pause_resume_confirm_token_residual_gap, closed for the literal
-    # PausePaperRuntime/ResumePaperRuntime action_id spellings under
+    # pause_resume_confirm_token_residual_gap, closed under
     # DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 (the exact defect an
     # independent review reproduced: wrapping the literal canonical
     # action_id in RuntimeAction validated RuntimeAction's own weak
     # requires_confirm_token=False entry instead of PausePaperRuntime's/
-    # ResumePaperRuntime's own confirm_token/approval requirements).
+    # ResumePaperRuntime's own confirm_token/approval requirements). Every
+    # RuntimeAction spelling of pause/resume -- the literal canonical
+    # action_id and every bare alias (``pause``/``pauseruntime``/
+    # ``pauseexecution``/``resume``/``unpause``) -- must gate admission
+    # against PausePaperRuntime's/ResumePaperRuntime's own (stronger)
+    # confirm_token/approval catalog entry; none of them fall back to
+    # RuntimeAction's weak entry any more.
     # RuntimeCommandAdapter._execute_pause's execution-time routing
     # (is_canonical_paper) is unaffected: this only changes which catalog
     # entry durable admission validates confirm_token/approval evidence
     # against, not which downstream branch the adapter dispatches to.
-    #
-    # The bare ``pause``/``pauseruntime``/``pauseexecution``/``resume``/
-    # ``unpause`` aliases remain intentionally NOT remapped here and stay
-    # gated only by RuntimeAction's own (weak) entry: closing that broader
-    # gap requires touching services/control-plane/bff/test_aud_002_audit_
-    # action_write_engine.py's existing bare-"pause" positive fixture, which
-    # is outside this task's declared artifact contract (the governed
-    # handoff command fails closed on out-of-contract file changes). This
-    # is recorded as an explicit, checkpointed residual -- see evidence.json
-    # generic_wrapper_parity_audit -- not a silently narrowed fix; it needs
-    # either a contract amendment or a follow-up task covering that file.
     "pausepaperruntime": "PausePaperRuntime",
     "resumepaperruntime": "ResumePaperRuntime",
+    "pause": "PausePaperRuntime",
+    "pauseruntime": "PausePaperRuntime",
+    "pauseexecution": "PausePaperRuntime",
+    "resume": "ResumePaperRuntime",
+    "unpause": "ResumePaperRuntime",
 }
 
-# Bare pause/resume aliases with no distinct canonical command bypass to
-# gate against for admission purposes (see the residual-gap note above).
-_RUNTIME_ACTION_GENERIC_ONLY = {
-    "resume",
-    "unpause",
-    "pause",
-    "pauseruntime",
-    "pauseexecution",
-}
+# No RuntimeAction pause/resume spelling is generic-only any more: every
+# alias above resolves to a distinct, stronger canonical command that
+# durable admission must validate against instead of RuntimeAction's own
+# weak entry.
+_RUNTIME_ACTION_GENERIC_ONLY: frozenset = frozenset()
 
 
 def _resolve_runtime_action(params: Dict[str, Any]) -> EffectiveAction:

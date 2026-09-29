@@ -1101,7 +1101,18 @@ def test_signed_identity_same_tenant_confirm_token_idempotency_key_replays(
 
 @pytest.mark.parametrize("admission_shape", ["missing", "ambiguous", "foreign", "same_tenant"])
 @pytest.mark.parametrize("restart", [False, True])
-@pytest.mark.parametrize("action", ["PausePaperRuntime", "ResumePaperRuntime", "pause", "resume"])
+@pytest.mark.parametrize(
+    "action",
+    [
+        "PausePaperRuntime",
+        "ResumePaperRuntime",
+        "pause",
+        "pauseRuntime",
+        "pauseExecution",
+        "resume",
+        "unpause",
+    ],
+)
 def test_signed_identity_runtime_pause_resume_requires_owner_tenant(
     tmp_path, monkeypatch, restart, action, admission_shape
 ) -> None:
@@ -1180,9 +1191,11 @@ def test_signed_identity_runtime_pause_resume_requires_owner_tenant(
     }
     calls: List[Dict[str, Any]] = []
 
+    is_resume = action in ("ResumePaperRuntime", "resume", "unpause")
+
     def fake_http(url, **kwargs):
         calls.append({"url": url, "method": kwargs.get("method"), "payload": kwargs.get("payload")})
-        binding["status"] = "paused" if action in ("PausePaperRuntime", "pause") else "active"
+        binding["status"] = "active" if is_resume else "paused"
         return {
             "status": "executed",
             "status_after": binding["status"],
@@ -1190,7 +1203,6 @@ def test_signed_identity_runtime_pause_resume_requires_owner_tenant(
             "runtime_id": "rt-review",
         }
 
-    is_resume = action in ("ResumePaperRuntime", "resume")
     effective_command = "ResumePaperRuntime" if is_resume else "PausePaperRuntime"
     target_id = "rt-review" if action in ("PausePaperRuntime", "ResumePaperRuntime") else "bind-review"
     approval_id = "runtime-pause-resume-approval"
@@ -1297,35 +1309,44 @@ def test_signed_identity_runtime_pause_resume_requires_owner_tenant(
 
 @pytest.mark.parametrize("evidence_shape", ["missing", "invalid", "valid"])
 @pytest.mark.parametrize("restart", [False, True])
-@pytest.mark.parametrize("action", ["PausePaperRuntime", "ResumePaperRuntime"])
+@pytest.mark.parametrize(
+    "action",
+    [
+        "PausePaperRuntime",
+        "ResumePaperRuntime",
+        "pause",
+        "pauseRuntime",
+        "pauseExecution",
+        "resume",
+        "unpause",
+    ],
+)
 def test_signed_identity_runtime_action_pause_resume_requires_effective_confirm_token_and_approval(
     tmp_path, monkeypatch, restart, action, evidence_shape
 ) -> None:
     """Regression for the DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 independent
-    review REJECT at PR #5998 head 737af15a610aa083d92423e9f25ae3231cfa0a49:
+    review REJECT at PR #5998 head 4a24cf62d7ac1cc1732437e067a1ea8048583d1e:
     ``runtime_adapter.py`` classified the literal ``PausePaperRuntime``/
-    ``ResumePaperRuntime`` ``action_id`` values dispatched through the
-    generic ``RuntimeAction`` wrapper as ``generic_ok``, so ``service.py``
-    validated admission against ``RuntimeAction``'s own (weak,
-    ``requires_confirm_token=False``) catalog entry instead of the effective
-    canonical command's. A same-tenant mounted signed-JWT
-    ``POST /bff/v1/commands`` with no confirm token (and, for resume, no
-    approval evidence) reached durable admission and dispatched exactly like
-    a caller who supplied real evidence to the direct
-    ``PausePaperRuntime``/``ResumePaperRuntime`` commands. (The bare
-    ``pause``/``resume``/``unpause``/``pauseRuntime``/``pauseExecution``
-    aliases remain an explicit, recorded residual -- see
-    runtime_adapter.py's ``_RUNTIME_ACTION_GENERIC_ONLY`` comment and
-    evidence.json's ``generic_wrapper_parity_audit`` -- closing them touches
-    a bare-"pause" fixture in test_aud_002_audit_action_write_engine.py,
-    which is outside this task's declared artifact contract.)
+    ``ResumePaperRuntime`` ``action_id`` values *and* every bare
+    ``pause``/``pauseRuntime``/``pauseExecution``/``resume``/``unpause``
+    alias dispatched through the generic ``RuntimeAction`` wrapper as
+    ``generic_ok``, so ``service.py`` validated admission against
+    ``RuntimeAction``'s own (weak, ``requires_confirm_token=False``) catalog
+    entry instead of the effective canonical command's. A same-tenant
+    mounted signed-JWT ``POST /bff/v1/commands`` with no confirm token (and,
+    for resume-shaped aliases, no approval evidence) reached durable
+    admission and dispatched exactly like a caller who supplied real
+    evidence to the direct ``PausePaperRuntime``/``ResumePaperRuntime``
+    commands, both before and after a ``CommandStore`` restart.
 
     Drives a real signed-JWT mounted admission through the durable
     ``CommandStore`` and ``process_command`` executor for every evidence
     shape (missing entirely, present but invalid/unbound, and a genuine
-    valid confirm token plus -- for resume actions -- a genuine approved
-    approval decision bound to the exact command and target), across a
-    CommandStore restart. Only the fully valid shape may dispatch.
+    valid confirm token plus -- for resume-shaped actions -- a genuine
+    approved approval decision bound to the exact effective command and
+    target), across a CommandStore restart, for every action_id spelling
+    RuntimeAction dispatches to pause/resume. Only the fully valid shape may
+    dispatch.
     """
     import asyncio
     import time
@@ -1370,9 +1391,11 @@ def test_signed_identity_runtime_action_pause_resume_requires_effective_confirm_
     }
     calls: List[Dict[str, Any]] = []
 
+    is_resume = action in ("ResumePaperRuntime", "resume", "unpause")
+
     def fake_http(url, **kwargs):
         calls.append({"url": url, "method": kwargs.get("method"), "payload": kwargs.get("payload")})
-        binding["status"] = "paused" if action in ("PausePaperRuntime", "pause") else "active"
+        binding["status"] = "active" if is_resume else "paused"
         return {
             "status": "executed",
             "status_after": binding["status"],
@@ -1380,7 +1403,6 @@ def test_signed_identity_runtime_action_pause_resume_requires_effective_confirm_
             "runtime_id": "rt-confirm-review",
         }
 
-    is_resume = action in ("ResumePaperRuntime", "resume")
     effective_command = "ResumePaperRuntime" if is_resume else "PausePaperRuntime"
     target_id = "rt-confirm-review" if action in ("PausePaperRuntime", "ResumePaperRuntime") else "bind-confirm-review"
 
