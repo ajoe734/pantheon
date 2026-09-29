@@ -20,8 +20,18 @@ from .base import (
     utc_now,
 )
 from .runtime_adapter import resolve_wrapper_dispatch
+from services.control_plane.bff.ports.persona_write_owner import (
+    PersonaWriteConflict,
+    PersonaWriteOwnerUnavailable,
+    create_persona_registry_write_owner,
+)
 
 log = logging.getLogger(__name__)
+
+
+def _persona_owner():
+    """Typed Persona owner port (seam for isolated-owner tests)."""
+    return create_persona_registry_write_owner()
 
 
 class PersonaCommandAdapter(DomainCommandAdapter):
@@ -99,15 +109,36 @@ class PersonaCommandAdapter(DomainCommandAdapter):
         if not confirm_token:
             raise ValueError("AdvanceLifecycle requires an admission-validated confirm_token.")
 
-        payload: Dict[str, Any] = {
-            "target_state": target_state,
-            "confirm_token": confirm_token,
+        # The Persona owner is the only lifecycle authority: bind its
+        # ``PATCH /api/personas/{id}/lifecycle`` contract and report only the
+        # state it persisted. Authority is the governance decision the
+        # admission validated, never request metadata.
+        decision_id = str(params.get("approval_decision_id") or params.get("governance_decision_id") or "").strip()
+        try:
+            owner_body = _persona_owner().advance_lifecycle(
+                target_persona_id,
+                target_state=target_state,
+                governance_decision_id=decision_id or None,
+            )
+        except PersonaWriteOwnerUnavailable as exc:
+            raise ActionUnavailableError(
+                f"Persona owner unavailable for AdvanceLifecycle on {target_persona_id!r}: {exc.reason}",
+                action_id="AdvanceLifecycle",
+                entity_type="Persona",
+            ) from exc
+        except PersonaWriteConflict as exc:
+            raise ValueError(f"Persona owner rejected lifecycle transition: {exc}") from exc
+        owner_state = str(owner_body.get("lifecycle_state") or "")
+        body = {
+            "persona_id": target_persona_id,
+            "from_state": owner_body.get("from_state"),
+            "to_state": owner_state,
+            "actor_id": owner_body.get("actor_id"),
+            "governance_decision_id": decision_id or None,
+            "updated_at": owner_body.get("updated_at"),
+            "owner": "persona_registry_service",
+            "confirm_token_id": confirm_token,
         }
-        if params.get("memo"):
-            payload["memo"] = str(params["memo"])
-
-        url = internal_url(f"/api/internal/v1/personas/{quote(target_persona_id, safe='')}/advance-lifecycle")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
 
         return build_domain_receipt(
             command_id=command_id,
@@ -115,18 +146,19 @@ class PersonaCommandAdapter(DomainCommandAdapter):
             entity_id=target_persona_id,
             action_id="AdvanceLifecycle",
             status="accepted",
-            dispatch_path=url,
+            dispatch_path=f"persona_registry_service:PATCH /api/personas/{quote(target_persona_id, safe='')}/lifecycle",
             domain_receipt=body,
             authoritative_readback={
                 "persona_id": target_persona_id,
-                "current_state": body.get("to_state", target_state),
-                "from_state": body.get("from_state"),
+                "current_state": owner_state,
+                "from_state": body["from_state"],
             },
+            owner="persona_registry_service",
+            committed_at=owner_body.get("updated_at"),
             extra={
                 "persona_id": target_persona_id,
-                "from_state": body.get("from_state"),
-                "to_state": body.get("to_state", target_state),
-                "audit_id": body.get("audit_id"),
+                "from_state": body["from_state"],
+                "to_state": owner_state,
             },
         )
 
@@ -216,9 +248,9 @@ class PersonaCommandAdapter(DomainCommandAdapter):
         # The persona lifecycle owner is the only authority for these
         # transitions: request the transition through it and report only what
         # its receipt returns. State/version are never synthesized locally.
-        requested_state = str(params.get("target_state") or "").strip() or (
-            "paper_candidate" if "promote" in action_id.lower() else "demoted"
-        )
+        requested_state = str(params.get("target_state") or "").strip()
+        if not requested_state:
+            raise ValueError(f"{action_id} requires an explicit owner lifecycle target_state.")
         transition_params = dict(params)
         transition_params["target_state"] = requested_state
         receipt = self._execute_advance_lifecycle(

@@ -1562,8 +1562,8 @@ class GovernanceService:
             in self._PENDING_APPROVAL_STATES
         ]
 
-    def approval_evidence(self, approval_id: str) -> Optional[List[Dict[str, Any]]]:
-        decision = self.get_approval_detail(approval_id)
+    def approval_evidence(self, approval_id: str, tenant_id: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
+        decision = self.get_approval_detail(approval_id, tenant_id=tenant_id)
         if decision is None:
             return None
         refs = decision.get("evidence_refs") or decision.get("evidence") or []

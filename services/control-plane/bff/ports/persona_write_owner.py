@@ -365,6 +365,53 @@ class PersonaRegistryHttpWritePort:
             )
         return self._persona_payload(updated)
 
+    def advance_lifecycle(
+        self,
+        persona_id: str,
+        *,
+        target_state: str,
+        governance_decision_id: str | None = None,
+    ) -> Dict[str, Any]:
+        """Request a governed lifecycle transition from the Persona owner.
+
+        Binds the owner's ``PATCH /api/personas/{id}/lifecycle`` contract. The
+        returned payload is the owner's persisted ``PersonaBody`` plus the
+        pre-transition ``from_state`` read from the same owner; nothing about
+        the resulting state is synthesized by the BFF.
+        """
+        clean_id = str(persona_id or "").strip()
+        clean_target = str(target_state or "").strip()
+        if not clean_id or not clean_target:
+            raise PersonaWriteConflict("persona_id and target_state are required")
+        current = self.get_persona(clean_id)
+        if current is None:
+            raise PersonaWriteConflict(f"Persona {clean_id!r} was not found")
+        body: Dict[str, Any] = {
+            "actor_id": self._service_actor_id,
+            "target_state": clean_target,
+        }
+        if str(governance_decision_id or "").strip():
+            body["governance_decision_id"] = str(governance_decision_id).strip()
+        try:
+            updated = self._request(
+                "PATCH",
+                f"/api/personas/{urllib.parse.quote(clean_id, safe='')}/lifecycle",
+                dependency="persona_registry_write_owner",
+                body=body,
+                write=True,
+            )
+        except _PersonaHttpResponseError as exc:
+            self._raise_write_error(exc, "persona_registry_write_owner")
+        if not isinstance(updated, dict) or not updated.get("lifecycle_state"):
+            raise PersonaWriteOwnerUnavailable(
+                "persona_registry_write_owner",
+                "Persona service returned an invalid lifecycle response",
+            )
+        payload = self._persona_payload(updated)
+        payload["from_state"] = current.get("lifecycle_state")
+        payload["actor_id"] = self._service_actor_id
+        return payload
+
     def get_persona(self, persona_id: str | None) -> Optional[Dict[str, Any]]:
         clean_id = str(persona_id or "").strip()
         if not clean_id:

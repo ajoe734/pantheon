@@ -586,12 +586,14 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
         self.assertEqual(error["code"], "BINDING_MISMATCH")
 
 
-    @patch("services.control_plane.bff.command_adapters.persona_adapter.http_request_json")
-    def test_persona_advance_lifecycle_action(self, mock_http):
-        mock_http.return_value = {
-            "from_state": "candidate",
-            "to_state": "paper_owner",
-            "audit_id": "aud-persona-01",
+    @patch("services.control_plane.bff.command_adapters.persona_adapter._persona_owner")
+    def test_persona_advance_lifecycle_action(self, mock_owner):
+        mock_owner.return_value.advance_lifecycle.return_value = {
+            "persona_id": "persona-alpha",
+            "from_state": "consultable",
+            "lifecycle_state": "paper_owner",
+            "actor_id": "operator-bff",
+            "updated_at": "2026-09-29T00:00:00Z",
         }
 
         result = execute_command(
@@ -608,7 +610,8 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "accepted")
-        self.assertEqual(mock_http.call_args.kwargs["payload"]["confirm_token"], "confirm-persona-adv-01")
+        kwargs = mock_owner.return_value.advance_lifecycle.call_args.kwargs
+        self.assertEqual(kwargs["target_state"], "paper_owner")
         self.assertEqual(result["authoritative_readback"]["current_state"], "paper_owner")
 
     @patch("services.control_plane.bff.command_adapters.governance_adapter.http_request_json")

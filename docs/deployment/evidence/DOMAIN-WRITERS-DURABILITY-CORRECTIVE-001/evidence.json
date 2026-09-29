@@ -3,7 +3,7 @@
   "task_id": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
   "base_ref": "dev@24608d4c8e04767f658e77be466780b9e91f7525",
   "depends_on": "DOMAIN-WRITERS-001 (done), BFF-ROUTER-USECASE-CORRECTIVE-001 (done), GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 (done), JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 (done)",
-  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md \u00a7E (canonical tracked docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md, SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa; restored at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md); DOMAIN-WRITERS-001 corrective closure",
+  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md §E (canonical tracked docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md, SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa; restored at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md); DOMAIN-WRITERS-001 corrective closure",
   "defect_remediation": {
     "defect_1_dead_capital_write_routes": {
       "problem": "capital/router.py constructs CapitalService(get_read_store=..., get_capital_authority=...). Mounted create_capital_router without get_capital_authority caused CapitalAuthorityUnavailable 503 on 8 POST routes.",
@@ -291,7 +291,7 @@
     },
     "defect_72_commit_trailer_length_and_normative_plan_access": {
       "problem": "Commit c6a39d5f8 subject length was 93 characters, exceeding the 72-character limit and causing the Commit trailers CI job to fail. Furthermore, the task-scoped /tmp reference for the normative Section E plan was expired.",
-      "remediation": "Shortened task commit subject line to \u2264 70 characters adhering to repository trailers gate. Restored reviewer access to the immutable normative Section E plan at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md matching tracked file docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md with verified SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa."
+      "remediation": "Shortened task commit subject line to ≤ 70 characters adhering to repository trailers gate. Restored reviewer access to the immutable normative Section E plan at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md matching tracked file docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md with verified SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa."
     },
     "defect_73_experiment_adapter_dispatcher_command_id_fail_closed": {
       "problem": "services/control-plane/bff/command_adapters/experiment_adapter.py:102 accepted blank/whitespace dispatcher command_id by falling back to params.command_id or uuid.uuid4(), allowing experiment mutations without the trusted admitted command identity.",
@@ -2750,5 +2750,26 @@
     "p1_tenant_read": "governance/service.py list/detail filter durable command rows by trusted audit/foundation tenant (fail closed); router passes resolve_identity_tenant(identity) for list, detail, evidence.",
     "tests": "services/control-plane/bff/governance/test_domain_durability_corrective_p1_target_owner_tenant.py: 6 passed; test_command_adapters_router.py 772 passed; governance dir + read_surface_caller_migration + management_domain_actions 274 passed.",
     "p2_trailers": "Only 5360830dad (older dev-resync merge) remains non-compliant; repairing needs a history rewrite of a pushed merge, which requires an authorized repository workflow. Not rewritten."
+  },
+  "review_round_persona_owner_contract_tenant_approval_reads": {
+    "rejected_head": "1f9a3c0521b3e56d21e3142de8a95ef8d435ac75",
+    "p1_persona_owner_contract": "PersonaCommandAdapter._execute_advance_lifecycle (also used by PromoteCandidate/Demote and the legacy command_executor AdvanceLifecycle) now terminates at PersonaRegistryHttpWritePort.advance_lifecycle -> PATCH /api/personas/{id}/lifecycle {actor_id,target_state,governance_decision_id}; receipt from_state/to_state come from the owner's PersonaBody.lifecycle_state, governance authority is the admission-validated approval_decision_id, never request metadata. The unmounted /api/internal/v1/personas/{id}/advance-lifecycle hop is deleted (zero callers). Promote/Demote no longer invent non-owner states: an explicit owner target_state is required.",
+    "p1_owner_write_test": "test_persona_success_requires_owner_write now drives the real Persona owner FastAPI app (PersistentPersonaOwner over a JSON store, governance verifier) through the port, mounted signed-JWT PersonaAction admission, process_command, asserts executed status, owner PATCH 200, receipt from/to state, owner readback, and a fresh owner/CommandStore restart readback. Vacuous positive removed.",
+    "p1_tenant_approval_reads": "governance/router.py bff_approval_evidence, get_approval_detail, decide and batch-decide existence checks and GovernanceService.approval_evidence now propagate resolve_identity_tenant(identity) into get_approval_detail; same-tenant warm/restart reads return 200, foreign tenant stays denied.",
+    "p2_commit_trailers": "5360830dad (merge dev resync) reworded with governed trailers by the true operator; no attribution fabricated.",
+    "verification": [
+      {
+        "command": "pytest governance/test_domain_durability_corrective_p1_target_owner_tenant.py + reviewer reproducer approval-read cases",
+        "result": "approval reads 6/6 pass; owner-write Promote/Demote pass"
+      },
+      {
+        "command": "pytest governance + test_read_surface_caller_migration + test_management_domain_actions",
+        "result": "273 passed then 32/32 management after test rebinding"
+      },
+      {
+        "command": "pytest test_command_adapters_router.py (split in two bounded batches)",
+        "result": "all passed, exit 0"
+      }
+    ]
   }
 }

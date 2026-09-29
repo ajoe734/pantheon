@@ -2347,6 +2347,19 @@ def test_signed_identity_lifecycle_and_runtime_start_confirm_token_id_parity(
 
     monkeypatch.setattr(command_executor, "_post_json", fake_http)
 
+    from services.control_plane.bff.command_adapters import persona_adapter
+
+    class _OwnerStub:
+        def advance_lifecycle(self, persona_id, *, target_state, governance_decision_id=None):
+            calls.append({
+                "url": f"persona-owner:/api/personas/{persona_id}/lifecycle", "method": "PATCH",
+                "payload": {"target_state": target_state, "governance_decision_id": governance_decision_id},
+            })
+            return {"persona_id": persona_id, "from_state": "consultable", "lifecycle_state": target_state,
+                    "actor_id": "operator-bff", "updated_at": "2026-09-29T00:00:00Z"}
+
+    monkeypatch.setattr(persona_adapter, "_persona_owner", lambda: _OwnerStub())
+
     token_id = f"lifecycle-runtime-start-confirm-token-{action}"
     headers = {
         "Authorization": "Bearer " + token,
@@ -2407,7 +2420,8 @@ def test_signed_identity_lifecycle_and_runtime_start_confirm_token_id_parity(
     assert response.status_code == 202, evidence
     assert len(calls) == 1, evidence
     assert final.get("status") == "executed", evidence
-    assert calls[0]["payload"].get("confirm_token") == token_id, evidence
+    assert calls[0]["payload"] == {"target_state": "paper_owner", "governance_decision_id": "approval-review"}, evidence
+    assert ((final.get("result") or {}).get("domain_receipt") or {}).get("confirm_token_id") == token_id, evidence
 
 
 @pytest.mark.parametrize("restart", [False, True])
@@ -3065,6 +3079,16 @@ def test_mounted_confirm_token_reaches_every_executor(tmp_path, monkeypatch, com
     monkeypatch.setattr(runtime_adapter, "http_request_json", fake_http)
     monkeypatch.setattr(runtime_adapter, "_get_read_store", lambda: read_store_stub)
 
+    from services.control_plane.bff.command_adapters import persona_adapter
+
+    class _OwnerStub:
+        def advance_lifecycle(self, persona_id, *, target_state, governance_decision_id=None):
+            calls.append({"url": f"persona-owner:/api/personas/{persona_id}/lifecycle", "payload": {"owner": True}})
+            return {"persona_id": persona_id, "from_state": "consultable", "lifecycle_state": target_state,
+                    "actor_id": "operator-bff", "updated_at": "2026-09-29T00:00:00Z"}
+
+    monkeypatch.setattr(persona_adapter, "_persona_owner", lambda: _OwnerStub())
+
     token_id = f"inventory-token-{command}-{wrapped}-{restart}"
     issued = client.post(
         "/bff/confirm-tokens",
@@ -3130,7 +3154,12 @@ def test_mounted_confirm_token_reaches_every_executor(tmp_path, monkeypatch, com
     assert response.status_code == 202, evidence
     assert final.get("status") == "executed", evidence
     assert len(calls) == 1, evidence
-    assert calls[0]["payload"].get("confirm_token") == token_id, evidence
+    if calls[0]["payload"].get("owner"):
+        # Persona lifecycle terminates at the typed owner port: the
+        # admission-bound token is recorded in the durable receipt instead.
+        assert ((final.get("result") or {}).get("domain_receipt") or {}).get("confirm_token_id") == token_id, evidence
+    else:
+        assert calls[0]["payload"].get("confirm_token") == token_id, evidence
 
 
 def test_no_raw_confirm_token_param_reads_remain_in_executors_and_adapters():
@@ -3290,6 +3319,19 @@ class _WrapperParityHarness:
         for module in (runtime_adapter, capital_adapter, deployment_adapter, governance_adapter, incident_adapter, persona_adapter):
             monkeypatch.setattr(module, "http_request_json", fake_http)
         monkeypatch.setattr(runtime_adapter, "_get_read_store", lambda: read_store_stub)
+
+        # Persona lifecycle terminates at the typed Persona owner port (not the
+        # generic HTTP hop): stub only that owner boundary and record the call.
+        class _OwnerStub:
+            def advance_lifecycle(_self, persona_id, *, target_state, governance_decision_id=None):
+                self.calls.append({
+                    "url": f"persona-owner:/api/personas/{persona_id}/lifecycle", "method": "PATCH",
+                    "payload": {"target_state": target_state, "governance_decision_id": governance_decision_id},
+                })
+                return {"persona_id": persona_id, "from_state": "consultable", "lifecycle_state": target_state,
+                        "actor_id": "operator-bff", "updated_at": "2026-09-29T00:00:00Z"}
+
+        monkeypatch.setattr(persona_adapter, "_persona_owner", lambda: _OwnerStub())
         # RecordSponsorDecision admission reads a committee read projection;
         # stub that read-only projection (never the admission logic itself).
         from services.control_plane.bff.governance.service import GovernanceService
@@ -3459,7 +3501,12 @@ def _wp_run(tmp_path, monkeypatch, *, wrapper, alias, canonical, mode, restart, 
             "bound" if c["payload"].get("confirm_token") == token_id else c["payload"].get("confirm_token")
             for c in harness.calls
             if isinstance(c.get("payload"), dict) and c["payload"].get("confirm_token")
-        ],
+        ] + (
+            ["bound"]
+            if isinstance((final.get("result") or {}).get("domain_receipt"), dict)
+            and final["result"]["domain_receipt"].get("confirm_token_id") == token_id
+            else []
+        ),
         "detail": response.text[:300],
     }
 

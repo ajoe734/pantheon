@@ -1292,7 +1292,7 @@ def _execute_advance_lifecycle(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch AdvanceLifecycle to internal API /personas/{id}/advance-lifecycle.
+    """Dispatch AdvanceLifecycle to the Persona owner lifecycle endpoint.
 
     State machine: draft → paper_owner → live_owner → retired.
     No skip transitions; retire allowed from any non-retired state.
@@ -1308,25 +1308,25 @@ def _execute_advance_lifecycle(
             f"AdvanceLifecycle: target_state must be one of {sorted(allowed_targets)}, got {target_state!r}."
         )
 
-    confirm_token = _require_confirm_token("AdvanceLifecycle", params)
+    _require_confirm_token("AdvanceLifecycle", params)
 
-    payload: Dict[str, Any] = {
-        "target_state": target_state,
-        "confirm_token": confirm_token,
-    }
-    if params.get("memo"):
-        payload["memo"] = str(params["memo"])
+    # The Persona owner (PATCH /api/personas/{id}/lifecycle) is the only
+    # lifecycle authority; the adapter binds that contract.
+    from .command_adapters.persona_adapter import PersonaCommandAdapter
 
-    url = _internal_url(f"/api/internal/v1/personas/{persona_id}/advance-lifecycle")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    receipt = PersonaCommandAdapter()._execute_advance_lifecycle(
+        command_id, persona_id, dict(params), auth_token=auth_token, mfa_token=mfa_token
+    )
+    body = receipt.get("domain_receipt") or {}
     return {
         "command_id": command_id,
         "status": "accepted",
         "persona_id": body.get("persona_id", persona_id),
         "from_state": body.get("from_state"),
-        "to_state": body.get("to_state", target_state),
-        "audit_id": body.get("audit_id"),
-        "advanced_at": body.get("advanced_at"),
+        "to_state": body.get("to_state"),
+        "domain_receipt": body,
+        "authoritative_readback": receipt.get("authoritative_readback"),
+        "advanced_at": body.get("updated_at"),
     }
 
 

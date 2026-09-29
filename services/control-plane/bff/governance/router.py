@@ -1242,7 +1242,7 @@ def create_governance_router(
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
         clean_id = approval_id.strip()
-        refs = _service().approval_evidence(clean_id)
+        refs = _service().approval_evidence(clean_id, tenant_id=resolve_identity_tenant(identity))
         decision = _service().get_approval_detail(clean_id, tenant_id=resolve_identity_tenant(identity))
         if refs is None or decision is None:
             _not_found("Approval decision", approval_id)
@@ -1263,7 +1263,7 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
-        detail = _service().get_approval_detail(approval_id)
+        detail = _service().get_approval_detail(approval_id, tenant_id=resolve_identity_tenant(identity))
         if detail is None:
             _not_found("Approval decision", approval_id)
         redacted, total_redacted = _redact_evidence_field_items(identity, [detail])
@@ -1284,7 +1284,7 @@ def create_governance_router(
         identity = _identity(authorization, operator=True)
         _require_approver(identity)
         clean_id = approval_id.strip()
-        if _service().get_approval_detail(clean_id) is None and _service().dataset_source("approval_decisions") != "missing":
+        if _service().get_approval_detail(clean_id, tenant_id=resolve_identity_tenant(identity)) is None and _service().dataset_source("approval_decisions") != "missing":
             _not_found("Approval decision", clean_id)
         try:
             decision = _service().validate_decision(payload)
@@ -1329,7 +1329,7 @@ def create_governance_router(
             item_id = str(item["id"]).strip()
             try:
                 decision = _service().validate_decision(item)
-                if _service().get_approval_detail(item_id) is None and _service().dataset_source("approval_decisions") != "missing":
+                if _service().get_approval_detail(item_id, tenant_id=resolve_identity_tenant(identity)) is None and _service().dataset_source("approval_decisions") != "missing":
                     raise LookupError(item_id)
                 command = await _service().submit_governance_action(
                     action_kind="approval",
