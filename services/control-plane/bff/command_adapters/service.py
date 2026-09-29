@@ -2595,6 +2595,29 @@ class CommandAdapterService:
                         _execute_command_background_task, self._process_command_task, str(duplicate["command_id"])
                     )
                 duplicate_status = CommandStatus.SUBMITTED
+            if duplicate_status in (CommandStatus.FAILED, CommandStatus.TIMEOUT):
+                # Persisted terminal failure: replay the original outcome. Never
+                # re-dispatch the mutation, coerce to accepted, or add a row.
+                original_error = duplicate.get("error")
+                original_error = dict(original_error) if isinstance(original_error, dict) else {}
+                raise foundation_bff_error(
+                    self._raise_error(
+                        409,
+                        ErrorCode.RESOURCE_CONFLICT,
+                        "Command previously reached a terminal failure",
+                        f"command {duplicate.get('command_id')} is {duplicate_status.value}; "
+                        "submit a new idempotency key to retry",
+                        precondition_failed="command_terminal_failure",
+                        details_extra={
+                            "command_id": str(duplicate.get("command_id") or ""),
+                            "command": cmd.command.value,
+                            "status": duplicate_status.value,
+                            "replayed": True,
+                            "original_error": original_error,
+                        },
+                    ),
+                    foundation_context=foundation_context,
+                )
             return project_final_command_response(
                 command_id=duplicate["command_id"],
                 command=cmd.command,

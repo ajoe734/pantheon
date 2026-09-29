@@ -2771,5 +2771,12 @@
         "result": "all passed, exit 0"
       }
     ]
+  },
+  "review_round_failed_command_replay": {
+    "finding": "P2 duplicate admission of persisted failed/timeout command hit success-only projector -> HTTP 500",
+    "fix": "command_adapters/service.py duplicate branch raises structured 409 RESOURCE_CONFLICT (precondition_failed=command_terminal_failure) with original command_id, status, original_error; no re-dispatch, no new row",
+    "tests": "services/control-plane/bff/governance/test_domain_durability_corrective_failed_replay.py: 18 passed (3 lifecycle commands x success/denied/unavailable x warm/fresh)",
+    "regression": "router/research-jobs replay|duplicate|idempotent|retry|fail subset 40 passed; full router file exceeded 300s bounded run (exit 143) and is not counted as passed",
+    "no_product_or_capital_execution": true
   }
 }
