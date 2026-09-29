@@ -41,6 +41,7 @@ _MIXED_REFS = [copy.deepcopy(_ALERT_REF), copy.deepcopy(_METRIC_REF), copy.deepc
 _APPROVAL_1: Dict[str, Any] = {
     "id": "approval-1",
     "decision_id": "approval-1",
+    "tenant_id": "tenant-sweep",
     "decision_type": "DeploymentPlan",
     "decision_state": "pending",
     "risk_level": "high",
@@ -49,6 +50,7 @@ _APPROVAL_1: Dict[str, Any] = {
 _APPROVAL_2: Dict[str, Any] = {
     "id": "approval-2",
     "decision_id": "approval-2",
+    "tenant_id": "tenant-sweep",
     "decision_type": "StrategySpec",
     "decision_state": "approved",
     "outcome": "approved",
@@ -57,6 +59,7 @@ _APPROVAL_2: Dict[str, Any] = {
 _APPROVAL_3_DECISION_ONLY: Dict[str, Any] = {
     "id": "approval-3",
     "decision_id": "approval-3",
+    "tenant_id": "tenant-sweep",
     "decision_type": "DeploymentPlan",
     "decision_state": "approved",
     "outcome": "approved",
@@ -197,6 +200,12 @@ class _SweepStore:
         return copy.deepcopy(_CONSULT_REQUEST_1) if request_id == "consult-req-1" else None
 
 
+def _tenant_identity(*args: Any, **kwargs: Any) -> Any:
+    identity = auth_policy.extract_identity(*args, **kwargs)
+    identity.claims = {**(identity.claims or {}), "tenant_id": "tenant-sweep"}
+    return identity
+
+
 def _build_app(
     store: Optional[_SweepStore] = None,
     *,
@@ -208,7 +217,7 @@ def _build_app(
     app.include_router(
         create_governance_router(
             read_surface=store or _SweepStore(),
-            extract_identity=auth_policy.extract_identity,
+            extract_identity=_tenant_identity,
             require_read_role=auth_policy.require_read_role,
             require_operator_role=auth_policy.require_operator_role,
             bff_error=auth_policy.bff_error,

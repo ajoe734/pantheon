@@ -305,10 +305,10 @@ def test_approval_decisions_are_scoped_to_viewer_tenant_on_mounted_routes() -> N
     store.get_approval_decision = lambda _id: None  # type: ignore[method-assign]  # exercise list fallback
 
     def viewer_identity(authorization: Optional[str] = None) -> Any:
-        tenant = (authorization or "tenant-a").removeprefix("Bearer ").partition(":")[0]
+        tenant, _, role = (authorization or "tenant-a").removeprefix("Bearer ").partition(":")
         return type("Identity", (), {
             "operator_id": f"op-{tenant}",
-            "roles": {"viewer"},
+            "roles": {role or "viewer"},
             "claims": {"tenant_id": tenant} if tenant != "none" else {},
         })()
 
@@ -330,7 +330,9 @@ def test_approval_decisions_are_scoped_to_viewer_tenant_on_mounted_routes() -> N
 
     approver = {"Authorization": "tenant-a:approver", "Idempotency-Key": "scope-1"}
     payload = {"plan_id": "plan-1", "decision": "approve", "memo": "Approved with evidence", "tenant_id": "tenant-b"}
-    decision_id = client.post("/api/v1/approval-decisions", json=payload, headers=approver).json()["data"]["commandId"]
+    created = client.post("/api/v1/approval-decisions", json=payload, headers=approver)
+    assert created.status_code == 202
+    decision_id = created.json()["data"]["commandId"]
     assert client.get(f"/api/v1/approval-decisions/{decision_id}", headers=tenant_a).status_code == 200
     assert client.get(f"/api/v1/approval-decisions/{decision_id}", headers=tenant_b).status_code == 404
 
