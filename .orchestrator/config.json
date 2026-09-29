@@ -157,30 +157,42 @@
       "Claude": [
         "Claude2",
         "Antigravity",
-        "Antigravity2"
+        "Antigravity2",
+        "PiAstra"
       ],
       "Claude2": [
         "Claude",
         "Antigravity",
-        "Antigravity2"
+        "Antigravity2",
+        "PiAstra"
       ],
       "Antigravity": [
         "Antigravity2",
         "Claude",
-        "Claude2"
+        "Claude2",
+        "PiAstra"
       ],
       "Antigravity2": [
         "Antigravity",
         "Claude",
-        "Claude2"
+        "Claude2",
+        "PiAstra"
       ],
       "Codex": [
+        "PiAstra",
         "Claude",
         "Claude2",
         "Antigravity",
         "Antigravity2"
       ],
       "Codex2": [
+        "PiAstra",
+        "Claude",
+        "Claude2",
+        "Antigravity",
+        "Antigravity2"
+      ],
+      "PiAstra": [
         "Claude",
         "Claude2",
         "Antigravity",
@@ -764,7 +776,7 @@
         "cli": "~/.local/bin/pi",
         "agent_dir": "~/.pi/pantheon-astra",
         "provider": "openai-codex",
-        "model": "gpt-6-astra",
+        "model": "gpt-6-luna",
         "thinking": "high"
       }
     }
