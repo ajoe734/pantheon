@@ -2784,5 +2784,12 @@
     "fix": "command_adapters/service.py: shared _raise_terminal_failure_replay used by both duplicate branches; explicit capital retry policy preserved (retryable_terminal_capital_command skips replay)",
     "tests": "services/control-plane/bff/governance/test_domain_durability_corrective_concurrent_replay.py: 2 passed (AdvanceLifecycle, PersonaAction: concurrent raced=409, sequential control=409, exactly one durable row); failed_replay 18 passed",
     "no_product_or_capital_execution": true
+  },
+  "review_round_capital_retry_duplicate_unification": {
+    "finding": "P2 acceptance 3: late duplicate branch exempted retryable capital FAILED/TIMEOUT from replay but projected it without reset/enqueue -> HTTP 500 for the racing request while a sequential retry returned 202",
+    "fix": "command_adapters/service.py: single _retry_retryable_capital_duplicate used by both duplicate branches (reset to submitted with expected_status guard, one enqueue, same command_id/row); non-retryable or enqueue-disabled duplicates fall through to the 409 terminal replay",
+    "tests": "governance/test_domain_durability_corrective_capital_retry_race.py: FAILED+TIMEOUT mounted race (raced 202, sequential 202, one row, zero downstream calls) and enqueue-disabled helper (status kept, no dispatch); governance durability corrective suite 197 passed",
+    "commit_trailers": "head commits carry LLM-Agent/Task-ID/Reviewer; subject <=72 chars",
+    "no_product_or_capital_execution": true
   }
 }
