@@ -13,6 +13,7 @@ from .base import (
     ActionUnavailableError,
     DomainCommandAdapter,
     build_domain_receipt,
+    canonical_confirm_token,
     capital_url,
     http_request_json,
     internal_url,
@@ -84,7 +85,7 @@ class PersonaCommandAdapter(DomainCommandAdapter):
             raise ValueError("AdvanceLifecycle requires persona_id.")
 
         target_state = str(params.get("target_state") or "paper_owner").strip()
-        confirm_token = str(params.get("confirm_token") or "lifecycle-confirm").strip()
+        confirm_token = canonical_confirm_token(params) or "lifecycle-confirm"
 
         payload: Dict[str, Any] = {
             "target_state": target_state,

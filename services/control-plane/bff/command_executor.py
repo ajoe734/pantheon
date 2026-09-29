@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 from .models import CommandStatus, CommandType
 from .command_adapters import ActionUnavailableError, dispatch_domain_command
+from .command_adapters.base import canonical_confirm_token
 
 log = logging.getLogger(__name__)
 
@@ -1343,7 +1344,7 @@ def _execute_approve_pool(
         raise ValueError("ApprovePool requires memo of at least 8 characters.")
 
     payload: Dict[str, Any] = {"memo": memo}
-    optional_confirm_token = str(params.get("confirm_token_id") or params.get("confirm_token") or "").strip()
+    optional_confirm_token = canonical_confirm_token(params)
     if optional_confirm_token:
         payload["confirm_token"] = optional_confirm_token
 
@@ -1438,7 +1439,7 @@ def _require_confirm_token(action_id: str, params: Dict[str, Any]) -> str:
     # RuntimeAction wrapper already does (runtime_adapter.py
     # _execute_repair_action) instead of rejecting a genuinely confirmed
     # mounted request.
-    confirm_token = str(params.get("confirm_token_id") or params.get("confirm_token") or "").strip()
+    confirm_token = canonical_confirm_token(params)
     if not confirm_token:
         raise ValueError(f"{action_id} requires confirm_token.")
     return confirm_token

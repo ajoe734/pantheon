@@ -57,6 +57,19 @@ class ActionUnavailableError(ValueError):
         self.downstream_status = downstream_status
 
 
+def canonical_confirm_token(params: Dict[str, Any]) -> str:
+    """Single reader for the admission-validated confirmation token.
+
+    Mounted admission canonicalizes a validated confirmation to
+    ``params.confirm_token_id`` and removes ``params.confirm_token`` (see
+    ``canonicalize_validated_precondition_evidence``). Every executor and
+    adapter must read the token through this accessor instead of the raw
+    ``confirm_token`` field. ``confirm_token`` is only consulted for
+    non-mounted direct callers that never passed through admission.
+    """
+    return str(params.get("confirm_token_id") or params.get("confirm_token") or "").strip()
+
+
 def get_base_url(primary_env: str, *fallback_envs: str) -> str:
     for env_name in (primary_env, *fallback_envs):
         val = os.getenv(env_name, "").strip()

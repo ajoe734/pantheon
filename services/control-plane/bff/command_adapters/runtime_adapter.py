@@ -15,6 +15,7 @@ from .base import (
     ActionUnavailableError,
     DomainCommandAdapter,
     build_domain_receipt,
+    canonical_confirm_token,
     governance_approval_url,
     http_request_json,
     internal_url,
@@ -444,7 +445,7 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         target_id = runtime_id or str(params.get("runtime_id") or "").strip()
         if not target_id:
             raise ValueError("StartRuntime requires runtime_id.")
-        confirm_token = str(params.get("confirm_token") or "").strip()
+        confirm_token = canonical_confirm_token(params)
         if not confirm_token:
             raise ValueError("StartRuntime requires confirm_token.")
 
@@ -860,7 +861,7 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         # A synthetic default here would let any caller who cleared the
         # (weaker) wrapper's own preconditions execute a repair action
         # that requires_confirm_token=True.
-        confirm_token = str(params.get("confirm_token_id") or params.get("confirm_token") or "").strip()
+        confirm_token = canonical_confirm_token(params)
         if not confirm_token:
             raise ActionUnavailableError(
                 f"{action_name} requires a confirmed confirm_token.",

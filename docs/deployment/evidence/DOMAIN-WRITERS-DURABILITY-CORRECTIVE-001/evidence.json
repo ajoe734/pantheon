@@ -2048,5 +2048,51 @@
       "fix": "See defect_100_command_executor_advance_lifecycle_start_runtime_approve_pool_confirm_token_id_closed.remediation above.",
       "verification": "See defect_100_command_executor_advance_lifecycle_start_runtime_approve_pool_confirm_token_id_closed.verification above."
     }
+  },
+  "confirm_token_canonical_reader_inventory": {
+    "defect_class": "admission canonicalizes params.confirm_token -> params.confirm_token_id; executors/adapters read pre-canonical name",
+    "single_accessor": "services/control-plane/bff/command_adapters/base.py::canonical_confirm_token (confirm_token_id first, then confirm_token for non-mounted direct callers)",
+    "readers": [
+      {
+        "where": "command_executor.py _require_confirm_token (AdvanceLifecycle, StartRuntime, runtime-repair actions)",
+        "before": "canonical-first inline",
+        "after": "canonical_confirm_token"
+      },
+      {
+        "where": "command_executor.py _execute_approve_pool optional token",
+        "before": "canonical-first inline",
+        "after": "canonical_confirm_token"
+      },
+      {
+        "where": "command_adapters/runtime_adapter.py _execute_start (RuntimeAction start)",
+        "before": "raw params.confirm_token (DEFECT)",
+        "after": "canonical_confirm_token"
+      },
+      {
+        "where": "command_adapters/runtime_adapter.py _execute_repair_action (RuntimeAction repair aliases)",
+        "before": "canonical-first inline",
+        "after": "canonical_confirm_token"
+      },
+      {
+        "where": "command_adapters/capital_adapter.py rebalance approve / two-man-sign / pool approve (3 sites)",
+        "before": "raw params.confirm_token (latent)",
+        "after": "canonical_confirm_token"
+      },
+      {
+        "where": "command_adapters/persona_adapter.py AdvanceLifecycle wrapper",
+        "before": "raw params.confirm_token (latent)",
+        "after": "canonical_confirm_token"
+      },
+      {
+        "where": "command_adapters/service.py confirm-token receipt builders (2 sites)",
+        "before": "raw params.confirm_token",
+        "after": "canonical_confirm_token"
+      }
+    ],
+    "other_admission_rewritten_fields": "approval_decision_id/approval_ref and two_man_signature_id: executors already read the canonical names (two_man_signature_id accepted by StartRuntime executor/adapter); no reader of a removed pre-canonical alias found. HumanGate aliases resolved via resolve_effective_action (prior rounds).",
+    "parametrized_mounted_test": "services/control-plane/bff/tests/test_confirm_token_canonical_inventory.py: StartRuntime, RestartPaperRuntime, RestartTelemetryBridge, StartPaperMonitoringSession, ProbeTelemetryIngest (direct + RuntimeAction wrapped) and AdvanceLifecycle (direct), each before/after CommandStore restart, real confirm token + two-man/approval evidence; plus static no-raw-read guard",
+    "test_result": "23 passed; with old runtime_adapter._execute_start reader restored: 3 failed (StartRuntime wrapped x2 restart modes + static guard)",
+    "regression_batch": "321 passed, 2 subtests passed (inventory, command_adapters_router, aud_002_audit_action_write_engine, management_domain_actions)",
+    "grep_search": "grep -rnE 'params(\\.get\\(|\\[)\\s*[\"']confirm_token[\"']' command_executor.py command_adapters/*.py => only base.py canonical_confirm_token"
   }
 }

@@ -74,7 +74,7 @@ except (ImportError, ValueError):
         from services.control_plane.bff.auth.policy import identity_claim_strings
     except (ImportError, ValueError):
         from auth.policy import identity_claim_strings
-from .base import ActionUnavailableError
+from .base import ActionUnavailableError, canonical_confirm_token
 from .runtime_adapter import EffectiveAction, resolve_effective_action
 from .contracts import (
     _FINAL_COMMAND_ROUTE,
@@ -867,7 +867,7 @@ class CommandAdapterService:
             or res_data.get("command_id")
         )
         token = (
-            params.get("confirm_token")
+            canonical_confirm_token(params)
             or res.get("token")
             or res.get("tokenId")
             or res_data.get("tokenId")
@@ -931,7 +931,7 @@ class CommandAdapterService:
             or res.get("command_id")
         )
         token = (
-            params.get("confirm_token")
+            canonical_confirm_token(params)
             or res_data.get("tokenId")
             or res_data.get("token")
             or res.get("tokenId")

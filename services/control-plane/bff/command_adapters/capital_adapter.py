@@ -13,6 +13,7 @@ from .base import (
     ActionUnavailableError,
     DomainCommandAdapter,
     build_domain_receipt,
+    canonical_confirm_token,
     capital_url,
     http_request_json,
     internal_url,
@@ -109,8 +110,9 @@ class CapitalCommandAdapter(DomainCommandAdapter):
             raise ValueError("ApprovePool requires pool_id.")
         memo = str(params.get("memo") or "Approve capital pool").strip()
         payload: Dict[str, Any] = {"memo": memo}
-        if params.get("confirm_token"):
-            payload["confirm_token"] = str(params["confirm_token"])
+        confirm_token = canonical_confirm_token(params)
+        if confirm_token:
+            payload["confirm_token"] = confirm_token
 
         url = internal_url(f"/api/internal/v1/capital-pools/{quote(pool_id, safe='')}/approve")
         body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
@@ -273,8 +275,9 @@ class CapitalCommandAdapter(DomainCommandAdapter):
             "actor_role": str(params.get("actor_role") or "approver"),
             "rebalance_id": rebalance_id,
         }
-        if params.get("confirm_token"):
-            payload["confirm_token"] = str(params["confirm_token"])
+        confirm_token = canonical_confirm_token(params)
+        if confirm_token:
+            payload["confirm_token"] = confirm_token
 
         url = capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}/approve")
         body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
@@ -331,8 +334,9 @@ class CapitalCommandAdapter(DomainCommandAdapter):
             "actor_role": str(params.get("actor_role") or "operator"),
             "rebalance_id": rebalance_id,
         }
-        if params.get("confirm_token"):
-            payload["confirm_token"] = str(params["confirm_token"])
+        confirm_token = canonical_confirm_token(params)
+        if confirm_token:
+            payload["confirm_token"] = confirm_token
 
         url = capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}/two-man-sign")
         body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
