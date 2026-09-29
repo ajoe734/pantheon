@@ -48,6 +48,7 @@ from .contracts import (
     _human_gate_source_type,
     stable_json_hash,
 )
+from .effective_action import resolve_effective_action
 from .receipts import foundation_idempotency_conflict_error
 
 _CONFIRM_TOKEN_FIELDS = (
@@ -747,8 +748,14 @@ def require_final_command_confirm_token(
     correlation_id: Optional[str],
     confirm_token_records_fn: Optional[Callable[[str], List[Dict[str, Any]]]] = None,
     confirm_token_lifecycle_fn: Optional[Callable[[str], Dict[str, Any]]] = None,
+    effective_command_value: Optional[str] = None,
 ) -> Optional[str]:
-    entry = get_catalog_entry(cmd.command.value)
+    # A generic wrapper command (RuntimeAction, ReviewAction, ...) must be
+    # gated on its effective canonical action's catalog entry, never its own
+    # weaker one -- see resolve_effective_action / DOMAIN-WRITERS-DURABILITY-
+    # CORRECTIVE-001. Callers that already resolved the effective action pass
+    # it explicitly; direct (non-wrapper) commands fall back to cmd.command.
+    entry = get_catalog_entry(effective_command_value or cmd.command.value)
     if entry is None or not getattr(entry, "requires_confirm_token", False):
         return None
 
@@ -1316,7 +1323,29 @@ def require_final_command_preconditions(
     read_store: Optional[Any] = None,
     command_store: Optional[Any] = None,
 ) -> Dict[str, str]:
-    entry = get_catalog_entry(cmd.command.value)
+    # A generic wrapper command must never be admitted under its own
+    # (deliberately weak) catalog entry once action_id names a distinct
+    # canonical command -- that would let a caller dispatch a high-risk
+    # canonical action (RestartPaperRuntime, ApproveDecision, ...) while
+    # only satisfying the wrapper's own confirm/approval/two-man gates.
+    # An action_id the adapter does not actually dispatch must fail closed
+    # here, before durable admission, rather than accept and fail later.
+    effective_action = resolve_effective_action(cmd.command.value, params=dict(cmd.params))
+    if effective_action.status == "unknown":
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=422,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Unsupported action_id for this generic command wrapper",
+            reason="UNSUPPORTED_WRAPPER_ACTION",
+            kind="action_id",
+            correlation_id=correlation_id,
+            suggestion="Submit a recognized action_id, or use the dedicated canonical command directly",
+            details_extra={"actionId": str(cmd.params.get("action_id") or cmd.params.get("actionId") or "")},
+        )
+    effective_command_value = effective_action.effective_command_id
+
+    entry = get_catalog_entry(effective_command_value or cmd.command.value)
     if entry is None:
         return {}
 
@@ -1387,6 +1416,7 @@ def require_final_command_preconditions(
             correlation_id=correlation_id,
             confirm_token_records_fn=confirm_token_records_fn,
             confirm_token_lifecycle_fn=confirm_token_lifecycle_fn,
+            effective_command_value=effective_command_value,
         )
         if validated_token_id:
             evidence["confirm_token_id"] = validated_token_id

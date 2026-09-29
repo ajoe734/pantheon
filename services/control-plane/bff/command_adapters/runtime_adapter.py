@@ -564,7 +564,65 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         actual_id = target_id or str(params.get(target_key) or "").strip()
         if not actual_id:
             raise ValueError(f"{action_name} requires {target_key}.")
-        confirm_token = str(params.get("confirm_token") or "repair-confirm-token").strip()
+
+        # Never invent confirmation authority: the caller must supply a
+        # real confirm token that admission already validated against
+        # this action's canonical catalog entry (resolve_effective_action).
+        # A synthetic default here would let any caller who cleared the
+        # (weaker) wrapper's own preconditions execute a repair action
+        # that requires_confirm_token=True.
+        confirm_token = str(params.get("confirm_token_id") or params.get("confirm_token") or "").strip()
+        if not confirm_token:
+            raise ActionUnavailableError(
+                f"{action_name} requires a confirmed confirm_token.",
+                action_id=action_name,
+                entity_type="Runtime",
+                error_code="CONFIRM_TOKEN_MISSING",
+            )
+
+        if target_key == "runtime_id":
+            # params["tenant_id"] is the admission-stamped caller tenant
+            # only (see _execute_pause); an absent or ambiguous admission
+            # tenant must never be replaced by the target binding's own
+            # tenant, or any caller with no resolvable tenant identity
+            # could "authenticate" as whatever tenant owns the target.
+            expected_tenant = str(params.get("tenant_id") or "").strip()
+            binding = None
+            store = _get_read_store()
+            if store and hasattr(store, "get_runtime_binding_by_runtime_id"):
+                binding = store.get_runtime_binding_by_runtime_id(actual_id)
+            if not binding:
+                try:
+                    rm_client = _get_runtime_manager_client()
+                    for candidate in rm_client.list_all():
+                        if candidate.get("runtime_id") == actual_id:
+                            binding = candidate
+                            break
+                except Exception:
+                    pass
+            if not binding:
+                raise ActionUnavailableError(
+                    f"Runtime {actual_id!r} not found.",
+                    action_id=action_name,
+                    entity_type="Runtime",
+                    error_code="RESOURCE_NOT_FOUND",
+                    downstream_status=404,
+                )
+            b_meta = binding.get("metadata") or {} if isinstance(binding, dict) else getattr(binding, "metadata", {}) or {}
+            binding_tenant = str(
+                b_meta.get("tenant_id")
+                or b_meta.get("tenantId")
+                or binding.get("tenant_id")
+                or binding.get("tenantId")
+                or ""
+            ).strip()
+            if not expected_tenant or binding_tenant != expected_tenant:
+                raise ActionUnavailableError(
+                    "Runtime owner tenant changed before execution",
+                    action_id=action_name,
+                    entity_type="Runtime",
+                    error_code="TENANT_MISMATCH",
+                )
 
         payload = {
             "command_id": command_id,

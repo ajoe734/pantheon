@@ -1256,3 +1256,180 @@ def test_signed_identity_runtime_pause_resume_requires_owner_tenant(
         assert calls == [], evidence
         assert final.get("status") != "executed", evidence
 
+
+@pytest.mark.parametrize("admission_shape", ["missing", "ambiguous", "foreign", "same_tenant"])
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize(
+    "action",
+    [
+        "RestartPaperRuntime",
+        "RestartTelemetryBridge",
+        "StartPaperMonitoringSession",
+        "ProbeTelemetryIngest",
+    ],
+)
+def test_signed_identity_runtime_action_repair_alias_requires_effective_confirm_token_and_tenant(
+    tmp_path, monkeypatch, restart, action, admission_shape
+) -> None:
+    """Regression for the DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 independent
+    review REJECT (PR #5998 head 3c498e1f1282f7502bd95903e647ee7ff9d87c6a):
+    mounted ``POST /bff/v1/commands`` with ``command=RuntimeAction`` and
+    ``params.action_id`` in {RestartPaperRuntime, RestartTelemetryBridge,
+    StartPaperMonitoringSession, ProbeTelemetryIngest} dispatched the
+    downstream runtime-repair POST with no confirmation token at all and no
+    target-tenant check, because ``service.py`` validated the outer
+    ``RuntimeAction`` wrapper's (weak) catalog entry instead of each
+    action's own ``requires_confirm_token=True`` canonical entry, and
+    ``runtime_adapter.py`` invented a synthetic ``repair-confirm-token``
+    whenever the caller omitted one.
+
+    Drives a real signed-JWT mounted admission through the durable
+    ``CommandStore`` and ``process_command`` executor (only the HTTP
+    transport to the downstream runtime-manager and the read-store binding
+    lookup are stubbed), across a CommandStore restart, for every admission
+    tenant shape. Every shape without a valid confirm token must reject at
+    428 with zero downstream calls; the same-tenant case with a real
+    confirm token issued for this exact ``RuntimeAction``/``Runtime``/
+    target binding must still dispatch exactly once.
+    """
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff.command_adapters import runtime_adapter
+    from services.control_plane.bff.command_adapters.service import (
+        CommandAdapterService,
+        process_command,
+    )
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "test-runtime-repair-alias-tenant-secret"
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://runtime-repair-alias-review.invalid")
+    monkeypatch.setenv("PANTHEON_RUNTIME_REPAIR_API_URL", "http://runtime-repair-alias-review.invalid")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "runtime-repair-alias-review")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "runtime-repair-alias-review")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+    now = int(time.time())
+    if admission_shape == "same_tenant":
+        scope: Dict[str, Any] = {"tenant_id": "tenant-a"}
+    elif admission_shape == "foreign":
+        scope = {"tenant_id": "tenant-b"}
+    elif admission_shape == "ambiguous":
+        scope = {"tenant_id": "tenant-b", "tid": "tenant-c"}
+    else:
+        scope = {}
+    token = encode_jwt_hs256(
+        {
+            "sub": "runtime-repair-review-actor",
+            "roles": ["operator"],
+            "iss": "runtime-repair-alias-review",
+            "aud": "runtime-repair-alias-review",
+            "iat": now - 10,
+            "exp": now + 300,
+            **scope,
+        },
+        secret=secret,
+    )
+
+    command_path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(command_path)
+    service = CommandAdapterService(
+        command_store=store,
+        extract_identity=extract_identity_jwt,
+        check_read_surface_state=lambda: None,
+        process_command_task=lambda command_id: None,
+    )
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=service))
+    client = TestClient(app)
+
+    binding = {
+        "runtime_id": "rt-repair-review",
+        "binding_id": "bind-repair-review",
+        "deployment_mode": "paper",
+        "status": "active",
+        "metadata": {"tenant_id": "tenant-a"},
+    }
+    calls: List[Dict[str, Any]] = []
+
+    def fake_http(url, **kwargs):
+        calls.append({"url": url, "method": kwargs.get("method"), "payload": kwargs.get("payload")})
+        return {"status": "accepted", "audit_id": "audit-repair-review", "heartbeat_freshness": 1}
+
+    monkeypatch.setattr(
+        runtime_adapter,
+        "_get_read_store",
+        lambda: SimpleNamespace(
+            get_runtime_binding_by_runtime_id=lambda rid: dict(binding) if rid == "rt-repair-review" else None,
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_adapter,
+        "_get_runtime_manager_client",
+        lambda: SimpleNamespace(get=lambda bid: dict(binding), list_all=lambda: [dict(binding)]),
+    )
+    monkeypatch.setattr(runtime_adapter, "http_request_json", fake_http)
+
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Idempotency-Key": f"runtime-repair-{action}-{admission_shape}",
+    }
+    if admission_shape == "same_tenant":
+        issue_headers = dict(headers)
+        issue_headers["Idempotency-Key"] = f"runtime-repair-issue-{action}-{admission_shape}-{restart}"
+        issued = client.post(
+            "/bff/confirm-tokens",
+            headers=issue_headers,
+            json={
+                "tokenId": f"repair-token-{action}",
+                "ttlSeconds": 300,
+                "command": "RuntimeAction",
+                "target_type": "Runtime",
+                "target_id": "rt-repair-review",
+                "operator_id": "runtime-repair-review-actor",
+            },
+        )
+        assert issued.status_code == 201, issued.text
+        headers["X-Confirm-Token"] = f"repair-token-{action}"
+
+    response = client.post(
+        "/bff/v1/commands",
+        headers=headers,
+        json={
+            "command": "RuntimeAction",
+            "target": {"type": "Runtime", "id": "rt-repair-review"},
+            "params": {"action_id": action, "runtime_id": "rt-repair-review"},
+            "audit_context": {"reason": "runtime repair alias effective-action regression"},
+        },
+    )
+
+    rows = store._get_all_commands()
+    runtime_action_rows = [row for row in rows if row["type"] == "RuntimeAction"]
+    if restart:
+        store = CommandStore(command_path)
+    for row in rows:
+        asyncio.run(process_command(row["command_id"], command_store=store))
+    final = store.get_command(runtime_action_rows[0]["command_id"]) if runtime_action_rows else {}
+    evidence = {
+        "admission_shape": admission_shape,
+        "restart": restart,
+        "action": action,
+        "response_status": response.status_code,
+        "calls": calls,
+        "status": final.get("status"),
+        "error": final.get("error"),
+    }
+
+    if admission_shape == "same_tenant":
+        assert response.status_code == 202, evidence
+        assert len(calls) == 1, evidence
+        assert final.get("status") == "executed", evidence
+    else:
+        assert response.status_code == 428, evidence
+        assert calls == [], evidence
+        assert final.get("status") != "executed", evidence
+

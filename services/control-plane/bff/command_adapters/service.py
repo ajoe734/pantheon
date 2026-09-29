@@ -75,6 +75,7 @@ except (ImportError, ValueError):
     except (ImportError, ValueError):
         from auth.policy import identity_claim_strings
 from .base import ActionUnavailableError
+from .effective_action import resolve_effective_action
 from .contracts import (
     _FINAL_COMMAND_ROUTE,
     _HUMAN_GATE_DECISIONS_BY_COMMAND,
@@ -2270,6 +2271,30 @@ class CommandAdapterService:
             ensure_live_broker_scope_allowed(cmd, payload)
             validate_drawer_runtime_target(cmd)
             validate_final_command_target_type(cmd)
+            # A generic wrapper command (RuntimeAction, ReviewAction, ...)
+            # must never be admitted when action_id names something the
+            # adapter does not actually dispatch -- that would accept a
+            # command durably only to fail (or be silently misrouted) at
+            # execution time. require_final_command_preconditions below
+            # runs the same resolution to gate confirm_token/approval/
+            # two-man evidence against the *effective* canonical entry;
+            # the per-command validators in self._validators are keyed by
+            # each canonical command's own param shape (e.g. PauseRuntime
+            # expects pause_action, PausePaperRuntime expects runtime_id)
+            # which differs from the wrapper's action_id/entity_id shape,
+            # so routing this lookup through the effective command would
+            # reject well-formed wrapper requests; that reconciliation is
+            # tracked as a separate follow-up (see evidence.json) and is
+            # not part of this fail-closed admission gate.
+            if resolve_effective_action(cmd.command.value, params=cmd.params).status == "unknown":
+                raise self._raise_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "Unsupported action_id for this generic command wrapper",
+                    f"{cmd.command.value} does not dispatch action_id={cmd.params.get('action_id') or cmd.params.get('actionId')!r}",
+                    precondition_failed="action_id",
+                    suggestion="Submit a recognized action_id, or use the dedicated canonical command directly",
+                )
             validator = self._validators.get(cmd.command)
             if validator:
                 validator(cmd.params, identity)
