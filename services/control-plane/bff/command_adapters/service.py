@@ -565,6 +565,43 @@ class CommandAdapterService:
             return self._check_read_surface_state()
         return _check_read_surface_state()
 
+    def _retry_retryable_capital_duplicate(
+        self,
+        *,
+        store: Any,
+        duplicate: dict[str, Any],
+        duplicate_status: CommandStatus,
+        enqueue: bool,
+        background_tasks: Any,
+    ) -> CommandStatus:
+        """Reset a retryable failed/timeout capital duplicate and enqueue it once.
+
+        Shared by both duplicate branches; keeps the command identity and row.
+        Returns the effective status (SUBMITTED when re-enqueued).
+        """
+        if (
+            duplicate_status not in (CommandStatus.FAILED, CommandStatus.TIMEOUT)
+            or not enqueue
+            or not retryable_terminal_capital_command(duplicate)
+        ):
+            return duplicate_status
+        command_id = str(duplicate["command_id"])
+        reset = store.update_status(
+            command_id,
+            CommandStatus.SUBMITTED,
+            audit={"retry_requested_at": self._utc_now()},
+            expected_status=duplicate_status,
+        )
+        if not reset:
+            # Another request already moved this row; never dispatch twice.
+            current = store.get_command(command_id) or {}
+            return CommandStatus(current.get("status") or duplicate_status.value)
+        if self._process_command_task and background_tasks and hasattr(background_tasks, "add_task"):
+            background_tasks.add_task(
+                _execute_command_background_task, self._process_command_task, command_id
+            )
+        return CommandStatus.SUBMITTED
+
     def _raise_terminal_failure_replay(
         self,
         *,
@@ -2617,17 +2654,13 @@ class CommandAdapterService:
             duplicate_status = CommandStatus(
                 duplicate.get("status") or CommandStatus.SUBMITTED.value
             )
-            if enqueue and retryable_terminal_capital_command(duplicate):
-                store.update_status(
-                    str(duplicate["command_id"]),
-                    CommandStatus.SUBMITTED,
-                    audit={"retry_requested_at": self._utc_now()},
-                )
-                if self._process_command_task and background_tasks and hasattr(background_tasks, "add_task"):
-                    background_tasks.add_task(
-                        _execute_command_background_task, self._process_command_task, str(duplicate["command_id"])
-                    )
-                duplicate_status = CommandStatus.SUBMITTED
+            duplicate_status = self._retry_retryable_capital_duplicate(
+                store=store,
+                duplicate=duplicate,
+                duplicate_status=duplicate_status,
+                enqueue=enqueue,
+                background_tasks=background_tasks,
+            )
             if duplicate_status in (CommandStatus.FAILED, CommandStatus.TIMEOUT):
                 self._raise_terminal_failure_replay(
                     duplicate=duplicate,
@@ -2788,10 +2821,14 @@ class CommandAdapterService:
                     duplicate_after_precheck.get("status")
                     or CommandStatus.SUBMITTED.value
                 )
-                if late_status in (
-                    CommandStatus.FAILED,
-                    CommandStatus.TIMEOUT,
-                ) and not retryable_terminal_capital_command(duplicate_after_precheck):
+                late_status = self._retry_retryable_capital_duplicate(
+                    store=store,
+                    duplicate=duplicate_after_precheck,
+                    duplicate_status=late_status,
+                    enqueue=enqueue,
+                    background_tasks=background_tasks,
+                )
+                if late_status in (CommandStatus.FAILED, CommandStatus.TIMEOUT):
                     self._raise_terminal_failure_replay(
                         duplicate=duplicate_after_precheck,
                         duplicate_status=late_status,
@@ -2802,10 +2839,7 @@ class CommandAdapterService:
                     command_id=duplicate_after_precheck["command_id"],
                     command=cmd.command,
                     accepted_at=duplicate_after_precheck.get("submitted_at") or self._utc_now(),
-                    status=CommandStatus(
-                        duplicate_after_precheck.get("status")
-                        or CommandStatus.SUBMITTED.value
-                    ),
+                    status=late_status,
                     staleness_warning=None,
                     meta=command_response_durable_meta(resolved_key, replayed=True)
                     if include_durable_meta
