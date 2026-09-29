@@ -18,6 +18,7 @@ from .base import (
     internal_url,
     utc_now,
 )
+from .runtime_adapter import _normalize_wrapper_alias, resolve_wrapper_dispatch
 
 log = logging.getLogger(__name__)
 
@@ -55,15 +56,20 @@ class DeploymentCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or command_type or "").strip()
         plan_id = str(params.get("deployment_plan_id") or params.get("plan_id") or params.get("entity_id") or "").strip()
 
-        if command_type == "ApproveDeployment" or action_id.lower() in {"approve", "approvedeployment"}:
+        # ``DeploymentAction`` dispatches the canonical direct command its
+        # action resolved to at admission; every other command dispatches on
+        # its own type only (``resolve_wrapper_dispatch``).
+        dispatch = resolve_wrapper_dispatch(command_type, params)
+
+        if dispatch == "ApproveDeployment":
             return self._execute_approve_deployment(command_id, plan_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "EscalateDiff" or action_id.lower() in {"escalatediff", "escalate_diff"}:
+        elif dispatch == "EscalateDiff":
             return self._execute_escalate_diff(command_id, plan_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "CreateDeployment" or action_id.lower() in {"create", "createdeployment"}:
+        elif dispatch == "CreateDeployment":
             return self._execute_create_deployment(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "PatchDeployment" or action_id.lower() in {"patch", "update", "patchdeployment"}:
+        elif dispatch == "PatchDeployment":
             return self._execute_patch_deployment(command_id, plan_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif action_id.lower() == "dispatch":
+        elif dispatch == "DeploymentAction" and _normalize_wrapper_alias(action_id) == "dispatch":
             return self._execute_dispatch_deployment(command_id, plan_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(

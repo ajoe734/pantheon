@@ -197,6 +197,124 @@ def _resolve_review_action(params: Dict[str, Any]) -> EffectiveAction:
 resolve_review_action_id = _resolve_review_action_id
 
 
+class _WrapperSpec(NamedTuple):
+    """Alias table for one generic wrapper command.
+
+    ``canonical`` maps a normalized alias (lower-case, ``-``/``_`` removed) to
+    the dedicated direct command the wrapper performs for it. ``generic``
+    are wrapper-only aliases with no stronger direct command.
+    ``open_vocabulary`` wrappers dispatch arbitrary further action ids to
+    ungated sub-handlers, so an alias that is not canonical stays
+    ``generic_ok`` instead of ``unknown``.
+    """
+
+    canonical: Dict[str, str]
+    generic: frozenset = frozenset()
+    open_vocabulary: bool = False
+
+
+def _normalize_wrapper_alias(action_id: str) -> str:
+    return str(action_id or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+
+
+_EMERGENCY_CONTAINMENT_ALIASES = {
+    "emergencycontainment": "EmergencyContainment",
+    "containment": "EmergencyContainment",
+}
+
+# Every wrapper below dispatches through this table only: its adapter
+# (persona/capital/deployment/incident) and ``command_executor.execute_command``
+# resolve the action through ``resolve_wrapper_dispatch`` instead of keeping a
+# private action_id switch, so a wrapped action can never reach a gated
+# canonical command that admission did not resolve and gate as that command.
+_WRAPPER_SPECS: Dict[str, _WrapperSpec] = {
+    "PersonaAction": _WrapperSpec(
+        canonical={
+            "advancelifecycle": "AdvanceLifecycle",
+            **_EMERGENCY_CONTAINMENT_ALIASES,
+            "observe": "Observe",
+            "promote": "PromoteCandidate",
+            "promotecandidate": "PromoteCandidate",
+            "demote": "Demote",
+        },
+    ),
+    "CapitalPoolAction": _WrapperSpec(
+        canonical={
+            "approve": "ApprovePool",
+            "approvepool": "ApprovePool",
+            **_EMERGENCY_CONTAINMENT_ALIASES,
+        },
+        open_vocabulary=True,
+    ),
+    "RebalanceAction": _WrapperSpec(
+        canonical={
+            "apply": "ApprovedApply",
+            "approve": "RebalanceApproval",
+            "approverebalance": "RebalanceApproval",
+            "sign": "RebalanceTwoManSign",
+            "twomansign": "RebalanceTwoManSign",
+            "signrebalance": "RebalanceTwoManSign",
+            **_EMERGENCY_CONTAINMENT_ALIASES,
+        },
+        open_vocabulary=True,
+    ),
+    "DeploymentAction": _WrapperSpec(
+        canonical={
+            "approve": "ApproveDeployment",
+            "approvedeployment": "ApproveDeployment",
+            "escalatediff": "EscalateDiff",
+            "create": "CreateDeployment",
+            "createdeployment": "CreateDeployment",
+            "patch": "PatchDeployment",
+            "update": "PatchDeployment",
+            "patchdeployment": "PatchDeployment",
+        },
+        generic=frozenset({"dispatch"}),
+    ),
+    "IncidentAction": _WrapperSpec(
+        canonical={
+            "remediate": "RemediateSentinelIntervention",
+            "remediatesentinelintervention": "RemediateSentinelIntervention",
+            "acknowledge": "AlertAcknowledge",
+            "alertacknowledge": "AlertAcknowledge",
+        },
+        open_vocabulary=True,
+    ),
+    "RiskAlertAction": _WrapperSpec(
+        canonical={
+            "remediate": "RemediateSentinelIntervention",
+            "remediatesentinelintervention": "RemediateSentinelIntervention",
+            "acknowledge": "AlertAcknowledge",
+            "alertacknowledge": "AlertAcknowledge",
+        },
+        open_vocabulary=True,
+    ),
+}
+
+
+def _make_wrapper_action_id_resolver(spec: _WrapperSpec):
+    def resolve(action_id: str) -> EffectiveAction:
+        normalized = _normalize_wrapper_alias(action_id)
+        if not normalized:
+            return EffectiveAction(None, "generic_ok" if spec.open_vocabulary else "unknown", None)
+        canonical = spec.canonical.get(normalized)
+        if canonical:
+            return EffectiveAction(canonical, "canonical", action_id)
+        if spec.open_vocabulary or normalized in spec.generic:
+            return EffectiveAction(None, "generic_ok", action_id)
+        return EffectiveAction(None, "unknown", action_id)
+
+    return resolve
+
+
+def _make_wrapper_resolver(action_id_resolver):
+    def resolve(params: Dict[str, Any]) -> EffectiveAction:
+        action_id = str((params or {}).get("action_id") or (params or {}).get("actionId") or "").strip()
+        return action_id_resolver(action_id)
+
+    return resolve
+
+
 _RESOLVERS = {
     "RuntimeAction": _resolve_runtime_action,
     "ReviewAction": _resolve_review_action,
@@ -206,6 +324,48 @@ _ACTION_ID_RESOLVERS = {
     "RuntimeAction": _resolve_runtime_action_id,
     "ReviewAction": _resolve_review_action_id,
 }
+
+for _wrapper_name, _wrapper_spec in _WRAPPER_SPECS.items():
+    _ACTION_ID_RESOLVERS[_wrapper_name] = _make_wrapper_action_id_resolver(_wrapper_spec)
+    _RESOLVERS[_wrapper_name] = _make_wrapper_resolver(_ACTION_ID_RESOLVERS[_wrapper_name])
+
+# Wrappers whose dispatch is resolved through ``resolve_wrapper_dispatch``
+# (adapter + executor), in addition to RuntimeAction/ReviewAction which keep
+# their own audited dispatch tables.
+DISPATCH_RESOLVED_WRAPPERS = frozenset(_WRAPPER_SPECS)
+
+
+def wrapper_canonical_inventory() -> Dict[str, Dict[str, str]]:
+    """wrapper -> {normalized alias -> canonical direct command} for every
+    wrapper; the committed evidence and the parametrized mounted parity test
+    both iterate exactly this table."""
+    inventory: Dict[str, Dict[str, str]] = {
+        "RuntimeAction": dict(_RUNTIME_ACTION_CANONICAL_ALIASES),
+        "ReviewAction": dict(_REVIEW_ACTION_CANONICAL_ALIASES),
+    }
+    for name, spec in _WRAPPER_SPECS.items():
+        inventory[name] = dict(spec.canonical)
+    return inventory
+
+
+def resolve_wrapper_dispatch(command_type: str, params: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Command an adapter/executor must dispatch for ``command_type``.
+
+    A dispatch-resolved wrapper returns the canonical direct command its
+    ``params.action_id`` names, ``command_type`` itself when the action is
+    generic wrapper-only, and ``None`` when the action is not dispatched by
+    the wrapper at all. Any other command returns ``command_type`` unchanged:
+    ``params.action_id`` is caller metadata there and never a selector.
+    """
+    normalized = str(command_type or "").strip()
+    if normalized not in DISPATCH_RESOLVED_WRAPPERS:
+        return normalized
+    effective = _RESOLVERS[normalized](params or {})
+    if effective.status == "canonical":
+        return effective.effective_command_id
+    if effective.status == "generic_ok":
+        return normalized
+    return None
 
 GENERIC_WRAPPER_COMMANDS = frozenset(_RESOLVERS)
 
@@ -285,7 +445,7 @@ def resolve_effective_action(
         return EffectiveAction(None, "not_wrapper", next(iter(selectors.values()), None))
 
     if not selectors:
-        return EffectiveAction(None, "unknown", None)
+        return action_id_resolver("")
 
     resolved_per_selector = {
         name: action_id_resolver(value) for name, value in selectors.items()

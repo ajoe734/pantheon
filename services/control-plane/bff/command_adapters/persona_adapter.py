@@ -19,6 +19,7 @@ from .base import (
     internal_url,
     utc_now,
 )
+from .runtime_adapter import resolve_wrapper_dispatch
 
 log = logging.getLogger(__name__)
 
@@ -57,14 +58,21 @@ class PersonaCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or command_type or "").strip()
         persona_id = str(params.get("persona_id") or params.get("entity_id") or "").strip()
 
-        if command_type == "AdvanceLifecycle" or action_id.lower() in {"advancelifecycle", "advance_lifecycle"}:
+        # ``PersonaAction`` is a generic wrapper: the command actually
+        # dispatched is the canonical direct command admission resolved and
+        # gated (``resolve_wrapper_dispatch``). Every other command
+        # dispatches on its own type only; its ``params.action_id`` is
+        # caller metadata and never selects a different (gated) command.
+        dispatch = resolve_wrapper_dispatch(command_type, params)
+
+        if dispatch == "AdvanceLifecycle":
             return self._execute_advance_lifecycle(command_id, persona_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "EmergencyContainment" or action_id.lower() in {"emergencycontainment", "emergency_containment"}:
+        elif dispatch == "EmergencyContainment":
             return self._execute_emergency_containment(command_id, persona_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"Observe"} or action_id.lower() == "observe":
+        elif dispatch == "Observe":
             return self._execute_observe(command_id, persona_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"PromoteCandidate", "Demote"} or action_id.lower() in {"promote", "promotecandidate", "demote"}:
-            return self._execute_promote_demote(command_id, persona_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
+        elif dispatch in {"PromoteCandidate", "Demote"}:
+            return self._execute_promote_demote(command_id, persona_id, dispatch, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
                 f"Persona action {action_id!r} on {persona_id!r} is not supported.",
@@ -85,7 +93,11 @@ class PersonaCommandAdapter(DomainCommandAdapter):
             raise ValueError("AdvanceLifecycle requires persona_id.")
 
         target_state = str(params.get("target_state") or "paper_owner").strip()
-        confirm_token = canonical_confirm_token(params) or "lifecycle-confirm"
+        # Never default or synthesize a confirmation: the admission-validated
+        # token is the only evidence this executor may forward.
+        confirm_token = canonical_confirm_token(params)
+        if not confirm_token:
+            raise ValueError("AdvanceLifecycle requires an admission-validated confirm_token.")
 
         payload: Dict[str, Any] = {
             "target_state": target_state,
@@ -129,7 +141,9 @@ class PersonaCommandAdapter(DomainCommandAdapter):
         target_persona_id = persona_id or str(params.get("persona_id") or "").strip()
         if not target_persona_id:
             raise ValueError("EmergencyContainment requires persona_id.")
-        two_man_signature_id = str(params.get("two_man_signature_id") or params.get("twoManSignatureId") or "sig-ops-containment").strip()
+        two_man_signature_id = str(params.get("two_man_signature_id") or params.get("twoManSignatureId") or "").strip()
+        if not two_man_signature_id:
+            raise ValueError("EmergencyContainment requires an admission-validated two_man_signature_id.")
 
         payload = {
             "command_id": command_id,

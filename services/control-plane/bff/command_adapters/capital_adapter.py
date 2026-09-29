@@ -19,6 +19,7 @@ from .base import (
     internal_url,
     utc_now,
 )
+from .runtime_adapter import resolve_wrapper_dispatch
 
 log = logging.getLogger(__name__)
 
@@ -75,15 +76,21 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or "").strip()
         entity_id = str(params.get("entity_id") or params.get("pool_id") or params.get("rebalance_id") or params.get("binding_id") or params.get("persona_id") or "").strip()
 
-        if command_type == "ApprovedApply" or (entity_type == "rebalance" and action_id.lower() == "apply"):
+        # ``CapitalPoolAction``/``RebalanceAction`` dispatch the canonical
+        # direct command admission resolved and gated (approve/apply/sign/
+        # containment); every other command dispatches on its own type only,
+        # never on caller ``action_id`` metadata (``resolve_wrapper_dispatch``).
+        dispatch = resolve_wrapper_dispatch(command_type, params)
+
+        if dispatch == "ApprovedApply":
             return self._execute_rebalance_apply(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "ApproveRebalance" or (entity_type == "rebalance" and action_id.lower() in {"approve", "approverebalance"}):
+        elif dispatch in {"ApproveRebalance", "RebalanceApproval"}:
             return self._execute_approve_rebalance(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "SignRebalance" or (entity_type == "rebalance" and action_id.lower() in {"sign", "two-man-sign", "twomansign"}):
+        elif dispatch in {"SignRebalance", "RebalanceTwoManSign"}:
             return self._execute_sign_rebalance(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "EmergencyContainment" or action_id.lower() == "emergencycontainment":
+        elif dispatch == "EmergencyContainment":
             return self._execute_containment(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "ApprovePool" or (entity_type in {"capitalpool", "capital-pool"} and action_id.lower() in {"approve", "approvepool"}):
+        elif dispatch == "ApprovePool":
             return self._execute_approve_pool(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif entity_type in {"capitalpool", "capital-pool"}:
             return self._execute_capital_pool_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
@@ -236,14 +243,6 @@ class CapitalCommandAdapter(DomainCommandAdapter):
                 domain_receipt=body,
                 authoritative_readback=readback,
                 extra={"rebalance_id": target_rebalance_id},
-            )
-        elif action_id.lower() in {"approve", "approverebalance"}:
-            return self._execute_approve_rebalance(
-                command_id, {**params, "rebalance_id": rebalance_id}, auth_token=auth_token, mfa_token=mfa_token
-            )
-        elif action_id.lower() in {"sign", "two-man-sign", "twomansign"}:
-            return self._execute_sign_rebalance(
-                command_id, {**params, "rebalance_id": rebalance_id}, auth_token=auth_token, mfa_token=mfa_token
             )
         else:
             raise ActionUnavailableError(
@@ -429,7 +428,9 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         persona_id = entity_id or requested_persona_id
         if not persona_id:
             raise ValueError("EmergencyContainment requires a trusted Persona identity")
-        two_man_signature_id = str(params.get("two_man_signature_id") or params.get("twoManSignatureId") or "sig-emergency-ops").strip()
+        two_man_signature_id = str(params.get("two_man_signature_id") or params.get("twoManSignatureId") or "").strip()
+        if not two_man_signature_id:
+            raise ValueError("EmergencyContainment requires an admission-validated two_man_signature_id.")
 
         payload = {
             key: value

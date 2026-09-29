@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 from .models import CommandStatus, CommandType
 from .command_adapters import ActionUnavailableError, dispatch_domain_command
+from .command_adapters.runtime_adapter import DISPATCH_RESOLVED_WRAPPERS, resolve_wrapper_dispatch
 from .command_adapters.base import canonical_confirm_token
 
 log = logging.getLogger(__name__)
@@ -1917,6 +1918,27 @@ _EXECUTORS = {
 # Public execution entry point
 # --------------------------------------------------------------------------- #
 
+def _resolve_wrapper_command_type(command_type: CommandType, params: Dict[str, Any]) -> CommandType:
+    """A dispatch-resolved wrapper (``PersonaAction``, ``DeploymentAction``,
+    ...) executes as the canonical direct command its ``action_id`` named at
+    admission, through that command's own executor, so the wrapped and direct
+    paths run identical execution-time checks (confirm token, two-man
+    evidence). Never resolves to a command admission did not gate."""
+    wrapper_name = command_type.value if hasattr(command_type, "value") else str(command_type)
+    if wrapper_name not in DISPATCH_RESOLVED_WRAPPERS:
+        return command_type
+    resolved = resolve_wrapper_dispatch(wrapper_name, params)
+    if not resolved:
+        raise ActionUnavailableError(
+            f"{wrapper_name} does not dispatch action_id={params.get('action_id')!r}.",
+            action_id=str(params.get("action_id") or wrapper_name),
+            entity_type=str(params.get("entity_type") or ""),
+        )
+    if resolved == wrapper_name:
+        return command_type
+    return CommandType(resolved)
+
+
 def execute_command(
     command_id: str,
     command_type: CommandType,
@@ -1929,6 +1951,7 @@ def execute_command(
     Returns the result payload on success.
     Raises Exception on any failure (caller should catch and record as FAILED).
     """
+    command_type = _resolve_wrapper_command_type(command_type, params)
     executor = _EXECUTORS.get(command_type)
     if executor is not None:
         return executor(command_id, params, auth_token=auth_token, mfa_token=mfa_token)

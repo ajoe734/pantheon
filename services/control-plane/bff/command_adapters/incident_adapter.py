@@ -17,6 +17,7 @@ from .base import (
     internal_url,
     utc_now,
 )
+from .runtime_adapter import resolve_wrapper_dispatch
 
 log = logging.getLogger(__name__)
 
@@ -67,13 +68,19 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("incident_id") or params.get("alert_id") or params.get("intervention_id") or params.get("finding_id") or params.get("entity_id") or "").strip()
 
-        if command_type == "RemediateSentinelIntervention" or action_id.lower() in {"remediatesentinelintervention", "remediate"}:
+        # ``IncidentAction``/``RiskAlertAction`` dispatch the canonical direct
+        # command admission resolved and gated; every other command
+        # dispatches on its own type only, never on caller ``action_id``
+        # metadata (``resolve_wrapper_dispatch``).
+        dispatch = resolve_wrapper_dispatch(command_type, params)
+
+        if dispatch == "RemediateSentinelIntervention":
             return self._execute_remediate_sentinel(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"RiskAlertAction", "AlertAcknowledge"} or action_id.lower() in {"acknowledge", "alertacknowledge"}:
+        elif dispatch in {"RiskAlertAction", "AlertAcknowledge"}:
             return self._execute_alert_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"IncidentAction"} or action_id.lower() in {"resolve", "investigate", "close", "reopen"}:
+        elif dispatch == "IncidentAction":
             return self._execute_incident_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"V5InterventionAction", "DecideV5Intervention", "SentinelFindingStatus", "SentinelRemediationBuild", "SentinelRemediationExecute"}:
+        elif dispatch in {"V5InterventionAction", "DecideV5Intervention", "SentinelFindingStatus", "SentinelRemediationBuild", "SentinelRemediationExecute"}:
             return self._execute_sentinel_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
@@ -93,7 +100,9 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         target_id = intervention_id or str(params.get("intervention_id") or "").strip()
         if not target_id:
             raise ValueError("RemediateSentinelIntervention requires intervention_id.")
-        two_man_signature_id = str(params.get("twoManSignatureId") or params.get("two_man_signature_id") or "sig-sentinel-remed").strip()
+        two_man_signature_id = str(params.get("twoManSignatureId") or params.get("two_man_signature_id") or "").strip()
+        if not two_man_signature_id:
+            raise ValueError("RemediateSentinelIntervention requires an admission-validated two_man_signature_id.")
 
         payload = {
             "intervention_id": target_id,

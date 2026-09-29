@@ -2404,10 +2404,30 @@ class CommandAdapterService:
             resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
             reject_body_idempotency_key(payload)
             reject_server_managed_rebalance_evidence_command(cmd)
+            # A wrapper action that resolves to a server-managed evidence
+            # command (RebalanceAction approve/sign) must be refused exactly
+            # like the direct command, and must satisfy the same capital
+            # authority/target binding checks the direct command does.
+            effective_cmd = cmd
+            if (
+                effective_action.status == "canonical"
+                and effective_action.effective_command_id
+                and effective_action.effective_command_id != cmd.command.value
+            ):
+                try:
+                    effective_cmd = cmd.model_copy(
+                        update={"command": CommandType(effective_action.effective_command_id)}
+                    )
+                except ValueError:
+                    effective_cmd = cmd
+            if effective_cmd is not cmd:
+                reject_server_managed_rebalance_evidence_command(effective_cmd)
             if extra_precondition is not None:
                 extra_precondition(identity, cmd)
             validate_audit_context(cmd)
             validate_capital_authority_target_binding(cmd)
+            if effective_cmd is not cmd:
+                validate_capital_authority_target_binding(effective_cmd)
             validate_paper_runtime_authority_target_binding(cmd)
             ensure_live_broker_scope_allowed(cmd, payload)
             validate_drawer_runtime_target(cmd)
