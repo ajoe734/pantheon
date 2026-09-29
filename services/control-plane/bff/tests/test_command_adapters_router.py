@@ -2062,6 +2062,183 @@ def test_signed_identity_runtime_action_repair_alias_requires_effective_confirm_
 @pytest.mark.parametrize("restart", [False, True])
 @pytest.mark.parametrize("wrapped", [False, True])
 @pytest.mark.parametrize(
+    "action",
+    [
+        "RestartPaperRuntime",
+        "RestartTelemetryBridge",
+        "StartPaperMonitoringSession",
+        "ProbeTelemetryIngest",
+    ],
+)
+def test_signed_identity_runtime_repair_direct_and_wrapped_confirm_token_parity(
+    tmp_path, monkeypatch, restart, wrapped, action
+) -> None:
+    """Regression for the DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001
+    independent review REJECT at PR #5998 head
+    4d35315b1be43bbcb7d0737530a5c908de635a27: ``service.py``'s
+    ``canonicalize_validated_precondition_evidence`` canonicalizes the
+    admission-validated confirmation to durable ``params.confirm_token_id``
+    and deletes ``params.confirm_token``, but
+    ``command_executor._require_confirm_token`` (used by the *direct*
+    ``ProbeTelemetryIngest``/``RestartPaperRuntime``/
+    ``RestartTelemetryBridge``/``StartPaperMonitoringSession`` commands, as
+    opposed to the ``RuntimeAction`` wrapper handled by
+    ``runtime_adapter._execute_repair_action``) read only
+    ``params.confirm_token``, so a mounted signed-JWT same-tenant request
+    with a genuinely issued and bound confirm token was accepted at 202 and
+    then failed ``EXECUTION_ERROR requires confirm_token`` with zero
+    downstream calls, while the equivalent ``RuntimeAction`` wrapper
+    succeeded.
+
+    Drives a real signed-JWT mounted admission through the durable
+    ``CommandStore`` and ``process_command`` executor (only the downstream
+    HTTP transport and the read-store binding lookup are stubbed), across a
+    ``CommandStore`` restart, for both the direct command and the
+    ``RuntimeAction`` wrapper. Both dispatch paths must consume the same
+    admission-validated ``confirm_token_id`` and dispatch exactly once.
+    """
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff import command_executor
+    from services.control_plane.bff.command_adapters import runtime_adapter
+    from services.control_plane.bff.command_adapters.service import (
+        CommandAdapterService,
+        process_command,
+    )
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "test-runtime-repair-direct-wrapper-parity-secret"
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://runtime-repair-direct-parity-review.invalid")
+    monkeypatch.setenv("PANTHEON_RUNTIME_REPAIR_API_URL", "http://runtime-repair-direct-parity-review.invalid")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "runtime-repair-direct-parity-review")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "runtime-repair-direct-parity-review")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+    now = int(time.time())
+    token = encode_jwt_hs256(
+        {
+            "sub": "runtime-repair-direct-parity-actor",
+            "roles": ["operator"],
+            "iss": "runtime-repair-direct-parity-review",
+            "aud": "runtime-repair-direct-parity-review",
+            "iat": now - 10,
+            "exp": now + 300,
+            "tenant_id": "tenant-a",
+        },
+        secret=secret,
+    )
+
+    binding = {
+        "runtime_id": "rt-repair-direct-parity",
+        "binding_id": "bind-repair-direct-parity",
+        "deployment_mode": "paper",
+        "status": "active",
+        "metadata": {"tenant_id": "tenant-a"},
+    }
+    calls: List[Dict[str, Any]] = []
+
+    def fake_http(url, payload=None, **kwargs):
+        if payload is not None:
+            kwargs["payload"] = payload
+        calls.append({"url": url, "method": kwargs.get("method"), "payload": kwargs.get("payload")})
+        return {"status": "accepted", "audit_id": "audit-repair-direct-parity", "heartbeat_freshness": 1}
+
+    read_store_stub = SimpleNamespace(
+        get_runtime_binding_by_runtime_id=lambda rid: dict(binding) if rid == "rt-repair-direct-parity" else None,
+        get_runtime_binding=lambda bid: dict(binding) if bid == "bind-repair-direct-parity" else None,
+    )
+
+    command_path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(command_path)
+    service = CommandAdapterService(
+        command_store=store,
+        extract_identity=extract_identity_jwt,
+        check_read_surface_state=lambda: None,
+        process_command_task=lambda command_id: None,
+        get_read_store=lambda: read_store_stub,
+    )
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=service))
+    client = TestClient(app)
+
+    monkeypatch.setattr(runtime_adapter, "_get_read_store", lambda: read_store_stub)
+    monkeypatch.setattr(
+        runtime_adapter,
+        "_get_runtime_manager_client",
+        lambda: SimpleNamespace(get=lambda bid: dict(binding), list_all=lambda: [dict(binding)]),
+    )
+    monkeypatch.setattr(runtime_adapter, "http_request_json", fake_http)
+    monkeypatch.setattr(command_executor, "_post_json", fake_http)
+
+    token_id = f"repair-direct-parity-token-{action}-{wrapped}"
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Idempotency-Key": f"runtime-repair-direct-parity-issue-{action}-{wrapped}-{restart}",
+    }
+    issued = client.post(
+        "/bff/confirm-tokens",
+        headers=headers,
+        json={
+            "tokenId": token_id,
+            "ttlSeconds": 300,
+            # Bound to the effective canonical command -- what
+            # submit_command_admission validates the direct command or the
+            # RuntimeAction wrapper against, per
+            # require_final_command_preconditions.
+            "command": action,
+            "target_type": "Runtime",
+            "target_id": "rt-repair-direct-parity",
+            "operator_id": "runtime-repair-direct-parity-actor",
+        },
+    )
+    assert issued.status_code == 201, issued.text
+
+    response = client.post(
+        "/bff/v1/commands",
+        headers={
+            "Authorization": "Bearer " + token,
+            "Idempotency-Key": f"runtime-repair-direct-parity-{action}-{wrapped}-{restart}",
+            "X-Confirm-Token": token_id,
+        },
+        json={
+            "command": "RuntimeAction" if wrapped else action,
+            "target": {"type": "Runtime", "id": "rt-repair-direct-parity"},
+            "params": {"action_id": action, "runtime_id": "rt-repair-direct-parity"},
+            "audit_context": {"reason": "runtime repair direct/wrapper confirm-token parity regression"},
+        },
+    )
+
+    rows = store._get_all_commands()
+    repair_rows = [row for row in rows if row["type"] in ("RuntimeAction", action)]
+    if restart:
+        store = CommandStore(command_path)
+    for row in repair_rows:
+        asyncio.run(process_command(row["command_id"], command_store=store))
+    final = store.get_command(repair_rows[0]["command_id"]) if repair_rows else {}
+    evidence = {
+        "restart": restart,
+        "wrapped": wrapped,
+        "action": action,
+        "response_status": response.status_code,
+        "calls": calls,
+        "status": final.get("status"),
+        "error": final.get("error"),
+    }
+
+    assert response.status_code == 202, evidence
+    assert len(calls) == 1, evidence
+    assert final.get("status") == "executed", evidence
+    assert calls[0]["payload"].get("confirm_token") == token_id, evidence
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize(
     "roles,mfa_verified",
     [
         (["operator"], False),

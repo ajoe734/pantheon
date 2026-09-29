@@ -1434,7 +1434,14 @@ _RUNTIME_REPAIR_ACTION_PATHS: dict[CommandType, tuple[str, tuple[str, ...], str]
 
 
 def _require_confirm_token(action_id: str, params: Dict[str, Any]) -> str:
-    confirm_token = str(params.get("confirm_token") or "").strip()
+    # Admission canonicalizes a validated confirmation to durable
+    # params.confirm_token_id and removes params.confirm_token (see
+    # canonicalize_validated_precondition_evidence); accept either so the
+    # direct executor consumes the same admission-validated evidence the
+    # RuntimeAction wrapper already does (runtime_adapter.py
+    # _execute_repair_action) instead of rejecting a genuinely confirmed
+    # mounted request.
+    confirm_token = str(params.get("confirm_token_id") or params.get("confirm_token") or "").strip()
     if not confirm_token:
         raise ValueError(f"{action_id} requires confirm_token.")
     return confirm_token
