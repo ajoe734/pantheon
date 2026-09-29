@@ -18,6 +18,7 @@ from .base import (
     internal_url,
     utc_now,
 )
+from .runtime_adapter import resolve_review_action_id
 
 log = logging.getLogger(__name__)
 
@@ -97,10 +98,32 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
             # the canonical action. For the generic ``ReviewAction``/empty
             # wrapper, ``command_type`` is the wrapper itself, not the
             # resolved action -- the actual HumanGate* verb lives in
-            # ``action_id`` and must be used instead, or the wrapper always
-            # dispatches as literal "ReviewAction" regardless of which
-            # HumanGate action the caller selected.
-            resolved_action_name = action_id if is_generic_wrapper else command_type
+            # ``action_id``. Admission accepts case-insensitive aliases
+            # (e.g. ``humangaterequestmoreevidence``/``HUMANGATE...``) via
+            # ``resolve_effective_action``/``stored_command_params``, which
+            # preserve the caller's exact selector spelling rather than its
+            # resolved canonical name (see service.py's
+            # ``stored_command_params`` comment -- that literal-spelling
+            # preservation matters for RuntimeAction's own dispatch). A raw,
+            # non-canonical-case ``action_id`` must therefore be resolved to
+            # its canonical HumanGate* command here, through the same
+            # canonical alias table admission used, before it can be used to
+            # select ``_execute_human_gate_action``'s case-sensitive
+            # ``verb_map`` entry -- never passed through unresolved
+            # (DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 P2: an accepted
+            # lower/upper-case alias dispatched to a mangled endpoint
+            # instead of its intended one).
+            if is_generic_wrapper:
+                effective = resolve_review_action_id(action_id)
+                if effective.status != "canonical" or not effective.effective_command_id:
+                    raise ActionUnavailableError(
+                        f"Governance action {action_id!r} on {entity_id!r} is not supported.",
+                        action_id=action_id,
+                        entity_type="Governance",
+                    )
+                resolved_action_name = effective.effective_command_id
+            else:
+                resolved_action_name = command_type
             return self._execute_human_gate_action(command_id, entity_id, resolved_action_name, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RecordSponsorDecision" or (is_generic_wrapper and action_id.lower() in {"recordsponsordecision", "sponsor-decision"}):
             return self._execute_sponsor_decision(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)

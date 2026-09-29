@@ -186,6 +186,16 @@ def _resolve_review_action(params: Dict[str, Any]) -> EffectiveAction:
     return _resolve_review_action_id(action_id)
 
 
+# Public alias: governance_adapter.py's ``ReviewAction``/empty-wrapper
+# dispatch must bind to this same canonical resolution instead of
+# re-deriving its own answer from the raw, case-preserved ``action_id``
+# (DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 P2 -- a case-insensitively
+# admitted alias such as ``humangaterequestmoreevidence`` reached
+# governance_adapter's case-sensitive ``verb_map`` unresolved and fell
+# through to a mangled endpoint instead of the intended one).
+resolve_review_action_id = _resolve_review_action_id
+
+
 _RESOLVERS = {
     "RuntimeAction": _resolve_runtime_action,
     "ReviewAction": _resolve_review_action,
