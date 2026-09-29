@@ -127,7 +127,7 @@ def create_personalization_router(
     ):
         """BFF: route an Agora insight action through command admission."""
         identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_operator(identity)
         svc.reject_body_idempotency_key(payload)
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         if not svc.get_insight(insightId):
@@ -179,7 +179,7 @@ def create_personalization_router(
     ):
         """BFF: route an Agora memory action through command admission."""
         identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_operator(identity)
         svc.reject_body_idempotency_key(payload)
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         if not svc.get_memory_entry(memoryId):
@@ -211,7 +211,7 @@ def create_personalization_router(
     ):
         """BFF: execute-plans compatibility alias for memory quarantine."""
         identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_operator(identity)
         svc.reject_body_idempotency_key(payload)
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         if not svc.get_memory_entry(memoryId):
@@ -243,7 +243,7 @@ def create_personalization_router(
     ):
         """BFF: execute-plans compatibility alias for attaching an insight to a strategy."""
         identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_operator(identity)
         svc.reject_body_idempotency_key(payload)
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         if not svc.get_insight(insightId):

@@ -1,0 +1,21 @@
+{
+  "task": "BFF-MUTATION-ROUTE-ROLES-001",
+  "changed_routes": [
+    "POST /bff/jobs/{job_id}/actions/{action_id}",
+    "POST /bff/rankings/{ranking_id}/actions/{action_id}",
+    "POST /bff/agora/messages/{messageId}/actions/{actionId}",
+    "POST /bff/agora/ask/sessions",
+    "POST /bff/agora/ask/sessions/{sessionId}/close",
+    "POST /bff/agora/ask",
+    "POST /bff/agora/insights/{insightId}/actions/{actionId}",
+    "POST /bff/agora/memory/{memoryId}/actions/{actionId}",
+    "POST /bff/memory/{memoryId}/actions/quarantine",
+    "POST /bff/insights/{insightId}/actions/attach-strategy",
+    "POST /api/v1/personas/{persona_id}/strategy-discovery",
+    "POST /bff/personas/{persona_id}/strategy-discovery",
+    "POST /api/v1/personas/{persona_id}/strategy-matches/{match_id}/actions",
+    "POST /bff/personas/{persona_id}/strategy-matches/{match_id}/actions",
+    "POST /bff/personas/{persona_id}/test-prompt"
+  ],
+  "verification": "tests/test_mutation_route_roles.py: viewer token gets 403 and operator token passes the role gate on every route, through the mounted main.app (30 passed). Unrelated failures in test_bff_capital_ranking_rebalance_contract.py (3) and test_mgmt_load_002_shell_summary.py (3) reproduce on the base commit."
+}
