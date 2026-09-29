@@ -1,10 +1,11 @@
 # Pi Astra auto-worker
 
-`PiAstra` is the `piastra` logical agent, using provider `pi_astra`.
+`PiAstra` is the `piastra` logical agent, using provider `pi_astra`. The
+agent name is historical; the model is set by `providers.pi_astra.pi.model`.
 The supervisor launches Pi in the
 leased task worktree through the existing `worker_runner`, with its existing
 heartbeat, task binding, process termination, and bubblewrap boundary.
-The adapter calls `openai-codex/gpt-6-astra` with `high` thinking. It does not
+The adapter calls `openai-codex/gpt-6-luna` with `high` thinking. It does not
 invoke Codex CLI. Project instructions still load; project extensions and
 settings are not automatically trusted, and extension discovery is disabled.
 
@@ -41,6 +42,16 @@ logged-in Pi account was compared with the existing Codex account on
 Pi and that Codex lane share its existing account cap of two. Fleet capacity
 is unchanged. Verify the account mapping when installing on another host or
 changing the login; a different client name does not establish another account.
+On 2026-09-26 the Pi directory was found logged in to the Codex2 account, whose
+usage limit was exhausted; re-login with the Codex1 account restores the
+mapping above.
+
+## Dispatch routing
+
+The supervisor only moves work within `worker_reassignment.owner_fallbacks`.
+`PiAstra` is the first owner fallback for `Codex` and `Codex2`, the last one for
+the Claude and Antigravity lanes, and has its own root so its tasks can move on
+when Pi is unavailable. Tasks may also name `PiAstra` as owner directly.
 
 The Pi model probe disables tools, extensions, project context, skills and
 session persistence, and requires the requested model to return `OK`. The
