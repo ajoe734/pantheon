@@ -83,34 +83,40 @@ _RUNTIME_ACTION_CANONICAL_ALIASES: Dict[str, str] = {
     "activatekillswitch": "ActivateKillSwitch",
     "killswitch": "ActivateKillSwitch",
     "issueriskoff": "IssueRiskOff",
-    # Pause/resume aliases (pause_resume_confirm_token_residual_gap, closed
-    # under DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001). RuntimeAction's own
-    # catalog entry deliberately has requires_confirm_token=False so it can
-    # carry weaker actions (ProbeTelemetryIngest, IssueRiskOff, ...); a
-    # caller who wraps a pause/resume action_id in RuntimeAction must be
-    # gated by the same confirm_token/approval evidence a direct
-    # PausePaperRuntime/ResumePaperRuntime submission requires, or the
-    # wrapper becomes a strictly weaker way to reach the same effect.
-    # ``pause``/``pauseruntime``/``pauseexecution`` are gated at the
-    # PausePaperRuntime confirm_token level (requires_confirm_token=True,
-    # the strictest of PauseRuntime/PauseExecution's own entries) and
-    # ``resume``/``unpause`` at the ResumePaperRuntime confirm_token+
-    # approval level, matching this module's own
-    # ``generic_wrapper_parity_audit`` grouping of these aliases: there is
-    # no dedicated canonical ResumeRuntime CommandType for a plain
-    # "resume"/"unpause" to bind a confirm token to, so ResumePaperRuntime's
-    # entry is the only applicable stronger gate. RuntimeCommandAdapter.
-    # _execute_pause's execution-time routing (is_canonical_paper) is
-    # unaffected: this only changes which catalog entry durable admission
-    # validates confirm_token/approval evidence against, not which
-    # downstream branch the adapter dispatches to.
-    "pause": "PausePaperRuntime",
-    "pauseruntime": "PausePaperRuntime",
-    "pauseexecution": "PausePaperRuntime",
+    # pause_resume_confirm_token_residual_gap, closed for the literal
+    # PausePaperRuntime/ResumePaperRuntime action_id spellings under
+    # DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 (the exact defect an
+    # independent review reproduced: wrapping the literal canonical
+    # action_id in RuntimeAction validated RuntimeAction's own weak
+    # requires_confirm_token=False entry instead of PausePaperRuntime's/
+    # ResumePaperRuntime's own confirm_token/approval requirements).
+    # RuntimeCommandAdapter._execute_pause's execution-time routing
+    # (is_canonical_paper) is unaffected: this only changes which catalog
+    # entry durable admission validates confirm_token/approval evidence
+    # against, not which downstream branch the adapter dispatches to.
+    #
+    # The bare ``pause``/``pauseruntime``/``pauseexecution``/``resume``/
+    # ``unpause`` aliases remain intentionally NOT remapped here and stay
+    # gated only by RuntimeAction's own (weak) entry: closing that broader
+    # gap requires touching services/control-plane/bff/test_aud_002_audit_
+    # action_write_engine.py's existing bare-"pause" positive fixture, which
+    # is outside this task's declared artifact contract (the governed
+    # handoff command fails closed on out-of-contract file changes). This
+    # is recorded as an explicit, checkpointed residual -- see evidence.json
+    # generic_wrapper_parity_audit -- not a silently narrowed fix; it needs
+    # either a contract amendment or a follow-up task covering that file.
     "pausepaperruntime": "PausePaperRuntime",
-    "resume": "ResumePaperRuntime",
-    "unpause": "ResumePaperRuntime",
     "resumepaperruntime": "ResumePaperRuntime",
+}
+
+# Bare pause/resume aliases with no distinct canonical command bypass to
+# gate against for admission purposes (see the residual-gap note above).
+_RUNTIME_ACTION_GENERIC_ONLY = {
+    "resume",
+    "unpause",
+    "pause",
+    "pauseruntime",
+    "pauseexecution",
 }
 
 
@@ -122,6 +128,8 @@ def _resolve_runtime_action(params: Dict[str, Any]) -> EffectiveAction:
     canonical = _RUNTIME_ACTION_CANONICAL_ALIASES.get(lowered)
     if canonical:
         return EffectiveAction(canonical, "canonical")
+    if lowered in _RUNTIME_ACTION_GENERIC_ONLY:
+        return EffectiveAction(None, "generic_ok")
     return EffectiveAction(None, "unknown")
 
 
