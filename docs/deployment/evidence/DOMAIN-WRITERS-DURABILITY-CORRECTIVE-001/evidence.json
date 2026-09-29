@@ -1821,8 +1821,21 @@
         "result": "293 passed, 3 warnings in 118.59s",
         "executed": 293,
         "collected": 293
+      },
+      {
+        "command": "timeout 590s env BFF_READ_STORE_BOOTSTRAP=0 PYTHONPATH=. python -m pytest -q -p services.control_plane.bff.conftest services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/test_aud_002_audit_action_write_engine.py services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/tests/test_legacy_command_write_retirement.py services/control-plane/bff/tests/test_read_surface_caller_migration.py --tb=short",
+        "result": "843 passed, 3 warnings, 2 subtests passed in 475.61s, exit 0 (includes 482 wrapper-parity cases)",
+        "executed": 843,
+        "collected": 843
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range f3d5b433e..HEAD --delivery-class auto",
+        "result": "no problems, exit 0",
+        "executed": 0,
+        "collected": 0
       }
-    ]
+    ],
+    "known_preexisting_failures": "49 tests in the wider BFF batch (e.g. test_bff_main_composition.py, test_bff_write_gap_2026_05_28.py) fail identically at 45bf8c93f before this change (same failing set diffed); unrelated."
   },
   "acceptance_check": {
     "acceptance_1_mutation_caller_inventory": true,
@@ -2047,6 +2060,12 @@
       "finding": "See defect_100_command_executor_advance_lifecycle_start_runtime_approve_pool_confirm_token_id_closed.problem above (verbatim independent review verdict) -- _execute_advance_lifecycle did not accept the canonical confirm_token_id evidence admission already validated and stored, unlike the runtime-repair executors fixed under defect_99.",
       "fix": "See defect_100_command_executor_advance_lifecycle_start_runtime_approve_pool_confirm_token_id_closed.remediation above.",
       "verification": "See defect_100_command_executor_advance_lifecycle_start_runtime_approve_pool_confirm_token_id_closed.verification above."
+    },
+    "wrapper_effective_action_rejection": {
+      "pr": 5998,
+      "rejected_head": "45bf8c93fcfa1cce2b502536b31fae4f38f7adbc",
+      "finding": "P1 acceptance 3/4: PersonaAction params.action_id=AdvanceLifecycle bypassed canonical approval/confirm-token preconditions and persona_adapter fabricated confirm_token=lifecycle-confirm. P2 acceptance 5: commits d8ee93256/45bf8c93f lacked LLM-Agent/Task-ID/Reviewer trailers and had subject >72.",
+      "resolution": "wrapper_effective_action_inventory section: every wrapper's aliases resolve to the canonical direct command before durable admission; fabricated evidence defaults removed; mounted parity test iterates every (wrapper, action_id) pair before/after CommandStore restart. The two commits were reworded with true-authorship trailers (tree identical); branch republished with force-with-lease."
     }
   },
   "confirm_token_canonical_reader_inventory": {
