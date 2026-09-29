@@ -565,6 +565,39 @@ class CommandAdapterService:
             return self._check_read_surface_state()
         return _check_read_surface_state()
 
+    def _raise_terminal_failure_replay(
+        self,
+        *,
+        duplicate: dict[str, Any],
+        duplicate_status: CommandStatus,
+        cmd: Any,
+        foundation_context: Any,
+    ) -> None:
+        """Replay a persisted terminal failure as a structured 409.
+
+        Shared by both duplicate branches; never re-dispatches or adds a row.
+        """
+        original_error = duplicate.get("error")
+        original_error = dict(original_error) if isinstance(original_error, dict) else {}
+        raise foundation_bff_error(
+            self._raise_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Command previously reached a terminal failure",
+                f"command {duplicate.get('command_id')} is {duplicate_status.value}; "
+                "submit a new idempotency key to retry",
+                precondition_failed="command_terminal_failure",
+                details_extra={
+                    "command_id": str(duplicate.get("command_id") or ""),
+                    "command": cmd.command.value,
+                    "status": duplicate_status.value,
+                    "replayed": True,
+                    "original_error": original_error,
+                },
+            ),
+            foundation_context=foundation_context,
+        )
+
     def _raise_error(
         self,
         status_code: int,
@@ -2596,26 +2629,10 @@ class CommandAdapterService:
                     )
                 duplicate_status = CommandStatus.SUBMITTED
             if duplicate_status in (CommandStatus.FAILED, CommandStatus.TIMEOUT):
-                # Persisted terminal failure: replay the original outcome. Never
-                # re-dispatch the mutation, coerce to accepted, or add a row.
-                original_error = duplicate.get("error")
-                original_error = dict(original_error) if isinstance(original_error, dict) else {}
-                raise foundation_bff_error(
-                    self._raise_error(
-                        409,
-                        ErrorCode.RESOURCE_CONFLICT,
-                        "Command previously reached a terminal failure",
-                        f"command {duplicate.get('command_id')} is {duplicate_status.value}; "
-                        "submit a new idempotency key to retry",
-                        precondition_failed="command_terminal_failure",
-                        details_extra={
-                            "command_id": str(duplicate.get("command_id") or ""),
-                            "command": cmd.command.value,
-                            "status": duplicate_status.value,
-                            "replayed": True,
-                            "original_error": original_error,
-                        },
-                    ),
+                self._raise_terminal_failure_replay(
+                    duplicate=duplicate,
+                    duplicate_status=duplicate_status,
+                    cmd=cmd,
                     foundation_context=foundation_context,
                 )
             return project_final_command_response(
@@ -2767,6 +2784,20 @@ class CommandAdapterService:
                     confirm_token=x_confirm_token,
                     foundation_context=foundation_context,
                 )
+                late_status = CommandStatus(
+                    duplicate_after_precheck.get("status")
+                    or CommandStatus.SUBMITTED.value
+                )
+                if late_status in (
+                    CommandStatus.FAILED,
+                    CommandStatus.TIMEOUT,
+                ) and not retryable_terminal_capital_command(duplicate_after_precheck):
+                    self._raise_terminal_failure_replay(
+                        duplicate=duplicate_after_precheck,
+                        duplicate_status=late_status,
+                        cmd=cmd,
+                        foundation_context=foundation_context,
+                    )
                 return project_final_command_response(
                     command_id=duplicate_after_precheck["command_id"],
                     command=cmd.command,
