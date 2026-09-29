@@ -2791,5 +2791,11 @@
     "tests": "governance/test_domain_durability_corrective_capital_retry_race.py: FAILED+TIMEOUT mounted race (raced 202, sequential 202, one row, zero downstream calls) and enqueue-disabled helper (status kept, no dispatch); governance durability corrective suite 197 passed",
     "commit_trailers": "head commits carry LLM-Agent/Task-ID/Reviewer; subject <=72 chars",
     "no_product_or_capital_execution": true
+  },
+  "review_54a01_receipt_remediation": {
+    "finding": "Direct AdvanceLifecycle in command_executor.py discarded the canonical PersonaCommandAdapter receipt (aggregate_type/id/version, event_id, correlation_id, owner, committed_at).",
+    "fix": "_execute_advance_lifecycle now spreads the full adapter receipt and layers public compat fields on top.",
+    "regression": "services/control-plane/bff/tests/test_direct_advance_lifecycle_canonical_receipt.py (mounted signed-JWT, real PersistentPersonaOwner; direct+wrapped x warm+restart) => 4 passed",
+    "bounded_verification": "test_command_adapters_router.py -k 'lifecycle or persona or Persona' => 70 passed. The unfiltered router+read_surface+governance run exceeded the 10-minute bound and is NOT counted as passed."
   }
 }
