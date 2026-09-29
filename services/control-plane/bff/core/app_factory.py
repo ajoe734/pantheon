@@ -1306,7 +1306,6 @@ def mount_bff_routers(
             read_surface=app_deps.read_surface,
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
-            require_operator_role=_dep("_require_operator_role"),
             bff_error=_dep("_bff_error"),
             utc_now=_dep("utc_now"),
             page_slice=_dep("_page_slice"),
