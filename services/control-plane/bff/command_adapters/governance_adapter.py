@@ -93,7 +93,15 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         elif command_type == "RequestApprovalRevision" or (is_generic_wrapper and action_id.lower() in {"requestrevision", "requestapprovalrevision", "request-revision"}):
             return self._execute_decision_action(command_id, entity_id, "request-revision", params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type.startswith("HumanGate") or (is_generic_wrapper and action_id.lower().startswith("humangate")):
-            return self._execute_human_gate_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
+            # For a direct HumanGate* command, ``command_type`` already names
+            # the canonical action. For the generic ``ReviewAction``/empty
+            # wrapper, ``command_type`` is the wrapper itself, not the
+            # resolved action -- the actual HumanGate* verb lives in
+            # ``action_id`` and must be used instead, or the wrapper always
+            # dispatches as literal "ReviewAction" regardless of which
+            # HumanGate action the caller selected.
+            resolved_action_name = action_id if is_generic_wrapper else command_type
+            return self._execute_human_gate_action(command_id, entity_id, resolved_action_name, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RecordSponsorDecision" or (is_generic_wrapper and action_id.lower() in {"recordsponsordecision", "sponsor-decision"}):
             return self._execute_sponsor_decision(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"ReviewAction", "RequestReview"} or (is_generic_wrapper and action_id.lower() in {"requestreview", "review"}):

@@ -2353,3 +2353,123 @@ def test_matching_action_selectors_still_admit(
     assert len(rows) == 1, evidence
     assert rows[0]["params"]["action_id"] == action_id, evidence
 
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize(
+    "command,action",
+    [("HumanGateRequestMoreEvidence", None), ("ReviewAction", "HumanGateRequestMoreEvidence")],
+)
+def test_human_gate_wrapper_dispatch_uses_resolved_canonical_action(
+    tmp_path, monkeypatch, restart, command, action
+) -> None:
+    """Regression for the DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 independent
+    review REJECT at PR #5998 head 79e1132215f79afb82bfc4cc8c1a5fba54d753dc
+    (manifest 26941ab0bd7090102ec4a57a026a59526a84dd93): dispatching a
+    mounted ``ReviewAction`` wrapper whose ``action_id`` selected a HumanGate
+    alias (for example ``HumanGateRequestMoreEvidence``) executed against the
+    literal wrapper name instead of the resolved canonical action, because
+    ``GovernanceCommandAdapter.execute`` called
+    ``self._execute_human_gate_action(..., command_type or action_id, ...)`` --
+    since ``command_type`` ("ReviewAction") is always truthy, the resolved
+    ``action_id`` was never used and ``_execute_human_gate_action``'s
+    ``verb_map`` fell through to its lowercase fallback, dispatching
+    ``/api/governance/human-gates/<id>/reviewaction`` instead of
+    ``/request-evidence``. A direct ``HumanGateRequestMoreEvidence`` command
+    (no wrapper) already dispatched correctly and must keep doing so.
+
+    Drives a real signed-JWT mounted admission through the durable
+    ``CommandStore`` and ``process_command`` executor (only the HTTP
+    transport to the downstream governance service is stubbed), across a
+    CommandStore restart, for both the direct command and the wrapped alias.
+    """
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff.command_adapters import governance_adapter
+    from services.control_plane.bff.command_adapters.service import (
+        CommandAdapterService,
+        process_command,
+    )
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "test-human-gate-wrapper-dispatch-secret"
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://human-gate-wrapper-review.invalid")
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", "http://human-gate-wrapper-review.invalid")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "human-gate-wrapper-review")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "human-gate-wrapper-review")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+    now = int(time.time())
+    token = encode_jwt_hs256(
+        {
+            "sub": "human-gate-review-actor",
+            "roles": ["operator"],
+            "tenant_id": "tenant-a",
+            "iss": "human-gate-wrapper-review",
+            "aud": "human-gate-wrapper-review",
+            "iat": now - 10,
+            "exp": now + 300,
+        },
+        secret=secret,
+    )
+
+    command_path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(command_path)
+    read_store_stub = SimpleNamespace(
+        get_approval_decision=lambda decision_id: None,
+        get_persona=lambda persona_id: {"persona_id": persona_id, "tenant_id": "tenant-a"},
+    )
+    service = CommandAdapterService(
+        command_store=store,
+        extract_identity=extract_identity_jwt,
+        check_read_surface_state=lambda: None,
+        process_command_task=lambda command_id: None,
+        get_read_store=lambda: read_store_stub,
+    )
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=service))
+    client = TestClient(app)
+
+    calls: List[str] = []
+
+    def fake_http(url, **kwargs):
+        calls.append(url)
+        return {"status": "executed", "state": "pending_evidence"}
+
+    monkeypatch.setattr(governance_adapter, "http_request_json", fake_http)
+
+    target_type = "HumanGateItem" if command == "HumanGateRequestMoreEvidence" else "Review"
+    response = client.post(
+        "/bff/v1/commands",
+        headers={
+            "Authorization": "Bearer " + token,
+            "Idempotency-Key": f"human-gate-wrapper-dispatch-{command}-{restart}",
+        },
+        json={
+            "command": command,
+            "action": action,
+            "target": {"type": target_type, "id": "gate-a"},
+            "params": {
+                "gate_id": "gate-a",
+                "human_gate_item_id": "gate-a",
+                "decision": "request_more_evidence",
+                "reason": "independent review",
+            },
+            "audit_context": {"reason": "independent isolated review"},
+        },
+    )
+    rows = store._get_all_commands()
+    if restart:
+        store = CommandStore(command_path)
+    for row in rows:
+        asyncio.run(process_command(row["command_id"], command_store=store))
+    evidence = {"command": command, "action": action, "restart": restart, "http": response.status_code, "calls": calls}
+
+    assert response.status_code == 202, evidence
+    assert len(calls) == 1, evidence
+    assert calls[0].endswith("/gate-a/request-evidence"), evidence
+
