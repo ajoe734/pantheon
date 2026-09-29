@@ -363,7 +363,7 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
-        decisions = _service().list_approval_decisions(outcome=outcome, state=state)
+        decisions = _service().list_approval_decisions(outcome=outcome, state=state, identity=identity)
         redacted_decisions, total_redacted = _redact_evidence_field_items(identity, decisions)
         snapshot_at = _now()
         meta = _read_meta(
@@ -414,7 +414,7 @@ def create_governance_router(
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
         snapshot_at = _now()
-        decision = _service().get_approval_detail(decision_id)
+        decision = _service().get_approval_detail(decision_id, identity)
         surface = _surface(
             "approval_decisions",
             snapshot_at=snapshot_at,
