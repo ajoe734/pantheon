@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
+from ..command_adapters.service import resolve_identity_tenant
 from ..models import (
     redact_evidence_refs as _canonical_redact_evidence_refs,
     safe_redact_evidence_refs,
@@ -390,7 +391,9 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
-        decisions = _service().list_approval_decisions(outcome=outcome, state=state)
+        decisions = _service().list_approval_decisions(
+            outcome=outcome, state=state, tenant_id=resolve_identity_tenant(identity)
+        )
         redacted_decisions, total_redacted = _redact_evidence_field_items(identity, decisions)
         snapshot_at = _now()
         meta = _read_meta(
@@ -445,7 +448,7 @@ def create_governance_router(
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
         snapshot_at = _now()
-        decision = _service().get_approval_detail(decision_id)
+        decision = _service().get_approval_detail(decision_id, tenant_id=resolve_identity_tenant(identity))
         surface = _surface(
             "approval_decisions",
             snapshot_at=snapshot_at,
@@ -1240,7 +1243,7 @@ def create_governance_router(
         identity = _identity(authorization)
         clean_id = approval_id.strip()
         refs = _service().approval_evidence(clean_id)
-        decision = _service().get_approval_detail(clean_id)
+        decision = _service().get_approval_detail(clean_id, tenant_id=resolve_identity_tenant(identity))
         if refs is None or decision is None:
             _not_found("Approval decision", approval_id)
         processed, redacted_count = _safe_redact(identity, refs)

@@ -342,8 +342,29 @@ class GovernanceService:
 
     # Approval decisions -------------------------------------------------
 
+    @staticmethod
+    def _durable_command_visible(cmd: Mapping[str, Any], tenant_id: Optional[str]) -> bool:
+        """Durable command rows are visible only inside their own tenant scope.
+
+        The record tenant comes from the trusted audit/foundation identity
+        frozen at admission. Fail closed: a tenanted row is hidden from an
+        unscoped caller and an untenanted row is hidden from a scoped caller.
+        """
+        from .command_audit import _record_tenant_id
+
+        record_tenant = _record_tenant_id(dict(cmd))
+        if not record_tenant:
+            foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
+            idem = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
+            record_tenant = str(idem.get("tenant_id") or "").strip() or None
+        return (record_tenant or None) == (str(tenant_id or "").strip() or None)
+
     def list_approval_decisions(
-        self, *, outcome: Optional[str] = None, state: Optional[str] = None
+        self,
+        *,
+        outcome: Optional[str] = None,
+        state: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         try:
             records = self._call(
@@ -359,6 +380,8 @@ class GovernanceService:
         if self.command_store is not None:
             try:
                 for cmd in self.command_store._get_all_commands():
+                    if not self._durable_command_visible(cmd, tenant_id):
+                        continue
                     foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
                     approval_rec = foundation.get("approval_record")
                     if isinstance(approval_rec, dict):
@@ -391,7 +414,7 @@ class GovernanceService:
             result.append(item)
         return result
 
-    def get_approval_detail(self, approval_id: str) -> Optional[Dict[str, Any]]:
+    def get_approval_detail(self, approval_id: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Typed replacement for the former generic ``/bff/approvals/{id}`` alias."""
         clean_id = str(approval_id or "").strip()
         if not clean_id:
@@ -399,7 +422,7 @@ class GovernanceService:
         if self.command_store is not None:
             try:
                 cmd = self.command_store.get_command(clean_id)
-                if cmd is not None:
+                if cmd is not None and self._durable_command_visible(cmd, tenant_id):
                     foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
                     approval_rec = foundation.get("approval_record")
                     if isinstance(approval_rec, dict):
@@ -414,7 +437,7 @@ class GovernanceService:
         return next(
             (
                 copy.deepcopy(item)
-                for item in self.list_approval_decisions()
+                for item in self.list_approval_decisions(tenant_id=tenant_id)
                 if record_id(item, "decision_id", "id", "item_id") == clean_id
             ),
             None,

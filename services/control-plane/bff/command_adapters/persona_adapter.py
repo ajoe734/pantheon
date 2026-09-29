@@ -213,17 +213,37 @@ class PersonaCommandAdapter(DomainCommandAdapter):
         if not target_persona_id:
             raise ValueError(f"{action_id} requires persona_id.")
 
-        is_promote = "promote" in action_id.lower()
-        new_state = "paper_candidate" if is_promote else "demoted"
-
+        # The persona lifecycle owner is the only authority for these
+        # transitions: request the transition through it and report only what
+        # its receipt returns. State/version are never synthesized locally.
+        requested_state = str(params.get("target_state") or "").strip() or (
+            "paper_candidate" if "promote" in action_id.lower() else "demoted"
+        )
+        transition_params = dict(params)
+        transition_params["target_state"] = requested_state
+        receipt = self._execute_advance_lifecycle(
+            command_id, target_persona_id, transition_params, auth_token=auth_token, mfa_token=mfa_token
+        )
+        domain_receipt = receipt.get("domain_receipt") if isinstance(receipt.get("domain_receipt"), dict) else {}
+        owner_state = domain_receipt.get("to_state")
+        if not owner_state:
+            raise ActionUnavailableError(
+                f"Persona owner returned no authoritative state for {action_id!r} on {target_persona_id!r}.",
+                action_id=action_id,
+                entity_type="Persona",
+            )
         return build_domain_receipt(
             command_id=command_id,
             entity_type="Persona",
             entity_id=target_persona_id,
             action_id=action_id,
-            status="executed",
-            dispatch_path="persona_registry_authority",
-            domain_receipt={"persona_id": target_persona_id, "action": action_id, "new_state": new_state},
-            authoritative_readback={"persona_id": target_persona_id, "state": new_state},
-            extra={"persona_id": target_persona_id, "state": new_state},
+            status="accepted",
+            dispatch_path=receipt.get("dispatch_path"),
+            domain_receipt=domain_receipt,
+            authoritative_readback={
+                "persona_id": target_persona_id,
+                "state": owner_state,
+                "from_state": domain_receipt.get("from_state"),
+            },
+            extra={"persona_id": target_persona_id, "state": owner_state, "audit_id": domain_receipt.get("audit_id")},
         )

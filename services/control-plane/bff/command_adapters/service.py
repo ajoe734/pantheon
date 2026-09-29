@@ -124,6 +124,12 @@ _TWO_MAN_EVIDENCE_FIELDS = (
 )
 
 
+_PERSONA_TARGET_BOUND_COMMANDS = frozenset(
+    {"PersonaAction", "AdvanceLifecycle", "PromoteCandidate", "Demote", "Observe", "EmergencyContainment"}
+)
+_PERSONA_TARGET_ALIASES = ("persona_id", "personaId", "entity_id", "entityId")
+
+
 def stored_command_params(
     cmd: OperatorCommand,
     identity: OperatorIdentity,
@@ -141,6 +147,14 @@ def stored_command_params(
                 if val:
                     params["two_man_signature_id"] = val
                     break
+    if cmd.command.value in {
+        "PersonaAction", "AdvanceLifecycle", "PromoteCandidate", "Demote", "Observe", "EmergencyContainment",
+    }:
+        # Freeze the owner target to the admitted (confirmed/approved) target.
+        for alias in ("personaId", "entityId"):
+            params.pop(alias, None)
+        params["persona_id"] = str(cmd.target.id).strip()
+        params["entity_id"] = str(cmd.target.id).strip()
     if cmd.command == CommandType.APPROVED_APPLY:
         params.pop("rebalanceId", None)
         params["rebalance_id"] = cmd.target.id
@@ -2326,6 +2340,30 @@ class CommandAdapterService:
             params["actionId"] = canonical_command.value
         return params
 
+    def _reject_conflicting_persona_target(
+        self, cmd: OperatorCommand, effective_cmd: OperatorCommand
+    ) -> None:
+        """A persona-scoped command's owner target is exactly ``target.id``.
+
+        Confirm tokens and approval projections are bound to the admitted
+        target; a disagreeing ``persona_id``/``entity_id`` alias would let
+        execution dispatch on a persona nothing authorized.
+        """
+        if not ({cmd.command.value, effective_cmd.command.value} & _PERSONA_TARGET_BOUND_COMMANDS):
+            return
+        target_id = str(cmd.target.id or "").strip()
+        for alias in _PERSONA_TARGET_ALIASES:
+            value = str(cmd.params.get(alias) or "").strip()
+            if value and value != target_id:
+                raise self._raise_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "Persona target conflicts with params",
+                    f"params.{alias}={value!r} does not match target.id={target_id!r}",
+                    precondition_failed="persona_target_conflict",
+                    suggestion="Omit the persona alias or make it equal to target.id",
+                )
+
     def submit_command_admission(
         self,
         *,
@@ -2438,6 +2476,7 @@ class CommandAdapterService:
             if effective_cmd is not cmd:
                 validate_drawer_runtime_target(effective_cmd)
             validate_final_command_target_type(cmd)
+            self._reject_conflicting_persona_target(cmd, effective_cmd)
             # A generic wrapper command (RuntimeAction, ReviewAction, ...)
             # must never be admitted under its own (deliberately weak)
             # catalog entry once action_id names a distinct canonical
