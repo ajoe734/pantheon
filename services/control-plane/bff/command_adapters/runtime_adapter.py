@@ -49,20 +49,31 @@ log = logging.getLogger(__name__)
 #
 # - ``not_wrapper``: ``command_type`` is not a generic wrapper this module
 #   understands; callers should validate against ``command_type`` unchanged.
-# - ``canonical``: ``action_id`` names a distinct canonical command; callers
-#   must validate against ``effective_command_id`` instead of the wrapper.
-# - ``generic_ok``: ``action_id`` is a recognized wrapper-only alias with no
-#   stronger canonical command to bypass; the wrapper's own (weak) entry is
-#   the correct and only applicable entry.
-# - ``unknown``: ``action_id`` does not match anything the wrapper's adapter
-#   actually dispatches; admission must reject fail-closed rather than
-#   accept a command that can only fail (or be silently misrouted) at
-#   execution time.
+# - ``canonical``: an action selector names a distinct canonical command;
+#   callers must validate against ``effective_command_id`` instead of the
+#   wrapper.
+# - ``generic_ok``: the action selector is a recognized wrapper-only alias
+#   with no stronger canonical command to bypass; the wrapper's own (weak)
+#   entry is the correct and only applicable entry.
+# - ``unknown``: no action selector is present, or the one present does not
+#   match anything the wrapper's adapter actually dispatches; admission must
+#   reject fail-closed rather than accept a command that can only fail (or
+#   be silently misrouted) at execution time.
+# - ``conflict``: a request carried more than one action selector (top-level
+#   ``action``, ``params.action_id``, ``params.actionId``) and they do not
+#   resolve to the same canonical action (DOMAIN-WRITERS-DURABILITY-
+#   CORRECTIVE-001: the exact defect an independent review reproduced --
+#   ``params.action_id=PausePaperRuntime`` validated/confirmed while a
+#   disagreeing top-level ``action=ResumePaperRuntime`` was later persisted
+#   and executed). Callers must reject with 422 before any lookup or write
+#   rather than let a downstream reader silently pick one selector over
+#   another.
 
 
 class EffectiveAction(NamedTuple):
     effective_command_id: Optional[str]
     status: str
+    action_id: Optional[str] = None
 
 
 # RuntimeAction: mirrors RuntimeCommandAdapter.execute()'s action_id dispatch
@@ -115,17 +126,21 @@ _RUNTIME_ACTION_CANONICAL_ALIASES: Dict[str, str] = {
 _RUNTIME_ACTION_GENERIC_ONLY: frozenset = frozenset()
 
 
-def _resolve_runtime_action(params: Dict[str, Any]) -> EffectiveAction:
-    action_id = str((params or {}).get("action_id") or (params or {}).get("actionId") or "").strip()
+def _resolve_runtime_action_id(action_id: str) -> EffectiveAction:
     lowered = action_id.lower()
     if not lowered:
-        return EffectiveAction(None, "unknown")
+        return EffectiveAction(None, "unknown", None)
     canonical = _RUNTIME_ACTION_CANONICAL_ALIASES.get(lowered)
     if canonical:
-        return EffectiveAction(canonical, "canonical")
+        return EffectiveAction(canonical, "canonical", action_id)
     if lowered in _RUNTIME_ACTION_GENERIC_ONLY:
-        return EffectiveAction(None, "generic_ok")
-    return EffectiveAction(None, "unknown")
+        return EffectiveAction(None, "generic_ok", action_id)
+    return EffectiveAction(None, "unknown", action_id)
+
+
+def _resolve_runtime_action(params: Dict[str, Any]) -> EffectiveAction:
+    action_id = str((params or {}).get("action_id") or (params or {}).get("actionId") or "").strip()
+    return _resolve_runtime_action_id(action_id)
 
 
 # ReviewAction: mirrors services/control-plane/bff/command_adapters/
@@ -154,17 +169,21 @@ _REVIEW_ACTION_CANONICAL_ALIASES: Dict[str, str] = {
 _REVIEW_ACTION_GENERIC_ONLY = {"requestreview", "review"}
 
 
-def _resolve_review_action(params: Dict[str, Any]) -> EffectiveAction:
-    action_id = str((params or {}).get("action_id") or (params or {}).get("actionId") or "").strip()
+def _resolve_review_action_id(action_id: str) -> EffectiveAction:
     lowered = action_id.lower()
     if not lowered:
-        return EffectiveAction(None, "unknown")
+        return EffectiveAction(None, "unknown", None)
     canonical = _REVIEW_ACTION_CANONICAL_ALIASES.get(lowered)
     if canonical:
-        return EffectiveAction(canonical, "canonical")
+        return EffectiveAction(canonical, "canonical", action_id)
     if lowered in _REVIEW_ACTION_GENERIC_ONLY:
-        return EffectiveAction(None, "generic_ok")
-    return EffectiveAction(None, "unknown")
+        return EffectiveAction(None, "generic_ok", action_id)
+    return EffectiveAction(None, "unknown", action_id)
+
+
+def _resolve_review_action(params: Dict[str, Any]) -> EffectiveAction:
+    action_id = str((params or {}).get("action_id") or (params or {}).get("actionId") or "").strip()
+    return _resolve_review_action_id(action_id)
 
 
 _RESOLVERS = {
@@ -172,22 +191,114 @@ _RESOLVERS = {
     "ReviewAction": _resolve_review_action,
 }
 
+_ACTION_ID_RESOLVERS = {
+    "RuntimeAction": _resolve_runtime_action_id,
+    "ReviewAction": _resolve_review_action_id,
+}
+
 GENERIC_WRAPPER_COMMANDS = frozenset(_RESOLVERS)
 
+# Commands whose top-level ``action`` and ``params.action_id``/``actionId``
+# are genuinely competing selectors for *which action gets dispatched* --
+# a generic wrapper's own execute() (or, for ExperimentAction, its adapter's
+# execute()) switches on exactly these fields. Every other command's
+# top-level ``action`` is independent, caller-supplied UI/audit metadata
+# (e.g. "submit", "modify") that has no bearing on dispatch -- that field is
+# never read by the command's own adapter for routing, so treating it as a
+# disagreeing selector would reject legitimate, unrelated requests (see
+# HumanGateApprove/QuarterlyRankingRecommendationSubmit callers that
+# legitimately set both a generic ``action`` and an unrelated ``params.
+# action_id``/decision id). Only commands in this set participate in
+# effective-action selector resolution at all.
+_ACTION_SELECTOR_PARTICIPANTS = GENERIC_WRAPPER_COMMANDS | {"ExperimentAction"}
 
-def resolve_effective_action(command_type: str, params: Optional[Dict[str, Any]]) -> EffectiveAction:
-    """Resolve the canonical command that must gate admission for a wrapper.
+
+def _gather_action_selectors(
+    action: Optional[str], params: Optional[Dict[str, Any]]
+) -> Dict[str, str]:
+    """Collect every action selector a request can carry, keyed by its
+    field name so a conflict can be reported precisely. A request that omits
+    a selector never contributes an (empty-string) entry -- an absent
+    selector must never itself be treated as disagreeing with a present one.
+    """
+    selectors: Dict[str, str] = {}
+    top_action = str(action or "").strip()
+    if top_action:
+        selectors["action"] = top_action
+    p = params or {}
+    param_action_id = str(p.get("action_id") or "").strip()
+    if param_action_id:
+        selectors["params.action_id"] = param_action_id
+    param_action_id_camel = str(p.get("actionId") or "").strip()
+    if param_action_id_camel:
+        selectors["params.actionId"] = param_action_id_camel
+    return selectors
+
+
+def resolve_effective_action(
+    command_type: str,
+    params: Optional[Dict[str, Any]] = None,
+    action: Optional[str] = None,
+) -> EffectiveAction:
+    """Resolve the single effective action a command admits, from every
+    selector the request can carry (top-level ``action``, ``params.
+    action_id``, ``params.actionId``), and reject as ``conflict`` when
+    present selectors do not agree (DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001).
 
     ``ExperimentAction`` is intentionally not in ``_RESOLVERS``: its
     action_id vocabulary (cancel/retry/archive/invalidate/promote) never
     aliases into a distinct canonical CommandType, so its own catalog entry
     is already the correct and only applicable entry (audited under
-    DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001; see evidence.json).
+    DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001; see evidence.json) -- but a
+    request naming two different verbs across its selectors is still
+    ambiguous about which action is being requested, so it is still
+    resolved (and rejected on disagreement) here rather than left to
+    whichever selector a downstream reader happens to look at first.
+
+    A command outside ``_ACTION_SELECTOR_PARTICIPANTS`` does not consult its
+    top-level ``action`` for dispatch at all, so it never participates in
+    selector gathering or conflict detection -- exactly its pre-existing
+    ``not_wrapper``/no-op behavior.
     """
-    resolver = _RESOLVERS.get(str(command_type or "").strip())
-    if resolver is None:
-        return EffectiveAction(None, "not_wrapper")
-    return resolver(params or {})
+    normalized_command_type = str(command_type or "").strip()
+    if normalized_command_type not in _ACTION_SELECTOR_PARTICIPANTS:
+        return EffectiveAction(None, "not_wrapper", None)
+
+    selectors = _gather_action_selectors(action, params)
+    action_id_resolver = _ACTION_ID_RESOLVERS.get(normalized_command_type)
+
+    if action_id_resolver is None:
+        distinct = {value.lower() for value in selectors.values()}
+        if len(distinct) > 1:
+            return EffectiveAction(None, "conflict", None)
+        return EffectiveAction(None, "not_wrapper", next(iter(selectors.values()), None))
+
+    if not selectors:
+        return EffectiveAction(None, "unknown", None)
+
+    resolved_per_selector = {
+        name: action_id_resolver(value) for name, value in selectors.items()
+    }
+    canonical_ids = {
+        r.effective_command_id for r in resolved_per_selector.values() if r.status == "canonical"
+    }
+    if len(canonical_ids) > 1:
+        return EffectiveAction(None, "conflict", None)
+
+    literal_spellings = {value.lower() for value in selectors.values()}
+    if not canonical_ids and len(literal_spellings) > 1:
+        # No selector aliases to a distinct canonical command, but the raw
+        # spellings still disagree (e.g. two different generic-only verbs) --
+        # still ambiguous about which action is being requested.
+        return EffectiveAction(None, "conflict", None)
+
+    agreed_raw = next(iter(selectors.values()))
+    if canonical_ids:
+        return EffectiveAction(next(iter(canonical_ids)), "canonical", agreed_raw)
+    # All present selectors share one literal spelling; every selector's
+    # resolution is therefore identical (generic_ok/unknown) -- use any one.
+    only_resolution = next(iter(resolved_per_selector.values()))
+    return EffectiveAction(only_resolution.effective_command_id, only_resolution.status, agreed_raw)
 
 
 def _get_runtime_manager_client():

@@ -2227,3 +2227,129 @@ def test_signed_identity_issue_safe_mode_requires_effective_role_and_mfa_parity(
         assert calls == [], evidence
         assert rows == [], evidence
 
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize(
+    "command,target_type,target_id,params,conflicting_action",
+    [
+        (
+            "RuntimeAction",
+            "Runtime",
+            "rt-selector-conflict",
+            {"action_id": "PausePaperRuntime"},
+            "ResumePaperRuntime",
+        ),
+        (
+            "ReviewAction",
+            "Review",
+            "review-selector-conflict",
+            {"action_id": "approve"},
+            "reject",
+        ),
+        (
+            "ExperimentAction",
+            "Experiment",
+            "exp-selector-conflict",
+            {"action_id": "cancel"},
+            "archive",
+        ),
+    ],
+)
+def test_conflicting_action_selectors_rejected_before_any_write(
+    tmp_path, restart, command, target_type, target_id, params, conflicting_action
+) -> None:
+    """Regression for the DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 independent
+    review REJECT at PR #5998 exact head cd5613e7ba19546b3a0d9f43d4a67b1becf39438
+    (manifest 8e9f92f4f779d7827160934a4a20ac36cd0aebaa): ``stored_command_params``
+    computed the persisted ``action_id`` from ``cmd.action or params.action_id or
+    params.actionId`` independently of the ``effective_action`` that admission's
+    validators/preconditions/confirm-token binding had already validated a
+    *different* action against, so a top-level ``action`` disagreeing with a
+    validated ``params.action_id`` could be silently persisted and executed
+    instead. ``submit_command_admission`` now resolves exactly one effective
+    action from every selector up front and rejects a disagreement with 422
+    before any command-store lookup or write, for both a generic wrapper whose
+    action_id aliases to a distinct canonical command (``RuntimeAction``) and
+    one whose action_id vocabulary does not (``ReviewAction``, ``Experiment
+    Action``).
+    """
+    command_path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(command_path)
+    app = _test_app(store)
+    client = TestClient(app)
+
+    response = client.post(
+        "/bff/v1/commands",
+        headers={**HEADERS, "Idempotency-Key": f"selector-conflict-{command}"},
+        json={
+            "command": command,
+            "action": conflicting_action,
+            "target": {"type": target_type, "id": target_id},
+            "params": params,
+            "audit_context": {"reason": "conflicting action selector regression"},
+        },
+    )
+    evidence = {"command": command, "restart": restart, "response_status": response.status_code, "body": response.text}
+    assert response.status_code == 422, evidence
+    assert response.json()["detail"]["error"]["details"]["precondition_failed"] == "action_selector_conflict", evidence
+    assert store._get_all_commands() == [], evidence
+
+    if restart:
+        store = CommandStore(command_path)
+        app = _test_app(store)
+        client = TestClient(app)
+        response = client.post(
+            "/bff/v1/commands",
+            headers={**HEADERS, "Idempotency-Key": f"selector-conflict-{command}-restart"},
+            json={
+                "command": command,
+                "action": conflicting_action,
+                "target": {"type": target_type, "id": target_id},
+                "params": params,
+                "audit_context": {"reason": "conflicting action selector regression across restart"},
+            },
+        )
+        evidence = {"command": command, "restart": restart, "response_status": response.status_code, "body": response.text}
+        assert response.status_code == 422, evidence
+        assert response.json()["detail"]["error"]["details"]["precondition_failed"] == "action_selector_conflict", evidence
+        assert store._get_all_commands() == [], evidence
+
+
+@pytest.mark.parametrize(
+    "command,target_type,target_id,action_id",
+    [
+        ("ReviewAction", "Review", "review-selector-match", "review"),
+        ("ExperimentAction", "Experiment", "exp-selector-match", "cancel"),
+    ],
+)
+def test_matching_action_selectors_still_admit(
+    tmp_path, command, target_type, target_id, action_id
+) -> None:
+    """Companion to ``test_conflicting_action_selectors_rejected_before_any_
+    write``: a request whose top-level ``action`` agrees with ``params.
+    action_id`` (the common single-selector case, and the explicit
+    matching-selectors case) must still be admitted -- the conflict gate
+    must not reject a legitimate, unambiguous request.
+    """
+    command_path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(command_path)
+    app = _test_app(store)
+    client = TestClient(app)
+
+    response = client.post(
+        "/bff/v1/commands",
+        headers={**HEADERS, "Idempotency-Key": f"selector-match-{command}"},
+        json={
+            "command": command,
+            "action": action_id,
+            "target": {"type": target_type, "id": target_id},
+            "params": {"action_id": action_id},
+            "audit_context": {"reason": "matching action selector regression"},
+        },
+    )
+    evidence = {"command": command, "response_status": response.status_code, "body": response.text}
+    assert response.status_code == 202, evidence
+    rows = store._get_all_commands()
+    assert len(rows) == 1, evidence
+    assert rows[0]["params"]["action_id"] == action_id, evidence
+

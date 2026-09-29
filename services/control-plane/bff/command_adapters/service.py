@@ -75,7 +75,7 @@ except (ImportError, ValueError):
     except (ImportError, ValueError):
         from auth.policy import identity_claim_strings
 from .base import ActionUnavailableError
-from .runtime_adapter import resolve_effective_action
+from .runtime_adapter import EffectiveAction, resolve_effective_action
 from .contracts import (
     _FINAL_COMMAND_ROUTE,
     _HUMAN_GATE_DECISIONS_BY_COMMAND,
@@ -128,6 +128,8 @@ def stored_command_params(
     cmd: OperatorCommand,
     identity: OperatorIdentity,
     raw_payload: Optional[Dict[str, Any]] = None,
+    *,
+    effective_action: Optional[EffectiveAction] = None,
 ) -> Dict[str, Any]:
     if cmd.command in _DRAWER_RUNTIME_COMMANDS:
         return dict(cmd.params)
@@ -164,10 +166,46 @@ def stored_command_params(
                     params["duration_seconds"] = bdm_val * 60
             except (ValueError, TypeError):
                 pass
-    canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(
-        cmd.command,
-        cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
-    )
+    if cmd.command in _HUMAN_GATE_DECISIONS_BY_COMMAND:
+        canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND[cmd.command]
+    elif effective_action is not None and (
+        effective_action.action_id or effective_action.effective_command_id
+    ):
+        # The frozen effective action computed once at the top of
+        # ``submit_command_admission`` from every selector the request
+        # carried (top-level ``cmd.action``, ``params.action_id``, ``params.
+        # actionId``) after conflicting selectors were already rejected.
+        # Never re-derive the stored action_id from ``cmd.action``/``cmd.
+        # params`` independently here -- that independent re-derivation is
+        # the exact defect DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 closes
+        # (a validated/confirmed ``params.action_id`` could be silently
+        # overwritten by a disagreeing top-level ``cmd.action`` at
+        # persistence time). Only commands whose top-level ``action`` is
+        # actually a dispatch selector (RuntimeAction, ReviewAction,
+        # ExperimentAction) ever populate this branch; see
+        # ``_ACTION_SELECTOR_PARTICIPANTS`` in runtime_adapter.py.
+        # Preserve the exact agreed selector spelling (e.g. the literal
+        # alias "pause"), not its resolved canonical command id: execution
+        # (RuntimeCommandAdapter._execute_pause's is_canonical_paper switch)
+        # keys the *runtime_id vs. RuntimeBinding-id* target-resolution
+        # branch off whether the stored action_id spells the literal
+        # canonical command name, so canonicalizing a generic alias here
+        # would silently reroute a RuntimeBinding-targeted wrapper command
+        # onto the runtime_id-only path.
+        canonical_action_id = (
+            effective_action.action_id
+            or effective_action.effective_command_id
+            or cmd.command.value
+        )
+    else:
+        # Every command outside ``_ACTION_SELECTOR_PARTICIPANTS``: its
+        # top-level ``action`` is independent caller-supplied UI/audit
+        # metadata (e.g. "submit", "modify") that its own adapter never
+        # reads for dispatch, so it cannot conflict with ``params.
+        # action_id`` the way a generic wrapper's selectors can. Also used
+        # by direct/unit-test callers that construct params without going
+        # through admission's effective-action freeze.
+        canonical_action_id = cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value
     if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
         canonical_action_id = "submit_recommendation"
     canonical_paper = cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
@@ -2313,6 +2351,38 @@ class CommandAdapterService:
         identity = self.extract_identity(authorization, mfa_token=x_mfa_token)
         cmd = normalize_operator_command_payload(payload)
 
+        # Compute the single effective action from every selector this
+        # request can carry -- top-level ``cmd.action``, ``params.
+        # action_id``, ``params.actionId`` -- before any lookup or write.
+        # A request that carries more than one selector and they do not
+        # resolve to the same canonical action is rejected outright here
+        # (DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001: the exact defect an
+        # independent review reproduced -- ``params.action_id=
+        # PausePaperRuntime`` validated/confirmed a genuine pause while a
+        # disagreeing top-level ``action=ResumePaperRuntime`` was later
+        # persisted and executed instead). Every downstream step --
+        # validator dispatch, precondition/confirm-token/approval binding,
+        # ``stored_command_params``, the durable row, and execution -- must
+        # key off this one frozen ``effective_action``, never re-derive its
+        # own answer from ``cmd.action``/``cmd.params`` independently.
+        effective_action = resolve_effective_action(
+            cmd.command.value, params=cmd.params, action=cmd.action
+        )
+        if effective_action.status == "conflict":
+            raise self._raise_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Conflicting action selectors on command",
+                (
+                    f"command={cmd.command.value} action={cmd.action!r} "
+                    f"params.action_id={cmd.params.get('action_id')!r} "
+                    f"params.actionId={cmd.params.get('actionId')!r} do not "
+                    "resolve to the same canonical action"
+                ),
+                precondition_failed="action_selector_conflict",
+                suggestion="Submit exactly one action selector, or ensure all supplied selectors name the same action",
+            )
+
         candidate_key = str(idempotency_key or x_idempotency_key or "").strip() or None
         foundation_context = build_foundation_command_context(
             cmd=cmd,
@@ -2351,8 +2421,10 @@ class CommandAdapterService:
             # two-man gates. An action_id the adapter does not actually
             # dispatch must fail closed here, before durable admission,
             # rather than accept a command that can only fail (or be
-            # silently misrouted) at execution time.
-            effective_action = resolve_effective_action(cmd.command.value, params=cmd.params)
+            # silently misrouted) at execution time. ``effective_action`` was
+            # already frozen at the top of this function from every
+            # selector the request carries; reused here unchanged rather
+            # than re-resolved.
             if effective_action.status == "unknown":
                 raise self._raise_error(
                     422,
@@ -2507,7 +2579,7 @@ class CommandAdapterService:
         except HTTPException as exc:
             raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
-        stored_params = stored_command_params(cmd, identity, payload)
+        stored_params = stored_command_params(cmd, identity, payload, effective_action=effective_action)
         stored_params["idempotency_key"] = resolved_key
         stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
         # Canonicalize unconditionally, including a trusted None: a caller
