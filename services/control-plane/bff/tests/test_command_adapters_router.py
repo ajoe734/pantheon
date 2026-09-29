@@ -2237,6 +2237,180 @@ def test_signed_identity_runtime_repair_direct_and_wrapped_confirm_token_parity(
 
 
 @pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("action", ["AdvanceLifecycle"])
+def test_signed_identity_lifecycle_and_runtime_start_confirm_token_id_parity(
+    tmp_path, monkeypatch, restart, action
+) -> None:
+    """Regression for the DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001
+    independent review REJECT at PR #5998 head
+    a6b38a778fa06b9fdcaf058bb06a3aa0f5f8bc31: ``service.py``'s
+    ``canonicalize_validated_precondition_evidence`` canonicalizes the
+    admission-validated confirmation to durable ``params.confirm_token_id``
+    and deletes ``params.confirm_token``, but
+    ``command_executor._execute_advance_lifecycle`` (``AdvanceLifecycle``)
+    read only ``params.confirm_token`` directly instead of calling the
+    shared ``_require_confirm_token`` helper already used by the
+    runtime-repair executors. A mounted signed-JWT same-tenant request
+    with a genuinely issued and bound confirm token was accepted at 202
+    and then failed ``EXECUTION_ERROR requires confirm_token`` with zero
+    downstream calls, both before and after a ``CommandStore`` restart.
+
+    ``command_executor._execute_start_runtime`` (``StartRuntime``) and
+    ``_execute_approve_pool`` (``ApprovePool``) were the same static
+    mismatch (raw ``params.get("confirm_token")`` instead of the
+    canonical-first helper) and were fixed alongside
+    ``_execute_advance_lifecycle``; they are not separately reproduced
+    here because ``StartRuntime`` requires two-man authorization
+    (``requires_two_man=True``) that is out of this regression's scope,
+    matching how the prior ``defect_99`` round treated these as static
+    sibling-reader concerns.
+
+    Drives a real signed-JWT mounted admission through the durable
+    ``CommandStore`` and ``process_command`` executor (only the downstream
+    HTTP transport and the read-store lookups are stubbed), across a
+    ``CommandStore`` restart, for ``AdvanceLifecycle``. It must consume
+    the admission-validated ``confirm_token_id`` and dispatch exactly
+    once.
+    """
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff import command_executor
+    from services.control_plane.bff.command_adapters.service import (
+        CommandAdapterService,
+        process_command,
+    )
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "test-lifecycle-runtime-start-confirm-token-id-secret"
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://lifecycle-runtime-start-confirm-review.invalid")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "lifecycle-runtime-start-confirm-review")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "lifecycle-runtime-start-confirm-review")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+    now = int(time.time())
+    token = encode_jwt_hs256(
+        {
+            "sub": "lifecycle-runtime-start-confirm-actor",
+            "roles": ["operator"],
+            "iss": "lifecycle-runtime-start-confirm-review",
+            "aud": "lifecycle-runtime-start-confirm-review",
+            "iat": now - 10,
+            "exp": now + 300,
+            "tenant_id": "tenant-a",
+        },
+        secret=secret,
+    )
+
+    target_id = "rt-lifecycle-runtime-start-confirm"
+    binding = {
+        "runtime_id": target_id,
+        "binding_id": "bind-lifecycle-runtime-start-confirm",
+        "deployment_mode": "paper",
+        "status": "active",
+        "metadata": {"tenant_id": "tenant-a"},
+    }
+    calls: List[Dict[str, Any]] = []
+
+    def fake_http(url, payload=None, **kwargs):
+        if payload is not None:
+            kwargs["payload"] = payload
+        calls.append({"url": url, "method": kwargs.get("method"), "payload": kwargs.get("payload")})
+        return {"status": "accepted", "audit_id": "audit-lifecycle-runtime-start-confirm"}
+
+    read_store_stub = SimpleNamespace(
+        get_approval_decision=lambda _: {
+            "outcome": "approved",
+            "command": action,
+            "target": {"type": "Persona" if action == "AdvanceLifecycle" else "Runtime", "id": target_id},
+        },
+        get_runtime_binding_by_runtime_id=lambda rid: dict(binding) if rid == target_id else None,
+        get_runtime_binding=lambda bid: dict(binding) if bid == "bind-lifecycle-runtime-start-confirm" else None,
+    )
+
+    command_path = str(tmp_path / "commands.jsonl")
+    store = CommandStore(command_path)
+    service = CommandAdapterService(
+        command_store=store,
+        extract_identity=extract_identity_jwt,
+        check_read_surface_state=lambda: None,
+        process_command_task=lambda command_id: None,
+        get_read_store=lambda: read_store_stub,
+    )
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=service))
+    client = TestClient(app)
+
+    monkeypatch.setattr(command_executor, "_post_json", fake_http)
+
+    token_id = f"lifecycle-runtime-start-confirm-token-{action}"
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Idempotency-Key": f"lifecycle-runtime-start-confirm-issue-{action}-{restart}",
+    }
+    issued = client.post(
+        "/bff/confirm-tokens",
+        headers=headers,
+        json={
+            "tokenId": token_id,
+            "ttlSeconds": 300,
+            "command": action,
+            "target_type": "Persona",
+            "target_id": target_id,
+            "operator_id": "lifecycle-runtime-start-confirm-actor",
+        },
+    )
+    assert issued.status_code == 201, issued.text
+
+    params: Dict[str, Any] = {
+        "approval_decision_id": "approval-review",
+        "persona_id": target_id,
+        "target_state": "paper_owner",
+    }
+    target = {"type": "Persona", "id": target_id}
+
+    response = client.post(
+        "/bff/v1/commands",
+        headers={
+            "Authorization": "Bearer " + token,
+            "Idempotency-Key": f"lifecycle-runtime-start-confirm-{action}-{restart}",
+            "X-Confirm-Token": token_id,
+        },
+        json={
+            "command": action,
+            "target": target,
+            "params": params,
+            "audit_context": {"reason": "lifecycle/runtime-start confirm-token-id regression"},
+        },
+    )
+
+    rows = store._get_all_commands()
+    action_rows = [row for row in rows if row["type"] == action]
+    if restart:
+        store = CommandStore(command_path)
+    for row in action_rows:
+        asyncio.run(process_command(row["command_id"], command_store=store))
+    final = store.get_command(action_rows[0]["command_id"]) if action_rows else {}
+    evidence = {
+        "restart": restart,
+        "action": action,
+        "response_status": response.status_code,
+        "calls": calls,
+        "status": final.get("status"),
+        "error": final.get("error"),
+    }
+
+    assert response.status_code == 202, evidence
+    assert len(calls) == 1, evidence
+    assert final.get("status") == "executed", evidence
+    assert calls[0]["payload"].get("confirm_token") == token_id, evidence
+
+
+@pytest.mark.parametrize("restart", [False, True])
 @pytest.mark.parametrize("wrapped", [False, True])
 @pytest.mark.parametrize(
     "roles,mfa_verified",

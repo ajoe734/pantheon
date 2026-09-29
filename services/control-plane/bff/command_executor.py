@@ -1307,9 +1307,7 @@ def _execute_advance_lifecycle(
             f"AdvanceLifecycle: target_state must be one of {sorted(allowed_targets)}, got {target_state!r}."
         )
 
-    confirm_token = str(params.get("confirm_token") or "").strip()
-    if not confirm_token:
-        raise ValueError("AdvanceLifecycle requires confirm_token.")
+    confirm_token = _require_confirm_token("AdvanceLifecycle", params)
 
     payload: Dict[str, Any] = {
         "target_state": target_state,
@@ -1345,8 +1343,9 @@ def _execute_approve_pool(
         raise ValueError("ApprovePool requires memo of at least 8 characters.")
 
     payload: Dict[str, Any] = {"memo": memo}
-    if params.get("confirm_token"):
-        payload["confirm_token"] = str(params["confirm_token"])
+    optional_confirm_token = str(params.get("confirm_token_id") or params.get("confirm_token") or "").strip()
+    if optional_confirm_token:
+        payload["confirm_token"] = optional_confirm_token
 
     url = _internal_url(f"/api/internal/v1/capital-pools/{pool_id}/approve")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
@@ -1374,9 +1373,7 @@ def _execute_start_runtime(
     runtime_id = str(params.get("runtime_id") or "").strip()
     if not runtime_id:
         raise ValueError("StartRuntime requires runtime_id.")
-    confirm_token = str(params.get("confirm_token") or "").strip()
-    if not confirm_token:
-        raise ValueError("StartRuntime requires confirm_token.")
+    confirm_token = _require_confirm_token("StartRuntime", params)
 
     two_man_token = (
         params.get("two_man_token")
