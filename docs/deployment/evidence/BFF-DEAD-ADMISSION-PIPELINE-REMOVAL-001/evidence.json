@@ -1,0 +1,401 @@
+{
+ "task": "BFF-DEAD-ADMISSION-PIPELINE-REMOVAL-001",
+ "method": "AST top-level def scan of main.py; a symbol is removed only if its name token appears in no other tracked .py file (production or test) and only inside other already-dead defs in main.py (fixpoint). Constants likewise (name lives only in command_adapters/preconditions.py under its own definition).",
+ "main_py_functions_removed": [
+  {
+   "symbol": "_command_runtime_auth_context",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    620,
+    640
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_foundation_request_payload",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    641,
+    658
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_foundation_idempotency_payload",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    659,
+    671
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_foundation_route_metadata",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    672,
+    676
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_build_foundation_command_context",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    705,
+    787
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_extract_error_fields",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    800,
+    826
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_foundation_bff_error",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    827,
+    930
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_foundation_idempotency_conflict_error",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    931,
+    977
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_ensure_live_broker_scope_allowed",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    1292,
+    1308
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_validate_drawer_runtime_target",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    1315,
+    1331
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_validate_audit_context",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    1332,
+    1340
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_reject_server_managed_rebalance_evidence_command",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    1616,
+    1632
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_require_final_command_confirm_token",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    1859,
+    1930
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_require_final_command_preconditions",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    1931,
+    2080
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_validate_final_command_target_type",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2092,
+    2103
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_validate_capital_authority_target_binding",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2104,
+    2136
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_validate_paper_runtime_authority_target_binding",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2137,
+    2179
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_canonicalize_validated_precondition_evidence",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2180,
+    2201
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_normalize_human_gate_command",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2408,
+    2452
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_normalize_quarterly_recommendation_command",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2453,
+    2499
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_normalize_b5_command_payload",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2500,
+    2503
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_normalize_operator_command_payload",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2504,
+    2615
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_assert_duplicate_confirm_token_matches",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2629,
+    2664
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_persist_admitted_command_with_confirm_token",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2665,
+    2710
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_sem_session_state",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    2793,
+    2794
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_ppl_alloc_009_paper_rebalance_authority",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    5026,
+    5140
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_deployment_url",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    5451,
+    5455
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_current_read_store_for_legacy_incident_seam",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    6888,
+    6889
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_bff_incident_service",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    6890,
+    6898
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_list_bff_incidents",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    6899,
+    6907
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_get_bff_incident",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    6908,
+    6909
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_sem_command_payload_from_record",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    7041,
+    7081
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_sem_command_dry_run_payload",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    7082,
+    7123
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_scoped_idempotency_cache_key",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    7124,
+    7125
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_confirm_token_records",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    7153,
+    7160
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_confirm_token_expiry_from_record",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    7161,
+    7178
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  },
+  {
+   "symbol": "_confirm_token_lifecycle_payload",
+   "file": "services/control-plane/bff/main.py",
+   "lines": [
+    7196,
+    7246
+   ],
+   "ast_scan_external_refs": 0,
+   "grep_refs_outside_main_py_at_HEAD": 0
+  }
+ ],
+ "main_py_constants_removed": [
+  "_recoverable_capital_command",
+  "_CONFIRM_TOKEN_FIELDS",
+  "_APPROVAL_EVIDENCE_FIELDS",
+  "_SERVER_MANAGED_REBALANCE_EVIDENCE_TYPES",
+  "_FINAL_COMMAND_TARGET_TYPES",
+  "_sem_session_key",
+  "_sem_legacy_operator_session_key",
+  "_PPL_ALLOC_009_PAPER_POLICY_VERSION",
+  "_GOV_BFF_EVOLUTION_PROGRAM_OVERLAY"
+ ],
+ "other_removed": {
+  "main._strategy_persona_action_command": "main copy only injected via app_factory _dep into strategies router kwarg strategy_persona_action_command, which strategies/routes/common.py stored but never read; live route uses personas.service._strategy_persona_action_command. Removed main def, app_factory injection + fallback name, router.py param/pass-through, common.py field, and two test kwargs.",
+  "command_executor._execute_bff_action_adapter": "not in _EXECUTORS or called by production code; only referenced by tests. Removed with its 3 direct tests and the test-only monkeypatch/executor-path assertions in test_bff_b5_humangate_commands.py and test_bff_b5_001_security_hardening.py.",
+  "emergency_containment_policy.containment_receipt_fields": "only caller was the removed adapter.",
+  "unused_imports": [
+   "get_mgmt_nl_command_recovery_seconds alias",
+   "sem_bff_version alias",
+   "IncidentService alias",
+   "_runtime_router assignment"
+  ]
+ },
+ "test_update": "tests/test_read_surface_caller_migration.py read_store attribute count 28->26 (get_capital_pool, get_rebalance only used by removed code).",
+ "net_production_lines": -1501,
+ "test_results": "Full top-level test_*.py and tests/test_*.py run in 4 batches before (HEAD copy) and after; failure sets identical apart from load-flaky timing tests (test_bff_auth_facade provider timeout, test_pm12_eligibility_fixture_contract x3, test_mgmt_load_005 timeout) which pass in isolation on the changed tree, and the read_store count test fixed above. ~90 pre-existing failures exist on baseline in this environment."
+}

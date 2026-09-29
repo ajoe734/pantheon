@@ -1620,49 +1620,6 @@ def _execute_probe_telemetry_ingest(
     )
 
 
-def _execute_bff_action_adapter(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Record adapter-only execution for BFF resource action envelopes.
-
-    The generic /bff/actions/* adapter is an admission bridge. It must not
-    directly mutate BFF read state or call live broker/runtime side effects.
-    Domain-specific authorities can later consume the persisted command record.
-    """
-    del auth_token, mfa_token
-    source_route = params.get("frontend_source_route") or params.get("adapter_source_route")
-    two_man_signature_id = (
-        params.get("twoManSignatureId")
-        or params.get("two_man_signature_id")
-        or params.get("twoManApprovalId")
-        or params.get("two_man_approval_id")
-        or params.get("secondOperatorId")
-        or params.get("second_operator_id")
-    )
-    result = {
-        "command_id": command_id,
-        "dispatch_path": "bff_action_adapter",
-        "status": "admitted",
-        "action_id": params.get("action_id"),
-        "entity_type": params.get("entity_type"),
-        "entity_id": params.get("entity_id"),
-        "audit_event": params.get("audit_event"),
-        "source_route": source_route,
-        "two_man_signature_id": two_man_signature_id,
-        "deprecated_action_receipt": (
-            params.get("adapter_source_route")
-            == "POST /bff/actions/{entityType}/{entityId}/{actionId}"
-        ),
-        "live_capital_side_effects": False,
-    }
-    if params.get("action_id") == "EmergencyContainment":
-        from services.control_plane.bff.emergency_containment_policy import containment_receipt_fields
-
-        result.update(containment_receipt_fields(params))
-    return result
-
-
 def _execute_approved_rebalance_apply(
     command_id: str,
     params: Dict[str, Any],
