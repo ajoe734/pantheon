@@ -48,8 +48,8 @@ from .contracts import (
     _human_gate_source_type,
     stable_json_hash,
 )
-from .effective_action import resolve_effective_action
 from .receipts import foundation_idempotency_conflict_error
+from .runtime_adapter import resolve_effective_action
 
 _CONFIRM_TOKEN_FIELDS = (
     "confirmToken",

@@ -75,7 +75,7 @@ except (ImportError, ValueError):
     except (ImportError, ValueError):
         from auth.policy import identity_claim_strings
 from .base import ActionUnavailableError
-from .effective_action import resolve_effective_action
+from .runtime_adapter import resolve_effective_action
 from .contracts import (
     _FINAL_COMMAND_ROUTE,
     _HUMAN_GATE_DECISIONS_BY_COMMAND,
