@@ -2709,7 +2709,7 @@
         "canonical_direct_command": "ResumePaperRuntime"
       }
     ],
-    "admission_parity": "For a canonical result admission runs the canonical validator, confirm-token/approval/two-man preconditions (require_final_command_preconditions with the effective command), server-managed rebalance-evidence rejection, capital authority binding, target-type, drawer-runtime and live-broker-scope checks against the effective command, before any durable row.",
+    "admission_parity": "For a canonical result admission runs the canonical validator, confirm-token/approval/two-man preconditions (require_final_command_preconditions with the effective command), server-managed rebalance-evidence rejection, capital authority binding, drawer-runtime and live-broker-scope checks against the effective command, before any durable row. Target type stays the wrapper's own (ReviewAction legitimately targets a Review for HumanGate verbs).",
     "removed_fabricated_evidence": [
       "persona_adapter._execute_advance_lifecycle default confirm_token 'lifecycle-confirm'",
       "persona_adapter._execute_emergency_containment default two_man_signature_id 'sig-ops-containment'",

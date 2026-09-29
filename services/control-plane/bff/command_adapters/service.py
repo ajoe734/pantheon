@@ -2407,7 +2407,9 @@ class CommandAdapterService:
             # A wrapper action that resolves to a server-managed evidence
             # command (RebalanceAction approve/sign) must be refused exactly
             # like the direct command, and must satisfy the same capital
-            # authority/target binding checks the direct command does.
+            # authority binding, drawer-runtime and live-broker-scope checks
+            # the direct command does (target *type* stays the wrapper's own:
+            # ReviewAction legitimately targets a Review for HumanGate verbs).
             effective_cmd = cmd
             if (
                 effective_action.status == "canonical"
@@ -2436,8 +2438,6 @@ class CommandAdapterService:
             if effective_cmd is not cmd:
                 validate_drawer_runtime_target(effective_cmd)
             validate_final_command_target_type(cmd)
-            if effective_cmd is not cmd:
-                validate_final_command_target_type(effective_cmd)
             # A generic wrapper command (RuntimeAction, ReviewAction, ...)
             # must never be admitted under its own (deliberately weak)
             # catalog entry once action_id names a distinct canonical
