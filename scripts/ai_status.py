@@ -3647,6 +3647,8 @@ def task_metadata_from_env() -> dict[str, Any]:
         if parsed is not None:
             metadata[field_name] = parsed
 
+    if "change_class" in metadata or "net_prod_line_budget" in metadata:
+        _diff_budget_module().validate_task_metadata(metadata)
     return metadata
 
 
@@ -8616,6 +8618,13 @@ def _github_review_bridge_module():
     except ImportError as exc:  # pragma: no cover - deployment packaging guard
         raise SystemExit("GitHub review bridge is unavailable") from exc
     return github_review_bridge
+
+
+def _diff_budget_module():
+    _github_review_bridge_module()  # puts scripts/git on sys.path
+    import diff_budget
+
+    return diff_budget
 
 
 

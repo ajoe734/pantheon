@@ -53,5 +53,49 @@ class TaskContractTests(unittest.TestCase):
         )
 
 
+class HandoffDiffBudgetGateTests(unittest.TestCase):
+    """The handoff admission runs the diff budget on the real PR file list."""
+
+    def _admit(self, task, pr_files):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from rewrite import task_contract
+
+        bridge = task_contract._ai_status_module()._github_review_bridge_module()
+        config = {"branch_workflow": {"diff_budget": {"enabled": True}}}
+        binding = {"pr": 7, "head_sha": "a" * 40, "head_branch": "task/T-1", "base": "dev"}
+        validated = SimpleNamespace(as_dict=lambda: dict(binding))
+        with (
+            mock.patch.object(task_contract, "validate_task_repository_scope", return_value="pantheon"),
+            mock.patch.object(task_contract, "repository_slug", return_value="o/r"),
+            mock.patch.object(task_contract, "validate_review_manifest_contract_path", return_value="docs/e.json"),
+            mock.patch.object(task_contract, "validate_task_artifact_diff_scope"),
+            mock.patch.object(bridge, "validate_review_admission", return_value=validated),
+            mock.patch.object(bridge, "list_pull_request_files", return_value=pr_files),
+            mock.patch.object(bridge, "revalidate_pull_request_snapshot"),
+        ):
+            return task_contract.validate_handoff_pr_delivery_binding(
+                task, config, binding, review_file="docs/e.json"
+            )
+
+    def test_refactor_growth_blocks_handoff(self) -> None:
+        files = [{"filename": "svc/a.py", "additions": 50, "deletions": 10}]
+        with self.assertRaises(SystemExit) as ctx:
+            self._admit({"id": "T-1", "change_class": "refactor"}, files)
+        self.assertIn("net +40", str(ctx.exception))
+
+    def test_refactor_shrink_is_admitted(self) -> None:
+        files = [{"filename": "svc/a.py", "additions": 10, "deletions": 50}]
+        result = self._admit({"id": "T-1", "change_class": "refactor"}, files)
+        self.assertEqual(result["pr"], 7)
+
+    def test_change_class_requires_pr_delivery(self) -> None:
+        from rewrite.task_contract import requires_pr_delivery_binding
+
+        self.assertTrue(requires_pr_delivery_binding({"change_class": "simplify"}))
+        self.assertFalse(requires_pr_delivery_binding({}))
+
+
 if __name__ == "__main__":
     unittest.main()

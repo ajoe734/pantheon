@@ -620,6 +620,11 @@ def list_pull_request_files(
                 "sha": raw_sha,
                 "status": raw_status,
             }
+            # Line counts feed the diff budget; keep them only when well formed.
+            for count_key in ("additions", "deletions"):
+                count = item.get(count_key)
+                if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+                    entry[count_key] = count
 
             previous_filename = item.get("previous_filename")
             if raw_status == "renamed" and (not previous_filename or not str(previous_filename).strip()):

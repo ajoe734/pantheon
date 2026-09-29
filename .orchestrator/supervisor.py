@@ -15665,6 +15665,8 @@ def build_dispatch_event(
     }
     for key in (
         "task_class",
+        "change_class",
+        "net_prod_line_budget",
         "delivery_binding",
         "target_repo",
         "target_repository",
