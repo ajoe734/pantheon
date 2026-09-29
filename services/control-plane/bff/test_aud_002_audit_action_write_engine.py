@@ -193,9 +193,35 @@ def _command_event(events: list[dict], command_id: str) -> dict:
 
 def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
     with _isolated_audit_client(allow_fallback=True) as client:
+        # RuntimeAction/pause dispatches to the canonical PausePaperRuntime
+        # command (see runtime_adapter.py's pause/resume alias map), whose
+        # own (stronger) catalog entry requires a genuine confirm_token --
+        # RuntimeAction's own requires_confirm_token=False entry no longer
+        # applies once action_id resolves to a distinct canonical command.
+        # Issue a real confirm token through the actual confirmation flow,
+        # bound to that effective command and this exact target, instead of
+        # weakening the admission gate.
+        confirm_issue = client.post(
+            "/bff/confirm-tokens",
+            headers={**HEADERS, "Idempotency-Key": "aud-002-runtime-pause-confirm-issue"},
+            json={
+                "tokenId": "aud-002-runtime-pause-confirm",
+                "ttlSeconds": 300,
+                "command": "PausePaperRuntime",
+                "target_type": "Runtime",
+                "target_id": "runtime-042",
+                "operator_id": "op-aud-002",
+            },
+        )
+        assert confirm_issue.status_code == 201, confirm_issue.text
+
         response = client.post(
             "/bff/v1/commands",
-            headers={**HEADERS, "Idempotency-Key": "aud-002-runtime-pause"},
+            headers={
+                **HEADERS,
+                "Idempotency-Key": "aud-002-runtime-pause",
+                "X-Confirm-Token": "aud-002-runtime-pause-confirm",
+            },
             json={
                 "command": "RuntimeAction",
                 "target": {"type": "Runtime", "id": "runtime-042"},
@@ -212,9 +238,13 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
         assert response.status_code == 202, response.text
         command_id = response.json()["data"]["receipt_id"]
 
+        # The confirm-token issuance above is itself a durable command, so
+        # select the intended RuntimeAction record by id rather than
+        # assuming it is the only row in the store.
         records = command_store._get_all_commands()
-        assert len(records) == 1
-        foundation = records[0]["foundation"]
+        runtime_records = [r for r in records if r.get("command_id") == command_id]
+        assert len(runtime_records) == 1
+        foundation = runtime_records[0]["foundation"]
         assert foundation["audit_action"]["action_type"] == "bff.command.accepted"
         assert foundation["audit_action"]["target_ref"] == "Runtime:runtime-042"
         assert foundation["audit_action"]["payload_checksum"]

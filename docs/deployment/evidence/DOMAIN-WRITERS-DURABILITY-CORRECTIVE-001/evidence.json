@@ -3,7 +3,7 @@
   "task_id": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
   "base_ref": "dev@24608d4c8e04767f658e77be466780b9e91f7525",
   "depends_on": "DOMAIN-WRITERS-001 (done), BFF-ROUTER-USECASE-CORRECTIVE-001 (done), GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 (done), JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 (done)",
-  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md §E (canonical tracked docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md, SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa; restored at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md); DOMAIN-WRITERS-001 corrective closure",
+  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md \u00a7E (canonical tracked docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md, SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa; restored at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md); DOMAIN-WRITERS-001 corrective closure",
   "defect_remediation": {
     "defect_1_dead_capital_write_routes": {
       "problem": "capital/router.py constructs CapitalService(get_read_store=..., get_capital_authority=...). Mounted create_capital_router without get_capital_authority caused CapitalAuthorityUnavailable 503 on 8 POST routes.",
@@ -291,7 +291,7 @@
     },
     "defect_72_commit_trailer_length_and_normative_plan_access": {
       "problem": "Commit c6a39d5f8 subject length was 93 characters, exceeding the 72-character limit and causing the Commit trailers CI job to fail. Furthermore, the task-scoped /tmp reference for the normative Section E plan was expired.",
-      "remediation": "Shortened task commit subject line to ≤ 70 characters adhering to repository trailers gate. Restored reviewer access to the immutable normative Section E plan at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md matching tracked file docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md with verified SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa."
+      "remediation": "Shortened task commit subject line to \u2264 70 characters adhering to repository trailers gate. Restored reviewer access to the immutable normative Section E plan at /tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/STRUCTURAL_RESIDUAL_SA_SD_20260906.md matching tracked file docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md with verified SHA256 6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa."
     },
     "defect_73_experiment_adapter_dispatcher_command_id_fail_closed": {
       "problem": "services/control-plane/bff/command_adapters/experiment_adapter.py:102 accepted blank/whitespace dispatcher command_id by falling back to params.command_id or uuid.uuid4(), allowing experiment mutations without the trusted admitted command identity.",
@@ -394,8 +394,13 @@
     "defect_91_bare_pause_resume_alias_confirm_token_gap_closed": {
       "problem": "runtime_adapter.py's resolve_effective_action classified the bare 'pause'/'pauseRuntime'/'pauseExecution'/'resume'/'unpause' action_id spellings dispatched through the generic RuntimeAction wrapper as generic_ok (_RUNTIME_ACTION_GENERIC_ONLY), so service.py validated admission against RuntimeAction's own weak (requires_confirm_token=false) catalog entry instead of PausePaperRuntime's (requires_confirm_token=true) or ResumePaperRuntime's (requires_confirm_token=true, requires_approval=true) own entries. A mounted signed-JWT same-tenant POST /bff/v1/commands with no confirm token (and, for resume-shaped aliases, no approval evidence) dispatched exactly like an evidence-bearing direct PausePaperRuntime/ResumePaperRuntime submission, both before and after a CommandStore restart. Independent exact-head REJECT at PR #5998 head 4a24cf62d7ac1cc1732437e067a1ea8048583d1e (P1 acceptance 3 negative authorization remains unmet).",
       "remediation": "Moved 'pause', 'pauseruntime', 'pauseexecution', 'resume', and 'unpause' out of _RUNTIME_ACTION_GENERIC_ONLY (now an empty frozenset) and into _RUNTIME_ACTION_CANONICAL_ALIASES, mapping the pause-shaped aliases to PausePaperRuntime and the resume-shaped aliases to ResumePaperRuntime for admission purposes, exactly as the literal 'pausepaperruntime'/'resumepaperruntime' spellings were already mapped under defect_90. service.py's existing cmd.model_copy(update={\"command\": ...}) canonical-swap now also gates every bare alias's confirm_token (and, for resume-shaped aliases, approval) evidence against the effective PausePaperRuntime/ResumePaperRuntime catalog entry before durable admission. RuntimeCommandAdapter._execute_pause's own execution-time routing (is_canonical_paper) is unchanged: it still only recognizes the literal PausePaperRuntime/ResumePaperRuntime action_id/command_type spellings as canonical-paper for execution-routing purposes, so this only changes which catalog entry admission validates confirm_token/approval evidence against, not which downstream branch the adapter dispatches to, preserving defect_88's tenant-ownership fix unmodified for both the canonical-paper and generic-binding branches. Extended test_signed_identity_runtime_pause_resume_requires_owner_tenant and test_signed_identity_runtime_action_pause_resume_requires_effective_confirm_token_and_approval (test_command_adapters_router.py) to parametrize over all five bare alias spellings in addition to the two canonical spellings; all 190 tests in that file pass.",
-      "recorded_residual": "services/control-plane/bff/test_aud_002_audit_action_write_engine.py::test_runtime_action_writes_audit_action_visible_in_bff_audit submits command=RuntimeAction, action_id=pause with no confirm_token and asserts response.status_code == 202; with this round's fix that request now correctly returns 428 CONFIRMATION_REQUIRED (verified: 1 failed, 1 warning -- AssertionError: assert 428 == 202). That file is not in this task's declared artifact contract, so it cannot be edited without a contract amendment; per acceptance item 5 this is an explicit checkpointed authenticated blocker, not a silently narrowed fix. Requesting the operator add it to the artifact contract so the fixture can be updated to supply genuine confirm_token evidence while keeping every existing assertion.",
+      "recorded_residual": "Superseded: closed under defect_92_test_aud_002_bare_pause_fixture_confirm_token_gap_closed. services/control-plane/bff/test_aud_002_audit_action_write_engine.py is now in this task's declared artifact contract (operator artifact-contract amendment), and its positive fixture issues a genuine confirm_token bound to the effective PausePaperRuntime command before submitting the RuntimeAction/pause command; no residual gap remains.",
       "verification": "timeout 400s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py => 190 passed, exit 0 (76.07s); timeout 120s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_aud_002_audit_action_write_engine.py::test_runtime_action_writes_audit_action_visible_in_bff_audit => 1 failed, exit 1 (expected -- confirms the out-of-contract residual is real and file-scoped, not a silent gap)."
+    },
+    "defect_92_test_aud_002_bare_pause_fixture_confirm_token_gap_closed": {
+      "problem": "services/control-plane/bff/test_aud_002_audit_action_write_engine.py::test_runtime_action_writes_audit_action_visible_in_bff_audit submitted command=RuntimeAction, action_id=pause with no confirm_token and asserted response.status_code == 202. After defect_91 correctly closed the bare-alias confirm_token gate, this fixture's request returns 428 CONFIRMATION_REQUIRED / CONFIRM_TOKEN_MISSING instead, since RuntimeAction/pause now resolves through PausePaperRuntime's own (requires_confirm_token=true) catalog entry before durable admission. Independent exact-head review REJECT at PR #5998 head 649d3ef09b6b4addbe4b79f6d64a06dd1293df7c (191 passed, 1 failed -- this test).",
+      "remediation": "Operator added services/control-plane/bff/test_aud_002_audit_action_write_engine.py to this task's declared artifact contract under standing authorisation for reviewer-named files (contract_revision recorded on the canonical task row). Updated the fixture to issue a genuine confirm token through the real confirmation flow (POST /bff/confirm-tokens with command=PausePaperRuntime, target_type=Runtime, target_id=runtime-042, operator_id=op-aud-002, matching the identity resolved by _extract_identity), then supplied it via the X-Confirm-Token header on the RuntimeAction/pause submission -- the same genuine-evidence pattern already proven by test_signed_identity_runtime_action_pause_resume_requires_effective_confirm_token_and_approval in test_command_adapters_router.py. The confirm-token issuance is itself a durable command, so the record-count assertion now selects the intended RuntimeAction record by its returned command_id instead of assuming it is the only row in the store, independent of the token issuance row. Every existing audit assertion (audit_action.action_type, target_ref, payload_checksum, /bff/audit and /bff/audit/entities readback) is unchanged and still verified against the selected record. The stronger confirm_token gate from defect_91 is preserved unmodified; no admission code changed.",
+      "verification": "timeout 240s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/test_aud_002_audit_action_write_engine.py --tb=short => 192 passed, 3 warnings in 85.76s, exit 0."
     }
   },
   "generic_wrapper_parity_audit": {
@@ -751,7 +756,8 @@
       "services/control-plane/bff/command_adapters/evolution_adapter.py",
       "services/control-plane/bff/command_adapters/runtime_adapter.py",
       "services/control-plane/bff/governance/test_domain_durability_corrective_p1_generic_tenant_forgery.py",
-      "services/control-plane/bff/tests/test_management_domain_actions.py"
+      "services/control-plane/bff/tests/test_management_domain_actions.py",
+      "services/control-plane/bff/test_aud_002_audit_action_write_engine.py"
     ],
     "artifact_scope_boundary": "core/app_factory.py is preserved byte-identical to base dev commit because core/app_factory.py falls outside this task's declared artifact contract. Capital and governance routers encapsulate their durable store and authority resolution entirely within their domain-scoped boundaries.",
     "read_surface_invariants_preserved": "ReadSurfacePorts in services/control-plane/bff/ports/read_surface_ports.py is completely unmodified and maintains zero mutation methods, adhering strictly to RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE.",
@@ -1750,6 +1756,12 @@
         "result": "63 passed, 3 warnings, 2 subtests passed in 32.36s",
         "executed": 63,
         "collected": 63
+      },
+      {
+        "command": "timeout 240s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/test_aud_002_audit_action_write_engine.py --tb=short",
+        "result": "192 passed, 3 warnings in 85.76s",
+        "executed": 192,
+        "collected": 192
       }
     ]
   },
@@ -1845,7 +1857,10 @@
     "defect_84_domain_writer_tenant_guard_fail_open_on_none_resolved": true,
     "defect_87_generic_admission_and_sibling_params_tenant_actor_fallbacks_resolved": true,
     "defect_88_runtime_pause_resume_tenant_forgery_and_generic_alias_bypass_resolved": true,
-    "defect_89_generic_wrapper_effective_action_bypass_resolved": true
+    "defect_89_generic_wrapper_effective_action_bypass_resolved": true,
+    "defect_90_pause_resume_confirm_token_residual_gap_closed_resolved": true,
+    "defect_91_bare_pause_resume_alias_confirm_token_gap_closed_resolved": true,
+    "defect_92_test_aud_002_bare_pause_fixture_confirm_token_gap_closed_resolved": true
   },
   "review": {
     "reviewer": "Codex",
@@ -1920,6 +1935,14 @@
       "residual_scope_preserved_unchanged": "operator guidance item 4's pre-existing IssueSafeMode/ExecuteRollback/HardRollback direct-path tenant-ownership gap and item 2's TerminateStalePaperMonitoringSession session-to-runtime-binding residual remain out of scope for this fix and are unchanged from defect_89's recorded residuals; this round only closes the pause/resume confirm_token/approval gate.",
       "verification": "pytest -q services/control-plane/bff/tests/test_command_adapters_router.py (136 passed, includes the rewritten test_signed_identity_runtime_pause_resume_requires_owner_tenant with genuine confirm_token/approval evidence in its same-tenant fixtures and the new test_signed_identity_runtime_action_pause_resume_requires_effective_confirm_token_and_approval covering missing/invalid/valid evidence shapes across a CommandStore restart for the two literal action_id spellings); pytest -q services/control-plane/bff/test_aud_002_audit_action_write_engine.py (2 passed, file unmodified from before this round); reviewer reproducer BFF_READ_STORE_BOOTSTRAP=0 pytest -p services.control_plane.bff.conftest -q -s /tmp/test_domain_writer_737af_review.py --tb=short => 8 passed, exit 0 (previously 4 failed, 4 passed).",
       "scope_boundary": "The fix is scoped to the literal 'PausePaperRuntime'/'ResumePaperRuntime' action_id spellings -- exactly what the reviewer's reproducer exercises -- because remapping the bare pause/pauseRuntime/pauseExecution/resume/unpause aliases as well would require updating services/control-plane/bff/test_aud_002_audit_action_write_engine.py's bare-'pause' positive fixture, and that file is outside this task's declared artifact contract; the governed handoff command fails closed on out-of-contract file changes. See defect_90.recorded_residual."
+    },
+    "tenth_rejection_and_fix": {
+      "pr": 5998,
+      "rejected_head": "649d3ef09b6b4addbe4b79f6d64a06dd1293df7c",
+      "rejected_manifest": "3425f63912aca68278aafef9c68ee94c3c47cc14",
+      "finding": "P2 acceptance 5 validation incomplete: services/control-plane/bff/test_aud_002_audit_action_write_engine.py:212 test_runtime_action_writes_audit_action_visible_in_bff_audit submitted RuntimeAction/pause without confirmation and expected 202; actual 428 CONFIRMATION_REQUIRED / CONFIRM_TOKEN_MISSING blocked every subsequent accepted-command/audit assertion. File was not yet in this task's declared artifact contract.",
+      "fix": "See defect_92_test_aud_002_bare_pause_fixture_confirm_token_gap_closed above.",
+      "verification": "timeout 240s env BFF_READ_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/test_aud_002_audit_action_write_engine.py --tb=short => 192 passed, 3 warnings in 85.76s, exit 0."
     }
   }
 }
