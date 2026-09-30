@@ -1,0 +1,11 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-DEAD-ADMISSION-PIPELINE-REMOVAL-001-EXACT-HEAD-MERGE-CONFLI-C1CC0D3459E0",
+  "original_pr": 6021,
+  "original_head": "e0ff25f70116bb8dbd9d81e8832007e5555f1fa3",
+  "root_cause": "PR #6021 deleted the `_ACKNOWLEDGED_ALERTS` line in services/control-plane/bff/main.py, adjacent to the block that dev's BFF-INCIDENT-DELIVERY-001 (82b69e4dd) rewrote into IncidentService composition-root bindings; both sides edited the same hunk, so the exact-head merge with dev conflicted.",
+  "resolution": "Kept dev's IncidentService bindings and dropped `_ACKNOWLEDGED_ALERTS` (no remaining references in services/). Merge commit pushed to PR #6021 head branch task/BFF-DEAD-ADMISSION-PIPELINE-REMOVAL-001-v2.",
+  "verification": {
+    "command": "pytest tests/test_incidents_real_source.py tests/test_bff_emergency_containment.py tests/test_bff_b5_humangate_commands.py tests/test_bff_b5_001_security_hardening.py tests/test_read_surface_caller_migration.py test_command_executor.py",
+    "result": "156 passed"
+  }
+}

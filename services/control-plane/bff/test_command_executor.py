@@ -41,7 +41,6 @@ from services.control_plane.bff.command_executor import (
     _execute_terminate_stale_paper_monitoring_session,
     _execute_start_paper_monitoring_session,
     _execute_probe_telemetry_ingest,
-    _execute_bff_action_adapter,
 )
 
 
@@ -698,36 +697,6 @@ class TestExecuteCommandDispatch(unittest.TestCase):
     def test_dispatch_unknown_command_type(self):
         with self.assertRaises(ValueError):
             execute_command("cmd-001", "FakeCommand", {})
-
-
-class TestBffActionAdapterExecutor(unittest.TestCase):
-    def test_records_final_command_source_without_deprecated_receipt(self):
-        result = _execute_bff_action_adapter("cmd-action-final", {
-            "action_id": "promote_paper",
-            "entity_type": "strategy",
-            "entity_id": "stg-024",
-            "audit_event": "strategy.promote_paper",
-            "frontend_source_route": "/bff/v1/commands",
-        })
-
-        self.assertEqual(result["source_route"], "/bff/v1/commands")
-        self.assertFalse(result["deprecated_action_receipt"])
-        self.assertFalse(result["live_capital_side_effects"])
-
-    def test_marks_legacy_adapter_source_as_deprecated_receipt(self):
-        result = _execute_bff_action_adapter("cmd-action-legacy", {
-            "action_id": "submit_review",
-            "entity_type": "strategy",
-            "entity_id": "stg-024",
-            "audit_event": "strategy.submit_review",
-            "adapter_source_route": "POST /bff/actions/{entityType}/{entityId}/{actionId}",
-        })
-
-        self.assertEqual(
-            result["source_route"],
-            "POST /bff/actions/{entityType}/{entityId}/{actionId}",
-        )
-        self.assertTrue(result["deprecated_action_receipt"])
 
 
 class TestExecuteCommandWithStatus(unittest.TestCase):

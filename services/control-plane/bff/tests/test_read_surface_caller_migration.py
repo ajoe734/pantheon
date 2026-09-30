@@ -205,7 +205,7 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 )
 
     def test_main_py_all_read_store_attributes_are_inventoried_and_mapped(self) -> None:
-        """Prove that all 44 read_store attributes in main.py are inventoried and mapped or isolated.
+        """Prove that all 26 read_store attributes in main.py are inventoried and mapped or isolated.
 
         BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001 moved the
         `read_store.list_events_bff(...)` call for the assistant `recent_sse`
@@ -227,8 +227,8 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
 
         self.assertEqual(
             len(read_store_attrs),
-            28,
-            "Expected exactly 28 read_store attributes in main.py following domain router modularization",
+            26,
+            "Expected exactly 26 read_store attributes in main.py after dead admission pipeline removal",
         )
 
         ports_instance = create_read_surface_ports()
@@ -250,9 +250,9 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
             [],
             f"Found uninventoried read_store attributes in main.py: {uninventoried}",
         )
-        self.assertEqual(len(mapped_reads), 28)
+        self.assertEqual(len(mapped_reads), 26)
         self.assertEqual(len(deferred_writes), 0)
-        self.assertEqual(len(mapped_reads) + len(deferred_writes), 28)
+        self.assertEqual(len(mapped_reads) + len(deferred_writes), 26)
 
 
 class TestAgoraPersonaClientMigration(unittest.TestCase):
