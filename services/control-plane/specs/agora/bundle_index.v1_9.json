@@ -3,7 +3,7 @@
   "extends": {
     "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_8.json",
     "bundle_version": "1.8",
-    "bundle_index_sha256": "5b89a76a4734adf78df4ab18466282eef329ba382daa4193133b84bec91007fc"
+    "bundle_index_sha256": "a415cbf56a4fc400ef9806271e7706a0a1e7b753fe0b7d16cf811545a8bf4cfd"
   },
   "files": {
     "specs/agora/v10/persona_interaction_daily.schema.json": "629c9cb145085b3cf4d00bfd2222fb096e06b46143fdb6001a2a23d95a2fd605",
@@ -59,7 +59,11 @@
   "contract_refs": {
     "product_truth": "docs/bff/execution-tasks/2026-07-17-persona-daily-strict-operator/PINT-011-CONTRACT.md",
     "superseded_daily_interpretation": "docs/bff/execution-tasks/2026-07-12-persona-interaction/PINT-010-R2-EVIDENCE.md",
-    "runtime_implementation_tasks": ["PINT-012", "PINT-013", "PINT-014"]
+    "runtime_implementation_tasks": [
+      "PINT-012",
+      "PINT-013",
+      "PINT-014"
+    ]
   },
   "note": "Additive extension over exact v1.8 bytes. PINT-013 implements the durable Persona interaction route family; remaining v1.9 governance routes retain their per-capability contract status. This does not claim hosted deployment and grants no execution authority."
 }

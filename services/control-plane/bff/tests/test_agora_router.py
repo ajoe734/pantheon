@@ -436,10 +436,15 @@ def test_agora_capabilities_returns_manifest(monkeypatch):
     assert isinstance(body["data"]["capabilities"], list)
 
     capabilities_list = body["data"]["capabilities"]
-    assert len(capabilities_list) == 7, f"Expected 7 capabilities, got {len(capabilities_list)}"
+    assert len(capabilities_list) == 5, f"Expected 5 capabilities, got {len(capabilities_list)}"
     cap_names = {c["name"] for c in capabilities_list}
     assert "agora.identity.v1" in cap_names
-    assert "agora.session.v1" in cap_names
+    assert "agora.workshop.v1" in cap_names
+    assert "agora.research.v1" in cap_names
+    assert "agora.trading.v1" in cap_names
+    assert "agora.dashboard.v1" in cap_names
+    assert "agora.session.v1" not in cap_names
+    assert "agora.personalization.v1" not in cap_names
 
 
 
