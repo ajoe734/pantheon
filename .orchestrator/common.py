@@ -2734,7 +2734,7 @@ def _validate_activity_rotation_lineage_row(
     *,
     expected_sequence: int,
     previous_row: dict[str, Any] | None,
-    previous_lineage_bytes: bytes,
+    previous_lineage_sha256: str,
     validate_archive: bool,
 ) -> Path:
     required = {
@@ -2790,8 +2790,7 @@ def _validate_activity_rotation_lineage_row(
     ):
         if not isinstance(row.get(key), int) or int(row[key]) < 0:
             raise RuntimeError("activity lineage count is invalid")
-    expected_previous_sha = _sha256_bytes(previous_lineage_bytes)
-    if row.get("previous_lineage_sha256") != expected_previous_sha:
+    if row.get("previous_lineage_sha256") != previous_lineage_sha256:
         raise RuntimeError("activity lineage previous digest mismatch")
     if previous_row is None:
         if row.get("previous_sequence") != 0 or row.get("previous_transaction_id") is not None:
@@ -2929,9 +2928,10 @@ def _load_activity_rotation_lineage_unlocked(
         raise RuntimeError("activity lineage file is truncated")
     rows: list[dict[str, Any]] = []
     archive_paths: list[Path] = []
-    previous_bytes = b""
+    # Each row binds the digest of every row before it; hash the prefix
+    # incrementally instead of rehashing it per row (quadratic in rows).
+    prefix_hash = hashlib.sha256()
     previous_row: dict[str, Any] | None = None
-    offset = 0
     seen_sequences: set[int] = set()
     seen_transactions: set[str] = set()
     seen_archives: set[Path] = set()
@@ -2955,7 +2955,7 @@ def _load_activity_rotation_lineage_unlocked(
             row,
             expected_sequence=expected_sequence,
             previous_row=previous_row,
-            previous_lineage_bytes=previous_bytes,
+            previous_lineage_sha256=prefix_hash.hexdigest(),
             validate_archive=validate_archives,
         )
         sequence = int(row["sequence"])
@@ -2975,8 +2975,7 @@ def _load_activity_rotation_lineage_unlocked(
         seen_archives.add(archive_path)
         rows.append(row)
         archive_paths.append(archive_path)
-        offset += len(raw_line)
-        previous_bytes = lineage_bytes[:offset]
+        prefix_hash.update(raw_line)
         previous_row = row
     return lineage_bytes, rows, archive_paths
 
@@ -3100,7 +3099,7 @@ def _validated_activity_rotation_resolution_row(
     row: Any,
     *,
     expected_sequence: int,
-    previous_resolutions_bytes: bytes,
+    previous_resolutions_sha256: str,
     validate_archives: bool,
 ) -> Path:
     if not isinstance(row, dict) or set(row) != ACTIVITY_ROTATION_RESOLUTION_ROW_KEYS:
@@ -3135,9 +3134,7 @@ def _validated_activity_rotation_resolution_row(
         or not str(row["writer_guard_attestation"]).strip()
     ):
         raise RuntimeError("activity resolution guard attestation is missing")
-    if row.get("previous_resolutions_sha256") != _sha256_bytes(
-        previous_resolutions_bytes
-    ):
+    if row.get("previous_resolutions_sha256") != previous_resolutions_sha256:
         raise RuntimeError("activity resolution previous digest mismatch")
     if row.get("resolution_id") != activity_rotation_resolution_id(row):
         raise RuntimeError("activity resolution id mismatch")
@@ -3295,8 +3292,7 @@ def _load_activity_rotation_resolutions_unlocked(
         raise RuntimeError("activity resolutions file is truncated")
     rows: list[dict[str, Any]] = []
     archive_paths: list[Path] = []
-    previous_bytes = b""
-    offset = 0
+    prefix_hash = hashlib.sha256()
     seen_ids: set[str] = set()
     seen_transactions: set[str] = set()
     seen_archives: set[Path] = set()
@@ -3318,7 +3314,7 @@ def _load_activity_rotation_resolutions_unlocked(
             log_path,
             row,
             expected_sequence=expected_sequence,
-            previous_resolutions_bytes=previous_bytes,
+            previous_resolutions_sha256=prefix_hash.hexdigest(),
             validate_archives=validate_archives,
         )
         resolution_id = str(row["resolution_id"])
@@ -3334,8 +3330,7 @@ def _load_activity_rotation_resolutions_unlocked(
         seen_archives.add(archive_path)
         rows.append(row)
         archive_paths.append(archive_path)
-        offset += len(raw_line)
-        previous_bytes = resolutions_bytes[:offset]
+        prefix_hash.update(raw_line)
     return resolutions_bytes, rows, archive_paths
 
 
@@ -4751,6 +4746,63 @@ def validated_activity_event_digests_unlocked(
         return result
     finally:
         conn.close()
+
+
+def recent_activity_event_digests_unlocked(
+    log_path: Path,
+    event_ids: Iterable[str],
+    *,
+    not_before: float,
+) -> dict[str, str]:
+    """Return requested event digests from the active log and recent archives.
+
+    For events that did not exist before ``not_before`` (epoch seconds): an
+    archive is written when it is rotated, so one last modified earlier cannot
+    hold them. The caller must hold the activity audit lock. Whole-history
+    validation stays with rotation and the logical readers.
+    """
+
+    requested = set(event_ids)
+    log_path = _resolved_activity_log_path(log_path)
+    prepare_activity_audit_unlocked(log_path)
+    archive_dir = log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR
+    payloads: list[bytes] = []
+    for path in sorted(archive_dir.glob(f"{log_path.name}-*.gz")):
+        if path.lstat().st_mtime < not_before:
+            continue
+        payload = _activity_archive_payload(path)[1]
+        if classify_source(path) == "content_addressed":
+            _assert_content_addressed_archive_identity(path, _sha256_bytes(payload))
+        payloads.append(payload)
+    if log_path.is_file():
+        payloads.append(_read_active_payload_without_lineage_head(log_path)[1])
+    result: dict[str, str] = {}
+    for payload in payloads:
+        for raw_line in payload.splitlines():
+            if not raw_line.strip():
+                continue
+            try:
+                entry = strict_activity_json_loads(raw_line.decode("utf-8"))
+            except (
+                UnicodeError,
+                json.JSONDecodeError,
+                DuplicateActivityJSONKeyError,
+            ) as exc:
+                raise RuntimeError(f"activity audit row is unreadable: {exc}") from exc
+            if not isinstance(entry, dict):
+                raise RuntimeError("activity audit row is not an object")
+            event_id = str(entry.get("event_id") or "").strip()
+            if event_id not in requested:
+                continue
+            digest = _canonical_json_sha256(entry)
+            previous = result.get(event_id)
+            if previous is not None:
+                detail = (
+                    "duplicate across sources" if previous == digest else "payload mismatch"
+                )
+                raise RuntimeError(f"activity event_id {detail}: {event_id}")
+            result[event_id] = digest
+    return result
 
 
 def _resolved_activity_log_path(log_path: Path) -> Path:
