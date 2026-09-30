@@ -9,6 +9,8 @@ import logging
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
+from ..ports.lifecycle_telemetry_governance import DomainIncidentPort
+
 from .base import (
     ActionUnavailableError,
     DomainCommandAdapter,
@@ -67,11 +69,15 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("incident_id") or params.get("alert_id") or params.get("intervention_id") or params.get("finding_id") or params.get("entity_id") or "").strip()
 
-        if command_type == "RemediateSentinelIntervention" or action_id.lower() in {"remediatesentinelintervention", "remediate"}:
-            return self._execute_remediate_sentinel(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"RiskAlertAction", "AlertAcknowledge"} or action_id.lower() in {"acknowledge", "alertacknowledge"}:
+        if command_type == "IncidentAction":
+            return self._execute_incident_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
+        elif command_type in {"RiskAlertAction", "AlertAcknowledge"}:
             return self._execute_alert_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"IncidentAction"} or action_id.lower() in {"resolve", "investigate", "close", "reopen"}:
+        elif command_type == "RemediateSentinelIntervention" or action_id.lower() in {"remediatesentinelintervention", "remediate"}:
+            return self._execute_remediate_sentinel(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
+        elif action_id.lower() in {"acknowledge", "alertacknowledge"}:
+            return self._execute_alert_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
+        elif action_id.lower() in {"resolve", "investigate", "close", "reopen"}:
             return self._execute_incident_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"V5InterventionAction", "DecideV5Intervention", "SentinelFindingStatus", "SentinelRemediationBuild", "SentinelRemediationExecute"}:
             return self._execute_sentinel_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
@@ -129,40 +135,43 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target_id = alert_id or str(params.get("alert_id") or "alert-001").strip()
+        target_id = str(params.get("alert_id") or alert_id).strip()
+        if action_id.lower() not in {"acknowledge", "ack", "alertacknowledge"}:
+            raise ActionUnavailableError(f"Alert action {action_id!r} on {target_id!r} is not supported.", action_id=action_id, entity_type="RiskAlert")
+        incident_id = target_id[15:].strip() if target_id.startswith("alert-incident-") else (target_id if target_id.startswith("inc-") else "")
+        p_inc = str(params.get("incident_id") or "").strip()
+        p_inc = p_inc[15:].strip() if p_inc.startswith("alert-incident-") else p_inc
+        if not incident_id or (p_inc and p_inc != incident_id):
+            raise ActionUnavailableError(f"Alert {target_id!r} has no durable owner; acknowledgement is unavailable.", action_id=action_id, entity_type="RiskAlert")
+        body = DomainIncidentPort().update_incident_status(
+            incident_id, "investigating", auth_token=auth_token, mfa_token=mfa_token,
+        )
+        read_back_status = body.get("status") or "investigating"
         return build_domain_receipt(
-            command_id=command_id,
-            entity_type="RiskAlert",
-            entity_id=target_id,
-            action_id=action_id,
-            status="acknowledged",
-            dispatch_path="incident_alert_authority",
-            domain_receipt={"alert_id": target_id, "acknowledged": True, "acknowledged_by": params.get("actor_id", "operator")},
-            authoritative_readback={"alert_id": target_id, "status": "acknowledged"},
-            extra={"alert_id": target_id},
+            command_id=command_id, entity_type="RiskAlert", entity_id=target_id, action_id=action_id, status="acknowledged",
+            dispatch_path="incidents_service", domain_receipt=body, authoritative_readback={"alert_id": target_id, "incident_id": incident_id, "status": "acknowledged", "incident_status": read_back_status},
+            extra={"alert_id": target_id, "incident_id": incident_id, "incident_status": read_back_status},
         )
 
     def _execute_incident_action(
-        self,
-        command_id: str,
-        incident_id: str,
-        action_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
+        self, command_id: str, incident_id: str, action_id: str, params: Dict[str, Any], auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target_id = incident_id or str(params.get("incident_id") or "inc-001").strip()
-        new_status = "resolved" if action_id.lower() in {"resolve", "close"} else "investigating"
+        target_id = incident_id or str(params.get("incident_id") or "").strip()
+        if not target_id:
+            raise ActionUnavailableError("Incident action requires incident_id.", action_id=action_id, entity_type="Incident")
+        k = action_id.lower()
+        new_status = "resolved" if k in {"resolve", "close"} else ("investigating" if k in {"start-mitigation", "mitigate", "escalate", "acknowledge", "ack", "investigate", "reopen"} else None)
+        if not new_status:
+            raise ActionUnavailableError(f"Incident action {action_id!r} on {target_id!r} is not supported.", action_id=action_id, entity_type="Incident")
+        body = DomainIncidentPort().update_incident_status(
+            target_id, new_status, resolved_at=params.get("resolved_at"),
+            auth_token=auth_token, mfa_token=mfa_token,
+        )
+        read_back_status = body.get("status") or new_status
         return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Incident",
-            entity_id=target_id,
-            action_id=action_id,
-            status=new_status,
-            dispatch_path="incident_store_authority",
-            domain_receipt={"incident_id": target_id, "new_status": new_status, "reason": params.get("reason")},
-            authoritative_readback={"incident_id": target_id, "status": new_status},
-            extra={"incident_id": target_id, "status": new_status},
+            command_id=command_id, entity_type="Incident", entity_id=target_id, action_id=action_id, status=read_back_status,
+            dispatch_path="incidents_service", domain_receipt=body, authoritative_readback={"incident_id": target_id, "status": read_back_status},
+            extra={"incident_id": target_id, "status": read_back_status},
         )
 
     def _execute_sentinel_action(

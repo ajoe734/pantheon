@@ -136,7 +136,7 @@ def test_mutation_requires_write_role(monkeypatch: pytest.MonkeyPatch) -> None:
 # ===========================================================================
 
 def test_multi_tenant_isolation_non_enumerating_404(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Foreign IDs belonging to other users/tenants return non-enumerating 404 (Not Found)."""
+    """Reads remain private; a same-tenant operator may decide another user's plan."""
     client = _client(monkeypatch)
 
     # Create plan under User A
@@ -162,18 +162,14 @@ def test_multi_tenant_isolation_non_enumerating_404(monkeypatch: pytest.MonkeyPa
     assert res_b_get.status_code == 404, res_b_get.text
     assert res_b_get.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
-    # User B tries to approve plan -> 404 (non-enumerating, not 403)
+    # User B is a same-tenant operator: approval is allowed without read access.
     res_b_app = client.post(
         f"/bff/agora/research-plans/{plan_id}/approve",
         headers=_headers(auth=_OPERATOR_AUTH_B, idempotency_key="idemp-tb1", if_match=etag),
     )
-    assert res_b_app.status_code == 404, res_b_app.text
+    assert res_b_app.status_code == 200, res_b_app.text
 
-    # Approve under User A and dispatch run
-    client.post(
-        f"/bff/agora/research-plans/{plan_id}/approve",
-        headers=_headers(auth=_OPERATOR_AUTH_A, idempotency_key="idemp-ta2", if_match=etag),
-    )
+    # User A can observe the decision and dispatch the approved plan.
     plan_app = client.get(f"/bff/agora/research-plans/{plan_id}", headers=_headers(auth=_OPERATOR_AUTH_A)).json()
     res_disp = client.post(
         f"/bff/agora/research-plans/{plan_id}/runs",
@@ -779,4 +775,3 @@ def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
         user_id=scope.user_id,
     )
     assert len(results_restart) == 0
-

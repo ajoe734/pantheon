@@ -2871,22 +2871,17 @@ def _dataset_surface_status(
 ) -> Dict[str, Any]:
     resolved_store = read_store if read_store is not None else globals().get("read_store")
     if source is None:
-        if resolved_store is not None and hasattr(resolved_store, "dataset_source"):
-            try:
-                source = str(resolved_store.dataset_source(dataset) or "missing")
-            except Exception:
-                source = "missing"
+        src = getattr(resolved_store, "dataset_source", lambda d: "missing")(dataset) if resolved_store else "missing"
+        if dataset == "incidents":
+            p = getattr(getattr(resolved_store, "lifecycle_telemetry_governance", None), "incidents", None) or getattr(resolved_store, "incident_port", None) or getattr(resolved_store, "incidents", None)
+            psrc = getattr(p, "dataset_source", lambda: "missing")() if p else "missing"
+            source = "unavailable" if (psrc == "unavailable" or getattr(p, "_last_error", False)) else (psrc if src in (None, "typed_store") else src)
         else:
-            source = "missing"
-    return _format_dataset_surface_status(
-        dataset,
-        snapshot_at=snapshot_at,
-        has_data=has_data,
-        missing_message=missing_message,
-        source=source,
-        utc_now=utc_now,
-        **kwargs,
-    )
+            source = str(src or "missing")
+    res = _format_dataset_surface_status(dataset, snapshot_at=snapshot_at, has_data=has_data, missing_message=missing_message, source=source, utc_now=utc_now, **kwargs)
+    if source in ("unavailable", "missing"):
+        res.update(status="unavailable", source=source)
+    return res
 def _loop_run_surface_status(
     available: bool,
     *,
@@ -3196,12 +3191,12 @@ def _alert_severity_for_risk_level(
         return "high"
     return severity
 def _build_incident_alerts(snapshot_at: str) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    incidents = read_store.list_incidents()
     incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     if incident_surface.get("status") == "unavailable":
         return [], incident_surface
 
     alerts: List[Dict[str, Any]] = []
-    incidents = read_store.list_incidents()
     for incident in incidents:
         incident_status = str(incident.get("status") or "").lower()
         if incident_status not in {"open", "in_progress"}:
@@ -3496,10 +3491,7 @@ def _build_operator_alerts_payload(snapshot_at: str) -> Dict[str, Any]:
         key=_alert_sort_key,
         reverse=True,
     )
-    alerts = [
-        a for a in alerts
-        if str(a.get("alert_id") or a.get("id") or "") not in _ACKNOWLEDGED_ALERTS
-    ]
+
     if alerts_surface.get("status") == "unavailable":
         alerts = []
 
@@ -6846,18 +6838,16 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
 _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 # _GOV_BFF_IDEMPOTENCY defined earlier
-_ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
+from .action_catalog import get_catalog_entry
 from .incidents.service import IncidentService as _IncidentService
 def _current_read_store_for_legacy_incident_seam() -> Any:
     return read_store
 def _bff_incident_service() -> _IncidentService:
     """Composition-root binding: incidents/service.py's IncidentService is the
     sole owner of Incident-case projection and filtering; inject the live
-    ``read_store``/``_ACKNOWLEDGED_ALERTS`` globals rather than duplicating
-    the projection logic here."""
+    ``read_store`` global rather than duplicating the projection logic here."""
     return _IncidentService(
         get_read_store=_current_read_store_for_legacy_incident_seam,
-        acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
     )
 def _list_bff_incidents(
     *,
@@ -6953,22 +6943,17 @@ def _gov_bff_action_command(
         "audit_action": audit_action.to_dict(),
     }
     audit_record["foundation"] = foundation_ctx
-    command_store.submit_command(
-        command_id=command_id,
-        command_type=command_type,
-        target=target,
-        submitted_at=submitted_at,
-        params={"action_id": action_id, **payload},
-        audit_context=audit_record,
-        foundation_context=foundation_ctx,
-    )
-    result = _project_final_command_response(
-        command_id=command_id,
-        command=command_type,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-    )
+    if command_type in {CommandType.INCIDENT_ACTION, CommandType.RISK_ALERT_ACTION}:
+        from .incidents.router import submit_incident_action_command
+        return submit_incident_action_command(
+            command_store, entity_type, entity_id, action_id, resolved_key,
+            identity, payload, command_type, bff_error=_bff_error, idempotency_ledger=_GOV_BFF_IDEMPOTENCY,
+            request_hash=request_hash,
+        )
+    exec_status = CommandStatus.SUBMITTED
+
+    command_store.submit_command(command_id=command_id, command_type=command_type, target=target, submitted_at=submitted_at, params={"action_id": action_id, **payload}, audit_context=audit_record, foundation_context=foundation_ctx)
+    result = _project_final_command_response(command_id=command_id, command=command_type, accepted_at=submitted_at, status=exec_status, staleness_warning=staleness_warning)
     res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
     _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": res_dict}
     return res_dict

@@ -710,7 +710,7 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     if name in {
         "_GOV_BFF_IDEMPOTENCY", "gov_bff_idempotency", "_AGORA_CORE_BFF_IDEMPOTENCY",
         "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", "_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY",
-        "_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY", "_ACKNOWLEDGED_ALERTS", "acknowledged_alerts",
+        "_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY",
         "idempotency_ledger", "capital_bff_idempotency_store", "_capital_bff_idempotency_store",
     }:
         return {}
@@ -1371,6 +1371,7 @@ def mount_bff_routers(
         create_incident_router(
             read_surface=app_deps.read_surface,
             command_store=app_deps.command_store,
+            durable_writer=getattr(app_deps.read_surface, "lifecycle_telemetry_governance", None),
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             require_operator_role=_dep("_require_operator_role"),
@@ -1395,7 +1396,6 @@ def mount_bff_routers(
             list_governance_audit_events=_dep("_list_governance_audit_events"),
             incident_events=_dep("_incident_events"),
             incident_subscribers=_dep("_incident_subscribers"),
-            acknowledged_alerts=_dep("_ACKNOWLEDGED_ALERTS"),
             idempotency_ledger=_dep("_GOV_BFF_IDEMPOTENCY"),
         )
     )
