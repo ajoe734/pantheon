@@ -125,6 +125,7 @@ components:
       - services/openclaw-gateway-adapter/
       - services/consultation/
       - services/evolution/
+      - services/monitor-agent/
       - services/policy-learning/
       - services/research/
       - services/source_ingestion/
