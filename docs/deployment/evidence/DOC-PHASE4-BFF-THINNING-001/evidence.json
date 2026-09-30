@@ -1,0 +1,29 @@
+{
+  "task_id": "DOC-PHASE4-BFF-THINNING-001",
+  "repository": "ajoe734/pantheon",
+  "owner": "Codex2",
+  "reviewer": "Claude2",
+  "delivery_type": "documentation",
+  "approved_design_date": "2026-09-30",
+  "source_file": "/home/chloe_ong_dev_cctech_support_com/phase4-bff-thinning-20260930.md",
+  "document": "docs/02-architecture/phase4-bff-thinning.md",
+  "source_and_document_sha256": "71c54218111a7ad79d68d9ee20136fe3c1f928c657acf72a7a017390100e12c5",
+  "source_and_document_bytes": 10768,
+  "scope": [
+    "docs/02-architecture/phase4-bff-thinning.md",
+    "docs/deployment/evidence/DOC-PHASE4-BFF-THINNING-001/evidence.json"
+  ],
+  "scope_note": "The approved design is copied verbatim. The only accompanying file is this evidence manifest, explicitly declared in task artifacts and required before review admission by task-closeout-finalization.md. No runtime or other source files change.",
+  "verification": [
+    {
+      "command": "cmp /home/chloe_ong_dev_cctech_support_com/phase4-bff-thinning-20260930.md docs/02-architecture/phase4-bff-thinning.md",
+      "exit_code": 0
+    },
+    {
+      "command": "sha256sum /home/chloe_ong_dev_cctech_support_com/phase4-bff-thinning-20260930.md docs/02-architecture/phase4-bff-thinning.md",
+      "exit_code": 0,
+      "result": "Both SHA-256 digests match source_and_document_sha256."
+    }
+  ],
+  "independent_review": "Pending canonical review by Claude2; this manifest records owner verification only."
+}
