@@ -1524,6 +1524,27 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
         _release_lock_handle(handle)
 
 
+def resolve_authoritative_head_branch(
+    candidate: TaskCandidate,
+    *,
+    head_branch: str = "",
+) -> str:
+    cleaned_head = str(head_branch or "").strip()
+    if cleaned_head:
+        return cleaned_head
+    raw_review = candidate.raw_task.get("review_binding")
+    if isinstance(raw_review, Mapping):
+        bound_head = str(raw_review.get("head_branch") or "").strip()
+        if bound_head:
+            return bound_head
+    raw_delivery = candidate.raw_task.get("delivery_binding")
+    if isinstance(raw_delivery, Mapping):
+        bound_head = str(raw_delivery.get("head_branch") or "").strip()
+        if bound_head:
+            return bound_head
+    return str(candidate.branch or "").strip()
+
+
 def fetch_refs(
     candidate: TaskCandidate,
     runner: CommandRunner,
@@ -1533,21 +1554,37 @@ def fetch_refs(
     exact_head: str = "",
 ) -> None:
     runner.run(["git", "fetch", "origin", candidate.target_branch, "--quiet"], cwd=root)
-    branches = {candidate.branch}
-    if head_branch:
-        branches.add(head_branch)
+    authoritative_branch = resolve_authoritative_head_branch(
+        candidate, head_branch=head_branch
+    )
+    if authoritative_branch:
+        runner.run(
+            [
+                "git",
+                "fetch",
+                "origin",
+                f"+refs/heads/{authoritative_branch}:refs/remotes/origin/{authoritative_branch}",
+                "--quiet",
+            ],
+            cwd=root,
+        )
+
+    optional_branches: set[str] = set()
+    candidate_branch = str(candidate.branch or "").strip()
+    if candidate_branch and candidate_branch != authoritative_branch:
+        optional_branches.add(candidate_branch)
     raw_delivery = candidate.raw_task.get("delivery_binding")
     if isinstance(raw_delivery, Mapping):
-        bound_head = raw_delivery.get("head_branch")
-        if bound_head:
-            branches.add(str(bound_head).strip())
+        bound_head = str(raw_delivery.get("head_branch") or "").strip()
+        if bound_head and bound_head != authoritative_branch:
+            optional_branches.add(bound_head)
     raw_review = candidate.raw_task.get("review_binding")
     if isinstance(raw_review, Mapping):
-        bound_head = raw_review.get("head_branch")
-        if bound_head:
-            branches.add(str(bound_head).strip())
+        bound_head = str(raw_review.get("head_branch") or "").strip()
+        if bound_head and bound_head != authoritative_branch:
+            optional_branches.add(bound_head)
 
-    for branch in sorted(b for b in branches if b):
+    for branch in sorted(optional_branches):
         runner.run(
             [
                 "git",
@@ -1557,6 +1594,7 @@ def fetch_refs(
                 "--quiet",
             ],
             cwd=root,
+            check=False,
         )
     if exact_head and review_gate.OID_RE.fullmatch(exact_head):
         runner.run(
@@ -1648,7 +1686,10 @@ def run_rebase_smoke(
             finally:
                 runner.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=root, check=False)
 
-    target_branch = head_branch or candidate.branch
+    target_branch = (
+        resolve_authoritative_head_branch(candidate, head_branch=head_branch)
+        or candidate.branch
+    )
     with tempfile.TemporaryDirectory(prefix=f"pantheon-integrate-{candidate.task_id}-") as tmp:
         worktree = Path(tmp)
         runner.run(["git", "worktree", "add", "--detach", str(worktree), f"origin/{target_branch}"], cwd=root)
@@ -3087,7 +3128,7 @@ def integrate_candidate(
             # being evaluated. The sole merge owner never rewrites task heads.
             allow_push=False,
             exact_head=decision.head_oid,
-            head_branch=str(pr.get("headRefName") or "") or candidate.branch,
+            head_branch=str(pr.get("headRefName") or "").strip(),
         )
     except CommandFailure as exc:
         detail = f"Local smoke or git command failed for PR #{number}: {exc.output.strip() or exc.args_rendered}"
